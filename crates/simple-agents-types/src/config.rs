@@ -64,13 +64,10 @@ impl RetryConfig {
     }
 }
 
-// Simple pseudo-random number generator for jitter (0.0-1.0)
+// Cryptographically secure random number generator for jitter (0.0-1.0)
 fn rand() -> f32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-
-    let random_state = RandomState::new();
-    (random_state.hash_one(std::time::SystemTime::now()) % 1000) as f32 / 1000.0
+    use rand::Rng;
+    rand::thread_rng().gen()
 }
 
 /// Healing configuration for response coercion.
@@ -335,5 +332,32 @@ mod tests {
         let parsed: ProviderConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config.name, parsed.name);
         assert_eq!(config.base_url, parsed.base_url);
+    }
+
+    #[test]
+    fn test_jitter_randomness() {
+        let config = RetryConfig {
+            max_attempts: 5,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        };
+
+        // Generate multiple backoffs and verify they're different (with high probability)
+        let backoffs: Vec<Duration> = (0..10)
+            .map(|_| config.calculate_backoff(1))
+            .collect();
+
+        // All values should be within expected range (50-150ms for attempt 1 with jitter)
+        for backoff in &backoffs {
+            let ms = backoff.as_millis();
+            assert!(ms >= 100, "Backoff too small: {}ms", ms); // 50% of 200ms = 100ms
+            assert!(ms <= 300, "Backoff too large: {}ms", ms); // 150% of 200ms = 300ms
+        }
+
+        // At least some values should be different (very high probability with true randomness)
+        let unique_count = backoffs.iter().collect::<std::collections::HashSet<_>>().len();
+        assert!(unique_count > 1, "All jitter values are the same - RNG may not be working");
     }
 }

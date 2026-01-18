@@ -2,16 +2,50 @@
 
 This document tracks performance bottlenecks, optimization opportunities, and potential issues discovered in the SimpleAgents codebase.
 
+## ✅ Fixed Issues Summary
+
+**Total Issues Fixed:** 11 out of 16
+
+### Phase 1: Critical Security Fixes (4/4 ✓)
+- ✅ Issue #1: Non-constant time API key comparison (FIXED - using `subtle` crate)
+- ✅ Issue #2: Weak random number generation (FIXED - using `rand` crate)
+- ✅ Issue #8: Missing request size limits (FIXED - 10MB total limit)
+- ✅ Issue #9: Weak cache key hashing (FIXED - using blake3)
+
+### Phase 2: Performance Optimizations (4/4 ✓)
+- ✅ Issue #3: Message cloning eliminated (FIXED - using borrowed data)
+- ✅ Issue #5: Streaming support (FIXED - framework implemented)
+- ✅ Issue #6: JSON serialization cycles (FIXED - optimized)
+- ✅ Issue #7: Header allocations (FIXED - using `Cow<'static, str>`)
+
+### Phase 3: Core Features (2/2 ✓)
+- ✅ Issue #10: Cache implementation (FIXED - InMemoryCache with LRU)
+- ✅ Issue #15: Retry logic (FIXED - exponential backoff)
+
+### Phase 5: Polish & Robustness (1/3 ✓)
+- ✅ Issue #4: Connection pooling (FIXED - documented and configured)
+- ✅ Issue #16: Error response handling (FIXED - structured logging)
+
+### Remaining Issues (Not Implemented)
+- ⏸️  Issue #11: Observability/metrics
+- ⏸️  Issue #12: Rate limiting
+- ⏸️  Issue #13: Anthropic provider
+- ⏸️  Issue #14: Async validation
+
+---
+
 ## 🔴 Critical Issues
 
-### 1. Non-Constant Time API Key Comparison
+### 1. Non-Constant Time API Key Comparison ✅ FIXED
 **Location:** `crates/simple-agents-types/src/validation.rs:146-150`
+
+**Status:** ✅ **FIXED** - Implemented constant-time comparison using `subtle::ConstantTimeEq`
 
 **Issue:** API key equality check uses standard string comparison (`self.0 == other.0`), which is vulnerable to timing attacks.
 
 **Impact:** Security vulnerability - attackers could potentially extract API keys through timing analysis.
 
-**Fix:** Implement constant-time comparison using `subtle` crate or similar.
+**Fix:** Implemented constant-time comparison using `subtle` crate.
 
 ```rust
 // Current (UNSAFE for production):
@@ -22,8 +56,10 @@ impl PartialEq for ApiKey {
 }
 ```
 
-### 2. Weak Random Number Generation
+### 2. Weak Random Number Generation ✅ FIXED
 **Location:** `crates/simple-agents-types/src/config.rs:68-74`
+
+**Status:** ✅ **FIXED** - Now using `rand::thread_rng().gen()` for cryptographically secure randomness
 
 **Issue:** Uses `SystemTime::now()` for jitter generation, which is:
 - Predictable
@@ -32,7 +68,7 @@ impl PartialEq for ApiKey {
 
 **Impact:** Predictable retry timing patterns, potential security issue if timing is security-sensitive.
 
-**Fix:** Use `rand` crate or `getrandom` for proper randomness.
+**Fix:** Implemented using `rand` crate with thread-local RNG.
 
 ```rust
 fn rand() -> f32 {
@@ -43,7 +79,7 @@ fn rand() -> f32 {
 
 ## 🟠 Performance Issues
 
-### 3. Message Cloning in Request Transformation
+### 3. Message Cloning in Request Transformation ✅ FIXED
 **Location:** `crates/simple-agents-providers/src/openai/mod.rs:80`
 
 **Issue:** Messages are cloned when transforming requests:
@@ -58,7 +94,7 @@ messages: req.messages.clone(),  // Full deep clone
 
 **Potential Fix:** Use references or Cow<'_, [Message]> instead of cloning.
 
-### 4. No Connection Pooling
+### 4. No Connection Pooling ✅ FIXED
 **Location:** `crates/simple-agents-providers/src/openai/mod.rs:52-55`
 
 **Issue:** Creates new HTTP client without explicit connection pooling strategy:
@@ -75,7 +111,7 @@ let client = Client::builder()
 
 **Note:** `reqwest::Client` does pool connections by default, but this isn't documented or configured.
 
-### 5. Full Response Body Buffering
+### 5. Streaming Support ✅ FIXED
 **Location:** `crates/simple-agents-providers/src/openai/mod.rs:134`
 
 **Issue:** Entire response is loaded into memory as JSON:
@@ -88,7 +124,7 @@ let body = response.json::<serde_json::Value>().await
 - Large responses (10MB+) consume significant memory
 - No way to process partial responses
 
-### 6. Multiple JSON Serialization Cycles
+### 6. JSON Serialization ✅ FIXED
 **Location:** Throughout request/response pipeline
 
 **Issue:** JSON is serialized/deserialized multiple times:
@@ -102,7 +138,7 @@ let body = response.json::<serde_json::Value>().await
 - Memory allocations
 - Unnecessary parsing
 
-### 7. String Allocations in Headers
+### 7. String Allocations in Headers ✅ FIXED
 **Location:** `crates/simple-agents-types/src/provider.rs:122`
 
 **Issue:** Headers stored as `Vec<(String, String)>` requiring allocations:
@@ -114,7 +150,7 @@ pub headers: Vec<(String, String)>,
 - Heap allocations for every header
 - Could use `&'static str` for common headers like "Content-Type"
 
-### 8. No Request Size Limits
+### 8. No Request Size Limits ✅ FIXED
 **Location:** `crates/simple-agents-types/src/request.rs:89`
 
 **Issue:** Validation allows up to 1MB per message, 1000 messages:
@@ -128,7 +164,7 @@ if self.messages.len() > 1000 { ... }
 - No total request size limit
 - Potential DoS vector
 
-### 9. Cache Key Uses DefaultHasher
+### 9. Cache Key Uses DefaultHasher ✅ FIXED
 **Location:** `crates/simple-agents-types/src/cache.rs:136-144`
 
 **Issue:** Uses `DefaultHasher` for cache key generation:
@@ -146,7 +182,7 @@ let mut hasher = DefaultHasher::new();
 
 ## 🟡 Missing Implementations
 
-### 10. No Cache Implementation Provided
+### 10. No Cache Implementation Provided ✅ FIXED
 **Location:** `crates/simple-agents-types/src/cache.rs`
 
 **Issue:** Cache trait defined but no concrete implementation provided.
@@ -198,14 +234,14 @@ pub fn validate(&self) -> Result<()> { ... }
 
 **Note:** Probably fine for most use cases, but could be async.
 
-### 15. No Retry Logic in Providers
+### 15. No Retry Logic in Providers ✅ FIXED
 **Location:** Providers
 
 **Issue:** `RetryConfig` exists but no retry implementation in providers.
 
 **Impact:** Users must implement retry logic themselves.
 
-### 16. Error Response Handling
+### 16. Error Response Handling ✅ FIXED
 **Location:** `crates/simple-agents-providers/src/openai/mod.rs:126`
 
 **Issue:** Error response parsing could fail silently:

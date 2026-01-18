@@ -48,9 +48,23 @@ impl OpenAIProvider {
     ///
     /// * `api_key` - OpenAI API key
     /// * `base_url` - Custom base URL (e.g., for Azure OpenAI)
+    ///
+    /// # Connection Pooling
+    ///
+    /// The HTTP client uses connection pooling automatically:
+    /// - **Pool size**: 10 idle connections per host (configurable)
+    /// - **Keep-alive**: Connections are reused across requests
+    /// - **HTTP/2**: Enabled by default for multiplexing
+    /// - **Timeout**: 30 seconds per request
+    ///
+    /// This significantly improves performance by reusing TCP connections
+    /// and TLS sessions across multiple API calls.
     pub fn with_base_url(api_key: ApiKey, base_url: String) -> Result<Self> {
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(10) // Connection pooling configuration
+            .pool_idle_timeout(Duration::from_secs(90)) // Keep connections alive
+            .http2_prior_knowledge() // Use HTTP/2 for multiplexing
             .build()
             .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
 
@@ -74,16 +88,16 @@ impl Provider for OpenAIProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
-        // Build OpenAI-specific request
+        // Build OpenAI-specific request (borrowing messages to avoid cloning)
         let openai_request = OpenAICompletionRequest {
-            model: req.model.clone(),
-            messages: req.messages.clone(),
+            model: &req.model,
+            messages: &req.messages,
             temperature: req.temperature,
             max_tokens: req.max_tokens,
             top_p: req.top_p,
             n: req.n,
             stream: Some(false),
-            stop: req.stop.clone(),
+            stop: req.stop.as_ref(),
         };
 
         let body = serde_json::to_value(&openai_request)?;
@@ -91,8 +105,14 @@ impl Provider for OpenAIProvider {
         Ok(ProviderRequest {
             url: format!("{}/chat/completions", self.base_url),
             headers: vec![
-                ("Authorization".into(), format!("Bearer {}", self.api_key.expose())),
-                ("Content-Type".into(), "application/json".into()),
+                (
+                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::AUTHORIZATION),
+                    std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose()))
+                ),
+                (
+                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
+                    std::borrow::Cow::Borrowed("application/json")
+                ),
             ],
             body,
             timeout: None,
@@ -121,12 +141,49 @@ impl Provider for OpenAIProvider {
 
         let status = response.status();
 
-        // Handle error responses
+        // Handle error responses with structured logging
         if !status.is_success() {
-            let error_body = response.text().await
-                .unwrap_or_else(|_| "Failed to read error response".to_string());
+            // Capture headers for debugging (before consuming response)
+            let headers_debug: Vec<(String, String)> = response
+                .headers()
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.as_str().to_string(),
+                        v.to_str().unwrap_or("<binary>").to_string(),
+                    )
+                })
+                .collect();
+
+            let error_body = match response.text().await {
+                Ok(body) => {
+                    tracing::warn!(
+                        status = %status,
+                        body_preview = %body.chars().take(200).collect::<String>(),
+                        "API request failed"
+                    );
+                    body
+                }
+                Err(e) => {
+                    tracing::error!(
+                        status = %status,
+                        error = %e,
+                        "Failed to read error response body"
+                    );
+                    format!("HTTP {} - Could not read response body: {}", status, e)
+                }
+            };
 
             let openai_error = OpenAIError::from_response(status.as_u16(), &error_body);
+
+            // Log additional context for debugging
+            tracing::debug!(
+                status = %status,
+                headers = ?headers_debug,
+                error_type = ?openai_error,
+                "OpenAI API error details"
+            );
+
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 

@@ -1,6 +1,7 @@
 //! Shared utilities for provider implementations.
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::borrow::Cow;
 use std::time::Duration;
 
 /// Default timeout for HTTP requests
@@ -11,8 +12,8 @@ pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 #[allow(dead_code)]
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
-/// Build HTTP headers from key-value pairs
-pub fn build_headers(pairs: Vec<(String, String)>) -> Result<HeaderMap, Box<dyn std::error::Error>> {
+/// Build HTTP headers from key-value pairs (now optimized with Cow)
+pub fn build_headers(pairs: Vec<(Cow<'static, str>, Cow<'static, str>)>) -> Result<HeaderMap, Box<dyn std::error::Error>> {
     let mut headers = HeaderMap::new();
 
     for (key, value) in pairs {
@@ -43,8 +44,8 @@ mod tests {
     #[test]
     fn test_build_headers() {
         let headers = build_headers(vec![
-            ("Authorization".into(), "Bearer sk-test".into()),
-            ("Content-Type".into(), "application/json".into()),
+            (Cow::Borrowed("Authorization"), Cow::Borrowed("Bearer sk-test")),
+            (Cow::Borrowed("Content-Type"), Cow::Borrowed("application/json")),
         ]).unwrap();
 
         assert_eq!(headers.len(), 2);

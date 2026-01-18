@@ -4,13 +4,15 @@ use serde::{Deserialize, Serialize};
 use simple_agents_types::prelude::Message;
 
 /// OpenAI chat completion request
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenAICompletionRequest {
+///
+/// This struct borrows messages to avoid cloning during serialization.
+#[derive(Debug, Serialize)]
+pub struct OpenAICompletionRequest<'a> {
     /// Model identifier (e.g., "gpt-4", "gpt-3.5-turbo")
-    pub model: String,
+    pub model: &'a str,
 
-    /// List of messages in the conversation
-    pub messages: Vec<Message>,
+    /// List of messages in the conversation (borrowed to avoid cloning)
+    pub messages: &'a [Message],
 
     /// Temperature (0.0-2.0)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,9 +34,9 @@ pub struct OpenAICompletionRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 
-    /// Stop sequences
+    /// Stop sequences (borrowed when possible)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stop: Option<Vec<String>>,
+    pub stop: Option<&'a Vec<String>>,
 }
 
 /// OpenAI chat completion response
@@ -122,14 +124,16 @@ mod tests {
 
     #[test]
     fn test_serialize_request() {
+        let messages = vec![Message {
+            role: Role::User,
+            content: "Hello".to_string(),
+            name: None,
+            tool_call_id: None,
+        }];
+
         let request = OpenAICompletionRequest {
-            model: "gpt-4".to_string(),
-            messages: vec![Message {
-                role: Role::User,
-                content: "Hello".to_string(),
-                name: None,
-                tool_call_id: None,
-            }],
+            model: "gpt-4",
+            messages: &messages,
             temperature: Some(0.7),
             max_tokens: Some(100),
             top_p: None,

@@ -106,6 +106,17 @@ impl CompletionRequest {
             }
         }
 
+        // Validate total request size (max 10MB)
+        const MAX_TOTAL_REQUEST_SIZE: usize = 10 * 1024 * 1024;
+        let total_size: usize = self.messages.iter().map(|m| m.content.len()).sum();
+        if total_size > MAX_TOTAL_REQUEST_SIZE {
+            return Err(ValidationError::TooLong {
+                field: "total_request_size".to_string(),
+                max: MAX_TOTAL_REQUEST_SIZE,
+            }
+            .into());
+        }
+
         // Validate model
         if self.model.is_empty() {
             return Err(ValidationError::Empty {
@@ -406,5 +417,40 @@ mod tests {
         let json = serde_json::to_value(&request).unwrap();
         assert!(!json.get("max_tokens").is_some());
         assert!(!json.get("temperature").is_some());
+    }
+
+    #[test]
+    fn test_validation_total_request_size_limit() {
+        // Create a request that exceeds 10MB total
+        let large_content = "x".repeat(2 * 1024 * 1024); // 2MB per message
+        let result = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user(large_content.clone()))
+            .message(Message::user(large_content.clone()))
+            .message(Message::user(large_content.clone()))
+            .message(Message::user(large_content.clone()))
+            .message(Message::user(large_content.clone()))
+            .message(Message::user(large_content.clone())) // 6 * 2MB = 12MB > 10MB
+            .build();
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            crate::error::SimpleAgentsError::Validation(ValidationError::TooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn test_validation_total_request_size_within_limit() {
+        // Create a request that's under 10MB total
+        let content = "x".repeat(1024 * 1024); // 1MB per message
+        let result = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user(content.clone()))
+            .message(Message::user(content.clone()))
+            .message(Message::user(content.clone())) // 3MB < 10MB
+            .build();
+
+        assert!(result.is_ok());
     }
 }

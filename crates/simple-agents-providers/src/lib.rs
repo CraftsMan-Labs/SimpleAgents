@@ -36,6 +36,7 @@
 
 pub mod openai;
 pub mod anthropic;
+pub mod retry;
 mod utils;
 
 // Re-export common types from simple-agents-types

@@ -5,6 +5,7 @@
 use crate::error::{Result, ValidationError};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use subtle::ConstantTimeEq;
 
 /// API key (validated, never logged or displayed).
 ///
@@ -142,10 +143,10 @@ impl<'de> Deserialize<'de> for ApiKey {
     }
 }
 
-// Implement PartialEq for testing (constant-time comparison would be better for production)
+// Implement PartialEq with constant-time comparison for security
 impl PartialEq for ApiKey {
     fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
+        self.0.as_bytes().ct_eq(other.0.as_bytes()).into()
     }
 }
 
@@ -238,5 +239,23 @@ mod tests {
 
         assert_eq!(key1, key2);
         assert_ne!(key1, key3);
+    }
+
+    #[test]
+    fn test_api_key_constant_time_comparison() {
+        // Test that constant-time comparison works correctly
+        let key1 = ApiKey::new("sk-1234567890abcdef1234567890").unwrap();
+        let key2 = ApiKey::new("sk-1234567890abcdef1234567890").unwrap();
+        let key3 = ApiKey::new("sk-9999999999999999999999").unwrap();
+
+        // Same keys should be equal
+        assert_eq!(key1, key2);
+
+        // Different keys should not be equal
+        assert_ne!(key1, key3);
+
+        // Keys differing only in last character should still be detected as different
+        let key4 = ApiKey::new("sk-1234567890abcdef12345678901").unwrap();
+        assert_ne!(key1, key4);
     }
 }

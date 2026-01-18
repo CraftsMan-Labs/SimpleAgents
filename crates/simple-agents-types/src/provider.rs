@@ -3,12 +3,23 @@
 //! Defines the interface for LLM providers with transformation hooks.
 
 use crate::config::{Capabilities, RetryConfig};
-use crate::error::Result;
+use crate::error::{Result, SimpleAgentsError, ProviderError};
 use crate::request::CompletionRequest;
-use crate::response::CompletionResponse;
+use crate::response::{CompletionResponse, CompletionChunk};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::time::Duration;
+
+/// Common HTTP header names (static to avoid allocations)
+pub mod headers {
+    /// Authorization header
+    pub const AUTHORIZATION: &str = "Authorization";
+    /// Content-Type header
+    pub const CONTENT_TYPE: &str = "Content-Type";
+    /// API key header (used by some providers like Anthropic)
+    pub const X_API_KEY: &str = "x-api-key";
+}
 
 /// Trait for LLM providers.
 ///
@@ -107,23 +118,89 @@ pub trait Provider: Send + Sync {
     fn timeout(&self) -> Duration {
         Duration::from_secs(30)
     }
+
+    /// Execute streaming request against provider API.
+    ///
+    /// This method returns a stream of completion chunks for streaming responses.
+    /// Not all providers support streaming - default implementation returns an error.
+    ///
+    /// # Arguments
+    /// - `req`: The provider-specific request
+    ///
+    /// # Returns
+    /// A boxed stream of Result<CompletionChunk>
+    ///
+    /// # Example
+    /// ```ignore
+    /// let stream = provider.execute_stream(request).await?;
+    /// while let Some(chunk) = stream.next().await {
+    ///     match chunk {
+    ///         Ok(chunk) => println!("Received: {:?}", chunk),
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    async fn execute_stream(
+        &self,
+        _req: ProviderRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        Err(SimpleAgentsError::Provider(
+            ProviderError::UnsupportedFeature("streaming".to_string())
+        ))
+    }
 }
 
 /// Opaque provider-specific request.
 ///
 /// This type encapsulates all information needed to make an HTTP request
 /// to a provider, without committing to a specific HTTP client library.
+///
+/// Headers use `Cow<'static, str>` to avoid allocations for common headers.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProviderRequest {
     /// Full URL to send request to
     pub url: String,
-    /// HTTP headers (name, value pairs)
-    pub headers: Vec<(String, String)>,
+    /// HTTP headers (name, value pairs) using Cow to avoid allocations for static strings
+    #[serde(with = "header_serde")]
+    pub headers: Vec<(Cow<'static, str>, Cow<'static, str>)>,
     /// Request body (JSON)
     pub body: serde_json::Value,
     /// Optional request timeout override
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout: Option<Duration>,
+}
+
+// Custom serde for Cow headers
+mod header_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::borrow::Cow;
+
+    pub fn serialize<S>(
+        headers: &[(Cow<'static, str>, Cow<'static, str>)],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let string_headers: Vec<(&str, &str)> = headers
+            .iter()
+            .map(|(k, v)| (k.as_ref(), v.as_ref()))
+            .collect();
+        string_headers.serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(
+        deserializer: D,
+    ) -> Result<Vec<(Cow<'static, str>, Cow<'static, str>)>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let string_headers: Vec<(String, String)> = Vec::deserialize(deserializer)?;
+        Ok(string_headers
+            .into_iter()
+            .map(|(k, v)| (Cow::Owned(k), Cow::Owned(v)))
+            .collect())
+    }
 }
 
 impl ProviderRequest {
@@ -137,9 +214,15 @@ impl ProviderRequest {
         }
     }
 
-    /// Add a header.
+    /// Add a header with owned strings.
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.push((name.into(), value.into()));
+        self.headers.push((Cow::Owned(name.into()), Cow::Owned(value.into())));
+        self
+    }
+
+    /// Add a header with static strings (zero allocation).
+    pub fn with_static_header(mut self, name: &'static str, value: &'static str) -> Self {
+        self.headers.push((Cow::Borrowed(name), Cow::Borrowed(value)));
         self
     }
 

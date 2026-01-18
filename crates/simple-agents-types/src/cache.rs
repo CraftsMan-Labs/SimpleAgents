@@ -125,6 +125,8 @@ pub struct CacheKey;
 impl CacheKey {
     /// Generate a cache key from a request.
     ///
+    /// Uses blake3 for cryptographically secure and deterministic hashing.
+    ///
     /// # Example
     /// ```
     /// use simple_agents_types::cache::CacheKey;
@@ -133,15 +135,12 @@ impl CacheKey {
     /// assert!(key.starts_with("openai:"));
     /// ```
     pub fn from_parts(provider: &str, model: &str, content: &str) -> String {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        provider.hash(&mut hasher);
-        model.hash(&mut hasher);
-        content.hash(&mut hasher);
-
-        format!("{}:{}:{:x}", provider, model, hasher.finish())
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(provider.as_bytes());
+        hasher.update(model.as_bytes());
+        hasher.update(content.as_bytes());
+        let hash = hasher.finalize();
+        format!("{}:{}:{}", provider, model, hash.to_hex())
     }
 
     /// Generate a cache key with custom namespace.
@@ -189,5 +188,39 @@ mod tests {
     #[test]
     fn test_cache_object_safety() {
         fn _assert_object_safe(_: &dyn Cache) {}
+    }
+
+    #[test]
+    fn test_cache_key_blake3_deterministic() {
+        // Verify blake3 produces deterministic hashes
+        let key1 = CacheKey::from_parts("openai", "gpt-4", "Hello, world!");
+        let key2 = CacheKey::from_parts("openai", "gpt-4", "Hello, world!");
+        assert_eq!(key1, key2, "Blake3 hashing should be deterministic");
+    }
+
+    #[test]
+    fn test_cache_key_blake3_collision_resistance() {
+        // Verify different inputs produce different hashes
+        let key1 = CacheKey::from_parts("openai", "gpt-4", "Hello");
+        let key2 = CacheKey::from_parts("openai", "gpt-4", "Hello!");
+        let key3 = CacheKey::from_parts("openai", "gpt-3.5", "Hello");
+        let key4 = CacheKey::from_parts("anthropic", "gpt-4", "Hello");
+
+        assert_ne!(key1, key2, "Different content should produce different hashes");
+        assert_ne!(key1, key3, "Different models should produce different hashes");
+        assert_ne!(key1, key4, "Different providers should produce different hashes");
+    }
+
+    #[test]
+    fn test_cache_key_blake3_format() {
+        // Verify the hash format is correct (provider:model:hex_hash)
+        let key = CacheKey::from_parts("openai", "gpt-4", "test");
+        let parts: Vec<&str> = key.split(':').collect();
+
+        assert_eq!(parts.len(), 3, "Key should have 3 parts");
+        assert_eq!(parts[0], "openai", "First part should be provider");
+        assert_eq!(parts[1], "gpt-4", "Second part should be model");
+        assert_eq!(parts[2].len(), 64, "Blake3 hash should be 64 hex characters");
+        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()), "Hash should be valid hex");
     }
 }
