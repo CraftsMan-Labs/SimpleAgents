@@ -1,0 +1,17 @@
+[package]
+name = "simple-agents-examples"
+version = "0.1.0"
+edition = "2021"
+
+[dev-dependencies]
+dotenv = "0.15"
+futures-util = { workspace = true }
+serde_json = { workspace = true }
+simple-agents-healing = { path = "../crates/simple-agents-healing", version = "0.1.0" }
+simple-agents-providers = { path = "../crates/simple-agents-providers", version = "0.1.0" }
+simple-agents-types = { path = "../crates/simple-agents-types", version = "0.1.0" }
+tokio = { workspace = true }
+
+[[example]]
+name = "full_api_example"
+path = "full_api_example.rs"
