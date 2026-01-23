@@ -1,0 +1,36 @@
+[package]
+name = "simple-agents-healing"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Rishub Kumar"]
+description = "Response healing system for SimpleAgents - BAML-inspired JSON parsing and coercion"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rishub/simple-agents"
+keywords = ["llm", "ai", "json", "parser", "healing"]
+categories = ["parser-implementations", "development-tools"]
+
+[dependencies]
+# Core dependencies
+simple-agents-types = { path = "../simple-agents-types", version = "0.1.0" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+# Logging
+tracing = "0.1"
+
+# Optional
+regex = { version = "1.10", optional = true }
+
+[features]
+default = []
+regex-support = ["regex"]
+
+[dev-dependencies]
+tokio = { version = "1.41", features = ["full"] }
+proptest = "1.5"
+
+[[test]]
+name = "parser_tests"
+path = "tests/parser_tests.rs"

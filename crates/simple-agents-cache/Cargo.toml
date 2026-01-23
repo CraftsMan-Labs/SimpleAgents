@@ -1,0 +1,15 @@
+[package]
+name = "simple-agents-cache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+simple-agents-types = { path = "../simple-agents-types", version = "0.1.0" }
+tokio = { workspace = true, features = ["sync", "time"] }
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

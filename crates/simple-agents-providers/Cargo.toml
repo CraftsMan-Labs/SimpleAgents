@@ -1,0 +1,37 @@
+[package]
+name = "simple-agents-providers"
+version = "0.1.0"
+edition = "2021"
+authors = ["SimpleAgents Contributors"]
+description = "LLM provider implementations for SimpleAgents"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/yourusername/SimpleAgents"
+
+[dependencies]
+simple-agents-types = { path = "../simple-agents-types", version = "0.1.0" }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+tokio = { version = "1.42", features = ["full"] }
+futures = "0.3"
+futures-core = "0.3"
+futures-util = "0.3"
+bytes = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-trait = "0.1"
+thiserror = "2.0"
+tracing = "0.1"
+metrics = "0.23"
+metrics-exporter-prometheus = { version = "0.15", optional = true }
+governor = "0.6"
+
+[features]
+default = []
+prometheus = ["dep:metrics-exporter-prometheus"]
+
+ [dev-dependencies]
+ tokio-test = "0.4"
+ mockito = "1.6"
+ tracing-subscriber = "0.3"
+ simple-agents-cache = { path = "../simple-agents-cache", version = "0.1.0" }
+ simple-agents-healing = { path = "../simple-agents-healing", version = "0.1.0" }
+ dotenv = "0.15"
