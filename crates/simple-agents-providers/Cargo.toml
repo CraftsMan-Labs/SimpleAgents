@@ -34,4 +34,5 @@ prometheus = ["dep:metrics-exporter-prometheus"]
  tracing-subscriber = "0.3"
  simple-agents-cache = { path = "../simple-agents-cache", version = "0.1.0" }
  simple-agents-healing = { path = "../simple-agents-healing", version = "0.1.0" }
+ simple-agents-macros = { path = "../simple-agents-macros", version = "0.1.0" }
  dotenv = "0.15"
