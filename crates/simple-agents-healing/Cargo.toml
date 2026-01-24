@@ -30,7 +30,13 @@ regex-support = ["regex"]
 [dev-dependencies]
 tokio = { version = "1.41", features = ["full"] }
 proptest = "1.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+simple-agents-macros = { path = "../simple-agents-macros", version = "0.1.0" }
 
 [[test]]
 name = "parser_tests"
 path = "tests/parser_tests.rs"
+
+[[bench]]
+name = "parser_benchmarks"
+harness = false
