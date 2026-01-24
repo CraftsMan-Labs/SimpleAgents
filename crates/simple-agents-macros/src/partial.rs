@@ -134,7 +134,7 @@ pub fn derive(input: TokenStream) -> TokenStream {
             /// # Errors
             ///
             /// Returns an error if any required fields are missing.
-            pub fn from_partial(partial: #partial_name #ty_generics) -> Result<Self, String> {
+            pub fn from_partial(partial: #partial_name #ty_generics) -> ::std::result::Result<Self, String> {
                 Ok(Self {
                     #(#from_partial_statements),*
                 })
