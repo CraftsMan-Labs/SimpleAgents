@@ -182,14 +182,14 @@ pub mod prometheus {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```rust
     /// use simple_agents_providers::metrics::prometheus;
     ///
-    /// #[tokio::main]
-    /// async fn main() {
-    ///     let addr = "127.0.0.1:9090".parse().unwrap();
+    /// let addr = "127.0.0.1:0".parse().unwrap();
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// rt.block_on(async {
     ///     prometheus::init(addr).expect("Failed to start Prometheus exporter");
-    /// }
+    /// });
     /// ```
     pub fn init(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
         let builder = metrics_exporter_prometheus::PrometheusBuilder::new();

@@ -74,14 +74,21 @@ impl OpenAIProvider {
     ///
     /// For local servers that only support HTTP/1.1 (e.g., vLLM, Ollama),
     /// use [`with_client`] to provide a custom HTTP client:
-    /// ```ignore
+    /// ```rust
     /// use reqwest::Client;
+    /// use simple_agents_providers::openai::OpenAIProvider;
+    /// use simple_agents_types::prelude::*;
+    /// use std::time::Duration;
     ///
+    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+    /// let base_url = "http://localhost:4000/v1".to_string();
     /// let client = Client::builder()
     ///     .timeout(Duration::from_secs(30))
-    ///     .build()?;
+    ///     .build()
+    ///     .expect("Failed to build reqwest client");
     ///
-    /// let provider = OpenAIProvider::with_client(api_key, base_url, client)?;
+    /// let provider = OpenAIProvider::with_client(api_key, base_url, client).unwrap();
+    /// assert_eq!(provider.base_url(), "http://localhost:4000/v1");
     /// ```
     pub fn with_base_url(api_key: ApiKey, base_url: String) -> Result<Self> {
         let client = Client::builder()
@@ -148,7 +155,8 @@ impl OpenAIProvider {
     ///     .timeout(Duration::from_secs(30))
     ///     .pool_max_idle_per_host(10)
     ///     .pool_idle_timeout(Duration::from_secs(90))
-    ///     .build()?;
+    ///     .build()
+    ///     .expect("Failed to build reqwest client");
     ///
     /// let provider = OpenAIProvider::with_client(
     ///     api_key,
@@ -417,6 +425,17 @@ impl Provider for OpenAIProvider {
 mod tests {
     use super::*;
 
+    fn load_env() -> (String, String, String) {
+        dotenv::dotenv().ok();
+        let api_base = std::env::var("CUSTOM_API_BASE")
+            .expect("CUSTOM_API_BASE environment variable not set");
+        let api_key = std::env::var("CUSTOM_API_KEY")
+            .expect("CUSTOM_API_KEY environment variable not set");
+        let model = std::env::var("CUSTOM_API_MODEL")
+            .expect("CUSTOM_API_MODEL environment variable not set");
+        (api_base, api_key, model)
+    }
+
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
@@ -462,17 +481,15 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires valid API key
     async fn test_streaming_integration() {
         use futures_util::StreamExt;
 
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .expect("OPENAI_API_KEY environment variable required");
+        let (api_base, api_key, model) = load_env();
         let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAIProvider::with_base_url(api_key, api_base).unwrap();
 
         let request = CompletionRequest::builder()
-            .model("gpt-4")
+            .model(&model)
             .message(Message::user("Say 'Hello' in one word"))
             .stream(true)
             .max_tokens(10)

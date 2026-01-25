@@ -16,36 +16,57 @@ use std::time::Duration;
 ///
 /// # Example Implementation
 ///
-/// ```ignore
+/// ```rust
 /// use simple_agents_types::cache::Cache;
 /// use simple_agents_types::error::Result;
 /// use async_trait::async_trait;
-/// use std::time::Duration;
 /// use std::collections::HashMap;
+/// use std::sync::{Arc, Mutex};
+/// use std::time::Duration;
 ///
 /// struct InMemoryCache {
-///     store: HashMap<String, Vec<u8>>,
+///     store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 /// }
 ///
 /// #[async_trait]
 /// impl Cache for InMemoryCache {
 ///     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-///         Ok(self.store.get(key).cloned())
+///         let store = self.store.lock().unwrap();
+///         Ok(store.get(key).cloned())
 ///     }
 ///
 ///     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> Result<()> {
-///         // Note: real implementation would need Arc<Mutex<HashMap>>
+///         let mut store = self.store.lock().unwrap();
+///         store.insert(key.to_string(), value);
 ///         Ok(())
 ///     }
 ///
 ///     async fn delete(&self, key: &str) -> Result<()> {
+///         let mut store = self.store.lock().unwrap();
+///         store.remove(key);
 ///         Ok(())
 ///     }
 ///
 ///     async fn clear(&self) -> Result<()> {
+///         let mut store = self.store.lock().unwrap();
+///         store.clear();
 ///         Ok(())
 ///     }
 /// }
+///
+/// let cache = InMemoryCache {
+///     store: Arc::new(Mutex::new(HashMap::new())),
+/// };
+///
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     cache
+///         .set("request:abc123", b"ok".to_vec(), Duration::from_secs(60))
+///         .await
+///         .unwrap();
+///     let value = cache.get("request:abc123").await.unwrap();
+///     assert_eq!(value, Some(b"ok".to_vec()));
+/// });
 /// ```
 #[async_trait]
 pub trait Cache: Send + Sync {
@@ -57,11 +78,50 @@ pub trait Cache: Send + Sync {
     /// - `key`: Cache key
     ///
     /// # Example
-    /// ```ignore
-    /// let value = cache.get("request:abc123").await?;
-    /// if let Some(bytes) = value {
-    ///     let response: CompletionResponse = serde_json::from_slice(&bytes)?;
-    /// }
+    /// ```rust
+    /// use simple_agents_types::cache::Cache;
+    /// use async_trait::async_trait;
+    /// use std::collections::HashMap;
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::Duration;
+    ///
+    /// # struct InMemoryCache {
+    /// #     store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// # }
+    /// # #[async_trait]
+    /// # impl Cache for InMemoryCache {
+    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #         let store = self.store.lock().unwrap();
+    /// #         Ok(store.get(key).cloned())
+    /// #     }
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.insert(key.to_string(), value);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.remove(key);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.clear();
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # let cache = InMemoryCache {
+    /// #     store: Arc::new(Mutex::new(HashMap::new())),
+    /// # };
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # rt.block_on(async {
+    /// cache
+    ///     .set("request:abc123", b"ok".to_vec(), Duration::from_secs(60))
+    ///     .await
+    ///     .unwrap();
+    /// let value = cache.get("request:abc123").await.unwrap();
+    /// assert_eq!(value, Some(b"ok".to_vec()));
+    /// # });
     /// ```
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>>;
 
@@ -73,9 +133,48 @@ pub trait Cache: Send + Sync {
     /// - `ttl`: Time-to-live (expiration duration)
     ///
     /// # Example
-    /// ```ignore
-    /// let response_bytes = serde_json::to_vec(&response)?;
-    /// cache.set("request:abc123", response_bytes, Duration::from_secs(3600)).await?;
+    /// ```rust
+    /// use simple_agents_types::cache::Cache;
+    /// use async_trait::async_trait;
+    /// use std::collections::HashMap;
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::Duration;
+    ///
+    /// # struct InMemoryCache {
+    /// #     store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// # }
+    /// # #[async_trait]
+    /// # impl Cache for InMemoryCache {
+    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #         let store = self.store.lock().unwrap();
+    /// #         Ok(store.get(key).cloned())
+    /// #     }
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.insert(key.to_string(), value);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.remove(key);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.clear();
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # let cache = InMemoryCache {
+    /// #     store: Arc::new(Mutex::new(HashMap::new())),
+    /// # };
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # rt.block_on(async {
+    /// cache
+    ///     .set("request:abc123", b"payload".to_vec(), Duration::from_secs(3600))
+    ///     .await
+    ///     .unwrap();
+    /// # });
     /// ```
     async fn set(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<()>;
 
@@ -85,8 +184,49 @@ pub trait Cache: Send + Sync {
     /// - `key`: Cache key
     ///
     /// # Example
-    /// ```ignore
-    /// cache.delete("request:abc123").await?;
+    /// ```rust
+    /// use simple_agents_types::cache::Cache;
+    /// use async_trait::async_trait;
+    /// use std::collections::HashMap;
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::Duration;
+    ///
+    /// # struct InMemoryCache {
+    /// #     store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// # }
+    /// # #[async_trait]
+    /// # impl Cache for InMemoryCache {
+    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #         let store = self.store.lock().unwrap();
+    /// #         Ok(store.get(key).cloned())
+    /// #     }
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.insert(key.to_string(), value);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.remove(key);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.clear();
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # let cache = InMemoryCache {
+    /// #     store: Arc::new(Mutex::new(HashMap::new())),
+    /// # };
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # rt.block_on(async {
+    /// cache
+    ///     .set("request:abc123", b"payload".to_vec(), Duration::from_secs(60))
+    ///     .await
+    ///     .unwrap();
+    /// cache.delete("request:abc123").await.unwrap();
+    /// # });
     /// ```
     async fn delete(&self, key: &str) -> Result<()>;
 
@@ -96,8 +236,49 @@ pub trait Cache: Send + Sync {
     /// This is a destructive operation. Use with caution.
     ///
     /// # Example
-    /// ```ignore
-    /// cache.clear().await?;
+    /// ```rust
+    /// use simple_agents_types::cache::Cache;
+    /// use async_trait::async_trait;
+    /// use std::collections::HashMap;
+    /// use std::sync::{Arc, Mutex};
+    /// use std::time::Duration;
+    ///
+    /// # struct InMemoryCache {
+    /// #     store: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// # }
+    /// # #[async_trait]
+    /// # impl Cache for InMemoryCache {
+    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #         let store = self.store.lock().unwrap();
+    /// #         Ok(store.get(key).cloned())
+    /// #     }
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.insert(key.to_string(), value);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.remove(key);
+    /// #         Ok(())
+    /// #     }
+    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #         let mut store = self.store.lock().unwrap();
+    /// #         store.clear();
+    /// #         Ok(())
+    /// #     }
+    /// # }
+    /// # let cache = InMemoryCache {
+    /// #     store: Arc::new(Mutex::new(HashMap::new())),
+    /// # };
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # rt.block_on(async {
+    /// cache
+    ///     .set("request:abc123", b"payload".to_vec(), Duration::from_secs(60))
+    ///     .await
+    ///     .unwrap();
+    /// cache.clear().await.unwrap();
+    /// # });
     /// ```
     async fn clear(&self) -> Result<()>;
 

@@ -368,6 +368,17 @@ mod tests {
     use super::*;
     use futures_util::StreamExt;
 
+    fn load_env() -> (String, String, String) {
+        dotenv::dotenv().ok();
+        let api_base = std::env::var("CUSTOM_API_BASE")
+            .expect("CUSTOM_API_BASE environment variable not set");
+        let api_key = std::env::var("CUSTOM_API_KEY")
+            .expect("CUSTOM_API_KEY environment variable not set");
+        let model = std::env::var("CUSTOM_API_MODEL")
+            .expect("CUSTOM_API_MODEL environment variable not set");
+        (api_base, api_key, model)
+    }
+
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890").unwrap();
@@ -438,15 +449,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires valid API key
     async fn test_anthropic_integration() {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .expect("ANTHROPIC_API_KEY environment variable required");
+        let (api_base, api_key, model) = load_env();
         let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = AnthropicProvider::new(api_key).unwrap();
+        let provider = AnthropicProvider::with_base_url(api_key, api_base).unwrap();
 
         let request = CompletionRequest::builder()
-            .model("claude-3-haiku-20240307")
+            .model(&model)
             .message(Message::user("Say 'Hello' in one word"))
             .max_tokens(10)
             .build()
@@ -462,15 +471,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires valid API key
     async fn test_streaming_integration() {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .expect("ANTHROPIC_API_KEY environment variable required");
+        let (api_base, api_key, model) = load_env();
         let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = AnthropicProvider::new(api_key).unwrap();
+        let provider = AnthropicProvider::with_base_url(api_key, api_base).unwrap();
 
         let request = CompletionRequest::builder()
-            .model("claude-3-haiku-20240307")
+            .model(&model)
             .message(Message::user("Say 'Hello' in one word"))
             .stream(true)
             .max_tokens(10)

@@ -19,9 +19,18 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 # Configuration
-API_BASE="http://localhost:4000"
-API_KEY="sk-1234"
-MODEL="openai/xai/grok-code-fast-1"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENV_FILE="$ROOT_DIR/.env"
+if [ -f "$ENV_FILE" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    . "$ENV_FILE"
+    set +a
+fi
+
+API_BASE="${CUSTOM_API_BASE:?CUSTOM_API_BASE environment variable not set}"
+API_KEY="${CUSTOM_API_KEY:?CUSTOM_API_KEY environment variable not set}"
+MODEL="${CUSTOM_API_MODEL:?CUSTOM_API_MODEL environment variable not set}"
 
 echo -e "${YELLOW}=== SimpleAgents Provider Integration Tests ===${NC}"
 echo ""
@@ -38,10 +47,10 @@ if curl -s --connect-timeout 2 "$API_BASE" > /dev/null 2>&1; then
 else
     echo -e "${RED}✗ Cannot connect to $API_BASE${NC}"
     echo ""
-    echo "Please ensure your LLM proxy server is running on localhost:4000"
+    echo "Please ensure your LLM proxy server is running at $API_BASE"
     echo ""
     echo "Example: If using LiteLLM proxy:"
-    echo "  litellm --model openai/xai/grok-code-fast-1 --port 4000"
+    echo "  litellm --model $MODEL --port 4000"
     echo ""
     exit 1
 fi
