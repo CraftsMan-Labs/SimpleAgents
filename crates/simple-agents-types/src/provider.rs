@@ -43,16 +43,15 @@ pub mod headers {
 ///
 /// # Example Implementation
 ///
-/// ```ignore
+/// ```rust
 /// use simple_agents_types::provider::{Provider, ProviderRequest, ProviderResponse};
 /// use simple_agents_types::request::CompletionRequest;
-/// use simple_agents_types::response::CompletionResponse;
+/// use simple_agents_types::response::{CompletionResponse, CompletionChoice, FinishReason, Usage};
+/// use simple_agents_types::message::Message;
 /// use simple_agents_types::error::Result;
 /// use async_trait::async_trait;
 ///
-/// struct MyProvider {
-///     api_key: String,
-/// }
+/// struct MyProvider;
 ///
 /// #[async_trait]
 /// impl Provider for MyProvider {
@@ -60,21 +59,45 @@ pub mod headers {
 ///         "my-provider"
 ///     }
 ///
-///     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
-///         // Transform to provider format
-///         todo!()
+///     fn transform_request(&self, _req: &CompletionRequest) -> Result<ProviderRequest> {
+///         Ok(ProviderRequest::new("http://example.com"))
 ///     }
 ///
-///     async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
-///         // Make HTTP request
-///         todo!()
+///     async fn execute(&self, _req: ProviderRequest) -> Result<ProviderResponse> {
+///         Ok(ProviderResponse::new(200, serde_json::json!({"ok": true})))
 ///     }
 ///
-///     fn transform_response(&self, resp: ProviderResponse) -> Result<CompletionResponse> {
-///         // Transform from provider format
-///         todo!()
+///     fn transform_response(&self, _resp: ProviderResponse) -> Result<CompletionResponse> {
+///         Ok(CompletionResponse {
+///             id: "resp_1".to_string(),
+///             model: "dummy".to_string(),
+///             choices: vec![CompletionChoice {
+///                 index: 0,
+///                 message: Message::assistant("ok"),
+///                 finish_reason: FinishReason::Stop,
+///                 logprobs: None,
+///             }],
+///             usage: Usage::new(1, 1),
+///             created: None,
+///             provider: Some(self.name().to_string()),
+///         })
 ///     }
 /// }
+///
+/// let provider = MyProvider;
+/// let request = CompletionRequest::builder()
+///     .model("gpt-4")
+///     .message(Message::user("Hello!"))
+///     .build()
+///     .unwrap();
+///
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     let provider_request = provider.transform_request(&request).unwrap();
+///     let provider_response = provider.execute(provider_request).await.unwrap();
+///     let response = provider.transform_response(provider_response).unwrap();
+///     assert_eq!(response.content(), Some("ok"));
+/// });
 /// ```
 #[async_trait]
 pub trait Provider: Send + Sync {
@@ -134,14 +157,80 @@ pub trait Provider: Send + Sync {
     /// A boxed stream of Result<CompletionChunk>
     ///
     /// # Example
-    /// ```ignore
-    /// let stream = provider.execute_stream(request).await?;
-    /// while let Some(chunk) = stream.next().await {
-    ///     match chunk {
-    ///         Ok(chunk) => println!("Received: {:?}", chunk),
-    ///         Err(e) => eprintln!("Error: {}", e),
+    /// ```rust
+    /// use simple_agents_types::provider::{Provider, ProviderRequest, ProviderResponse};
+    /// use simple_agents_types::request::CompletionRequest;
+    /// use simple_agents_types::response::{CompletionResponse, CompletionChunk, CompletionChoice, FinishReason, Usage};
+    /// use simple_agents_types::message::Message;
+    /// use simple_agents_types::error::Result;
+    /// use async_trait::async_trait;
+    /// use futures_core::Stream;
+    /// use std::pin::Pin;
+    /// use std::task::{Context, Poll};
+    ///
+    /// struct EmptyStream;
+    ///
+    /// impl Stream for EmptyStream {
+    ///     type Item = Result<CompletionChunk>;
+    ///
+    ///     fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    ///         Poll::Ready(None)
     ///     }
     /// }
+    ///
+    /// struct StreamingProvider;
+    ///
+    /// #[async_trait]
+    /// impl Provider for StreamingProvider {
+    ///     fn name(&self) -> &str {
+    ///         "streaming-provider"
+    ///     }
+    ///
+    ///     fn transform_request(&self, _req: &CompletionRequest) -> Result<ProviderRequest> {
+    ///         Ok(ProviderRequest::new("http://example.com"))
+    ///     }
+    ///
+    ///     async fn execute(&self, _req: ProviderRequest) -> Result<ProviderResponse> {
+    ///         Ok(ProviderResponse::new(200, serde_json::json!({"ok": true})))
+    ///     }
+    ///
+    ///     fn transform_response(&self, _resp: ProviderResponse) -> Result<CompletionResponse> {
+    ///         Ok(CompletionResponse {
+    ///             id: "resp_1".to_string(),
+    ///             model: "dummy".to_string(),
+    ///             choices: vec![CompletionChoice {
+    ///                 index: 0,
+    ///                 message: Message::assistant("ok"),
+    ///                 finish_reason: FinishReason::Stop,
+    ///                 logprobs: None,
+    ///             }],
+    ///             usage: Usage::new(1, 1),
+    ///             created: None,
+    ///             provider: None,
+    ///         })
+    ///     }
+    ///
+    ///     async fn execute_stream(
+    ///         &self,
+    ///         _req: ProviderRequest,
+    ///     ) -> Result<Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+    ///         Ok(Box::new(EmptyStream))
+    ///     }
+    /// }
+    ///
+    /// let provider = StreamingProvider;
+    /// let request = CompletionRequest::builder()
+    ///     .model("gpt-4")
+    ///     .message(Message::user("Hello!"))
+    ///     .build()
+    ///     .unwrap();
+    ///
+    /// let rt = tokio::runtime::Runtime::new().unwrap();
+    /// rt.block_on(async {
+    ///     let provider_request = provider.transform_request(&request).unwrap();
+    ///     let _stream = provider.execute_stream(provider_request).await.unwrap();
+    ///     // Use StreamExt::next to consume the stream in real usage.
+    /// });
     /// ```
     async fn execute_stream(
         &self,

@@ -19,12 +19,14 @@ use std::time::Duration;
 ///
 /// # Example Implementation
 ///
-/// ```ignore
+/// ```rust
 /// use simple_agents_types::router::RoutingStrategy;
 /// use simple_agents_types::config::ProviderConfig;
 /// use simple_agents_types::request::CompletionRequest;
-/// use simple_agents_types::error::Result;
+/// use simple_agents_types::message::Message;
+/// use simple_agents_types::error::{Result, SimpleAgentsError};
 /// use async_trait::async_trait;
+/// use std::sync::atomic::{AtomicUsize, Ordering};
 ///
 /// struct RoundRobinStrategy {
 ///     counter: AtomicUsize,
@@ -38,12 +40,31 @@ use std::time::Duration;
 ///         _request: &CompletionRequest,
 ///     ) -> Result<usize> {
 ///         if providers.is_empty() {
-///             return Err(/* ... */);
+///             return Err(SimpleAgentsError::Routing("no providers".to_string()));
 ///         }
 ///         let index = self.counter.fetch_add(1, Ordering::Relaxed);
 ///         Ok(index % providers.len())
 ///     }
 /// }
+///
+/// let strategy = RoundRobinStrategy {
+///     counter: AtomicUsize::new(0),
+/// };
+/// let providers = vec![
+///     ProviderConfig::new("p1", "http://example.com"),
+///     ProviderConfig::new("p2", "http://example.com"),
+/// ];
+/// let request = CompletionRequest::builder()
+///     .model("gpt-4")
+///     .message(Message::user("Hello!"))
+///     .build()
+///     .unwrap();
+///
+/// let rt = tokio::runtime::Runtime::new().unwrap();
+/// rt.block_on(async {
+///     let index = strategy.select_provider(&providers, &request).await.unwrap();
+///     assert!(index < providers.len());
+/// });
 /// ```
 #[async_trait]
 pub trait RoutingStrategy: Send + Sync {

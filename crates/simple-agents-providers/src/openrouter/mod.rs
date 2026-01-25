@@ -343,6 +343,17 @@ impl Provider for OpenRouterProvider {
 mod tests {
     use super::*;
 
+    fn load_env() -> (String, String, String) {
+        dotenv::dotenv().ok();
+        let api_base = std::env::var("CUSTOM_API_BASE")
+            .expect("CUSTOM_API_BASE environment variable not set");
+        let api_key = std::env::var("CUSTOM_API_KEY")
+            .expect("CUSTOM_API_KEY environment variable not set");
+        let model = std::env::var("CUSTOM_API_MODEL")
+            .expect("CUSTOM_API_MODEL environment variable not set");
+        (api_base, api_key, model)
+    }
+
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890").unwrap();
@@ -387,15 +398,13 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore] // Requires valid OpenRouter API key
     async fn test_integration() {
-        let api_key = std::env::var("OPENROUTER_API_KEY")
-            .expect("OPENROUTER_API_KEY environment variable required");
+        let (api_base, api_key, model) = load_env();
         let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = OpenRouterProvider::new(api_key).unwrap();
+        let provider = OpenRouterProvider::with_base_url(api_key, api_base).unwrap();
 
         let request = CompletionRequest::builder()
-            .model("openai/gpt-3.5-turbo")
+            .model(&model)
             .message(Message::user("Say 'test'"))
             .max_tokens(10)
             .build()

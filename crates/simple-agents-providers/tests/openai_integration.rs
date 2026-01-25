@@ -1,12 +1,23 @@
 //! Integration tests for OpenAI provider.
 //!
-//! These tests require a running API server and are ignored by default.
-//! Run with: `cargo test -p simple-agents-providers -- --ignored`
+//! These tests require a running API server configured via the project `.env`.
+//! Run with: `cargo test -p simple-agents-providers`
 
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_types::prelude::*;
 
-/// Test connection to local LLM proxy server
+fn load_env() -> (String, String, String) {
+    dotenv::dotenv().ok();
+    let api_base = std::env::var("CUSTOM_API_BASE")
+        .expect("CUSTOM_API_BASE environment variable not set");
+    let api_key = std::env::var("CUSTOM_API_KEY")
+        .expect("CUSTOM_API_KEY environment variable not set");
+    let model = std::env::var("CUSTOM_API_MODEL")
+        .expect("CUSTOM_API_MODEL environment variable not set");
+    (api_base, api_key, model)
+}
+
+/// Test connection to configured API server
 ///
 /// This test verifies that we can:
 /// 1. Create a provider with custom base URL
@@ -15,31 +26,31 @@ use simple_agents_types::prelude::*;
 ///
 /// # Configuration
 ///
-/// - API Base: http://localhost:4000
-/// - API Key: sk-1234
-/// - Model: openai/xai/grok-code-fast-1
+/// Set these in the project `.env`:
+/// - CUSTOM_API_BASE
+/// - CUSTOM_API_KEY
+/// - CUSTOM_API_MODEL
 ///
 /// # Running
 ///
 /// ```bash
-/// cargo test -p simple-agents-providers test_local_proxy_connection -- --ignored --nocapture
+/// cargo test -p simple-agents-providers test_local_proxy_connection -- --nocapture
 /// ```
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_local_proxy_connection() {
     // Setup
-    let api_key = ApiKey::new("sk-1234")
-        .expect("Failed to create API key");
+    let (api_base, api_key, model) = load_env();
+    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = OpenAIProvider::with_base_url(
         api_key,
-        "http://localhost:4000".to_string(),
+        api_base,
     )
     .expect("Failed to create provider");
 
     // Create a simple test request
     let request = CompletionRequest::builder()
-        .model("openai/xai/grok-code-fast-1")
+        .model(&model)
         .message(Message::user("Say 'Hello from SimpleAgents!' and nothing else."))
         .temperature(0.7)
         .max_tokens(50)
@@ -52,7 +63,7 @@ async fn test_local_proxy_connection() {
         .expect("Failed to transform request");
 
     println!("Making request to: {}", provider_request.url);
-    println!("Model: openai/xai/grok-code-fast-1");
+    println!("Model: {}", model);
 
     // Execute request
     let provider_response = provider
@@ -74,7 +85,7 @@ async fn test_local_proxy_connection() {
 
     // Assertions
     assert!(!response.id.is_empty(), "Response ID should not be empty");
-    assert_eq!(response.model, "openai/xai/grok-code-fast-1", "Model mismatch");
+    assert_eq!(response.model, model, "Model mismatch");
     assert!(!response.choices.is_empty(), "Response should have at least one choice");
 
     // Get the content
@@ -108,14 +119,13 @@ async fn test_local_proxy_connection() {
 
 /// Test multiple sequential requests to verify connection stability
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_local_proxy_multiple_requests() {
-    let api_key = ApiKey::new("sk-1234")
-        .expect("Failed to create API key");
+    let (api_base, api_key, model) = load_env();
+    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = OpenAIProvider::with_base_url(
         api_key,
-        "http://localhost:4000".to_string(),
+        api_base,
     )
     .expect("Failed to create provider");
 
@@ -128,7 +138,7 @@ async fn test_local_proxy_multiple_requests() {
         println!("Prompt: {}", prompt);
 
         let request = CompletionRequest::builder()
-            .model("openai/xai/grok-code-fast-1")
+            .model(&model)
             .message(Message::user(*prompt))
             .temperature(0.7)
             .max_tokens(50)
@@ -161,14 +171,13 @@ async fn test_local_proxy_multiple_requests() {
 
 /// Test error handling with invalid model name
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_local_proxy_invalid_model() {
-    let api_key = ApiKey::new("sk-1234")
-        .expect("Failed to create API key");
+    let (api_base, api_key, _model) = load_env();
+    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = OpenAIProvider::with_base_url(
         api_key,
-        "http://localhost:4000".to_string(),
+        api_base,
     )
     .expect("Failed to create provider");
 
@@ -205,14 +214,13 @@ async fn test_local_proxy_invalid_model() {
 
 /// Test with different temperature values
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_local_proxy_temperature_variations() {
-    let api_key = ApiKey::new("sk-1234")
-        .expect("Failed to create API key");
+    let (api_base, api_key, model) = load_env();
+    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = OpenAIProvider::with_base_url(
         api_key,
-        "http://localhost:4000".to_string(),
+        api_base,
     )
     .expect("Failed to create provider");
 
@@ -222,7 +230,7 @@ async fn test_local_proxy_temperature_variations() {
         println!("\n--- Testing temperature: {} ---", temp);
 
         let request = CompletionRequest::builder()
-            .model("openai/xai/grok-code-fast-1")
+            .model(&model)
             .message(Message::user("Say hello."))
             .temperature(temp)
             .max_tokens(20)
@@ -255,19 +263,18 @@ async fn test_local_proxy_temperature_variations() {
 
 /// Test conversation with multiple messages
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_local_proxy_conversation() {
-    let api_key = ApiKey::new("sk-1234")
-        .expect("Failed to create API key");
+    let (api_base, api_key, model) = load_env();
+    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = OpenAIProvider::with_base_url(
         api_key,
-        "http://localhost:4000".to_string(),
+        api_base,
     )
     .expect("Failed to create provider");
 
     let request = CompletionRequest::builder()
-        .model("openai/xai/grok-code-fast-1")
+        .model(&model)
         .message(Message::system("You are a helpful assistant."))
         .message(Message::user("What is the capital of France?"))
         .message(Message::assistant("The capital of France is Paris."))

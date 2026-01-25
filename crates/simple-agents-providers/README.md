@@ -67,22 +67,22 @@ cargo test -p simple-agents-providers
 
 ### Integration Tests
 
-Integration tests verify provider implementations against real or local API servers. They are marked with `#[ignore]` and don't run by default.
+Integration tests verify provider implementations against real or local API servers. They run by default and require a configured `.env`.
 
 **Quick Start:**
 ```bash
-# Using the provided script (requires server on localhost:4000)
+# Using the provided script (loads CUSTOM_API_* from project .env)
 cd crates/simple-agents-providers
 ./run_integration_tests.sh
 
 # Or run manually
-cargo test -p simple-agents-providers -- --ignored --nocapture
+cargo test -p simple-agents-providers --nocapture
 ```
 
 **Configuration for local proxy:**
-- API Base: `http://localhost:4000`
-- API Key: `sk-1234`
-- Model: `openai/xai/grok-code-fast-1`
+- `CUSTOM_API_BASE` (e.g. `http://localhost:4000`)
+- `CUSTOM_API_KEY`
+- `CUSTOM_API_MODEL`
 
 **Available integration tests:**
 - `test_local_proxy_connection` - Basic connectivity test
