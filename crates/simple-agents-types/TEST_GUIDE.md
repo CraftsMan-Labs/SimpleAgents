@@ -103,6 +103,7 @@ All the `///` documentation comments include executable examples. Run them with:
 ```bash
 cargo test --doc
 ```
+These doctests are fully runnable (including cache/provider/router examples) and do not require any environment variables.
 
 ### 3. Try Your Own Code
 
