@@ -9,7 +9,7 @@
 //!
 //! # Example
 //!
-//! ```ignore
+//! ```rust
 //! use simple_agents_macros::PartialType;
 //! use serde::{Deserialize, Serialize};
 //!
@@ -21,22 +21,14 @@
 //!     pub age: u32,
 //! }
 //!
-//! // This generates:
-//! // #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-//! // pub struct PartialUser {
-//! //     pub id: Option<u64>,
-//! //     pub name: Option<String>,
-//! //     pub email: Option<String>,
-//! //     pub age: Option<u32>,
-//! // }
-//! //
-//! // impl User {
-//! //     pub fn from_partial(partial: PartialUser) -> Result<Self, String> { ... }
-//! // }
-//! //
-//! // impl PartialUser {
-//! //     pub fn merge(&mut self, other: PartialUser) { ... }
-//! // }
+//! let partial = PartialUser {
+//!     id: Some(1),
+//!     name: Some("Ada".to_string()),
+//!     email: Some("ada@example.com".to_string()),
+//!     age: Some(42),
+//! };
+//! let user = User::from_partial(partial).unwrap();
+//! assert_eq!(user.name, "Ada");
 //! ```
 
 #![deny(missing_docs)]
@@ -72,8 +64,9 @@ use proc_macro::TokenStream;
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```rust
 /// use simple_agents_macros::PartialType;
+/// use std::time::SystemTime;
 ///
 /// #[derive(PartialType)]
 /// pub struct Resume {
@@ -85,20 +78,19 @@ use proc_macro::TokenStream;
 ///     pub created_at: SystemTime,
 /// }
 ///
-/// // Usage with streaming:
 /// let mut partial = PartialResume::default();
-///
-/// // First chunk: {"name": "Alice"}
-/// partial.merge(parse_chunk(chunk1));
-/// assert_eq!(partial.name, Some("Alice".to_string()));
+/// partial.name = Some("Alice".to_string());
 /// assert_eq!(partial.email, None);
 ///
-/// // Second chunk: {"email": "alice@example.com", "skills": ["Rust"]}
-/// partial.merge(parse_chunk(chunk2));
-/// assert_eq!(partial.email, Some("alice@example.com".to_string()));
+/// partial.merge(PartialResume {
+///     email: Some("alice@example.com".to_string()),
+///     skills: Some(vec!["Rust".to_string()]),
+///     ..Default::default()
+/// });
 ///
-/// // Convert to complete type
-/// let resume = Resume::from_partial(partial)?;
+/// let resume = Resume::from_partial(partial).unwrap();
+/// assert_eq!(resume.name, "Alice");
+/// assert_eq!(resume.skills, vec!["Rust".to_string()]);
 /// ```
 ///
 /// # Streaming Annotations

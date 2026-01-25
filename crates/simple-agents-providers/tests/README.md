@@ -6,39 +6,39 @@ This directory contains integration tests that verify provider implementations a
 
 ### Prerequisites
 
-For the local proxy tests, you need:
-- A local LLM proxy server running on `http://localhost:4000`
-- API key: `sk-1234`
-- Model: `openai/xai/grok-code-fast-1`
+For the integration tests, you need a `.env` in the project root with:
+- `CUSTOM_API_BASE` (e.g. `http://localhost:4000`)
+- `CUSTOM_API_KEY`
+- `CUSTOM_API_MODEL`
 
 ### Run All Integration Tests
 
 ```bash
 # From project root
-cargo test -p simple-agents-providers -- --ignored --nocapture
+cargo test -p simple-agents-providers --nocapture
 
 # Or from the providers crate directory
 cd crates/simple-agents-providers
-cargo test -- --ignored --nocapture
+cargo test --nocapture
 ```
 
 ### Run Specific Tests
 
 ```bash
 # Test basic connection
-cargo test -p simple-agents-providers test_local_proxy_connection -- --ignored --nocapture
+cargo test -p simple-agents-providers test_local_proxy_connection -- --nocapture
 
 # Test multiple sequential requests
-cargo test -p simple-agents-providers test_local_proxy_multiple_requests -- --ignored --nocapture
+cargo test -p simple-agents-providers test_local_proxy_multiple_requests -- --nocapture
 
 # Test error handling with invalid model
-cargo test -p simple-agents-providers test_local_proxy_invalid_model -- --ignored --nocapture
+cargo test -p simple-agents-providers test_local_proxy_invalid_model -- --nocapture
 
 # Test temperature variations
-cargo test -p simple-agents-providers test_local_proxy_temperature_variations -- --ignored --nocapture
+cargo test -p simple-agents-providers test_local_proxy_temperature_variations -- --nocapture
 
 # Test conversation flow
-cargo test -p simple-agents-providers test_local_proxy_conversation -- --ignored --nocapture
+cargo test -p simple-agents-providers test_local_proxy_conversation -- --nocapture
 ```
 
 ## Test Coverage
@@ -68,7 +68,7 @@ When tests pass, you'll see output like:
 
 ```
 Making request to: http://localhost:4000/chat/completions
-Model: openai/xai/grok-code-fast-1
+Model: your/model
 Response status: 200
 Response content: Hello from SimpleAgents!
 ✅ Integration test passed!
@@ -85,7 +85,7 @@ Response content: Hello from SimpleAgents!
 Error: Network error: error sending request for url (http://localhost:4000/...): error trying to connect: tcp connect error: Connection refused
 ```
 
-**Solution**: Ensure your local proxy server is running on port 4000.
+**Solution**: Ensure your API server is running at `CUSTOM_API_BASE`.
 
 ### Invalid API Key
 
@@ -93,31 +93,29 @@ Error: Network error: error sending request for url (http://localhost:4000/...):
 Error: Provider error: Invalid API key
 ```
 
-**Solution**: Verify your server accepts the API key `sk-1234`, or update the tests with your actual key.
+**Solution**: Verify your server accepts the API key from `CUSTOM_API_KEY`.
 
 ### Model Not Found
 
 ```
-Error: Provider error: Model not found: openai/xai/grok-code-fast-1
+Error: Provider error: Model not found: your/model
 ```
 
-**Solution**: Check that your proxy server supports this model name, or update the tests with a valid model.
+**Solution**: Check that your proxy server supports the model name from `CUSTOM_API_MODEL`.
 
 ## Adding New Tests
 
 When adding integration tests:
 
-1. Mark them with `#[ignore]` to prevent running by default
-2. Use `#[tokio::test]` for async tests
-3. Add clear documentation about what the test verifies
-4. Include helpful print statements with `--nocapture`
-5. Test both success and error cases
+1. Use `#[tokio::test]` for async tests
+2. Add clear documentation about what the test verifies
+3. Include helpful print statements with `--nocapture`
+4. Test both success and error cases
 
 Example:
 
 ```rust
 #[tokio::test]
-#[ignore] // Requires local server running
 async fn test_my_feature() {
     let provider = setup_provider();
     // ... test code ...
