@@ -6,7 +6,7 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_types::message::Message;
-use simple_agents_types::prelude::{CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -53,11 +53,21 @@ fn provider_from_env(provider_name: &str) -> Result<Arc<dyn Provider>> {
     match provider_name {
         "openai" => Ok(Arc::new(OpenAIProvider::from_env()?)),
         "anthropic" => Ok(Arc::new(AnthropicProvider::from_env()?)),
-        "openrouter" => Ok(Arc::new(OpenRouterProvider::from_env()?)),
+        "openrouter" => Ok(Arc::new(openrouter_from_env()?)),
         _ => Err(SimpleAgentsError::Config(format!(
             "Unknown provider '{provider_name}'"
         ))),
     }
+}
+
+fn openrouter_from_env() -> Result<OpenRouterProvider> {
+    let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
+        SimpleAgentsError::Config("OPENROUTER_API_KEY environment variable is required".to_string())
+    })?;
+    let api_key = ApiKey::new(api_key)?;
+    let base_url = std::env::var("OPENROUTER_API_BASE")
+        .unwrap_or_else(|_| OpenRouterProvider::DEFAULT_BASE_URL.to_string());
+    OpenRouterProvider::with_base_url(api_key, base_url)
 }
 
 unsafe fn cstr_to_string(ptr: *const c_char, field: &str) -> Result<String> {
@@ -141,7 +151,7 @@ where
 /// `provider_name` must be one of: "openai", "anthropic", "openrouter".
 #[no_mangle]
 pub unsafe extern "C" fn sa_client_new_from_env(provider_name: *const c_char) -> *mut SAClient {
-    let result = catch_unwind(AssertUnwindSafe(|| {
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<Box<SAClient>> {
         let provider = cstr_to_string(provider_name, "provider_name")?;
         let provider = provider_from_env(&provider)?;
         let client = build_client(provider)?;
