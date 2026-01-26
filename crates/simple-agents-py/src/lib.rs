@@ -77,6 +77,7 @@ impl Client {
         })
     }
 
+    #[pyo3(signature = (model, prompt, max_tokens=None, temperature=None))]
     fn complete(
         &self,
         model: &str,
@@ -98,7 +99,7 @@ impl Client {
 }
 
 #[pymodule]
-fn simple_agents_py(_py: Python<'_>, module: &PyModule) -> PyResult<()> {
+fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Client>()?;
     Ok(())
 }

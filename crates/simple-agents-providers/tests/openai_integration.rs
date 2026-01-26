@@ -7,18 +7,27 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_types::prelude::*;
 use std::time::Duration;
 
-fn load_env() -> (String, String, String) {
+fn load_env() -> Option<(String, String, String)> {
     dotenv::dotenv().ok();
     let api_base = std::env::var("OPENAI_API_BASE")
         .or_else(|_| std::env::var("CUSTOM_API_BASE"))
-        .expect("OPENAI_API_BASE or CUSTOM_API_BASE environment variable not set");
+        .ok()?;
     let api_key = std::env::var("OPENAI_API_KEY")
         .or_else(|_| std::env::var("CUSTOM_API_KEY"))
-        .expect("OPENAI_API_KEY or CUSTOM_API_KEY environment variable not set");
+        .ok()?;
     let model = std::env::var("OPENAI_API_MODEL")
         .or_else(|_| std::env::var("CUSTOM_API_MODEL"))
-        .expect("OPENAI_API_MODEL or CUSTOM_API_MODEL environment variable not set");
-    (api_base, api_key, model)
+        .ok()?;
+    Some((api_base, api_key, model))
+}
+
+fn should_run_integration() -> bool {
+    if std::env::var("SIMPLE_AGENTS_RUN_INTEGRATION").ok().as_deref() != Some("1") {
+        eprintln!("Skipping: set SIMPLE_AGENTS_RUN_INTEGRATION=1 to run integration tests");
+        return false;
+    }
+
+    true
 }
 
 fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
@@ -61,7 +70,13 @@ fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
 #[tokio::test]
 async fn test_local_proxy_connection() {
     // Setup
-    let (api_base, api_key, model) = load_env();
+    if !should_run_integration() {
+        return;
+    }
+    let Some((api_base, api_key, model)) = load_env() else {
+        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
+        return;
+    };
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = build_provider(api_key, &api_base);
@@ -143,7 +158,13 @@ async fn test_local_proxy_connection() {
 /// Test multiple sequential requests to verify connection stability
 #[tokio::test]
 async fn test_local_proxy_multiple_requests() {
-    let (api_base, api_key, model) = load_env();
+    if !should_run_integration() {
+        return;
+    }
+    let Some((api_base, api_key, model)) = load_env() else {
+        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
+        return;
+    };
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = build_provider(api_key, &api_base);
@@ -191,7 +212,13 @@ async fn test_local_proxy_multiple_requests() {
 /// Test error handling with invalid model name
 #[tokio::test]
 async fn test_local_proxy_invalid_model() {
-    let (api_base, api_key, _model) = load_env();
+    if !should_run_integration() {
+        return;
+    }
+    let Some((api_base, api_key, _model)) = load_env() else {
+        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
+        return;
+    };
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = build_provider(api_key, &api_base);
@@ -230,7 +257,13 @@ async fn test_local_proxy_invalid_model() {
 /// Test with different temperature values
 #[tokio::test]
 async fn test_local_proxy_temperature_variations() {
-    let (api_base, api_key, model) = load_env();
+    if !should_run_integration() {
+        return;
+    }
+    let Some((api_base, api_key, model)) = load_env() else {
+        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
+        return;
+    };
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = build_provider(api_key, &api_base);
@@ -275,7 +308,13 @@ async fn test_local_proxy_temperature_variations() {
 /// Test conversation with multiple messages
 #[tokio::test]
 async fn test_local_proxy_conversation() {
-    let (api_base, api_key, model) = load_env();
+    if !should_run_integration() {
+        return;
+    }
+    let Some((api_base, api_key, model)) = load_env() else {
+        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
+        return;
+    };
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
     let provider = build_provider(api_key, &api_base);
