@@ -27,6 +27,9 @@ use simple_agents_types::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenv::dotenv().ok();
+
     // Initialize tracing to see retry logs
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
@@ -37,9 +40,12 @@ async fn main() -> Result<()> {
 
     println!("🤖 SimpleAgents - Retry Logic Demo\n");
 
+    let model = std::env::var("OPENAI_API_MODEL")
+        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+
     // Build completion request
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(&model)
         .message(Message::user("Say 'hello'"))
         .max_tokens(10)
         .build()?;

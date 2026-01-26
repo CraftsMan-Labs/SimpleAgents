@@ -22,6 +22,9 @@ use simple_agents_types::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenv::dotenv().ok();
+
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 

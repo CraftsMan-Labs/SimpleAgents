@@ -27,6 +27,9 @@ use simple_agents_types::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenv::dotenv().ok();
+
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
@@ -35,9 +38,12 @@ async fn main() -> Result<()> {
 
     println!("🤖 SimpleAgents - Streaming Example\n");
 
+    let model = std::env::var("OPENAI_API_MODEL")
+        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+
     // Build streaming completion request
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(&model)
         .message(Message::system("You are a helpful assistant."))
         .message(Message::user("Write a haiku about Rust programming."))
         .temperature(0.7)
