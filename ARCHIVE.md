@@ -1,6 +1,6 @@
 # SimpleAgents Project Archive
 
-> **Archive Date**: 2026-01-24
+> **Archive Date**: 2026-01-26
 > **Purpose**: Historical record of completed project phases
 
 This document contains concise summaries of completed phases. For active work, see [TODO.md](TODO.md).
@@ -16,6 +16,8 @@ This document contains concise summaries of completed phases. For active work, s
    - [Phase 3: Response Healing](#phase-3-response-healing)
    - [Phase 4: Router & Reliability](#phase-4-router--reliability)
    - [Phase 5: Core API](#phase-5-core-api)
+   - [Phase 6: CLI & Tools](#phase-6-cli--tools)
+   - [Phase 7: Language Bindings](#phase-7-language-bindings)
 2. [Summary Statistics](#summary-statistics)
 
 ---
@@ -131,6 +133,35 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 
 ---
 
+### Phase 6: CLI & Tools ✅ (Week 9-10, completed Jan 26)
+
+**Crate**: `simple-agents-cli`
+**Status**: Production-ready
+**Focus**: Command-line tooling for completions, chat, benchmarking, and provider checks
+
+**What Was Built**:
+- **CLI Commands**: `complete`, `chat`, `benchmark`, `test-provider`
+- **Config Support**: TOML/YAML configuration with provider defaults
+- **Output Modes**: plain, JSON, and Markdown formatting
+- **Docs**: CLI README with usage examples
+
+---
+
+### Phase 7: Language Bindings ✅ (Week 11-12, completed Jan 26)
+
+**Crates**: `simple-agents-ffi`, `simple-agents-py`, `simple-agents-napi`
+**Status**: Production-ready
+**Tests**: 3 passing (FFI contract)
+
+**What Was Built**:
+- **C FFI**: Opaque client API with safe error handling and string ownership
+- **Python**: PyO3 bindings with synchronous client wrapper
+- **Node.js**: napi-rs bindings with synchronous client wrapper
+- **Go**: cgo wrapper over C FFI
+- **Docs**: Per-language READMEs and usage examples
+
+---
+
 ## Summary Statistics (Completed Phases)
 
 | Phase | Crates | Tests (at completion) | Completion Date |
@@ -141,7 +172,9 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 | Phase 3: Healing | 2 | 172 | Jan 24, 2026 |
 | Phase 4: Router | 1 | 25 | Jan 25, 2026 |
 | Phase 5: Core API | 1 | 7 | Jan 25, 2026 |
-| **Total Completed** | **7** | **521** | - |
+| Phase 6: CLI & Tools | 1 | 0 | Jan 26, 2026 |
+| Phase 7: Language Bindings | 3 | 3 | Jan 26, 2026 |
+| **Total Completed** | **11** | **524** | - |
 
 **Note**: Test counts reflect numbers at phase completion time. Current test counts may differ due to ongoing maintenance and improvements. See TODO.md for current test statistics.
 
@@ -158,4 +191,4 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 
 ---
 
-**Last Updated**: 2026-01-25
+**Last Updated**: 2026-01-26
