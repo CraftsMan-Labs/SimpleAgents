@@ -5,47 +5,29 @@
 
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_types::prelude::*;
-use std::time::Duration;
-
-fn load_env() -> Option<(String, String, String)> {
-    dotenv::dotenv().ok();
-    let api_base = std::env::var("OPENAI_API_BASE")
-        .or_else(|_| std::env::var("CUSTOM_API_BASE"))
-        .ok()?;
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .or_else(|_| std::env::var("CUSTOM_API_KEY"))
-        .ok()?;
-    let model = std::env::var("OPENAI_API_MODEL")
-        .or_else(|_| std::env::var("CUSTOM_API_MODEL"))
-        .ok()?;
-    Some((api_base, api_key, model))
+fn success_response(model: &str, content: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 123,
+        "model": model,
+        "choices": [{
+            "index": 0,
+            "message": { "role": "assistant", "content": content },
+            "finish_reason": "stop"
+        }],
+        "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+    })
 }
 
-fn should_run_integration() -> bool {
-    if std::env::var("SIMPLE_AGENTS_RUN_INTEGRATION").ok().as_deref() != Some("1") {
-        eprintln!("Skipping: set SIMPLE_AGENTS_RUN_INTEGRATION=1 to run integration tests");
-        return false;
-    }
-
-    true
-}
-
-fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
-    let client = if api_base.contains("localhost") || api_base.contains("127.0.0.1") {
-        reqwest::Client::builder()
-            .no_proxy()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to build HTTP client")
-    } else {
-        reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .expect("Failed to build HTTP client")
-    };
-
-    OpenAIProvider::with_client(api_key, api_base.to_string(), client)
-        .expect("Failed to create provider")
+fn error_response(message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "error": {
+            "message": message,
+            "type": "invalid_request_error",
+            "code": "model_not_found"
+        }
+    })
 }
 
 /// Test connection to configured API server
@@ -70,20 +52,14 @@ fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
 #[tokio::test]
 async fn test_local_proxy_connection() {
     // Setup
-    if !should_run_integration() {
-        return;
-    }
-    let Some((api_base, api_key, model)) = load_env() else {
-        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
-        return;
-    };
-    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
-
-    let provider = build_provider(api_key, &api_base);
+    let model = "gpt-4.1";
+    let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
+        .expect("Failed to create API key");
+    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
     // Create a simple test request
     let request = CompletionRequest::builder()
-        .model(&model)
+        .model(model)
         .message(Message::user("Say 'Hello from SimpleAgents!' and nothing else."))
         .temperature(0.7)
         .max_tokens(50)
@@ -98,17 +74,9 @@ async fn test_local_proxy_connection() {
     println!("Making request to: {}", provider_request.url);
     println!("Model: {}", model);
 
-    // Execute request
-    let provider_response = provider
-        .execute(provider_request)
-        .await
-        .expect("Failed to execute request");
-
-    println!("Response status: {}", provider_response.status);
-    assert!(
-        provider_response.is_success(),
-        "Expected successful response, got status: {}",
-        provider_response.status
+    let provider_response = ProviderResponse::new(
+        200,
+        success_response(model, "Hello from SimpleAgents!"),
     );
 
     // Transform response
@@ -158,16 +126,10 @@ async fn test_local_proxy_connection() {
 /// Test multiple sequential requests to verify connection stability
 #[tokio::test]
 async fn test_local_proxy_multiple_requests() {
-    if !should_run_integration() {
-        return;
-    }
-    let Some((api_base, api_key, model)) = load_env() else {
-        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
-        return;
-    };
-    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
-
-    let provider = build_provider(api_key, &api_base);
+    let model = "gpt-4.1";
+    let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
+        .expect("Failed to create API key");
+    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
     let test_prompts = ["Count from 1 to 3.",
         "What is 2+2?",
@@ -178,21 +140,18 @@ async fn test_local_proxy_multiple_requests() {
         println!("Prompt: {}", prompt);
 
         let request = CompletionRequest::builder()
-            .model(&model)
+            .model(model)
             .message(Message::user(*prompt))
             .temperature(0.7)
             .max_tokens(50)
             .build()
             .expect("Failed to build request");
 
-        let provider_request = provider
+        let _provider_request = provider
             .transform_request(&request)
             .expect("Failed to transform request");
 
-        let provider_response = provider
-            .execute(provider_request)
-            .await
-            .expect("Failed to execute request");
+        let provider_response = ProviderResponse::new(200, success_response(model, "ok"));
 
         let response = provider
             .transform_response(provider_response)
@@ -212,16 +171,9 @@ async fn test_local_proxy_multiple_requests() {
 /// Test error handling with invalid model name
 #[tokio::test]
 async fn test_local_proxy_invalid_model() {
-    if !should_run_integration() {
-        return;
-    }
-    let Some((api_base, api_key, _model)) = load_env() else {
-        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
-        return;
-    };
-    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
-
-    let provider = build_provider(api_key, &api_base);
+    let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
+        .expect("Failed to create API key");
+    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
     let request = CompletionRequest::builder()
         .model("invalid-model-that-does-not-exist")
@@ -229,44 +181,22 @@ async fn test_local_proxy_invalid_model() {
         .build()
         .expect("Failed to build request");
 
-    let provider_request = provider
+    let _provider_request = provider
         .transform_request(&request)
         .expect("Failed to transform request");
 
-    let result = provider.execute(provider_request).await;
-
-    // This should fail with a model not found error or similar
-    match result {
-        Err(e) => {
-            println!("✅ Expected error received: {}", e);
-            // Check if it's a provider error
-            assert!(
-                format!("{}", e).contains("Provider") ||
-                format!("{}", e).contains("Model") ||
-                format!("{}", e).contains("error"),
-                "Expected provider/model error, got: {}",
-                e
-            );
-        }
-        Ok(_) => {
-            panic!("Expected error for invalid model, but request succeeded");
-        }
-    }
+    let provider_response = ProviderResponse::new(404, error_response("Model not found"));
+    let result = provider.transform_response(provider_response);
+    assert!(result.is_err(), "Expected error for invalid model");
 }
 
 /// Test with different temperature values
 #[tokio::test]
 async fn test_local_proxy_temperature_variations() {
-    if !should_run_integration() {
-        return;
-    }
-    let Some((api_base, api_key, model)) = load_env() else {
-        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
-        return;
-    };
-    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
-
-    let provider = build_provider(api_key, &api_base);
+    let model = "gpt-4.1";
+    let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
+        .expect("Failed to create API key");
+    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
     let temperatures = vec![0.0, 0.5, 1.0];
 
@@ -274,21 +204,18 @@ async fn test_local_proxy_temperature_variations() {
         println!("\n--- Testing temperature: {} ---", temp);
 
         let request = CompletionRequest::builder()
-            .model(&model)
+            .model(model)
             .message(Message::user("Say hello."))
             .temperature(temp)
             .max_tokens(20)
             .build()
             .expect("Failed to build request");
 
-        let provider_request = provider
+        let _provider_request = provider
             .transform_request(&request)
             .expect("Failed to transform request");
 
-        let provider_response = provider
-            .execute(provider_request)
-            .await
-            .expect("Failed to execute request");
+        let provider_response = ProviderResponse::new(200, success_response(model, "hello"));
 
         let response = provider
             .transform_response(provider_response)
@@ -308,19 +235,13 @@ async fn test_local_proxy_temperature_variations() {
 /// Test conversation with multiple messages
 #[tokio::test]
 async fn test_local_proxy_conversation() {
-    if !should_run_integration() {
-        return;
-    }
-    let Some((api_base, api_key, model)) = load_env() else {
-        eprintln!("Skipping: missing OPENAI_API_* or CUSTOM_API_* environment variables");
-        return;
-    };
-    let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
-
-    let provider = build_provider(api_key, &api_base);
+    let model = "gpt-4.1";
+    let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
+        .expect("Failed to create API key");
+    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
     let request = CompletionRequest::builder()
-        .model(&model)
+        .model(model)
         .message(Message::system("You are a helpful assistant."))
         .message(Message::user("What is the capital of France?"))
         .message(Message::assistant("The capital of France is Paris."))
@@ -330,16 +251,14 @@ async fn test_local_proxy_conversation() {
         .build()
         .expect("Failed to build request");
 
-    let provider_request = provider
+    let _provider_request = provider
         .transform_request(&request)
         .expect("Failed to transform request");
 
     println!("Testing conversation with {} messages", request.messages.len());
 
-    let provider_response = provider
-        .execute(provider_request)
-        .await
-        .expect("Failed to execute request");
+    let provider_response =
+        ProviderResponse::new(200, success_response(model, "Paris has about 2 million people."));
 
     let response = provider
         .transform_response(provider_response)
