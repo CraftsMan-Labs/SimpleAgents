@@ -31,6 +31,7 @@
 
 use serde_json::json;
 use simple_agents_healing::prelude::*;
+use simple_agents_healing::string_utils::jaro_winkler;
 use simple_agents_providers::metrics::RequestTimer;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
@@ -345,43 +346,148 @@ async fn example_fuzzy_matching(provider: &OpenAIProvider, model: &str) -> Resul
     let parser = JsonishParser::new();
     let parse_result = parser.parse(content)?;
 
-    // Coerce with lowercase field names
-    let engine = CoercionEngine::new();
-    let schema = Schema::object(vec![
-        ("username".into(), Schema::String, true),
-        ("email".into(), Schema::String, true),
-        ("age".into(), Schema::Int, true),
-        ("isVerified".into(), Schema::Bool, true),
-    ]);
-
-    let coerce_result = engine.coerce(&parse_result.value, &schema)?;
-
-    println!("✅ Fuzzy Matching Result:");
-    println!("  Confidence: {:.2}", coerce_result.confidence);
-    println!("  Normalized value:");
-    println!("  {}", serde_json::to_string_pretty(&coerce_result.value)?);
-
-    // Show fuzzy matches
-    let fuzzy_matches: Vec<_> = coerce_result
-        .flags
-        .iter()
-        .filter_map(|f| {
-            if let CoercionFlag::FuzzyFieldMatch { expected, found } = f {
-                Some((expected, found))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if !fuzzy_matches.is_empty() {
-        println!("\n  🔍 Fuzzy field matches:");
-        for (expected, found) in fuzzy_matches {
-            println!("    - '{}' matched to '{}'", found, expected);
+    // Show similarity scores against the expected camelCase field
+    let expected_field = "isVerified";
+    if let Some(map) = parse_result.value.as_object() {
+        println!("🔎 Similarity scores vs '{}':", expected_field);
+        for key in map.keys() {
+            let score = jaro_winkler(expected_field, key);
+            println!("  - {}: {:.4}", key, score);
         }
     }
 
+    // Coerce to camelCase while relying on fuzzy matching for ALL CAPS keys
+    let schema = Schema::Object(ObjectSchema::new(vec![
+        Field::required("username", Schema::String),
+        Field::required("email", Schema::String),
+        Field::required("age", Schema::Int),
+        Field::required("isVerified", Schema::Bool),
+    ]));
+
+    let fuzzy_value = make_fuzzy_variant(&parse_result.value);
+
+    let mut run_coercion = |label: &str, threshold: f64| -> Result<()> {
+        let config = CoercionConfig {
+            fuzzy_match_threshold: threshold,
+            ..CoercionConfig::default()
+        };
+        let engine = CoercionEngine::with_config(config);
+
+        println!("\n{} (fuzzy threshold = {:.2})", label, threshold);
+        match engine.coerce(&fuzzy_value, &schema) {
+            Ok(coerce_result) => {
+                println!("✅ Coercion succeeded");
+                println!("  Confidence: {:.2}", coerce_result.confidence);
+                println!("  Normalized value:");
+                println!("  {}", serde_json::to_string_pretty(&coerce_result.value)?);
+
+                let fuzzy_matches: Vec<_> = coerce_result
+                    .flags
+                    .iter()
+                    .filter_map(|f| {
+                        if let CoercionFlag::FuzzyFieldMatch { expected, found } = f {
+                            Some((expected, found))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if !fuzzy_matches.is_empty() {
+                    println!("\n  🔍 Fuzzy field matches:");
+                    for (expected, found) in fuzzy_matches {
+                        println!("    - '{}' matched to '{}'", found, expected);
+                    }
+                }
+            }
+            Err(e) => {
+                println!("❌ Coercion failed: {}", e);
+            }
+        }
+
+        Ok(())
+    };
+
+    run_coercion("Example 4A: Default threshold", 0.8)?;
+    run_coercion("Example 4B: Lower threshold", 0.6)?;
+
     Ok(())
+}
+
+fn make_fuzzy_variant(value: &serde_json::Value) -> serde_json::Value {
+    let mut obj = match value.as_object() {
+        Some(map) => map.clone(),
+        None => return value.clone(),
+    };
+
+    let key_to_replace = obj
+        .keys()
+        .find(|k| k.eq_ignore_ascii_case("is_verified") || k.eq_ignore_ascii_case("isVerified"))
+        .cloned();
+
+    let Some(original_key) = key_to_replace else {
+        return serde_json::Value::Object(obj);
+    };
+
+    let expected = "isVerified";
+    let (fuzzy_key, score) = pick_fuzzy_key(expected);
+
+    if let Some(value) = obj.remove(&original_key) {
+        obj.insert(fuzzy_key.clone(), value);
+    }
+
+    println!(
+        "🔧 Fuzzy demo key: '{}' → '{}' (similarity {:.2})",
+        original_key, fuzzy_key, score
+    );
+
+    serde_json::Value::Object(obj)
+}
+
+fn pick_fuzzy_key(expected: &str) -> (String, f64) {
+    let chars: Vec<char> = expected.chars().collect();
+    let len = chars.len();
+    let mut candidates: Vec<String> = Vec::new();
+
+    // Replace the last N characters with 'x' to tune similarity.
+    for n in 1..=len {
+        let mut v = chars.clone();
+        for i in (len - n)..len {
+            v[i] = 'x';
+        }
+        candidates.push(v.iter().collect());
+    }
+
+    // Drop every third character to reduce similarity further if needed.
+    let mut dropped = String::with_capacity(len);
+    for (i, ch) in chars.iter().enumerate() {
+        if i % 3 != 0 {
+            dropped.push(*ch);
+        }
+    }
+    candidates.push(dropped);
+
+    let mut best: Option<(String, f64)> = None;
+
+    for candidate in candidates {
+        let score = jaro_winkler(expected, &candidate);
+        if score >= 0.6 && score < 0.8 {
+            return (candidate, score);
+        }
+        if score < 0.8 {
+            if best.as_ref().map_or(true, |(_, best_score)| score > *best_score) {
+                best = Some((candidate, score));
+            }
+        }
+    }
+
+    if let Some((candidate, score)) = best {
+        return (candidate, score);
+    }
+
+    let fallback = expected.to_string();
+    let score = jaro_winkler(expected, &fallback);
+    (fallback, score)
 }
 
 async fn example_streaming_healing(provider: &OpenAIProvider, model: &str) -> Result<()> {
