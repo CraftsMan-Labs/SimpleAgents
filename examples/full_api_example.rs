@@ -13,10 +13,14 @@
 //!
 //! 1. Copy `.env.example` to `.env`
 //! 2. Add your OpenAI API key to `.env`
+//! 3. Optionally set a base URL or model override
 //!
 //! ```bash
 //! cp .env.example .env
 //! # Edit .env and add your API key
+//! # Optional:
+//! # OPENAI_API_BASE=http://localhost:4000/v1
+//! # OPENAI_API_MODEL=gpt-4.1
 //! ```
 //!
 //! # Run
@@ -43,12 +47,10 @@ async fn main() -> Result<()> {
     println!("║   SimpleAgents - Full API + Coercion Healing Demo        ║");
     println!("╚══════════════════════════════════════════════════════════╝\n");
 
-    // Setup API key
-    let api_key_str = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY environment variable not set");
-
-    let api_key = ApiKey::new(api_key_str)?;
-    let provider = OpenAIProvider::new(api_key)?;
+    // Setup provider from environment (optional base URL override)
+    let provider = OpenAIProvider::from_env()?;
+    let model = std::env::var("OPENAI_API_MODEL")
+        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
 
     println!("✅ API key loaded successfully\n");
 
@@ -56,43 +58,43 @@ async fn main() -> Result<()> {
     println!("{}", "━".repeat(60));
     println!("Example 1: Basic JSON Healing");
     println!("{}", "━".repeat(60));
-    example_basic_json(&provider).await?;
+    example_basic_json(&provider, &model).await?;
 
     // Example 2: Type coercion
     println!("\n{}", "━".repeat(60));
     println!("Example 2: Type Coercion");
     println!("{}", "━".repeat(60));
-    example_type_coercion(&provider).await?;
+    example_type_coercion(&provider, &model).await?;
 
     // Example 3: Complex structured data with schema
     println!("\n{}", "━".repeat(60));
     println!("Example 3: Complex Schema Validation");
     println!("{}", "━".repeat(60));
-    example_schema_validation(&provider).await?;
+    example_schema_validation(&provider, &model).await?;
 
     // Example 4: Fuzzy field matching
     println!("\n{}", "━".repeat(60));
     println!("Example 4: Fuzzy Field Matching");
     println!("{}", "━".repeat(60));
-    example_fuzzy_matching(&provider).await?;
+    example_fuzzy_matching(&provider, &model).await?;
 
     // Example 5: Streaming with healing
     println!("\n{}", "━".repeat(60));
     println!("Example 5: Streaming + Response Healing");
     println!("{}", "━".repeat(60));
-    example_streaming_healing(&provider).await?;
+    example_streaming_healing(&provider, &model).await?;
 
     // Example 6: Streaming structured output
     println!("\n{}", "━".repeat(60));
     println!("Example 6: Streaming Structured Output (Progressive JSON)");
     println!("{}", "━".repeat(60));
-    example_streaming_structured(&provider).await?;
+    example_streaming_structured(&provider, &model).await?;
 
     // Example 7: Streaming graph visualization
     println!("\n{}", "━".repeat(60));
     println!("Example 7: Streaming Graph Visualization (Progressive)");
     println!("{}", "━".repeat(60));
-    example_streaming_graph(&provider).await?;
+    example_streaming_graph(&provider, &model).await?;
 
     println!("\n╔══════════════════════════════════════════════════════════╗");
     println!("║                    Demo Complete!                         ║");
@@ -101,12 +103,12 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn example_basic_json(provider: &OpenAIProvider) -> Result<()> {
-    println!("\n📤 Requesting simple JSON response from GPT-3.5...\n");
+async fn example_basic_json(provider: &OpenAIProvider, model: &str) -> Result<()> {
+    println!("\n📤 Requesting simple JSON response...\n");
 
     // Create a request that asks for JSON (LLMs often wrap in markdown)
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -118,7 +120,7 @@ async fn example_basic_json(provider: &OpenAIProvider) -> Result<()> {
         .build()?;
 
     // Execute with metrics
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
@@ -160,12 +162,12 @@ async fn example_basic_json(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_type_coercion(provider: &OpenAIProvider) -> Result<()> {
+async fn example_type_coercion(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting data with numeric values as strings...\n");
 
     // LLMs often return numbers as strings in JSON
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -177,7 +179,7 @@ async fn example_type_coercion(provider: &OpenAIProvider) -> Result<()> {
         .max_tokens(150)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
@@ -235,11 +237,11 @@ async fn example_type_coercion(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_schema_validation(provider: &OpenAIProvider) -> Result<()> {
+async fn example_schema_validation(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting complex structured data...\n");
 
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -252,7 +254,7 @@ async fn example_schema_validation(provider: &OpenAIProvider) -> Result<()> {
         .max_tokens(200)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
@@ -309,11 +311,11 @@ async fn example_schema_validation(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_fuzzy_matching(provider: &OpenAIProvider) -> Result<()> {
+async fn example_fuzzy_matching(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting data with case variations...\n");
 
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -324,7 +326,7 @@ async fn example_fuzzy_matching(provider: &OpenAIProvider) -> Result<()> {
         .max_tokens(150)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
@@ -382,11 +384,11 @@ async fn example_fuzzy_matching(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_streaming_healing(provider: &OpenAIProvider) -> Result<()> {
+async fn example_streaming_healing(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Streaming JSON response with healing (Large JSON)...\n");
 
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON. Wrap JSON in markdown.",
         ))
@@ -402,7 +404,7 @@ async fn example_streaming_healing(provider: &OpenAIProvider) -> Result<()> {
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
@@ -495,11 +497,11 @@ async fn example_streaming_healing(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_streaming_structured(provider: &OpenAIProvider) -> Result<()> {
+async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Streaming structured JSON with progressive parsing (Large Array)...\n");
 
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -511,7 +513,7 @@ async fn example_streaming_structured(provider: &OpenAIProvider) -> Result<()> {
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
@@ -612,11 +614,11 @@ async fn example_streaming_structured(provider: &OpenAIProvider) -> Result<()> {
     Ok(())
 }
 
-async fn example_streaming_graph(provider: &OpenAIProvider) -> Result<()> {
+async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Result<()> {
     println!("\n📤 Streaming graph data with progressive visualization...\n");
 
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(model)
         .message(Message::system(
             "You are a helpful assistant. Always respond with JSON.",
         ))
@@ -632,7 +634,7 @@ async fn example_streaming_graph(provider: &OpenAIProvider) -> Result<()> {
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start("openai", "gpt-3.5-turbo");
+    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
