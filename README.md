@@ -377,6 +377,25 @@ cargo fmt --all -- --check
 cargo run --example openai_basic
 ```
 
+You can also use the Makefile shortcuts:
+
+```bash
+# List available make targets
+make help
+
+# Run a provider example (default: openai_basic)
+make example-providers
+
+# Run a specific provider example
+make example-providers EXAMPLE=anthropic_basic
+
+# Run the full API example
+make example-full-api
+
+# Run both provider + full API examples
+make examples
+```
+
 ---
 
 ## Key Technical Innovations

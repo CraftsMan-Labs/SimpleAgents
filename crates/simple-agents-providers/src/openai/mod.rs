@@ -62,11 +62,24 @@ impl OpenAIProvider {
         let api_key = std::env::var("OPENAI_API_KEY")
             .map_err(|_| SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string()))?;
         let api_key = ApiKey::new(api_key)?;
+        let base_url = std::env::var("OPENAI_API_BASE")
+            .unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
+        let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
 
-        match std::env::var("OPENAI_API_BASE") {
-            Ok(base_url) => Self::with_base_url(api_key, base_url),
-            Err(_) => Self::new(api_key),
+        let mut client_builder = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90));
+        if is_local {
+            client_builder = client_builder.no_proxy();
+        } else {
+            client_builder = client_builder.http2_prior_knowledge();
         }
+        let client = client_builder
+            .build()
+            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+
+        Self::with_client(api_key, base_url, client)
     }
 
     /// Create a new OpenAI provider with custom base URL
