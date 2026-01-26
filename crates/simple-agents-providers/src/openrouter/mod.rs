@@ -93,6 +93,25 @@ impl OpenRouterProvider {
         Self::with_base_url(api_key, Self::DEFAULT_BASE_URL.to_string())
     }
 
+    /// Create a new OpenRouter provider from environment variables.
+    ///
+    /// Required:
+    /// - `OPENROUTER_API_KEY`
+    /// Optional:
+    /// - `OPENROUTER_API_BASE`
+    pub fn from_env() -> Result<Self> {
+        let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
+            SimpleAgentsError::Config(
+                "OPENROUTER_API_KEY environment variable is required".to_string(),
+            )
+        })?;
+        let api_key = ApiKey::new(api_key)?;
+        let base_url = std::env::var("OPENROUTER_API_BASE")
+            .unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
+
+        Self::with_base_url(api_key, base_url)
+    }
+
     /// Create a new OpenRouter provider with custom base URL.
     ///
     /// # Arguments
