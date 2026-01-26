@@ -1,0 +1,17 @@
+[package]
+name = "simple-agents-py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "simple_agents_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21", features = ["extension-module"] }
+tokio = { workspace = true }
+
+simple-agents-core = { path = "../simple-agents-core" }
+simple-agents-providers = { path = "../simple-agents-providers" }
+simple-agents-types = { path = "../simple-agents-types" }
