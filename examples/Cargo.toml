@@ -15,3 +15,7 @@ tokio = { workspace = true }
 [[example]]
 name = "full_api_example"
 path = "full_api_example.rs"
+
+[[example]]
+name = "jaro_scores"
+path = "jaro_scores.rs"

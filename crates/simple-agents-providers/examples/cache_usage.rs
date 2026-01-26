@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenv::dotenv().ok();
+
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
@@ -40,9 +43,12 @@ async fn main() -> Result<()> {
 
     println!("🤖 SimpleAgents - Cache Usage Example\n");
 
+    let model = std::env::var("OPENAI_API_MODEL")
+        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+
     // Build completion request
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(&model)
         .message(Message::user("What is 2+2?"))
         .temperature(0.7)
         .max_tokens(50)

@@ -47,6 +47,9 @@ pub struct Recipe {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env if present
+    dotenv::dotenv().ok();
+
     // Initialize tracing
     tracing_subscriber::fmt::init();
 
@@ -55,9 +58,12 @@ async fn main() -> Result<()> {
 
     println!("🍳 SimpleAgents - Streaming with Healing Example\n");
 
+    let model = std::env::var("OPENAI_API_MODEL")
+        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+
     // Create request asking for JSON recipe
     let request = CompletionRequest::builder()
-        .model("gpt-3.5-turbo")
+        .model(&model)
         .message(Message::system(
             "You are a helpful cooking assistant. Always respond with valid JSON.",
         ))
