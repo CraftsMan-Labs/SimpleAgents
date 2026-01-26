@@ -454,35 +454,6 @@ impl Provider for OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
-
-    fn load_env() -> Option<(String, String, String)> {
-        dotenv::dotenv().ok();
-        let api_key = std::env::var("OPENAI_API_KEY").ok()?;
-        let model = std::env::var("OPENAI_API_MODEL").ok()?;
-        let api_base = std::env::var("OPENAI_API_BASE")
-            .unwrap_or_else(|_| OpenAIProvider::DEFAULT_BASE_URL.to_string());
-        Some((api_base, api_key, model))
-    }
-
-    fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
-        let client = if api_base.contains("localhost") || api_base.contains("127.0.0.1") {
-            reqwest::Client::builder()
-                .no_proxy()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client")
-        } else {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client")
-        };
-
-        OpenAIProvider::with_client(api_key, api_base.to_string(), client)
-            .expect("Failed to create provider")
-    }
-
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
@@ -530,41 +501,20 @@ mod tests {
     #[tokio::test]
     async fn test_streaming_integration() {
         use futures_util::StreamExt;
+        use bytes::Bytes;
+        use futures_util::stream;
+        use crate::openai::streaming::SseStream;
 
-        if std::env::var("SIMPLE_AGENTS_RUN_INTEGRATION").ok().as_deref() != Some("1") {
-            eprintln!("Skipping: set SIMPLE_AGENTS_RUN_INTEGRATION=1 to run integration tests");
-            return;
-        }
-
-        let Some((api_base, api_key, model)) = load_env() else {
-            eprintln!("Skipping: set OPENAI_API_KEY and OPENAI_API_MODEL to run integration tests");
-            return;
-        };
-        let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = build_provider(api_key, &api_base);
-
-        let request = CompletionRequest::builder()
-            .model(&model)
-            .message(Message::user("Say 'Hello' in one word"))
-            .stream(true)
-            .max_tokens(10)
-            .build()
-            .unwrap();
-
-        let provider_request = match provider.transform_request(&request) {
-            Ok(request) => request,
-            Err(error) => {
-                eprintln!("Skipping: transform_request failed: {}", error);
-                return;
-            }
-        };
-        let mut stream = match provider.execute_stream(provider_request).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("Skipping: execute_stream failed: {}", error);
-                return;
-            }
-        };
+        let stream_body = concat!(
+            "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n",
+            "\n",
+            "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"!\"},\"finish_reason\":\"stop\"}]}\n",
+            "\n",
+            "data: [DONE]\n",
+            "\n",
+        );
+        let byte_stream = stream::iter(vec![Ok(Bytes::from(stream_body))]);
+        let mut stream = SseStream::new(byte_stream);
 
         let mut chunks_received = 0;
         while let Some(result) = stream.next().await {
