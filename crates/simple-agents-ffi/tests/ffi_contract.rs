@@ -10,7 +10,7 @@ fn rejects_unknown_provider() {
     let client = unsafe { sa_client_new_from_env(provider.as_ptr()) };
     assert!(client.is_null());
 
-    let err = unsafe { sa_last_error_message() };
+    let err = sa_last_error_message();
     assert!(!err.is_null());
     unsafe { sa_string_free(err) };
 }
@@ -23,7 +23,7 @@ fn rejects_null_client() {
     let response = unsafe { sa_complete(std::ptr::null_mut(), model.as_ptr(), prompt.as_ptr(), 0, -1.0) };
     assert!(response.is_null());
 
-    let err = unsafe { sa_last_error_message() };
+    let err = sa_last_error_message();
     assert!(!err.is_null());
     unsafe { sa_string_free(err) };
 }
