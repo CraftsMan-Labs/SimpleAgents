@@ -66,7 +66,7 @@ use proc_macro::TokenStream;
 ///
 /// ```rust
 /// use simple_agents_macros::PartialType;
-/// use std::time::SystemTime;
+/// use std::time::Duration;
 ///
 /// #[derive(PartialType)]
 /// pub struct Resume {
@@ -75,7 +75,7 @@ use proc_macro::TokenStream;
 ///     #[partial(default)]
 ///     pub skills: Vec<String>,
 ///     #[partial(skip)]
-///     pub created_at: SystemTime,
+///     pub created_at: Duration,
 /// }
 ///
 /// let mut partial = PartialResume::default();

@@ -9,6 +9,10 @@
 //! ```bash
 //! export OPENAI_API_KEY="sk-..."
 //! ```
+//! Optionally override the base URL (proxy/router/local):
+//! ```bash
+//! export OPENAI_API_BASE="http://localhost:4000/v1"
+//! ```
 //!
 //! # Run
 //!
@@ -26,13 +30,8 @@ async fn main() -> Result<()> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    // Get API key from environment
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY environment variable is required");
-    let api_key = ApiKey::new(api_key)?;
-
-    // Create OpenAI provider
-    let provider = OpenAIProvider::new(api_key)?;
+    // Create OpenAI provider (reads OPENAI_API_KEY and optional OPENAI_API_BASE)
+    let provider = OpenAIProvider::from_env()?;
 
     println!("🤖 SimpleAgents - Streaming Example\n");
 

@@ -9,6 +9,10 @@
 //! ```bash
 //! export ANTHROPIC_API_KEY="sk-ant-..."
 //! ```
+//! Optionally override the base URL (proxy/router/local):
+//! ```bash
+//! export ANTHROPIC_API_BASE="http://localhost:4000/v1"
+//! ```
 //!
 //! # Run
 //!
@@ -25,13 +29,8 @@ async fn main() -> Result<()> {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    // Get API key from environment
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY environment variable is required");
-    let api_key = ApiKey::new(api_key)?;
-
-    // Create Anthropic provider
-    let provider = AnthropicProvider::new(api_key)?;
+    // Create Anthropic provider (reads ANTHROPIC_API_KEY and optional ANTHROPIC_API_BASE)
+    let provider = AnthropicProvider::from_env()?;
 
     println!("🤖 SimpleAgents - Anthropic Basic Example\n");
 

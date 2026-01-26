@@ -52,6 +52,23 @@ impl OpenAIProvider {
         Self::with_base_url(api_key, Self::DEFAULT_BASE_URL.to_string())
     }
 
+    /// Create a new OpenAI provider from environment variables.
+    ///
+    /// Required:
+    /// - `OPENAI_API_KEY`
+    /// Optional:
+    /// - `OPENAI_API_BASE`
+    pub fn from_env() -> Result<Self> {
+        let api_key = std::env::var("OPENAI_API_KEY")
+            .map_err(|_| SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string()))?;
+        let api_key = ApiKey::new(api_key)?;
+
+        match std::env::var("OPENAI_API_BASE") {
+            Ok(base_url) => Self::with_base_url(api_key, base_url),
+            Err(_) => Self::new(api_key),
+        }
+    }
+
     /// Create a new OpenAI provider with custom base URL
     ///
     /// # Arguments
@@ -424,16 +441,33 @@ impl Provider for OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
-    fn load_env() -> (String, String, String) {
+    fn load_env() -> Option<(String, String, String)> {
         dotenv::dotenv().ok();
-        let api_base = std::env::var("CUSTOM_API_BASE")
-            .expect("CUSTOM_API_BASE environment variable not set");
-        let api_key = std::env::var("CUSTOM_API_KEY")
-            .expect("CUSTOM_API_KEY environment variable not set");
-        let model = std::env::var("CUSTOM_API_MODEL")
-            .expect("CUSTOM_API_MODEL environment variable not set");
-        (api_base, api_key, model)
+        let api_key = std::env::var("OPENAI_API_KEY").ok()?;
+        let model = std::env::var("OPENAI_API_MODEL").ok()?;
+        let api_base = std::env::var("OPENAI_API_BASE")
+            .unwrap_or_else(|_| OpenAIProvider::DEFAULT_BASE_URL.to_string());
+        Some((api_base, api_key, model))
+    }
+
+    fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
+        let client = if api_base.contains("localhost") || api_base.contains("127.0.0.1") {
+            reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client")
+        } else {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .expect("Failed to build HTTP client")
+        };
+
+        OpenAIProvider::with_client(api_key, api_base.to_string(), client)
+            .expect("Failed to create provider")
     }
 
     #[test]
@@ -484,9 +518,12 @@ mod tests {
     async fn test_streaming_integration() {
         use futures_util::StreamExt;
 
-        let (api_base, api_key, model) = load_env();
+        let Some((api_base, api_key, model)) = load_env() else {
+            eprintln!("Skipping: set OPENAI_API_KEY and OPENAI_API_MODEL to run integration tests");
+            return;
+        };
         let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = OpenAIProvider::with_base_url(api_key, api_base).unwrap();
+        let provider = build_provider(api_key, &api_base);
 
         let request = CompletionRequest::builder()
             .model(&model)
