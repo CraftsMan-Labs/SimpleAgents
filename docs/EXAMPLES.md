@@ -576,6 +576,39 @@ fn main() -> Result<()> {
 }
 ```
 
+**Alias-based matching**
+
+```rust
+fn main() -> Result<()> {
+    let engine = CoercionEngine::new();
+
+    let input = json!({
+        "IS_VERIFIED": true
+    });
+
+    let schema = Schema::Object(ObjectSchema::new(vec![
+        Field::required("isVerified", Schema::Bool)
+            .with_alias("IS_VERIFIED")
+            .with_alias("is_verified"),
+    ]));
+
+    let result = engine.coerce(&input, &schema)?;
+    assert_eq!(result.value["isVerified"], true);
+
+    Ok(())
+}
+```
+
+**Lowering the fuzzy threshold**
+
+```rust
+let config = CoercionConfig {
+    fuzzy_match_threshold: 0.6,
+    ..CoercionConfig::default()
+};
+let engine = CoercionEngine::with_config(config);
+```
+
 ### Default Values
 
 ```rust

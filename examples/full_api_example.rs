@@ -366,7 +366,7 @@ async fn example_fuzzy_matching(provider: &OpenAIProvider, model: &str) -> Resul
 
     let fuzzy_value = make_fuzzy_variant(&parse_result.value);
 
-    let mut run_coercion = |label: &str, threshold: f64| -> Result<()> {
+    let run_coercion = |label: &str, threshold: f64| -> Result<()> {
         let config = CoercionConfig {
             fuzzy_match_threshold: threshold,
             ..CoercionConfig::default()
