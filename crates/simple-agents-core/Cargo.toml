@@ -1,0 +1,22 @@
+[package]
+name = "simple-agents-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Core SimpleAgents client API integrating providers, routing, caching, and healing"
+
+[dependencies]
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+simple-agents-types = { path = "../simple-agents-types" }
+simple-agents-router = { path = "../simple-agents-router" }
+simple-agents-cache = { path = "../simple-agents-cache" }
+simple-agents-healing = { path = "../simple-agents-healing" }
+
+[dev-dependencies]
+tokio.workspace = true

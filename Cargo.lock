@@ -1811,6 +1811,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-agents-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "simple-agents-cache",
+ "simple-agents-healing",
+ "simple-agents-router",
+ "simple-agents-types",
+ "tokio",
+]
+
+[[package]]
 name = "simple-agents-examples"
 version = "0.1.0"
 dependencies = [
