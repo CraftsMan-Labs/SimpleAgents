@@ -1,0 +1,41 @@
+curl -X 'POST' \
+  'http://localhost:4000/anthropic/v1/chat/completions' \
+  -H 'accept: application/json' \
+  -H 'Authorization: Bearer sk-2rfWEZQIIYJeZCDLwdA1eA' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "model": "grok-code-fast-1",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Hello, how are you?"
+    }
+  ],
+  "frequency_penalty": null,
+  "logit_bias": null,
+  "logprobs": null,
+  "top_logprobs": null,
+  "max_tokens": null,
+  "n": null,
+  "presence_penalty": null,
+  "response_format": null,
+  "seed": null,
+  "service_tier": null,
+  "stop": null,
+  "stream_options": null,
+  "temperature": null,
+  "top_p": null,
+  "tools": null,
+  "tool_choice": null,
+  "parallel_tool_calls": null,
+  "function_call": null,
+  "functions": null,
+  "user": null,
+  "stream": null,
+  "metadata": null,
+  "guardrails": null,
+  "caching": null,
+  "num_retries": null,
+  "context_window_fallback_dict": null,
+  "fallbacks": null
+}'
