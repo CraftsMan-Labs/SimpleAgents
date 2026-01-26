@@ -29,7 +29,7 @@ fn build_request(
     model: &str,
     prompt: &str,
     max_tokens: Option<u32>,
-    temperature: Option<f32>,
+    temperature: Option<f64>,
 ) -> SaResult<CompletionRequest> {
     if model.is_empty() {
         return Err(SimpleAgentsError::Config("model cannot be empty".to_string()));
@@ -46,7 +46,7 @@ fn build_request(
         builder = builder.max_tokens(max_tokens);
     }
     if let Some(temperature) = temperature {
-        builder = builder.temperature(temperature);
+        builder = builder.temperature(temperature as f32);
     }
 
     builder.build()
@@ -85,7 +85,7 @@ impl Client {
         model: String,
         prompt: String,
         max_tokens: Option<u32>,
-        temperature: Option<f32>,
+        temperature: Option<f64>,
     ) -> Result<String> {
         let request = build_request(&model, &prompt, max_tokens, temperature).map_err(napi_err)?;
         let runtime = self
