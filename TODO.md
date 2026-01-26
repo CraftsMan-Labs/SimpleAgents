@@ -1,13 +1,13 @@
 # SimpleAgents Project TODO
 
-> **Status**: Phase 3 Complete - Phases 1-4 Archived 📦
+> **Status**: Phase 5 Complete - Phases 1-5 Archived 📦
 > **Current Version**: 0.1.0
-> **Last Updated**: 2026-01-24
-> **Overall Progress**: 43% (3/7 phases complete)
+> **Last Updated**: 2026-01-25
+> **Overall Progress**: 71% (5/7 phases complete)
 
 This is the **single source of truth** for all project tasks and progress tracking.
 
-**Archived Content**: See [ARCHIVE.md](ARCHIVE.md) for details on completed Phases 1-3.
+**Archived Content**: See [ARCHIVE.md](ARCHIVE.md) for details on completed Phases 1-5.
 
 ---
 
@@ -19,11 +19,11 @@ This is the **single source of truth** for all project tasks and progress tracki
 | **Phase 1: Foundation** | ✅ Complete (Archived) | 100% | 114 tests | Week 1-2 |
 | **Phase 2: Providers** | ✅ Complete (Archived) | 100% | 203 tests | Week 3-4, Jan 23 |
 | **Phase 3: Healing** | ✅ Complete (Archived) | 100% | 172 tests | Week 5-6, Jan 24 |
-| **Phase 4: Router** | 📅 Planned | 0% | - | Week 7 |
-| **Phase 5: Core** | 📅 Planned | 0% | - | Week 8 |
+| **Phase 4: Router** | ✅ Complete (Archived) | 100% | 25 tests | Week 7, Jan 25 |
+| **Phase 5: Core** | ✅ Complete (Archived) | 100% | 7 tests | Week 8, Jan 25 |
 | **Phase 6-7: CLI & Bindings** | 📅 Planned | 0% | - | Week 9-12 |
 
-**Current Focus**: Phases 1-3 complete and archived. Ready for Phase 4 or other work.
+**Current Focus**: Phases 1-5 complete and archived. Ready for Phase 6 or other work.
 
 ---
 
@@ -46,55 +46,12 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 - Phase 1: Foundation (114 tests)
 - Phase 2: Provider Integration (203 tests)
 - Phase 3: Response Healing (172 tests)
+- Phase 4: Router & Reliability (25 tests)
+- Phase 5: Core API (7 tests)
 
 ---
 
 ## 🚀 Upcoming Work
-
-### Phase 4: Router & Reliability (Week 7)
-
-**Goal**: Implement routing strategies and fallback chains
-**Crate**: `simple-agents-router`
-**Status**: Planned - Not started
-**Timeline**: Week 7
-**Reference**: [research/litellm-analysis.md](research/litellm-analysis.md) - Routing section
-
-**Major Tasks**:
-- [x] Round-robin routing strategy
-- [x] Latency-based routing
-- [x] Cost-based routing
-- [x] Fallback chains (provider → provider failover)
-- [x] Circuit breaker pattern
-- [x] Health tracking and monitoring
-- [x] Integration with retry logic
-- [x] Examples and tests
-
-**Implementation Notes**:
-- Integrate with existing `Provider` trait from `simple-agents-providers`
-- Design `Router` struct to coordinate multiple providers
-- Consider unified retry/routing layer vs separate concerns
-- Implement health tracking to inform routing decisions
-- Add circuit breaker to prevent cascading failures
-
----
-
-### Phase 5: Core API (Week 8)
-
-**Goal**: Unified client API bringing everything together
-**Crate**: `simple-agents-core`
-
-**Major Tasks**:
-- [ ] `SimpleAgentsClient` main API
-- [ ] Provider management and registration
-- [ ] Cache integration (transparent)
-- [ ] Router integration (automatic)
-- [ ] Healing integration (automatic)
-- [ ] Middleware system (logging, metrics, tracing)
-- [ ] Builder pattern for configuration
-- [ ] End-to-end integration tests
-- [ ] Examples and documentation
-
----
 
 ### Phase 6: CLI & Tools (Week 9-10)
 
@@ -134,8 +91,8 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 
 | Metric | Current | Target (MVP) |
 |--------|---------|--------------|
-| **Crates Created** | 5 of 9 | 7 of 9 |
-| **Tests Written** | 388 passing | 300+ ✅ |
+| **Crates Created** | 7 of 9 | 7 of 9 ✅ |
+| **Tests Written** | 420 passing | 300+ ✅ |
 | **Providers** | 3 | 3 ✅ |
 | **Code Analyzed** | 44,500+ lines | N/A |
 | **Documentation** | 170+ pages | 200+ |
@@ -150,8 +107,10 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 | simple-agents-healing | 55 | 99 | 18 | 172 |
 | simple-agents-macros | 13 | 0 | 2 (ignored) | 13 |
 | simple-agents-providers | 57 (3 ignored) | 0 (5 ignored) | 9 | 66 |
+| simple-agents-router | 24 | 1 | 0 | 25 |
+| simple-agents-core | 2 | 4 | 1 | 7 |
 | simple-agents-types | 90 | 11 | 21 (8 ignored) | 122 |
-| **TOTAL** | **228** | **110** | **52** | **388** |
+| **TOTAL** | **241** | **115** | **53** | **420** |
 
 **Note**: Detailed test breakdowns for archived phases available in [ARCHIVE.md](ARCHIVE.md)
 
@@ -160,14 +119,13 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 ## 🎯 Next Immediate Actions
 
 **Current Status**:
-- ✅ Phases 1-3 complete and archived
-- 🎯 Ready for Phase 4 (Router & Reliability)
+- ✅ Phases 1-5 complete and archived
+- 🎯 Ready for Phase 6 (CLI & Tools)
 
 **Options**:
-1. Begin Phase 4 (Router & Reliability) - recommended next step
-2. Begin Phase 5 (Core API - unified client)
-3. Begin Phase 6 (CLI & Tools)
-4. Other priorities (user-defined)
+1. Begin Phase 6 (CLI & Tools)
+2. Begin Phase 7 (Language Bindings)
+3. Other priorities (user-defined)
 
 ---
 
@@ -192,9 +150,9 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 
 ## 📝 Notes
 
-- **Archive**: See [ARCHIVE.md](ARCHIVE.md) for completed Phases 1-3
+- **Archive**: See [ARCHIVE.md](ARCHIVE.md) for completed Phases 1-5
 - **Completion Reports**: See [PHASE2_COMPLETION_REPORT.md](PHASE2_COMPLETION_REPORT.md)
 - **Per-Crate TODOs**: Each crate has its own TODO.md for detailed task tracking
 - **Research Documents**: All research in `research/` directory with 100+ pages of analysis
 
-**Last Updated**: 2026-01-24 (Created ARCHIVE.md - Completed phases archived) | **Next Review**: TBD (Awaiting direction)
+**Last Updated**: 2026-01-25 (Archived Phases 4-5, core API completed) | **Next Review**: TBD (Awaiting direction)

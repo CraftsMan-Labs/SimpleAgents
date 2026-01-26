@@ -14,6 +14,8 @@ This document contains concise summaries of completed phases. For active work, s
    - [Phase 1: Foundation](#phase-1-foundation)
    - [Phase 2: Provider Integration](#phase-2-provider-integration)
    - [Phase 3: Response Healing](#phase-3-response-healing)
+   - [Phase 4: Router & Reliability](#phase-4-router--reliability)
+   - [Phase 5: Core API](#phase-5-core-api)
 2. [Summary Statistics](#summary-statistics)
 
 ---
@@ -96,6 +98,39 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 
 ---
 
+### Phase 4: Router & Reliability ✅ (Week 7, completed Jan 25)
+
+**Crate**: `simple-agents-router`
+**Status**: Production-ready
+**Focus**: Routing strategy implementations and reliability primitives
+
+**What Was Built**:
+- **Routing**: Round-robin, latency-based, cost-based routing
+- **Fallback Chains**: Provider failover with retryable error filtering
+- **Reliability**: Circuit breaker with configurable thresholds and cooldowns
+- **Health Tracking**: Provider health metrics and status tracking
+- **Retry Integration**: Policy-driven retry execution with jittered backoff
+- **Coverage**: Unit tests + integration coverage for health tracking
+
+---
+
+### Phase 5: Core API ✅ (Week 8, completed Jan 25)
+
+**Crate**: `simple-agents-core`
+**Status**: Production-ready
+**Focus**: Unified client API integrating routing, caching, healing, and middleware
+
+**What Was Built**:
+- **SimpleAgentsClient** with builder-based configuration
+- **Provider Registry** for managing and registering providers
+- **Router Integration** with round-robin, latency, cost, and fallback modes
+- **Cache Integration** with transparent response caching
+- **Healing Helpers** for JSON parsing and schema coercion
+- **Middleware System** for request/response hooks
+- **Tests & Examples** for end-to-end client flows
+
+---
+
 ## Summary Statistics (Completed Phases)
 
 | Phase | Crates | Tests (at completion) | Completion Date |
@@ -104,7 +139,9 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 | Phase 1: Foundation | 1 | 114 | Week 1-2 |
 | Phase 2: Providers | 2 | 203 | Jan 23, 2026 |
 | Phase 3: Healing | 2 | 172 | Jan 24, 2026 |
-| **Total Completed** | **5** | **489** | - |
+| Phase 4: Router | 1 | 25 | Jan 25, 2026 |
+| Phase 5: Core API | 1 | 7 | Jan 25, 2026 |
+| **Total Completed** | **7** | **521** | - |
 
 **Note**: Test counts reflect numbers at phase completion time. Current test counts may differ due to ongoing maintenance and improvements. See TODO.md for current test statistics.
 
@@ -121,4 +158,4 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 
 ---
 
-**Last Updated**: 2026-01-24
+**Last Updated**: 2026-01-25
