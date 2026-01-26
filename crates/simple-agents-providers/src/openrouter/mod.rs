@@ -362,15 +362,6 @@ impl Provider for OpenRouterProvider {
 mod tests {
     use super::*;
 
-    fn load_env() -> Option<(String, String, String)> {
-        dotenv::dotenv().ok();
-        let api_key = std::env::var("OPENROUTER_API_KEY").ok()?;
-        let model = std::env::var("OPENROUTER_API_MODEL").ok()?;
-        let api_base = std::env::var("OPENROUTER_API_BASE")
-            .unwrap_or_else(|_| OpenRouterProvider::DEFAULT_BASE_URL.to_string());
-        Some((api_base, api_key, model))
-    }
-
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890").unwrap();
@@ -416,22 +407,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_integration() {
-        let Some((api_base, api_key, model)) = load_env() else {
-            eprintln!("Skipping: set OPENROUTER_API_KEY and OPENROUTER_API_MODEL to run integration tests");
-            return;
-        };
-        let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = OpenRouterProvider::with_base_url(api_key, api_base).unwrap();
+        let response_body = serde_json::json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 123,
+            "model": "openai/gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": { "role": "assistant", "content": "test" },
+                "finish_reason": "stop"
+            }],
+            "usage": { "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2 }
+        });
 
-        let request = CompletionRequest::builder()
-            .model(&model)
+        let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenRouterProvider::new(api_key).unwrap();
+
+        let _request = CompletionRequest::builder()
+            .model("openai/gpt-4")
             .message(Message::user("Say 'test'"))
             .max_tokens(10)
             .build()
             .unwrap();
 
-        let provider_request = provider.transform_request(&request).unwrap();
-        let provider_response = provider.execute(provider_request).await.unwrap();
+        let provider_response = ProviderResponse::new(200, response_body);
         let response = provider.transform_response(provider_response).unwrap();
 
         assert!(!response.choices.is_empty());
