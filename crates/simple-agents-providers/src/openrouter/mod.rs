@@ -343,15 +343,13 @@ impl Provider for OpenRouterProvider {
 mod tests {
     use super::*;
 
-    fn load_env() -> (String, String, String) {
+    fn load_env() -> Option<(String, String, String)> {
         dotenv::dotenv().ok();
-        let api_base = std::env::var("CUSTOM_API_BASE")
-            .expect("CUSTOM_API_BASE environment variable not set");
-        let api_key = std::env::var("CUSTOM_API_KEY")
-            .expect("CUSTOM_API_KEY environment variable not set");
-        let model = std::env::var("CUSTOM_API_MODEL")
-            .expect("CUSTOM_API_MODEL environment variable not set");
-        (api_base, api_key, model)
+        let api_key = std::env::var("OPENROUTER_API_KEY").ok()?;
+        let model = std::env::var("OPENROUTER_API_MODEL").ok()?;
+        let api_base = std::env::var("OPENROUTER_API_BASE")
+            .unwrap_or_else(|_| OpenRouterProvider::DEFAULT_BASE_URL.to_string());
+        Some((api_base, api_key, model))
     }
 
     #[test]
@@ -399,7 +397,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_integration() {
-        let (api_base, api_key, model) = load_env();
+        let Some((api_base, api_key, model)) = load_env() else {
+            eprintln!("Skipping: set OPENROUTER_API_KEY and OPENROUTER_API_MODEL to run integration tests");
+            return;
+        };
         let api_key = ApiKey::new(&api_key).unwrap();
         let provider = OpenRouterProvider::with_base_url(api_key, api_base).unwrap();
 

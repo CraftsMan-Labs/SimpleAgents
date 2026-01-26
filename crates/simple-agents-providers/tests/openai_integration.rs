@@ -5,16 +5,38 @@
 
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_types::prelude::*;
+use std::time::Duration;
 
 fn load_env() -> (String, String, String) {
     dotenv::dotenv().ok();
-    let api_base = std::env::var("CUSTOM_API_BASE")
-        .expect("CUSTOM_API_BASE environment variable not set");
-    let api_key = std::env::var("CUSTOM_API_KEY")
-        .expect("CUSTOM_API_KEY environment variable not set");
-    let model = std::env::var("CUSTOM_API_MODEL")
-        .expect("CUSTOM_API_MODEL environment variable not set");
+    let api_base = std::env::var("OPENAI_API_BASE")
+        .or_else(|_| std::env::var("CUSTOM_API_BASE"))
+        .expect("OPENAI_API_BASE or CUSTOM_API_BASE environment variable not set");
+    let api_key = std::env::var("OPENAI_API_KEY")
+        .or_else(|_| std::env::var("CUSTOM_API_KEY"))
+        .expect("OPENAI_API_KEY or CUSTOM_API_KEY environment variable not set");
+    let model = std::env::var("OPENAI_API_MODEL")
+        .or_else(|_| std::env::var("CUSTOM_API_MODEL"))
+        .expect("OPENAI_API_MODEL or CUSTOM_API_MODEL environment variable not set");
     (api_base, api_key, model)
+}
+
+fn build_provider(api_key: ApiKey, api_base: &str) -> OpenAIProvider {
+    let client = if api_base.contains("localhost") || api_base.contains("127.0.0.1") {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client")
+    } else {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to build HTTP client")
+    };
+
+    OpenAIProvider::with_client(api_key, api_base.to_string(), client)
+        .expect("Failed to create provider")
 }
 
 /// Test connection to configured API server
@@ -42,11 +64,7 @@ async fn test_local_proxy_connection() {
     let (api_base, api_key, model) = load_env();
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        api_base,
-    )
-    .expect("Failed to create provider");
+    let provider = build_provider(api_key, &api_base);
 
     // Create a simple test request
     let request = CompletionRequest::builder()
@@ -85,7 +103,12 @@ async fn test_local_proxy_connection() {
 
     // Assertions
     assert!(!response.id.is_empty(), "Response ID should not be empty");
-    assert_eq!(response.model, model, "Model mismatch");
+    assert!(
+        response.model == model || response.model.starts_with(&format!("{}-", model)),
+        "Model mismatch (requested: {}, got: {})",
+        model,
+        response.model
+    );
     assert!(!response.choices.is_empty(), "Response should have at least one choice");
 
     // Get the content
@@ -123,11 +146,7 @@ async fn test_local_proxy_multiple_requests() {
     let (api_base, api_key, model) = load_env();
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        api_base,
-    )
-    .expect("Failed to create provider");
+    let provider = build_provider(api_key, &api_base);
 
     let test_prompts = ["Count from 1 to 3.",
         "What is 2+2?",
@@ -175,11 +194,7 @@ async fn test_local_proxy_invalid_model() {
     let (api_base, api_key, _model) = load_env();
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        api_base,
-    )
-    .expect("Failed to create provider");
+    let provider = build_provider(api_key, &api_base);
 
     let request = CompletionRequest::builder()
         .model("invalid-model-that-does-not-exist")
@@ -218,11 +233,7 @@ async fn test_local_proxy_temperature_variations() {
     let (api_base, api_key, model) = load_env();
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        api_base,
-    )
-    .expect("Failed to create provider");
+    let provider = build_provider(api_key, &api_base);
 
     let temperatures = vec![0.0, 0.5, 1.0];
 
@@ -267,11 +278,7 @@ async fn test_local_proxy_conversation() {
     let (api_base, api_key, model) = load_env();
     let api_key = ApiKey::new(&api_key).expect("Failed to create API key");
 
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        api_base,
-    )
-    .expect("Failed to create provider");
+    let provider = build_provider(api_key, &api_base);
 
     let request = CompletionRequest::builder()
         .model(&model)

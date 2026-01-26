@@ -182,7 +182,7 @@ let mut hasher = DefaultHasher::new();
 
 **Recommendation:** Use SipHash or blake3 for deterministic, collision-resistant keys.
 
-## 🟡 Missing Implementations
+## 🟡 Missing Implementations (Resolved)
 
 ### 10. No Cache Implementation Provided ✅ FIXED
 **Location:** `crates/simple-agents-types/src/cache.rs`
@@ -196,7 +196,7 @@ let mut hasher = DefaultHasher::new();
 - Redis cache (optional feature)
 - No-op cache (for testing)
 
-### 11. No Streaming Support
+### 11. No Streaming Support ✅ FIXED
 **Location:** Throughout providers
 
 **Issue:** Streaming types defined (`CompletionChunk`, `ChoiceDelta`) but:
@@ -206,7 +206,9 @@ let mut hasher = DefaultHasher::new();
 
 **Impact:** Cannot use streaming for faster perceived latency.
 
-### 12. No Rate Limiting
+**Fix:** Streaming implemented in OpenAI/Anthropic providers with SSE parsing and chunk transforms.
+
+### 12. No Rate Limiting ✅ FIXED
 **Issue:** No built-in rate limiting for provider requests.
 
 **Impact:**
@@ -214,10 +216,14 @@ let mut hasher = DefaultHasher::new();
 - No automatic throttling
 - Users must implement rate limiting separately
 
-### 13. Anthropic Provider Stubbed
+**Fix:** Added token-bucket rate limiting with per-instance and shared modes.
+
+### 13. Anthropic Provider Stubbed ✅ FIXED
 **Location:** `crates/simple-agents-providers/src/anthropic/mod.rs`
 
 **Issue:** Only OpenAI provider implemented, Anthropic is placeholder.
+
+**Fix:** Full Anthropic provider implemented with request/response mapping and streaming.
 
 ## 🔵 Design Considerations
 
@@ -269,23 +275,7 @@ let error_body = response.text().await
 
 ## 🎯 Priority Recommendations
 
-### High Priority:
-1. Fix constant-time comparison for API keys (security)
-2. Implement proper RNG for jitter (security/quality)
-3. Add streaming support (major feature gap)
-4. Provide at least one cache implementation
-
-### Medium Priority:
-5. Optimize message cloning (use Cow or references)
-6. Add request size limits (DoS prevention)
-7. Implement retry logic
-8. Improve cache key generation
-
-### Low Priority:
-9. Optimize header allocations
-10. Reduce JSON serialization cycles
-11. Add rate limiting
-12. Make validation async
+All priority recommendations are implemented except for async validation, which remains deferred (see Issue #14).
 
 ## 📈 Benchmarking TODO
 
