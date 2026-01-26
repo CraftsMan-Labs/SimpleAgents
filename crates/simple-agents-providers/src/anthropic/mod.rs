@@ -68,12 +68,23 @@ impl AnthropicProvider {
 
         let base_url = std::env::var("ANTHROPIC_API_BASE")
             .or_else(|_| std::env::var("ANTHROPIC__API_BASE"))
-            .ok();
+            .unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
+        let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
 
-        match base_url {
-            Some(url) => Self::with_base_url(api_key, url),
-            None => Self::new(api_key),
+        let mut client_builder = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90));
+        if is_local {
+            client_builder = client_builder.no_proxy();
+        } else {
+            client_builder = client_builder.http2_prior_knowledge();
         }
+        let client = client_builder
+            .build()
+            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+
+        Self::with_client(api_key, base_url, client)
     }
 
     /// Create a new Anthropic provider with custom base URL
