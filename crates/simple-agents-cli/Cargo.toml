@@ -1,0 +1,20 @@
+[package]
+name = "simple-agents-cli"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+simple-agents-core = { path = "../simple-agents-core" }
+simple-agents-providers = { path = "../simple-agents-providers" }
+simple-agents-router = { path = "../simple-agents-router" }
+simple-agents-types = { path = "../simple-agents-types" }
+
+toml = "0.8"
+serde_yaml = "0.9"

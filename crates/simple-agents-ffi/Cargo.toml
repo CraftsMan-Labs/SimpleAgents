@@ -1,0 +1,16 @@
+[package]
+name = "simple-agents-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+simple-agents-core = { path = "../simple-agents-core" }
+simple-agents-providers = { path = "../simple-agents-providers" }
+simple-agents-types = { path = "../simple-agents-types" }
