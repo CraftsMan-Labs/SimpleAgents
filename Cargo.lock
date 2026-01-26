@@ -1880,6 +1880,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-agents-router"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "rand 0.8.5",
+ "serde_json",
+ "simple-agents-types",
+ "tokio",
+]
+
+[[package]]
 name = "simple-agents-types"
 version = "0.1.0"
 dependencies = [

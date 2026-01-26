@@ -53,7 +53,7 @@ let provider = OpenAIProvider::new(api_key)?;
 ```rust
 let request = CompletionRequest::builder()
     .model("gpt-4")
-    .message(Message::user("What is the capital of France?"))
+    .messages(vec![Message::user("What is the capital of France?")])
     .temperature(0.7)
     .max_tokens(100)
     .build()?;
@@ -178,13 +178,17 @@ let msg = Message::user("Hello!")
 
 ### Building a Conversation
 
+You can add messages one-by-one with `.message(...)` or pass an ordered list with `.messages(vec![...])`.
+
 ```rust
 let request = CompletionRequest::builder()
     .model("gpt-4")
-    .message(Message::system("You are a helpful assistant."))
-    .message(Message::user("What is 2+2?"))
-    .message(Message::assistant("4"))
-    .message(Message::user("What is 3+3?"))
+    .messages(vec![
+        Message::system("You are a helpful assistant."),
+        Message::user("What is 2+2?"),
+        Message::assistant("4"),
+        Message::user("What is 3+3?"),
+    ])
     .build()?;
 ```
 
@@ -558,6 +562,29 @@ let schema = Schema::object(vec![
 
 let result = engine.coerce(&input, &schema)?;
 assert_eq!(result.value["firstName"], "Alice");
+```
+
+**Matching order and aliases**
+
+- Matching tries exact name, aliases, case-insensitive match, snake↔camel conversion, then Jaro-Winkler.
+- Aliases are checked before fuzzy matching and are recorded as `FuzzyFieldMatch` when used.
+
+```rust
+let schema = Schema::Object(ObjectSchema::new(vec![
+    Field::required("isVerified", Schema::Bool)
+        .with_alias("IS_VERIFIED")
+        .with_alias("is_verified"),
+]));
+```
+
+**Tuning the fuzzy threshold**
+
+```rust
+let config = CoercionConfig {
+    fuzzy_match_threshold: 0.6, // default is 0.8
+    ..CoercionConfig::default()
+};
+let engine = CoercionEngine::with_config(config);
 ```
 
 ### Default Values

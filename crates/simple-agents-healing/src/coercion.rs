@@ -474,12 +474,16 @@ impl CoercionEngine {
             }
         }
 
-        // 4. Try snake_case ↔ camelCase conversion
+        // 4. Try snake_case ↔ camelCase conversion (case-insensitive)
         let snake = to_snake_case(&field.name);
         let camel = to_camel_case(&field.name);
 
         for (key, value) in map.iter() {
-            if key == &snake || key == &camel {
+            if key == &snake
+                || key == &camel
+                || key.eq_ignore_ascii_case(&snake)
+                || key.eq_ignore_ascii_case(&camel)
+            {
                 flags.push(CoercionFlag::FuzzyFieldMatch {
                     expected: field.name.clone(),
                     found: key.clone(),

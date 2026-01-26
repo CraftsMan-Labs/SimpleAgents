@@ -60,14 +60,14 @@ Build a **production-ready, extensible Rust framework** for LLM interactions wit
 **Reference**: [research/litellm-analysis.md](research/litellm-analysis.md) - Routing section
 
 **Major Tasks**:
-- [ ] Round-robin routing strategy
-- [ ] Latency-based routing
-- [ ] Cost-based routing
-- [ ] Fallback chains (provider → provider failover)
-- [ ] Circuit breaker pattern
-- [ ] Health tracking and monitoring
-- [ ] Integration with retry logic
-- [ ] Examples and tests
+- [x] Round-robin routing strategy
+- [x] Latency-based routing
+- [x] Cost-based routing
+- [x] Fallback chains (provider → provider failover)
+- [x] Circuit breaker pattern
+- [x] Health tracking and monitoring
+- [x] Integration with retry logic
+- [x] Examples and tests
 
 **Implementation Notes**:
 - Integrate with existing `Provider` trait from `simple-agents-providers`
