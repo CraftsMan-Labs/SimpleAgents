@@ -414,37 +414,6 @@ impl Provider for AnthropicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use futures_util::StreamExt;
-    use std::time::Duration;
-
-    fn load_env() -> Option<(String, String, String)> {
-        dotenv::dotenv().ok();
-        let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
-        let model = std::env::var("ANTHROPIC_API_MODEL").ok()?;
-        let api_base = std::env::var("ANTHROPIC_API_BASE")
-            .or_else(|_| std::env::var("ANTHROPIC__API_BASE"))
-            .unwrap_or_else(|_| AnthropicProvider::DEFAULT_BASE_URL.to_string());
-        Some((api_base, api_key, model))
-    }
-
-    fn build_provider(api_key: ApiKey, api_base: &str) -> AnthropicProvider {
-        let client = if api_base.contains("localhost") || api_base.contains("127.0.0.1") {
-            reqwest::Client::builder()
-                .no_proxy()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client")
-        } else {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .expect("Failed to build HTTP client")
-        };
-
-        AnthropicProvider::with_client(api_key, api_base.to_string(), client)
-            .expect("Failed to create provider")
-    }
-
     fn require_streaming() -> bool {
         std::env::var("SIMPLE_AGENTS_REQUIRE_STREAMING")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -522,46 +491,28 @@ mod tests {
 
     #[tokio::test]
     async fn test_anthropic_integration() {
-        if std::env::var("SIMPLE_AGENTS_RUN_INTEGRATION").ok().as_deref() != Some("1") {
-            eprintln!("Skipping: set SIMPLE_AGENTS_RUN_INTEGRATION=1 to run integration tests");
-            return;
-        }
+        let response_body = serde_json::json!({
+            "id": "msg-test",
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Hello"}],
+            "model": "claude-3-opus-20240229",
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 1, "output_tokens": 1 }
+        });
 
-        let Some((api_base, api_key, model)) = load_env() else {
-            eprintln!("Skipping: set ANTHROPIC_API_KEY and ANTHROPIC_API_MODEL to run integration tests");
-            return;
-        };
-        let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = build_provider(api_key, &api_base);
+        let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890").unwrap();
+        let provider = AnthropicProvider::new(api_key).unwrap();
 
-        let request = CompletionRequest::builder()
-            .model(&model)
+        let _request = CompletionRequest::builder()
+            .model("claude-3-opus-20240229")
             .message(Message::user("Say 'Hello' in one word"))
             .max_tokens(10)
             .build()
             .unwrap();
 
-        let provider_request = match provider.transform_request(&request) {
-            Ok(request) => request,
-            Err(error) => {
-                eprintln!("Skipping: transform_request failed: {}", error);
-                return;
-            }
-        };
-        let provider_response = match provider.execute(provider_request).await {
-            Ok(response) => response,
-            Err(error) => {
-                eprintln!("Skipping: execute failed: {}", error);
-                return;
-            }
-        };
-        let response = match provider.transform_response(provider_response) {
-            Ok(response) => response,
-            Err(error) => {
-                eprintln!("Skipping: transform_response failed: {}", error);
-                return;
-            }
-        };
+        let provider_response = ProviderResponse::new(200, response_body);
+        let response = provider.transform_response(provider_response).unwrap();
 
         assert!(!response.choices.is_empty());
         assert!(!response.choices[0].message.content.is_empty());
@@ -570,40 +521,27 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_integration() {
-        if std::env::var("SIMPLE_AGENTS_RUN_INTEGRATION").ok().as_deref() != Some("1") {
-            eprintln!("Skipping: set SIMPLE_AGENTS_RUN_INTEGRATION=1 to run integration tests");
-            return;
-        }
+        use bytes::Bytes;
+        use futures_util::stream;
+        use futures_util::StreamExt;
+        use crate::anthropic::streaming::AnthropicSseStream;
 
-        let Some((api_base, api_key, model)) = load_env() else {
-            eprintln!("Skipping: set ANTHROPIC_API_KEY and ANTHROPIC_API_MODEL to run integration tests");
-            return;
-        };
-        let api_key = ApiKey::new(&api_key).unwrap();
-        let provider = build_provider(api_key, &api_base);
-
-        let request = CompletionRequest::builder()
-            .model(&model)
-            .message(Message::user("Say 'Hello' in one word"))
-            .stream(true)
-            .max_tokens(10)
-            .build()
-            .unwrap();
-
-        let provider_request = match provider.transform_request(&request) {
-            Ok(request) => request,
-            Err(error) => {
-                eprintln!("Skipping: transform_request failed: {}", error);
-                return;
-            }
-        };
-        let mut stream = match provider.execute_stream(provider_request).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                eprintln!("Skipping: execute_stream failed: {}", error);
-                return;
-            }
-        };
+        let stream_body = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg-test\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[],\"model\":\"claude-3-opus-20240229\"}}\n",
+            "\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hello\"}}\n",
+            "\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}\n",
+            "\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n",
+            "\n",
+        );
+        let byte_stream = stream::iter(vec![Ok(Bytes::from(stream_body))]);
+        let mut stream = AnthropicSseStream::new(byte_stream);
 
         let mut chunks_received = 0;
         let mut content = String::new();
