@@ -107,6 +107,7 @@ impl Provider for MockProvider {
             },
             created: None,
             provider: Some(self.name.clone()),
+            healing_metadata: None,
         };
 
         Ok(response)

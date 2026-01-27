@@ -2,8 +2,44 @@
 //!
 //! Provides OpenAI-compatible response structures.
 
+use crate::coercion::CoercionFlag;
 use crate::message::Message;
 use serde::{Deserialize, Serialize};
+
+/// Metadata about healing/coercion applied to a response.
+///
+/// When native structured output parsing fails and healing is enabled,
+/// this metadata tracks all transformations applied to recover the response.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HealingMetadata {
+    /// All coercion flags applied during healing
+    pub flags: Vec<CoercionFlag>,
+    /// Confidence score (0.0-1.0) of the healed response
+    pub confidence: f32,
+    /// The original parsing error that triggered healing
+    pub original_error: String,
+}
+
+impl HealingMetadata {
+    /// Create new healing metadata.
+    pub fn new(flags: Vec<CoercionFlag>, confidence: f32, original_error: String) -> Self {
+        Self {
+            flags,
+            confidence: confidence.clamp(0.0, 1.0),
+            original_error,
+        }
+    }
+
+    /// Check if any major coercions were applied.
+    pub fn has_major_coercions(&self) -> bool {
+        self.flags.iter().any(|f| f.is_major())
+    }
+
+    /// Check if confidence meets a threshold.
+    pub fn is_confident(&self, threshold: f32) -> bool {
+        self.confidence >= threshold
+    }
+}
 
 /// A completion response from an LLM provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +58,9 @@ pub struct CompletionResponse {
     /// Provider that generated this response
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
+    /// Healing metadata (present if response was healed after parse failure)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub healing_metadata: Option<HealingMetadata>,
 }
 
 impl CompletionResponse {
@@ -61,6 +100,79 @@ impl CompletionResponse {
     /// Get the first choice.
     pub fn first_choice(&self) -> Option<&CompletionChoice> {
         self.choices.first()
+    }
+
+    /// Check if this response was healed after a parsing failure.
+    ///
+    /// Returns `true` if healing metadata is present, indicating the response
+    /// required transformation to be parseable.
+    ///
+    /// # Example
+    /// ```
+    /// use simple_agents_types::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
+    /// use simple_agents_types::message::Message;
+    /// use simple_agents_types::coercion::CoercionFlag;
+    ///
+    /// let mut response = CompletionResponse {
+    ///     id: "resp_123".to_string(),
+    ///     model: "gpt-4".to_string(),
+    ///     choices: vec![],
+    ///     usage: Usage::new(10, 5),
+    ///     created: None,
+    ///     provider: None,
+    ///     healing_metadata: None,
+    /// };
+    ///
+    /// assert!(!response.was_healed());
+    ///
+    /// response.healing_metadata = Some(HealingMetadata::new(
+    ///     vec![CoercionFlag::StrippedMarkdown],
+    ///     0.9,
+    ///     "Parse error".to_string(),
+    /// ));
+    ///
+    /// assert!(response.was_healed());
+    /// ```
+    pub fn was_healed(&self) -> bool {
+        self.healing_metadata.is_some()
+    }
+
+    /// Get the confidence score of the response.
+    ///
+    /// Returns 1.0 if the response was not healed (perfect confidence),
+    /// otherwise returns the confidence score from healing metadata.
+    ///
+    /// # Example
+    /// ```
+    /// use simple_agents_types::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
+    /// use simple_agents_types::message::Message;
+    /// use simple_agents_types::coercion::CoercionFlag;
+    ///
+    /// let mut response = CompletionResponse {
+    ///     id: "resp_123".to_string(),
+    ///     model: "gpt-4".to_string(),
+    ///     choices: vec![],
+    ///     usage: Usage::new(10, 5),
+    ///     created: None,
+    ///     provider: None,
+    ///     healing_metadata: None,
+    /// };
+    ///
+    /// assert_eq!(response.confidence(), 1.0);
+    ///
+    /// response.healing_metadata = Some(HealingMetadata::new(
+    ///     vec![CoercionFlag::StrippedMarkdown],
+    ///     0.8,
+    ///     "Parse error".to_string(),
+    /// ));
+    ///
+    /// assert_eq!(response.confidence(), 0.8);
+    /// ```
+    pub fn confidence(&self) -> f32 {
+        self.healing_metadata
+            .as_ref()
+            .map(|m| m.confidence)
+            .unwrap_or(1.0)
     }
 }
 
@@ -169,10 +281,13 @@ mod tests {
             usage: Usage::new(10, 5),
             created: Some(1234567890),
             provider: Some("openai".to_string()),
+            healing_metadata: None,
         };
 
         assert_eq!(response.content(), Some("Hello!"));
         assert_eq!(response.first_choice().unwrap().index, 0);
+        assert!(!response.was_healed());
+        assert_eq!(response.confidence(), 1.0);
     }
 
     #[test]
@@ -184,6 +299,7 @@ mod tests {
             usage: Usage::new(10, 0),
             created: None,
             provider: None,
+            healing_metadata: None,
         };
 
         assert_eq!(response.content(), None);
@@ -227,6 +343,7 @@ mod tests {
             usage: Usage::new(10, 5),
             created: None,
             provider: None,
+            healing_metadata: None,
         };
 
         let json = serde_json::to_string(&response).unwrap();
@@ -276,10 +393,83 @@ mod tests {
             usage: Usage::new(10, 5),
             created: None,
             provider: None,
+            healing_metadata: None,
         };
 
         let json = serde_json::to_value(&response).unwrap();
         assert!(json.get("created").is_none());
         assert!(json.get("provider").is_none());
+        assert!(json.get("healing_metadata").is_none());
+    }
+
+    #[test]
+    fn test_healing_metadata() {
+        use crate::coercion::CoercionFlag;
+
+        let metadata = HealingMetadata::new(
+            vec![CoercionFlag::StrippedMarkdown],
+            0.9,
+            "Parse error".to_string(),
+        );
+
+        assert_eq!(metadata.confidence, 0.9);
+        assert!(!metadata.has_major_coercions());
+        assert!(metadata.is_confident(0.8));
+        assert!(!metadata.is_confident(0.95));
+
+        let major_metadata = HealingMetadata::new(
+            vec![CoercionFlag::TruncatedJson],
+            0.7,
+            "Parse error".to_string(),
+        );
+
+        assert!(major_metadata.has_major_coercions());
+    }
+
+    #[test]
+    fn test_healing_metadata_confidence_clamped() {
+        let metadata = HealingMetadata::new(
+            vec![],
+            1.5,
+            "error".to_string(),
+        );
+        assert_eq!(metadata.confidence, 1.0);
+
+        let metadata = HealingMetadata::new(
+            vec![],
+            -0.5,
+            "error".to_string(),
+        );
+        assert_eq!(metadata.confidence, 0.0);
+    }
+
+    #[test]
+    fn test_response_with_healing_metadata() {
+        use crate::coercion::CoercionFlag;
+
+        let metadata = HealingMetadata::new(
+            vec![CoercionFlag::StrippedMarkdown, CoercionFlag::FixedTrailingComma],
+            0.85,
+            "JSON parse error".to_string(),
+        );
+
+        let response = CompletionResponse {
+            id: "resp_123".to_string(),
+            model: "gpt-4".to_string(),
+            choices: vec![],
+            usage: Usage::new(10, 5),
+            created: None,
+            provider: None,
+            healing_metadata: Some(metadata),
+        };
+
+        assert!(response.was_healed());
+        assert_eq!(response.confidence(), 0.85);
+
+        let json = serde_json::to_string(&response).unwrap();
+        let parsed: CompletionResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(response, parsed);
+        assert!(parsed.was_healed());
+        assert_eq!(parsed.confidence(), 0.85);
     }
 }

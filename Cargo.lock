@@ -2140,6 +2140,7 @@ dependencies = [
  "governor",
  "metrics",
  "metrics-exporter-prometheus",
+ "pin-project-lite",
  "reqwest",
  "serde",
  "serde_json",
