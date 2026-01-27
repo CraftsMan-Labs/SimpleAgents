@@ -5,8 +5,16 @@ Python bindings for SimpleAgents (PyO3-based).
 ## Build
 
 ```sh
-maturin build -m crates/simple-agents-py/Cargo.toml
+uv build
 ```
+
+## Publish
+
+```sh
+uv publish
+```
+
+Set `UV_PUBLISH_TOKEN` or pass `--token` to publish to PyPI.
 
 ## Usage
 
@@ -22,3 +30,10 @@ print(response)
 
 - `Client` reads provider configuration from environment variables (e.g. `OPENAI_API_KEY`).
 - `max_tokens` and `temperature` are optional.
+
+## Tests
+
+```sh
+uv pip install -e .[dev]
+uv run pytest
+```
