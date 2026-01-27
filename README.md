@@ -27,6 +27,8 @@ SimpleAgents combines the best of **LiteLLM's multi-provider capabilities** with
 
 ### Installation
 
+#### Rust
+
 Add to your `Cargo.toml`:
 
 ```toml
@@ -37,7 +39,20 @@ simple-agents-cache = "0.1.0"  # Optional
 tokio = { version = "1.35", features = ["full"] }
 ```
 
-### Basic Example
+#### Python
+
+[![PyPI](https://img.shields.io/pypi/v/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
+[![PyPI - Downloads](https://img.shields.io/pypi/dm/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
+
+Install from [PyPI](https://pypi.org/project/simple-agents-py/):
+
+```sh
+pip install simple-agents-py
+```
+
+See [crates/simple-agents-py/README.md](crates/simple-agents-py/README.md) for Python usage examples.
+
+### Basic Example (Rust)
 
 ```rust
 use simple_agents_types::prelude::*;
