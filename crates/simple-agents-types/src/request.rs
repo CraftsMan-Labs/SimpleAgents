@@ -5,6 +5,35 @@
 use crate::error::{Result, ValidationError};
 use crate::message::Message;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Response format for structured outputs
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ResponseFormat {
+    /// Default text response
+    Text,
+    /// JSON object mode (no schema validation)
+    JsonObject,
+    /// Structured output with JSON schema (OpenAI only)
+    #[serde(rename = "json_schema")]
+    JsonSchema {
+        /// The JSON schema definition
+        json_schema: JsonSchemaFormat,
+    },
+}
+
+/// JSON schema format for structured outputs
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct JsonSchemaFormat {
+    /// Name of the schema
+    pub name: String,
+    /// The JSON schema
+    pub schema: Value,
+    /// Whether to use strict mode (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
 
 /// A completion request to an LLM provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +69,9 @@ pub struct CompletionRequest {
     /// User identifier (for abuse detection)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// Response format for structured outputs (OpenAI only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<ResponseFormat>,
 }
 
 impl CompletionRequest {
@@ -204,6 +236,7 @@ pub struct CompletionRequestBuilder {
     presence_penalty: Option<f32>,
     frequency_penalty: Option<f32>,
     user: Option<String>,
+    response_format: Option<ResponseFormat>,
 }
 
 impl CompletionRequestBuilder {
@@ -279,6 +312,30 @@ impl CompletionRequestBuilder {
         self
     }
 
+    /// Set response format.
+    pub fn response_format(mut self, format: ResponseFormat) -> Self {
+        self.response_format = Some(format);
+        self
+    }
+
+    /// Enable JSON object mode (no schema validation).
+    pub fn json_mode(mut self) -> Self {
+        self.response_format = Some(ResponseFormat::JsonObject);
+        self
+    }
+
+    /// Enable structured output with JSON schema.
+    pub fn json_schema(mut self, name: impl Into<String>, schema: Value) -> Self {
+        self.response_format = Some(ResponseFormat::JsonSchema {
+            json_schema: JsonSchemaFormat {
+                name: name.into(),
+                schema,
+                strict: Some(true),
+            },
+        });
+        self
+    }
+
     /// Build and validate the request.
     pub fn build(self) -> Result<CompletionRequest> {
         let model = self.model.ok_or_else(|| ValidationError::Empty {
@@ -297,6 +354,7 @@ impl CompletionRequestBuilder {
             presence_penalty: self.presence_penalty,
             frequency_penalty: self.frequency_penalty,
             user: self.user,
+            response_format: self.response_format,
         };
 
         request.validate()?;
