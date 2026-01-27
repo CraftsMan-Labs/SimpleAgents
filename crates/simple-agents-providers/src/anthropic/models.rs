@@ -1,6 +1,30 @@
 //! Anthropic API request and response types.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Anthropic output format for structured outputs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AnthropicOutputFormat {
+    /// JSON schema mode for structured outputs
+    JsonSchema {
+        /// The JSON schema definition
+        json_schema: AnthropicJsonSchema,
+    },
+}
+
+/// Anthropic JSON schema format
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnthropicJsonSchema {
+    /// Name of the schema
+    pub name: String,
+    /// The JSON schema
+    pub schema: Value,
+    /// Whether to use strict mode (default: true)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+}
 
 /// Anthropic chat completion request
 ///
@@ -37,6 +61,10 @@ pub struct AnthropicCompletionRequest<'a> {
     /// Stop sequences (borrowed when possible)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop_sequences: Option<&'a Vec<String>>,
+
+    /// Output format for structured outputs (Claude Sonnet 4.5+, requires beta header)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_format: Option<AnthropicOutputFormat>,
 }
 
 /// Anthropic message format
@@ -138,6 +166,7 @@ mod tests {
             top_p: None,
             stream: Some(false),
             stop_sequences: None,
+            output_format: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();

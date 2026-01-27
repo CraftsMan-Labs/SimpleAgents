@@ -177,11 +177,28 @@ impl Provider for AnthropicProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
+        use simple_agents_types::request::ResponseFormat;
+        use crate::anthropic::models::{AnthropicOutputFormat, AnthropicJsonSchema};
+
         // Extract system prompt
         let system = Self::extract_system_prompt(&req.messages);
 
         // Transform messages (excluding system)
         let messages = Self::transform_messages(&req.messages);
+
+        // Convert ResponseFormat to Anthropic's output_format
+        let output_format = req.response_format.as_ref().and_then(|rf| match rf {
+            ResponseFormat::JsonSchema { json_schema } => Some(AnthropicOutputFormat::JsonSchema {
+                json_schema: AnthropicJsonSchema {
+                    name: json_schema.name.clone(),
+                    schema: json_schema.schema.clone(),
+                    strict: json_schema.strict,
+                },
+            }),
+            // Anthropic doesn't have a JsonObject mode without schema
+            // So we skip it (user should provide a schema)
+            ResponseFormat::JsonObject | ResponseFormat::Text => None,
+        });
 
         // Build Anthropic-specific request
         let anthropic_request = AnthropicCompletionRequest {
@@ -193,26 +210,38 @@ impl Provider for AnthropicProvider {
             top_p: req.top_p,
             stream: req.stream,
             stop_sequences: req.stop.as_ref(),
+            output_format,
         };
 
         let body = serde_json::to_value(&anthropic_request)?;
 
+        // Build headers
+        let mut headers = vec![
+            (
+                std::borrow::Cow::Borrowed("x-api-key"),
+                std::borrow::Cow::Owned(self.api_key.expose().to_string())
+            ),
+            (
+                std::borrow::Cow::Borrowed("anthropic-version"),
+                std::borrow::Cow::Borrowed(Self::API_VERSION)
+            ),
+            (
+                std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
+                std::borrow::Cow::Borrowed("application/json")
+            ),
+        ];
+
+        // Add beta header for structured outputs
+        if req.response_format.is_some() {
+            headers.push((
+                std::borrow::Cow::Borrowed("anthropic-beta"),
+                std::borrow::Cow::Borrowed("structured-outputs-2025-11-13")
+            ));
+        }
+
         Ok(ProviderRequest {
             url: format!("{}/messages", self.base_url),
-            headers: vec![
-                (
-                    std::borrow::Cow::Borrowed("x-api-key"),
-                    std::borrow::Cow::Owned(self.api_key.expose().to_string())
-                ),
-                (
-                    std::borrow::Cow::Borrowed("anthropic-version"),
-                    std::borrow::Cow::Borrowed(Self::API_VERSION)
-                ),
-                (
-                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
-                    std::borrow::Cow::Borrowed("application/json")
-                ),
-            ],
+            headers,
             body,
             timeout: None,
         })
