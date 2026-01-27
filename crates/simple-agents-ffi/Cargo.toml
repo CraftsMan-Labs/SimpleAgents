@@ -3,6 +3,8 @@ name = "simple-agents-ffi"
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "C-compatible FFI bindings for SimpleAgents"
+readme = "README.md"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]
