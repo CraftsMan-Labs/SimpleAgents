@@ -68,6 +68,11 @@ publish-crates:
 	done
 
 publish-python:
-	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && UV_PUBLISH_TOKEN=$$PYPI_TOKEN uv publish"
+	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && uv build --sdist"
+	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && \
+		TOKEN_SOURCE=$$(if [ -n \"\$$V_PUBLISH_TOKEN\" ]; then echo V_PUBLISH_TOKEN; elif [ -n \"\$$UV_PUBLISH_TOKEN\" ]; then echo UV_PUBLISH_TOKEN; else echo NONE; fi); \
+		TOKEN_VALUE=\$${V_PUBLISH_TOKEN:-\$$UV_PUBLISH_TOKEN}; \
+		echo \"[publish-python] token_source=\$$TOKEN_SOURCE token_len=\$${#TOKEN_VALUE}\"; \
+		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish dist/*.tar.gz"
 
 publish-all: publish-crates publish-python
