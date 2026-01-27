@@ -102,6 +102,7 @@ fn demo_responses() {
         usage: Usage::new(10, 15),
         created: Some(1234567890),
         provider: Some("openai".to_string()),
+        healing_metadata: None,
     };
 
     println!("  Response ID: {}", response.id);

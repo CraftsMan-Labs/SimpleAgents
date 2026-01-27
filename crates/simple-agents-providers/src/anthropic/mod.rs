@@ -16,7 +16,11 @@ pub use error::AnthropicError;
 use async_trait::async_trait;
 use reqwest::Client;
 use simple_agents_types::prelude::*;
+use simple_agents_types::request::ResponseFormat;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::healing_integration::{HealingConfig, HealingIntegration};
 
 /// Anthropic API provider
 #[derive(Clone)]
@@ -25,6 +29,8 @@ pub struct AnthropicProvider {
     base_url: String,
     client: Client,
     rate_limiter: crate::rate_limit::MaybeRateLimiter,
+    healing: Option<Arc<HealingIntegration>>,
+    current_request: Arc<Mutex<Option<CompletionRequest>>>,
 }
 
 impl std::fmt::Debug for AnthropicProvider {
@@ -107,6 +113,8 @@ impl AnthropicProvider {
             base_url,
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
+            healing: None,
+            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -123,12 +131,37 @@ impl AnthropicProvider {
             base_url,
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
+            healing: None,
+            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
     /// Enable rate limiting with the given configuration.
     pub fn with_rate_limit(mut self, config: simple_agents_types::config::RateLimitConfig) -> Self {
         self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
+        self
+    }
+
+    /// Enable healing system for automatic recovery from malformed responses.
+    ///
+    /// When enabled, if native structured output parsing fails, the healing system
+    /// will attempt to recover the response using tolerant parsing and type coercion.
+    ///
+    /// # Example
+    /// ```
+    /// use simple_agents_providers::anthropic::AnthropicProvider;
+    /// use simple_agents_providers::healing_integration::HealingConfig;
+    /// use simple_agents_types::prelude::*;
+    ///
+    /// # fn example() -> Result<()> {
+    /// let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890")?;
+    /// let provider = AnthropicProvider::new(api_key)?
+    ///     .with_healing(HealingConfig::default());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_healing(mut self, config: HealingConfig) -> Self {
+        self.healing = Some(Arc::new(HealingIntegration::new(config)));
         self
     }
 
@@ -179,6 +212,13 @@ impl Provider for AnthropicProvider {
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
         use simple_agents_types::request::ResponseFormat;
         use crate::anthropic::models::{AnthropicOutputFormat, AnthropicJsonSchema};
+
+        // Store request context for potential healing
+        if self.healing.is_some() && req.response_format.is_some() {
+            if let Ok(mut current) = self.current_request.lock() {
+                *current = Some(req.clone());
+            }
+        }
 
         // Extract system prompt
         let system = Self::extract_system_prompt(&req.messages);
@@ -338,52 +378,125 @@ impl Provider for AnthropicProvider {
     }
 
     fn transform_response(&self, resp: ProviderResponse) -> Result<CompletionResponse> {
-        // Parse Anthropic response
-        let anthropic_response: AnthropicCompletionResponse = serde_json::from_value(resp.body)
-            .map_err(|e| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", e))
+        // Try native parsing first (fast path)
+        match serde_json::from_value::<AnthropicCompletionResponse>(resp.body.clone()) {
+            Ok(anthropic_response) => {
+                // Extract text content from content blocks
+                let content = anthropic_response.content
+                    .iter()
+                    .map(|block| {
+                        let AnthropicContent::Text { text } = block;
+                        text.as_str()
+                    })
+                    .collect::<Vec<&str>>()
+                    .join("");
+
+                // Transform to unified format
+                let choice = CompletionChoice {
+                    index: 0,
+                    message: Message {
+                        role: Role::Assistant,
+                        content,
+                        name: None,
+                        tool_call_id: None,
+                    },
+                    finish_reason: anthropic_response.stop_reason.map(|s| match s.as_str() {
+                        "end_turn" => FinishReason::Stop,
+                        "max_tokens" => FinishReason::Length,
+                        "stop_sequence" => FinishReason::Stop,
+                        _ => FinishReason::Stop,
+                    })
+                    .unwrap_or(FinishReason::Stop),
+                    logprobs: None,
+                };
+
+                Ok(CompletionResponse {
+                    id: anthropic_response.id,
+                    model: anthropic_response.model,
+                    choices: vec![choice],
+                    usage: Usage {
+                        prompt_tokens: anthropic_response.usage.input_tokens,
+                        completion_tokens: anthropic_response.usage.output_tokens,
+                        total_tokens: anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
+                    },
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                })
+            }
+            Err(parse_error) => {
+                // Native parsing failed - try healing if enabled
+                if self.healing.is_some() {
+                    self.try_healing(&resp, parse_error)
+                } else {
+                    Err(SimpleAgentsError::Provider(
+                        ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", parse_error))
+                    ))
+                }
+            }
+        }
+    }
+}
+
+impl AnthropicProvider {
+    /// Attempt to heal a malformed response using the healing system.
+    fn try_healing(&self, resp: &ProviderResponse, original_error: serde_json::Error) -> Result<CompletionResponse> {
+        let healing = self.healing.as_ref().unwrap();
+
+        // Get the stored request context
+        let request = self.current_request.lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .ok_or_else(|| SimpleAgentsError::Provider(
+                ProviderError::InvalidResponse("No request context available for healing".to_string())
             ))?;
 
-        // Extract text content from content blocks
-        let content = anthropic_response.content
-            .iter()
-            .map(|block| {
-                let AnthropicContent::Text { text } = block;
-                text.as_str()
-            })
-            .collect::<Vec<&str>>()
-            .join("");
-
-        // Transform to unified format
-        let choice = CompletionChoice {
-            index: 0,
-            message: Message {
-                role: Role::Assistant,
-                content,
-                name: None,
-                tool_call_id: None,
-            },
-            finish_reason: anthropic_response.stop_reason.map(|s| match s.as_str() {
-                "end_turn" => FinishReason::Stop,
-                "max_tokens" => FinishReason::Length,
-                "stop_sequence" => FinishReason::Stop,
-                _ => FinishReason::Stop,
-            })
-            .unwrap_or(FinishReason::Stop),
-            logprobs: None,
+        // Extract JSON schema from request
+        let json_schema = match request.response_format.as_ref() {
+            Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
+            _ => {
+                return Err(SimpleAgentsError::Provider(
+                    ProviderError::InvalidResponse("No JSON schema available for healing".to_string())
+                ))
+            }
         };
 
+        // Extract the content from the response - Anthropic uses content array
+        let content = resp.body["content"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|block| block["text"].as_str())
+            .ok_or_else(|| SimpleAgentsError::Provider(
+                ProviderError::InvalidResponse("No text content in response".to_string())
+            ))?;
+
+        // Attempt healing
+        let healed = healing.heal_response(
+            content,
+            &json_schema.schema,
+            &format!("JSON parse error: {}", original_error),
+        )?;
+
+        // Construct response with healed content
+        let healed_content = serde_json::to_string(&healed.value)?;
+
         Ok(CompletionResponse {
-            id: anthropic_response.id,
-            model: anthropic_response.model,
-            choices: vec![choice],
+            id: resp.body["id"].as_str().unwrap_or("healed").to_string(),
+            model: resp.body["model"].as_str().unwrap_or("unknown").to_string(),
+            choices: vec![CompletionChoice {
+                index: 0,
+                message: Message::assistant(healed_content),
+                finish_reason: FinishReason::Stop,
+                logprobs: None,
+            }],
             usage: Usage {
-                prompt_tokens: anthropic_response.usage.input_tokens,
-                completion_tokens: anthropic_response.usage.output_tokens,
-                total_tokens: anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
+                prompt_tokens: resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
+                total_tokens: (resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0) + resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0)) as u32,
             },
             created: None,
             provider: Some(self.name().to_string()),
+            healing_metadata: Some(healed.metadata),
         })
     }
 

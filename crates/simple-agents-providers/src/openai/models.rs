@@ -194,6 +194,7 @@ mod tests {
             n: None,
             stream: Some(false),
             stop: None,
+            response_format: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
