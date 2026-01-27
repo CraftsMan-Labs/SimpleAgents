@@ -1,0 +1,28 @@
+[build-system]
+requires = ["maturin>=1.5,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "simple-agents-py"
+version = "0.1.0"
+description = "Python bindings for SimpleAgents"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT OR Apache-2.0" }
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "simple_agents_py"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
