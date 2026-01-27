@@ -16,7 +16,11 @@ pub use error::OpenAIError;
 use async_trait::async_trait;
 use reqwest::Client;
 use simple_agents_types::prelude::*;
+use simple_agents_types::request::ResponseFormat;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+use crate::healing_integration::{HealingConfig, HealingIntegration};
 
 /// OpenAI API provider
 #[derive(Clone)]
@@ -25,6 +29,8 @@ pub struct OpenAIProvider {
     base_url: String,
     client: Client,
     rate_limiter: crate::rate_limit::MaybeRateLimiter,
+    healing: Option<Arc<HealingIntegration>>,
+    current_request: Arc<Mutex<Option<CompletionRequest>>>,
 }
 
 impl std::fmt::Debug for OpenAIProvider {
@@ -134,6 +140,8 @@ impl OpenAIProvider {
             base_url,
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
+            healing: None,
+            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -154,6 +162,29 @@ impl OpenAIProvider {
     /// ```
     pub fn with_rate_limit(mut self, config: simple_agents_types::config::RateLimitConfig) -> Self {
         self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
+        self
+    }
+
+    /// Enable healing system for automatic recovery from malformed responses.
+    ///
+    /// When enabled, if native structured output parsing fails, the healing system
+    /// will attempt to recover the response using tolerant parsing and type coercion.
+    ///
+    /// # Example
+    /// ```
+    /// use simple_agents_providers::openai::OpenAIProvider;
+    /// use simple_agents_providers::healing_integration::HealingConfig;
+    /// use simple_agents_types::prelude::*;
+    ///
+    /// # fn example() -> Result<()> {
+    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
+    /// let provider = OpenAIProvider::new(api_key)?
+    ///     .with_healing(HealingConfig::default());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn with_healing(mut self, config: HealingConfig) -> Self {
+        self.healing = Some(Arc::new(HealingIntegration::new(config)));
         self
     }
 
@@ -202,6 +233,8 @@ impl OpenAIProvider {
             base_url,
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
+            healing: None,
+            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -218,6 +251,13 @@ impl Provider for OpenAIProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
+        // Store request context for potential healing
+        if self.healing.is_some() && req.response_format.is_some() {
+            if let Ok(mut current) = self.current_request.lock() {
+                *current = Some(req.clone());
+            }
+        }
+
         // Build OpenAI-specific request (borrowing messages to avoid cloning)
         let openai_request = OpenAICompletionRequest {
             model: &req.model,
@@ -361,41 +401,113 @@ impl Provider for OpenAIProvider {
     }
 
     fn transform_response(&self, resp: ProviderResponse) -> Result<CompletionResponse> {
-        // Parse OpenAI response
-        let openai_response: OpenAICompletionResponse = serde_json::from_value(resp.body)
-            .map_err(|e| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", e))
+        // Try native parsing first (fast path)
+        match serde_json::from_value::<OpenAICompletionResponse>(resp.body.clone()) {
+            Ok(openai_response) => {
+                // Native parsing succeeded - transform to unified format
+                let choices: Vec<CompletionChoice> = openai_response.choices.iter().map(|choice| {
+                    CompletionChoice {
+                        index: choice.index,
+                        message: choice.message.clone(),
+                        finish_reason: choice.finish_reason.as_ref()
+                            .map(|s: &String| match s.as_str() {
+                                "stop" => FinishReason::Stop,
+                                "length" => FinishReason::Length,
+                                "content_filter" => FinishReason::ContentFilter,
+                                "tool_calls" => FinishReason::ToolCalls,
+                                _ => FinishReason::Stop,
+                            })
+                            .unwrap_or(FinishReason::Stop),
+                        logprobs: None,
+                    }
+                }).collect();
+
+                Ok(CompletionResponse {
+                    id: openai_response.id,
+                    model: openai_response.model,
+                    choices,
+                    usage: Usage {
+                        prompt_tokens: openai_response.usage.prompt_tokens,
+                        completion_tokens: openai_response.usage.completion_tokens,
+                        total_tokens: openai_response.usage.total_tokens,
+                    },
+                    created: Some(openai_response.created as i64),
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                })
+            }
+            Err(parse_error) => {
+                // Native parsing failed - try healing if enabled
+                if self.healing.is_some() {
+                    self.try_healing(&resp, parse_error)
+                } else {
+                    Err(SimpleAgentsError::Provider(
+                        ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", parse_error))
+                    ))
+                }
+            }
+        }
+    }
+
+}
+
+impl OpenAIProvider {
+    /// Attempt to heal a malformed response using the healing system.
+    fn try_healing(&self, resp: &ProviderResponse, original_error: serde_json::Error) -> Result<CompletionResponse> {
+        let healing = self.healing.as_ref().unwrap();
+
+        // Get the stored request context
+        let request = self.current_request.lock()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .ok_or_else(|| SimpleAgentsError::Provider(
+                ProviderError::InvalidResponse("No request context available for healing".to_string())
             ))?;
 
-        // Transform choices to unified format
-        let choices: Vec<CompletionChoice> = openai_response.choices.iter().map(|choice| {
-            CompletionChoice {
-                index: choice.index,
-                message: choice.message.clone(),
-                finish_reason: choice.finish_reason.as_ref()
-                    .map(|s: &String| match s.as_str() {
-                        "stop" => FinishReason::Stop,
-                        "length" => FinishReason::Length,
-                        "content_filter" => FinishReason::ContentFilter,
-                        "tool_calls" => FinishReason::ToolCalls,
-                        _ => FinishReason::Stop,
-                    })
-                    .unwrap_or(FinishReason::Stop),
-                logprobs: None,
+        // Extract JSON schema from request
+        let json_schema = match request.response_format.as_ref() {
+            Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
+            _ => {
+                return Err(SimpleAgentsError::Provider(
+                    ProviderError::InvalidResponse("No JSON schema available for healing".to_string())
+                ))
             }
-        }).collect();
+        };
+
+        // Extract the content from the response
+        let content = resp.body["choices"][0]["message"]["content"]
+            .as_str()
+            .ok_or_else(|| SimpleAgentsError::Provider(
+                ProviderError::InvalidResponse("No content field in response".to_string())
+            ))?;
+
+        // Attempt healing
+        let healed = healing.heal_response(
+            content,
+            &json_schema.schema,
+            &format!("JSON parse error: {}", original_error),
+        )?;
+
+        // Construct response with healed content
+        let healed_content = serde_json::to_string(&healed.value)?;
 
         Ok(CompletionResponse {
-            id: openai_response.id,
-            model: openai_response.model,
-            choices,
+            id: resp.body["id"].as_str().unwrap_or("healed").to_string(),
+            model: resp.body["model"].as_str().unwrap_or("unknown").to_string(),
+            choices: vec![CompletionChoice {
+                index: 0,
+                message: Message::assistant(healed_content),
+                finish_reason: FinishReason::Stop,
+                logprobs: None,
+            }],
             usage: Usage {
-                prompt_tokens: openai_response.usage.prompt_tokens,
-                completion_tokens: openai_response.usage.completion_tokens,
-                total_tokens: openai_response.usage.total_tokens,
+                prompt_tokens: resp.body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: resp.body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                total_tokens: resp.body["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
             },
-            created: Some(openai_response.created as i64),
+            created: resp.body["created"].as_i64(),
             provider: Some(self.name().to_string()),
+            healing_metadata: Some(healed.metadata),
         })
     }
 

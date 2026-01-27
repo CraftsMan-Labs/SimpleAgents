@@ -175,6 +175,7 @@ mod tests {
             usage: Usage::new(10, 5),
             created: None,
             provider: None,
+            healing_metadata: None,
         };
 
         assert_eq!(response.content(), Some("Hello!"));

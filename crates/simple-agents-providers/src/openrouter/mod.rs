@@ -303,6 +303,7 @@ impl Provider for OpenRouterProvider {
             },
             created: Some(openai_response.created as i64),
             provider: Some(self.name().to_string()),
+            healing_metadata: None,
         })
     }
 
