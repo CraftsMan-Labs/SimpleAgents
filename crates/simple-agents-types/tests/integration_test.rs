@@ -39,6 +39,7 @@ fn test_complete_request_response_cycle() {
         usage: Usage::new(20, 10),
         created: Some(1234567890),
         provider: Some("openai".to_string()),
+        healing_metadata: None,
     };
 
     // Access response
