@@ -2,11 +2,20 @@
 
 This guide explains how to get structured JSON outputs from LLMs using SimpleAgents.
 
+## Provider Support
+
+| Provider | Support | Models | Parameter | Beta Header |
+|----------|---------|--------|-----------|-------------|
+| **OpenAI** | ✅ Full | gpt-4o-mini, gpt-4o, gpt-4-turbo | `response_format` | Not required |
+| **Anthropic** | ✅ Full | claude-sonnet-4.5, claude-opus-4.5, claude-haiku-4.5 | `output_format` | `anthropic-beta: structured-outputs-2025-11-13` |
+| **OpenRouter** | ✅ Passthrough | Any OpenAI model via OpenRouter | `response_format` | Not required |
+| **Other** | ❌ Use Healing System | All models | N/A | N/A |
+
 ## Two Approaches
 
-### 1. Native OpenAI Structured Outputs (Recommended for OpenAI)
+### 1. Native Structured Outputs (Recommended for OpenAI/Anthropic)
 
-Use OpenAI's native `response_format` with JSON schema for guaranteed structure validation.
+Use provider-native structured outputs with JSON schema for guaranteed structure validation.
 
 **Pros:**
 - ✅ Guaranteed to match schema
@@ -15,8 +24,8 @@ Use OpenAI's native `response_format` with JSON schema for guaranteed structure 
 - ✅ Fastest approach
 
 **Cons:**
-- ❌ OpenAI only (not portable to other LLMs)
-- ❌ Requires gpt-4o-mini, gpt-4o, or gpt-4-turbo
+- ❌ Limited to specific providers/models
+- ❌ Different implementations per provider
 
 ### 2. Healing System (Universal Approach)
 
@@ -304,22 +313,96 @@ let json_result = if provider.name() == "openai" {
 
 ---
 
+## Quick Start: Anthropic Claude Structured Outputs
+
+Anthropic uses the same API in SimpleAgents, but with different underlying implementation:
+
+```rust
+use simple_agents_providers::anthropic::AnthropicProvider;
+use simple_agents_providers::Provider;
+use simple_agents_types::prelude::*;
+use serde_json::json;
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let api_key = ApiKey::new(std::env::var("ANTHROPIC_API_KEY")?)?;
+    let provider = AnthropicProvider::new(api_key)?;
+
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "name": { "type": "string" },
+            "age": { "type": "integer" }
+        },
+        "required": ["name", "age"]
+    });
+
+    let request = CompletionRequest::builder()
+        .model("claude-sonnet-4.5")
+        .message(Message::user("Create a user profile"))
+        .json_schema("user_profile", schema)  // Same API!
+        .build()?;
+
+    // ... execute request ...
+    // Output is guaranteed to match the schema!
+    Ok(())
+}
+```
+
+**Note:** Anthropic automatically adds the required `anthropic-beta` header when structured outputs are used.
+
+---
+
 ## Running Examples
 
 ```bash
-# Native structured output example
+# OpenAI structured output example
 export OPENAI_API_KEY="sk-..."
 cargo run --example openai_structured_output
 
-# Healing system example
+# Anthropic structured output example
+export ANTHROPIC_API_KEY="sk-ant-..."
+cargo run --example anthropic_structured_output
+
+# Healing system example (works with any provider)
 cargo run --example streaming_with_healing
 ```
+
+---
+
+## Provider-Specific Details
+
+### OpenAI
+
+- **API Parameter**: `response_format`
+- **Modes**: `text`, `json_object`, `json_schema`
+- **Models**: gpt-4o-mini, gpt-4o, gpt-4-turbo
+- **Beta Header**: Not required
+- **Streaming**: Supported
+
+### Anthropic
+
+- **API Parameter**: `output_format` (converted automatically)
+- **Modes**: `json_schema` only (no plain json_object mode)
+- **Models**: claude-sonnet-4.5, claude-opus-4.5, claude-haiku-4.5
+- **Beta Header**: `anthropic-beta: structured-outputs-2025-11-13` (added automatically)
+- **Streaming**: Supported
+- **Public Beta**: Available since November 14, 2025
+
+### OpenRouter
+
+- **API Parameter**: `response_format` (passthrough)
+- **Modes**: Depends on underlying model
+- **Models**: Any OpenAI model accessed via OpenRouter
+- **Note**: Only works if the underlying model supports structured outputs
 
 ---
 
 ## JSON Schema Resources
 
 - [OpenAI Structured Outputs Docs](https://platform.openai.com/docs/guides/structured-outputs)
+- [Anthropic Structured Outputs Docs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+- [OpenRouter Structured Outputs Docs](https://openrouter.ai/docs/guides/features/structured-outputs)
 - [JSON Schema Specification](https://json-schema.org/)
 - [JSON Schema Validator](https://www.jsonschemavalidator.net/)
 
