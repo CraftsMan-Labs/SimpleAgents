@@ -165,6 +165,7 @@ impl Provider for OpenRouterProvider {
             n: req.n,
             stream: req.stream,
             stop: req.stop.as_ref(),
+            response_format: req.response_format.as_ref(),
         };
 
         let body = serde_json::to_value(&openai_request)?;

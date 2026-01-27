@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use simple_agents_types::prelude::Message;
+use simple_agents_types::request::ResponseFormat;
 
 /// OpenAI chat completion request
 ///
@@ -37,6 +38,10 @@ pub struct OpenAICompletionRequest<'a> {
     /// Stop sequences (borrowed when possible)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<&'a Vec<String>>,
+
+    /// Response format for structured outputs
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_format: Option<&'a ResponseFormat>,
 }
 
 /// OpenAI chat completion response
