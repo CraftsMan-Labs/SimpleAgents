@@ -1,6 +1,9 @@
 .PHONY: help test clippy fmt example-providers example-full-api examples \
 	release-ffi release-python release-go release-node release-all \
-	publish-crates publish-python publish-all
+	publish-crates publish-python publish-all \
+	check-publish publish-crates-dry publish-python-dry \
+	version-get version-patch version-minor version-major version-set \
+	tag-release version-next-patch version-next-minor version-next-major
 
 EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
@@ -12,22 +15,42 @@ DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agents-types simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
 	simple-agents-core simple-agents-ffi
+WORKSPACE_CARGO ?= Cargo.toml
+VERSION ?= 0.1.0
 
 help:
-	@echo "make test                  - Run all tests"
-	@echo "make clippy                - Run clippy on all targets"
-	@echo "make fmt                   - Check formatting"
-	@echo "make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
-	@echo "make example-full-api      - Run examples/full_api_example.rs"
-	@echo "make examples              - Run provider example + full_api_example"
-	@echo "make release-ffi           - Build C FFI library (for Go/C/other langs)"
-	@echo "make release-python        - Build Python wheels via uv"
-	@echo "make release-go            - Build Go bindings against release FFI"
-	@echo "make release-node          - Build Node napi module (Rust cdylib)"
-	@echo "make release-all           - Build all language artifacts"
-	@echo "make publish-crates        - Publish Rust crates with Doppler env"
-	@echo "make publish-python        - Publish Python package with Doppler env"
-	@echo "make publish-all           - Publish Rust crates + Python package"
+	@echo "Testing & Quality:"
+	@echo "  make test                  - Run all tests"
+	@echo "  make clippy                - Run clippy on all targets"
+	@echo "  make fmt                   - Check formatting"
+	@echo "  make check-publish         - Run all pre-publish checks"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
+	@echo "  make example-full-api      - Run examples/full_api_example.rs"
+	@echo "  make examples              - Run provider example + full_api_example"
+	@echo ""
+	@echo "Building:"
+	@echo "  make release-ffi           - Build C FFI library (for Go/C/other langs)"
+	@echo "  make release-python        - Build Python wheels via uv"
+	@echo "  make release-go            - Build Go bindings against release FFI"
+	@echo "  make release-node          - Build Node napi module (Rust cdylib)"
+	@echo "  make release-all           - Build all language artifacts"
+	@echo ""
+	@echo "Publishing:"
+	@echo "  make publish-crates-dry    - Dry-run publish Rust crates"
+	@echo "  make publish-python-dry    - Dry-run publish Python package"
+	@echo "  make publish-crates        - Publish Rust crates with Doppler env"
+	@echo "  make publish-python        - Publish Python package with Doppler env"
+	@echo "  make publish-all           - Publish Rust crates + Python package"
+	@echo ""
+	@echo "Versioning:"
+	@echo "  make version-get           - Show current version"
+	@echo "  make version-patch         - Bump patch version (0.1.0 -> 0.1.1)"
+	@echo "  make version-minor         - Bump minor version (0.1.0 -> 0.2.0)"
+	@echo "  make version-major         - Bump major version (0.1.0 -> 1.0.0)"
+	@echo "  make version-set VERSION=X - Set specific version"
+	@echo "  make tag-release           - Create git tag for current version"
 
 test:
 	cargo test --all
@@ -76,3 +99,160 @@ publish-python:
 		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish dist/*.tar.gz"
 
 publish-all: publish-crates publish-python
+
+# ============================================================================
+# Pre-publish checks
+# ============================================================================
+
+check-publish:
+	@echo "==> Running pre-publish checks..."
+	@echo ""
+	@echo "==> Running tests..."
+	@$(MAKE) test
+	@echo ""
+	@echo "==> Running clippy..."
+	@$(MAKE) clippy
+	@echo ""
+	@echo "==> Checking formatting..."
+	@$(MAKE) fmt
+	@echo ""
+	@echo "==> Verifying crate metadata..."
+	@for crate in $(PUBLISH_CRATES); do \
+		echo "Checking $$crate..."; \
+		cargo package --list -p $$crate > /dev/null || exit 1; \
+	done
+	@echo ""
+	@echo "==> Dry-run publishing crates..."
+	@$(MAKE) publish-crates-dry
+	@echo ""
+	@echo "==> All pre-publish checks passed! ✓"
+
+publish-crates-dry:
+	@echo "==> Dry-run publishing Rust crates..."
+	@set -e; for crate in $(PUBLISH_CRATES); do \
+		echo ""; \
+		echo "Dry-run: $$crate"; \
+		cargo publish -p $$crate --dry-run --allow-dirty || exit 1; \
+	done
+	@echo ""
+	@echo "==> Dry-run completed successfully! ✓"
+
+publish-python-dry:
+	@echo "==> Dry-run publishing Python package..."
+	@cd $(PYTHON_PROJECT_DIR) && uv build --sdist
+	@echo "==> Build successful! ✓"
+	@echo ""
+	@echo "To publish for real, run: make publish-python"
+
+# ============================================================================
+# Version management
+# ============================================================================
+
+version-get:
+	@grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'
+
+version-next-patch:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	patch=$$((patch + 1)); \
+	echo "$$major.$$minor.$$patch"
+
+version-next-minor:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	minor=$$((minor + 1)); \
+	echo "$$major.$$minor.0"
+
+version-next-major:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	major=$$((major + 1)); \
+	echo "$$major.0.0"
+
+version-patch:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	new=$$($(MAKE) --no-print-directory version-next-patch); \
+	echo "Bumping version: $$current -> $$new"; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
+	rm -f $(WORKSPACE_CARGO).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(PY_CRATE_MANIFEST); \
+	rm -f $(PY_CRATE_MANIFEST).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
+	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	echo "Version bumped to $$new"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  1. Review changes: git diff"; \
+	echo "  2. Run checks: make check-publish"; \
+	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
+	echo "  4. Tag: make tag-release"; \
+	echo "  5. Push: git push origin main --tags"
+
+version-minor:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	new=$$($(MAKE) --no-print-directory version-next-minor); \
+	echo "Bumping version: $$current -> $$new"; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
+	rm -f $(WORKSPACE_CARGO).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(PY_CRATE_MANIFEST); \
+	rm -f $(PY_CRATE_MANIFEST).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
+	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	echo "Version bumped to $$new"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  1. Review changes: git diff"; \
+	echo "  2. Run checks: make check-publish"; \
+	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
+	echo "  4. Tag: make tag-release"; \
+	echo "  5. Push: git push origin main --tags"
+
+version-major:
+	@current=$$($(MAKE) --no-print-directory version-get); \
+	new=$$($(MAKE) --no-print-directory version-next-major); \
+	echo "Bumping version: $$current -> $$new"; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
+	rm -f $(WORKSPACE_CARGO).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(PY_CRATE_MANIFEST); \
+	rm -f $(PY_CRATE_MANIFEST).bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
+	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	echo "Version bumped to $$new"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  1. Review changes: git diff"; \
+	echo "  2. Run checks: make check-publish"; \
+	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
+	echo "  4. Tag: make tag-release"; \
+	echo "  5. Push: git push origin main --tags"
+
+version-set:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION not specified"; \
+		echo "Usage: make version-set VERSION=0.2.0"; \
+		exit 1; \
+	fi; \
+	current=$$($(MAKE) --no-print-directory version-get); \
+	echo "Setting version: $$current -> $(VERSION)"; \
+	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' $(WORKSPACE_CARGO); \
+	rm -f $(WORKSPACE_CARGO).bak; \
+	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' $(PY_CRATE_MANIFEST); \
+	rm -f $(PY_CRATE_MANIFEST).bak; \
+	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' crates/simple-agents-py/pyproject.toml; \
+	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	echo "Version set to $(VERSION)"; \
+	echo ""; \
+	echo "Next steps:"; \
+	echo "  1. Review changes: git diff"; \
+	echo "  2. Run checks: make check-publish"; \
+	echo "  3. Commit: git commit -am 'chore(release): bump version to $(VERSION)'"; \
+	echo "  4. Tag: make tag-release"; \
+	echo "  5. Push: git push origin main --tags"
+
+tag-release:
+	@version=$$($(MAKE) --no-print-directory version-get); \
+	echo "Creating release tag v$$version..."; \
+	git tag -a "v$$version" -m "Release version $$version"; \
+	echo "Tag v$$version created"; \
+	echo ""; \
+	echo "Push with: git push origin main --tags"
