@@ -6,9 +6,12 @@ EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
 GO_BINDINGS_DIR ?= bindings/go
 PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
+PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
 DOPPLER_RUN ?= doppler run --command
-PUBLISH_CRATES ?= simple-agents-types simple-agents-providers simple-agents-cache simple-agents-core simple-agents-ffi
+PUBLISH_CRATES ?= simple-agents-types simple-agents-cache simple-agents-macros \
+	simple-agents-healing simple-agents-router simple-agents-providers \
+	simple-agents-core simple-agents-ffi
 
 help:
 	@echo "make test                  - Run all tests"
@@ -18,7 +21,7 @@ help:
 	@echo "make example-full-api      - Run examples/full_api_example.rs"
 	@echo "make examples              - Run provider example + full_api_example"
 	@echo "make release-ffi           - Build C FFI library (for Go/C/other langs)"
-	@echo "make release-python        - Build Python wheels via maturin"
+	@echo "make release-python        - Build Python wheels via uv"
 	@echo "make release-go            - Build Go bindings against release FFI"
 	@echo "make release-node          - Build Node napi module (Rust cdylib)"
 	@echo "make release-all           - Build all language artifacts"
@@ -47,7 +50,7 @@ release-ffi:
 	cargo build -p simple-agents-ffi --release
 
 release-python:
-	maturin build -m $(PY_CRATE_MANIFEST) --release
+	cd $(PYTHON_PROJECT_DIR) && uv build
 
 release-go: release-ffi
 	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
@@ -65,6 +68,6 @@ publish-crates:
 	done
 
 publish-python:
-	$(DOPPLER_RUN) "maturin publish -m $(PY_CRATE_MANIFEST)"
+	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && UV_PUBLISH_TOKEN=$$PYPI_TOKEN uv publish"
 
 publish-all: publish-crates publish-python
