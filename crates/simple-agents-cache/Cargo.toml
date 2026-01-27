@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+description = "Caching utilities for SimpleAgents"
 
 [dependencies]
 simple-agents-types = { path = "../simple-agents-types", version = "0.1.0" }
