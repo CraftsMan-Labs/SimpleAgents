@@ -1,6 +1,6 @@
 [package]
 name = "simple-agents-napi"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -12,6 +12,6 @@ napi = { version = "2.16", features = ["napi4"] }
 napi-derive = "2.16"
 tokio = { workspace = true }
 
-simple-agents-core = { path = "../simple-agents-core" }
-simple-agents-providers = { path = "../simple-agents-providers" }
-simple-agent-type = { path = "../simple-agent-type" }
+simple-agents-core = { path = "../simple-agents-core", version.workspace = true }
+simple-agents-providers = { path = "../simple-agents-providers", version.workspace = true }
+simple-agent-type = { path = "../simple-agent-type", version.workspace = true }
