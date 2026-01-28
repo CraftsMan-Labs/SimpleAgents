@@ -4,6 +4,7 @@
 
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use reqwest::Client as HttpClient;
 use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
@@ -11,6 +12,7 @@ use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 type Runtime = tokio::runtime::Runtime;
 
@@ -34,7 +36,25 @@ fn provider_from_params(
         "openai" => {
             let provider = match api_key {
                 Some(api_key) => match api_base {
-                    Some(api_base) => OpenAIProvider::with_base_url(api_key, api_base.to_string())?,
+                    Some(api_base) => {
+                        if is_local_base(api_base) {
+                            let client = HttpClient::builder()
+                                .timeout(Duration::from_secs(30))
+                                .pool_max_idle_per_host(10)
+                                .pool_idle_timeout(Duration::from_secs(90))
+                                .no_proxy()
+                                .build()
+                                .map_err(|e| {
+                                    SimpleAgentsError::Config(format!(
+                                        "Failed to create HTTP client: {}",
+                                        e
+                                    ))
+                                })?;
+                            OpenAIProvider::with_client(api_key, api_base.to_string(), client)?
+                        } else {
+                            OpenAIProvider::with_base_url(api_key, api_base.to_string())?
+                        }
+                    }
                     None => OpenAIProvider::new(api_key)?,
                 },
                 None => OpenAIProvider::from_env()?,
@@ -69,6 +89,10 @@ fn provider_from_params(
             "Unknown provider '{provider_name}'"
         ))),
     }
+}
+
+fn is_local_base(api_base: &str) -> bool {
+    api_base.contains("localhost") || api_base.contains("127.0.0.1")
 }
 
 fn build_request(
