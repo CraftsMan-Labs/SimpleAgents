@@ -370,7 +370,7 @@ impl Client {
         strict: bool,
     ) -> PyResult<String> {
         let messages = parse_messages(messages).map_err(py_err)?;
-        let schema_value: serde_json::Value = pyo3::serde::from_pyobject(schema.as_any())
+        let schema_value: serde_json::Value = pythonize::depythonize(schema)
             .map_err(|_| {
             py_err(SimpleAgentsError::Config(
                 "schema must be JSON-serializable".to_string(),
