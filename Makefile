@@ -91,12 +91,13 @@ publish-crates:
 	done
 
 publish-python:
-	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && uv build --sdist"
+	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && rm -f dist/*.tar.gz && uv build --sdist"
 	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && \
+		VERSION=$$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = \"\\(.*\\)\"/\\1/'); \
 		TOKEN_SOURCE=$$(if [ -n \"\$$V_PUBLISH_TOKEN\" ]; then echo V_PUBLISH_TOKEN; elif [ -n \"\$$UV_PUBLISH_TOKEN\" ]; then echo UV_PUBLISH_TOKEN; else echo NONE; fi); \
 		TOKEN_VALUE=\$${V_PUBLISH_TOKEN:-\$$UV_PUBLISH_TOKEN}; \
 		echo \"[publish-python] token_source=\$$TOKEN_SOURCE token_len=\$${#TOKEN_VALUE}\"; \
-		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish dist/*.tar.gz"
+		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish dist/simple_agents_py-\$$VERSION.tar.gz"
 
 publish-all: publish-crates publish-python
 
@@ -141,7 +142,7 @@ publish-crates-dry:
 
 publish-python-dry:
 	@echo "==> Dry-run publishing Python package..."
-	@cd $(PYTHON_PROJECT_DIR) && uv build --sdist
+	@cd $(PYTHON_PROJECT_DIR) && rm -f dist/*.tar.gz && uv build --sdist
 	@echo "==> Build successful! ✓"
 	@echo ""
 	@echo "To publish for real, run: make publish-python"
