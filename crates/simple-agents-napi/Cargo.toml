@@ -12,6 +12,6 @@ napi = { version = "2.16", features = ["napi4"] }
 napi-derive = "2.16"
 tokio = { workspace = true }
 
-simple-agents-core = { path = "../simple-agents-core", version = "0.1.0" }
-simple-agents-providers = { path = "../simple-agents-providers", version = "0.1.0" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.1.8" }
+simple-agents-providers = { path = "../simple-agents-providers", version = "0.1.8" }
 simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }

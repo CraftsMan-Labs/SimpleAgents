@@ -24,6 +24,15 @@ rm -f crates/simple-agents-py/pyproject.toml.bak
 echo "✓ Python package version updated"
 echo ""
 
+# Update examples package version
+if [ -f examples/pyproject.toml ]; then
+    echo "Updating examples package version..."
+    sed -i.bak "s/^version = \".*\"/version = \"$WORKSPACE_VERSION\"/" examples/pyproject.toml
+    rm -f examples/pyproject.toml.bak
+    echo "✓ Examples package version updated"
+    echo ""
+fi
+
 # Update internal dependencies in crates that don't use workspace dependencies
 echo "Checking internal dependencies..."
 
