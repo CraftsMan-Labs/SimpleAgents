@@ -1494,7 +1494,6 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-ffi",
  "pyo3-macros",
- "serde",
  "unindent",
 ]
 
@@ -1541,6 +1540,16 @@ dependencies = [
  "pyo3-build-config",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "pythonize"
+version = "0.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90fcf491425978bd889015d5430f6473d91bdfa2097262f1e731aadcf6c2113e"
+dependencies = [
+ "pyo3",
+ "serde",
 ]
 
 [[package]]
@@ -2026,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agent-type"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2041,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2050,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "clap",
  "serde",
@@ -2067,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "serde",
@@ -2094,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2105,7 +2114,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "criterion",
  "proptest",
@@ -2121,7 +2130,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2133,7 +2142,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "napi",
  "napi-derive",
@@ -2145,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2173,9 +2182,10 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "pyo3",
+ "pythonize",
  "reqwest",
  "serde_json",
  "simple-agent-type",
@@ -2186,7 +2196,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "async-trait",
  "rand 0.8.5",
