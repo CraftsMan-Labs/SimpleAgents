@@ -9,7 +9,7 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agent_type::message::Message;
-use simple_agent_type::prelude::{CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
 use std::sync::{Arc, Mutex};
 
 type Runtime = tokio::runtime::Runtime;
@@ -20,11 +20,51 @@ struct Client {
     client: SimpleAgentsClient,
 }
 
-fn provider_from_env(provider_name: &str) -> Result<Arc<dyn Provider>> {
+fn provider_from_params(
+    provider_name: &str,
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> Result<Arc<dyn Provider>> {
+    let api_key = match api_key {
+        Some(value) => Some(ApiKey::new(value)?),
+        None => None,
+    };
+
     match provider_name {
-        "openai" => Ok(Arc::new(OpenAIProvider::from_env()?)),
-        "anthropic" => Ok(Arc::new(AnthropicProvider::from_env()?)),
-        "openrouter" => Ok(Arc::new(OpenRouterProvider::from_env()?)),
+        "openai" => {
+            let provider = match api_key {
+                Some(api_key) => match api_base {
+                    Some(api_base) => OpenAIProvider::with_base_url(api_key, api_base.to_string())?,
+                    None => OpenAIProvider::new(api_key)?,
+                },
+                None => OpenAIProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
+        "anthropic" => {
+            let provider = match api_key {
+                Some(api_key) => match api_base {
+                    Some(api_base) => {
+                        AnthropicProvider::with_base_url(api_key, api_base.to_string())?
+                    }
+                    None => AnthropicProvider::new(api_key)?,
+                },
+                None => AnthropicProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
+        "openrouter" => {
+            let provider = match api_key {
+                Some(api_key) => match api_base {
+                    Some(api_base) => {
+                        OpenRouterProvider::with_base_url(api_key, api_base.to_string())?
+                    }
+                    None => OpenRouterProvider::new(api_key)?,
+                },
+                None => OpenRouterProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
         _ => Err(SimpleAgentsError::Config(format!(
             "Unknown provider '{provider_name}'"
         ))),
@@ -70,8 +110,14 @@ fn py_err(error: SimpleAgentsError) -> PyErr {
 #[allow(clippy::useless_conversion)]
 impl Client {
     #[new]
-    fn new(provider: &str) -> PyResult<Self> {
-        let provider = provider_from_env(provider).map_err(py_err)?;
+    #[pyo3(signature = (provider, api_key=None, api_base=None))]
+    fn new(provider: &str, api_key: Option<String>, api_base: Option<String>) -> PyResult<Self> {
+        let provider = provider_from_params(
+            provider,
+            api_key.as_deref(),
+            api_base.as_deref(),
+        )
+        .map_err(py_err)?;
         let client = SimpleAgentsClientBuilder::new()
             .with_provider(provider)
             .build()
