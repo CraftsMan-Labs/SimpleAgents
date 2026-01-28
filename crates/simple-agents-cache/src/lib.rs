@@ -9,4 +9,4 @@ pub use memory::InMemoryCache;
 pub use noop::NoOpCache;
 
 // Re-export the Cache trait
-pub use simple_agents_types::cache::Cache;
+pub use simple_agent_type::cache::Cache;

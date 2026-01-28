@@ -2,7 +2,7 @@
 //!
 //! Provides exponential backoff with jitter for retryable errors.
 
-use simple_agents_types::prelude::{ProviderError, SimpleAgentsError};
+use simple_agent_type::prelude::{ProviderError, SimpleAgentsError};
 use std::future::Future;
 use std::time::Duration;
 

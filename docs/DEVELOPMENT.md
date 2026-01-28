@@ -20,7 +20,7 @@ SimpleAgents is a Rust workspace with multiple crates:
 ```
 SimpleAgents/
 ├── crates/
-│   ├── simple-agents-types/       # Core types and traits
+│   ├── simple-agent-type/       # Core types and traits
 │   │   ├── src/
 │   │   │   ├── lib.rs              # Crate root
 │   │   │   ├── cache.rs            # Cache trait
@@ -62,7 +62,7 @@ SimpleAgents/
 
 ### Crate Responsibilities
 
-**simple-agents-types**
+**simple-agent-type**
 - Defines all core types and traits
 - No implementation-specific code
 - No external provider dependencies
@@ -101,7 +101,7 @@ cargo build --all --release
 ### Build Specific Crate
 
 ```bash
-cargo build -p simple-agents-types
+cargo build -p simple-agent-type
 cargo build -p simple-agents-providers
 cargo build -p simple-agents-cache
 ```
@@ -125,7 +125,7 @@ cargo test --all
 ### Run Tests for Specific Crate
 
 ```bash
-cargo test -p simple-agents-types
+cargo test -p simple-agent-type
 cargo test -p simple-agents-providers
 cargo test -p simple-agents-cache
 ```
@@ -461,7 +461,7 @@ touch crates/simple-agents-providers/src/newprovider/error.rs
 ```rust
 // models.rs
 use serde::{Deserialize, Serialize};
-use simple_agents_types::message::Message;
+use simple_agent_type::message::Message;
 
 #[derive(Debug, Serialize)]
 pub struct NewProviderRequest<'a> {
@@ -482,7 +482,7 @@ pub struct NewProviderResponse {
 
 ```rust
 // error.rs
-use simple_agents_types::error::ProviderError;
+use simple_agent_type::error::ProviderError;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -519,7 +519,7 @@ impl From<NewProviderError> for ProviderError {
 ```rust
 // mod.rs
 use async_trait::async_trait;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 pub struct NewProvider {
     api_key: ApiKey,
@@ -675,7 +675,7 @@ fn test_something() {
 4. Build release: `cargo build --all --release`
 5. Tag release: `git tag v0.x.0`
 6. Push tags: `git push --tags`
-7. Publish crates: `cargo publish -p simple-agents-types`, etc.
+7. Publish crates: `cargo publish -p simple-agent-type`, etc.
 
 ## Resources
 

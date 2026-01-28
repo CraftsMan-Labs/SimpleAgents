@@ -17,8 +17,8 @@ use std::time::Duration;
 /// # Example Implementation
 ///
 /// ```rust
-/// use simple_agents_types::cache::Cache;
-/// use simple_agents_types::error::Result;
+/// use simple_agent_type::cache::Cache;
+/// use simple_agent_type::error::Result;
 /// use async_trait::async_trait;
 /// use std::collections::HashMap;
 /// use std::sync::{Arc, Mutex};
@@ -79,7 +79,7 @@ pub trait Cache: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use simple_agents_types::cache::Cache;
+    /// use simple_agent_type::cache::Cache;
     /// use async_trait::async_trait;
     /// use std::collections::HashMap;
     /// use std::sync::{Arc, Mutex};
@@ -90,21 +90,21 @@ pub trait Cache: Send + Sync {
     /// # }
     /// # #[async_trait]
     /// # impl Cache for InMemoryCache {
-    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #     async fn get(&self, key: &str) -> simple_agent_type::error::Result<Option<Vec<u8>>> {
     /// #         let store = self.store.lock().unwrap();
     /// #         Ok(store.get(key).cloned())
     /// #     }
-    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.insert(key.to_string(), value);
     /// #         Ok(())
     /// #     }
-    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #     async fn delete(&self, key: &str) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.remove(key);
     /// #         Ok(())
     /// #     }
-    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #     async fn clear(&self) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.clear();
     /// #         Ok(())
@@ -134,7 +134,7 @@ pub trait Cache: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use simple_agents_types::cache::Cache;
+    /// use simple_agent_type::cache::Cache;
     /// use async_trait::async_trait;
     /// use std::collections::HashMap;
     /// use std::sync::{Arc, Mutex};
@@ -145,21 +145,21 @@ pub trait Cache: Send + Sync {
     /// # }
     /// # #[async_trait]
     /// # impl Cache for InMemoryCache {
-    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #     async fn get(&self, key: &str) -> simple_agent_type::error::Result<Option<Vec<u8>>> {
     /// #         let store = self.store.lock().unwrap();
     /// #         Ok(store.get(key).cloned())
     /// #     }
-    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.insert(key.to_string(), value);
     /// #         Ok(())
     /// #     }
-    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #     async fn delete(&self, key: &str) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.remove(key);
     /// #         Ok(())
     /// #     }
-    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #     async fn clear(&self) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.clear();
     /// #         Ok(())
@@ -185,7 +185,7 @@ pub trait Cache: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use simple_agents_types::cache::Cache;
+    /// use simple_agent_type::cache::Cache;
     /// use async_trait::async_trait;
     /// use std::collections::HashMap;
     /// use std::sync::{Arc, Mutex};
@@ -196,21 +196,21 @@ pub trait Cache: Send + Sync {
     /// # }
     /// # #[async_trait]
     /// # impl Cache for InMemoryCache {
-    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #     async fn get(&self, key: &str) -> simple_agent_type::error::Result<Option<Vec<u8>>> {
     /// #         let store = self.store.lock().unwrap();
     /// #         Ok(store.get(key).cloned())
     /// #     }
-    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.insert(key.to_string(), value);
     /// #         Ok(())
     /// #     }
-    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #     async fn delete(&self, key: &str) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.remove(key);
     /// #         Ok(())
     /// #     }
-    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #     async fn clear(&self) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.clear();
     /// #         Ok(())
@@ -237,7 +237,7 @@ pub trait Cache: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use simple_agents_types::cache::Cache;
+    /// use simple_agent_type::cache::Cache;
     /// use async_trait::async_trait;
     /// use std::collections::HashMap;
     /// use std::sync::{Arc, Mutex};
@@ -248,21 +248,21 @@ pub trait Cache: Send + Sync {
     /// # }
     /// # #[async_trait]
     /// # impl Cache for InMemoryCache {
-    /// #     async fn get(&self, key: &str) -> simple_agents_types::error::Result<Option<Vec<u8>>> {
+    /// #     async fn get(&self, key: &str) -> simple_agent_type::error::Result<Option<Vec<u8>>> {
     /// #         let store = self.store.lock().unwrap();
     /// #         Ok(store.get(key).cloned())
     /// #     }
-    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agents_types::error::Result<()> {
+    /// #     async fn set(&self, key: &str, value: Vec<u8>, _ttl: Duration) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.insert(key.to_string(), value);
     /// #         Ok(())
     /// #     }
-    /// #     async fn delete(&self, key: &str) -> simple_agents_types::error::Result<()> {
+    /// #     async fn delete(&self, key: &str) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.remove(key);
     /// #         Ok(())
     /// #     }
-    /// #     async fn clear(&self) -> simple_agents_types::error::Result<()> {
+    /// #     async fn clear(&self) -> simple_agent_type::error::Result<()> {
     /// #         let mut store = self.store.lock().unwrap();
     /// #         store.clear();
     /// #         Ok(())
@@ -310,7 +310,7 @@ impl CacheKey {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::cache::CacheKey;
+    /// use simple_agent_type::cache::CacheKey;
     ///
     /// let key = CacheKey::from_parts("openai", "gpt-4", "user:Hello");
     /// assert!(key.starts_with("openai:"));

@@ -16,7 +16,7 @@ healing, and middleware into a single entry point.
 ```rust
 use async_trait::async_trait;
 use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::sync::Arc;
 
 struct MockProvider;
@@ -71,7 +71,7 @@ Use healing for JSON outputs:
 
 ```rust
 use simple_agents_healing::schema::Schema;
-# use simple_agents_types::prelude::*;
+# use simple_agent_type::prelude::*;
 # use simple_agents_core::SimpleAgentsClientBuilder;
 # use std::sync::Arc;
 # use async_trait::async_trait;

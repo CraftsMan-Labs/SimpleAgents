@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 use simple_agents_healing::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
-use simple_agents_types::error::{SimpleAgentsError, ValidationError};
+use simple_agent_type::error::{SimpleAgentsError, ValidationError};
 
 /// Convert a JSON Schema to a healing Schema.
 ///

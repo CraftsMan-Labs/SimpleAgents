@@ -23,8 +23,8 @@
 use simple_agents_cache::InMemoryCache;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::cache::{Cache, CacheKey};
-use simple_agents_types::prelude::*;
+use simple_agent_type::cache::{Cache, CacheKey};
+use simple_agent_type::prelude::*;
 use std::time::{Duration, Instant};
 
 #[tokio::main]

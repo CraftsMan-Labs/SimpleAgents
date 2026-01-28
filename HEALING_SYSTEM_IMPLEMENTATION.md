@@ -89,7 +89,7 @@ let provider = OpenAIProvider::new(api_key)?
 ## 📦 New Files Created (10)
 
 ### Core Implementation
-1. `crates/simple-agents-types/src/response.rs` - Modified to add HealingMetadata
+1. `crates/simple-agent-type/src/response.rs` - Modified to add HealingMetadata
 2. `crates/simple-agents-providers/src/schema_converter.rs` - JSON Schema converter
 3. `crates/simple-agents-providers/src/healing_integration.rs` - Healing orchestration
 4. `crates/simple-agents-providers/src/streaming_structured.rs` - Streaming support

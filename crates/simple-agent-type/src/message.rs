@@ -39,7 +39,7 @@ impl Message {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::message::{Message, Role};
+    /// use simple_agent_type::message::{Message, Role};
     ///
     /// let msg = Message::user("Hello!");
     /// assert_eq!(msg.role, Role::User);
@@ -58,7 +58,7 @@ impl Message {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::message::{Message, Role};
+    /// use simple_agent_type::message::{Message, Role};
     ///
     /// let msg = Message::assistant("Hi there!");
     /// assert_eq!(msg.role, Role::Assistant);
@@ -76,7 +76,7 @@ impl Message {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::message::{Message, Role};
+    /// use simple_agent_type::message::{Message, Role};
     ///
     /// let msg = Message::system("You are a helpful assistant.");
     /// assert_eq!(msg.role, Role::System);
@@ -94,7 +94,7 @@ impl Message {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::message::{Message, Role};
+    /// use simple_agent_type::message::{Message, Role};
     ///
     /// let msg = Message::tool("result", "call_123");
     /// assert_eq!(msg.role, Role::Tool);
@@ -113,7 +113,7 @@ impl Message {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::message::Message;
+    /// use simple_agent_type::message::Message;
     ///
     /// let msg = Message::user("Hello").with_name("Alice");
     /// assert_eq!(msg.name, Some("Alice".to_string()));

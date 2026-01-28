@@ -44,11 +44,11 @@ pub mod headers {
 /// # Example Implementation
 ///
 /// ```rust
-/// use simple_agents_types::provider::{Provider, ProviderRequest, ProviderResponse};
-/// use simple_agents_types::request::CompletionRequest;
-/// use simple_agents_types::response::{CompletionResponse, CompletionChoice, FinishReason, Usage};
-/// use simple_agents_types::message::Message;
-/// use simple_agents_types::error::Result;
+/// use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
+/// use simple_agent_type::request::CompletionRequest;
+/// use simple_agent_type::response::{CompletionResponse, CompletionChoice, FinishReason, Usage};
+/// use simple_agent_type::message::Message;
+/// use simple_agent_type::error::Result;
 /// use async_trait::async_trait;
 ///
 /// struct MyProvider;
@@ -159,11 +159,11 @@ pub trait Provider: Send + Sync {
     ///
     /// # Example
     /// ```rust
-    /// use simple_agents_types::provider::{Provider, ProviderRequest, ProviderResponse};
-    /// use simple_agents_types::request::CompletionRequest;
-    /// use simple_agents_types::response::{CompletionResponse, CompletionChunk, CompletionChoice, FinishReason, Usage};
-    /// use simple_agents_types::message::Message;
-    /// use simple_agents_types::error::Result;
+    /// use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
+    /// use simple_agent_type::request::CompletionRequest;
+    /// use simple_agent_type::response::{CompletionResponse, CompletionChunk, CompletionChoice, FinishReason, Usage};
+    /// use simple_agent_type::message::Message;
+    /// use simple_agent_type::error::Result;
     /// use async_trait::async_trait;
     /// use futures_core::Stream;
     /// use std::pin::Pin;

@@ -22,7 +22,7 @@
 //! # Example
 //!
 //! ```
-//! use simple_agents_types::prelude::*;
+//! use simple_agent_type::prelude::*;
 //!
 //! // Create a request
 //! let request = CompletionRequest::builder()
@@ -67,7 +67,7 @@ pub use error::{HealingError, ProviderError, Result, SimpleAgentsError, Validati
 ///
 /// # Example
 /// ```
-/// use simple_agents_types::prelude::*;
+/// use simple_agent_type::prelude::*;
 ///
 /// let msg = Message::user("Hello!");
 /// let request = CompletionRequest::builder()

@@ -15,7 +15,7 @@
 //!
 //! ```no_run
 //! use simple_agents_providers::openai::OpenAIProvider;
-//! use simple_agents_types::prelude::*;
+//! use simple_agent_type::prelude::*;
 //!
 //! # async fn example() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! let api_key = ApiKey::new("sk-...")?;
@@ -50,15 +50,15 @@ mod utils;
 // Re-export common utilities
 pub use common::{HttpClient, ProviderError, RetryableError};
 
-// Re-export Provider trait and types from simple-agents-types
-pub use simple_agents_types::prelude::{Provider, ProviderRequest, ProviderResponse};
+// Re-export Provider trait and types from simple-agent-type
+pub use simple_agent_type::prelude::{Provider, ProviderRequest, ProviderResponse};
 
 use async_trait::async_trait;
 use futures_core::Stream;
 use serde::de::DeserializeOwned;
-use simple_agents_types::error::SimpleAgentsError;
-use simple_agents_types::request::CompletionRequest;
-use simple_agents_types::response::CompletionChunk;
+use simple_agent_type::error::SimpleAgentsError;
+use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::response::CompletionChunk;
 
 /// Result type for provider operations.
 pub type Result<T> = std::result::Result<T, ProviderError>;

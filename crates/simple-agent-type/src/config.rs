@@ -39,7 +39,7 @@ impl RetryConfig {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::config::RetryConfig;
+    /// use simple_agent_type::config::RetryConfig;
     /// use std::time::Duration;
     ///
     /// let config = RetryConfig::default();
@@ -236,7 +236,7 @@ impl RateLimitConfig {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::config::RateLimitConfig;
+    /// use simple_agent_type::config::RateLimitConfig;
     ///
     /// let config = RateLimitConfig::new(50, 100);
     /// assert_eq!(config.requests_per_second, 50);

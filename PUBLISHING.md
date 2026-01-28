@@ -140,7 +140,7 @@ If rate limited by crates.io:
 # Wait 10-60 minutes, then retry
 # Or publish crates one at a time with delays
 
-for crate in simple-agents-types simple-agents-cache; do
+for crate in simple-agent-type simple-agents-cache; do
   doppler run -- cargo publish -p $crate
   sleep 60  # Wait between publishes
 done
@@ -150,31 +150,31 @@ done
 
 If you need to rename a crate due to conflicts:
 
-1. **Choose new name**: e.g., `craftsman-simple-agents-types`
+1. **Choose new name**: e.g., `craftsman-simple-agent-type`
 
 2. **Update Cargo.toml**:
    ```toml
    [package]
-   name = "craftsman-simple-agents-types"  # Changed
+   name = "craftsman-simple-agent-type"  # Changed
    ```
 
 3. **Update all dependencies**:
    ```bash
    # Find all references
-   grep -r "simple-agents-types" crates/
+   grep -r "simple-agent-type" crates/
 
    # Update in each Cargo.toml:
-   craftsman-simple-agents-types = { path = "../simple-agents-types" }
+   craftsman-simple-agent-type = { path = "../simple-agent-type" }
    ```
 
 4. **Update imports** in Rust code:
    ```rust
-   use craftsman_simple_agents_types::prelude::*;
+   use craftsman_simple_agent_type::prelude::*;
    ```
 
 5. **Update Makefile**:
    ```makefile
-   PUBLISH_CRATES = craftsman-simple-agents-types ...
+   PUBLISH_CRATES = craftsman-simple-agent-type ...
    ```
 
 ## Rollback
@@ -200,7 +200,7 @@ Options:
 1. **Publish remaining crates** after fixing issues
 2. **Yank the version** (makes it unavailable for new projects):
    ```bash
-   cargo yank --version X.Y.Z simple-agents-types
+   cargo yank --version X.Y.Z simple-agent-type
    ```
 3. **Publish a fix version** (bump patch and republish)
 
@@ -247,10 +247,10 @@ make publish-python-dry
 
 ```bash
 # Check what files will be included
-cargo package --list -p simple-agents-types
+cargo package --list -p simple-agent-type
 
 # Build the package locally
-cargo package -p simple-agents-types
+cargo package -p simple-agent-type
 ```
 
 ### Check Token Permissions

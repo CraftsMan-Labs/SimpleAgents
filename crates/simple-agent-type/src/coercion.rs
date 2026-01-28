@@ -60,7 +60,7 @@ impl CoercionFlag {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::coercion::CoercionFlag;
+    /// use simple_agent_type::coercion::CoercionFlag;
     ///
     /// let flag = CoercionFlag::StrippedMarkdown;
     /// assert_eq!(flag.description(), "Stripped markdown code fences");
@@ -123,7 +123,7 @@ impl<T> CoercionResult<T> {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::coercion::CoercionResult;
+    /// use simple_agent_type::coercion::CoercionResult;
     ///
     /// let result = CoercionResult::new(42);
     /// assert_eq!(result.value, 42);
@@ -169,7 +169,7 @@ impl<T> CoercionResult<T> {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::coercion::{CoercionResult, CoercionFlag};
+    /// use simple_agent_type::coercion::{CoercionResult, CoercionFlag};
     ///
     /// let result = CoercionResult::new(42);
     /// assert!(!result.was_coerced());
@@ -185,7 +185,7 @@ impl<T> CoercionResult<T> {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::coercion::CoercionResult;
+    /// use simple_agent_type::coercion::CoercionResult;
     ///
     /// let result = CoercionResult::with_confidence(42, 0.8);
     /// assert!(result.is_confident(0.7));

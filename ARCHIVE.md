@@ -41,7 +41,7 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 
 ### Phase 1: Foundation ✅ (Week 1-2)
 
-**Crate**: `simple-agents-types`
+**Crate**: `simple-agent-type`
 **Status**: Production-ready
 **Tests**: 114 passing (83 unit + 11 integration + 20 doctests)
 
@@ -52,7 +52,7 @@ Comprehensive analysis of LiteLLM (24,500+ lines) and BAML (20,000+ lines) compl
 - CoercionFlag system for transparency tracking
 - Comprehensive error hierarchy
 
-**Report**: See `crates/simple-agents-types/TODO.md` for detailed completion status.
+**Report**: See `crates/simple-agent-type/TODO.md` for detailed completion status.
 
 ---
 

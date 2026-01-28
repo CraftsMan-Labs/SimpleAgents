@@ -9,7 +9,7 @@ use governor::{
     state::{InMemoryState, NotKeyed},
     Quota, RateLimiter as GovernorRateLimiter,
 };
-use simple_agents_types::config::{RateLimitConfig, RateLimitScope};
+use simple_agent_type::config::{RateLimitConfig, RateLimitScope};
 use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::sync::{Arc, RwLock};

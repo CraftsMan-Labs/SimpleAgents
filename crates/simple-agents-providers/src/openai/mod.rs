@@ -15,8 +15,8 @@ pub use models::*;
 
 use async_trait::async_trait;
 use reqwest::Client;
-use simple_agents_types::prelude::*;
-use simple_agents_types::request::ResponseFormat;
+use simple_agent_type::prelude::*;
+use simple_agent_type::request::ResponseFormat;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -115,7 +115,7 @@ impl OpenAIProvider {
     /// ```rust
     /// use reqwest::Client;
     /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agents_types::prelude::*;
+    /// use simple_agent_type::prelude::*;
     /// use std::time::Duration;
     ///
     /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
@@ -154,8 +154,8 @@ impl OpenAIProvider {
     /// # Example
     /// ```
     /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agents_types::prelude::*;
-    /// use simple_agents_types::config::RateLimitConfig;
+    /// use simple_agent_type::prelude::*;
+    /// use simple_agent_type::config::RateLimitConfig;
     ///
     /// # fn example() -> Result<()> {
     /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
@@ -164,7 +164,7 @@ impl OpenAIProvider {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn with_rate_limit(mut self, config: simple_agents_types::config::RateLimitConfig) -> Self {
+    pub fn with_rate_limit(mut self, config: simple_agent_type::config::RateLimitConfig) -> Self {
         self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
         self
     }
@@ -178,7 +178,7 @@ impl OpenAIProvider {
     /// ```
     /// use simple_agents_providers::openai::OpenAIProvider;
     /// use simple_agents_providers::healing_integration::HealingConfig;
-    /// use simple_agents_types::prelude::*;
+    /// use simple_agent_type::prelude::*;
     ///
     /// # fn example() -> Result<()> {
     /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
@@ -208,7 +208,7 @@ impl OpenAIProvider {
     /// # Example
     /// ```
     /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agents_types::prelude::*;
+    /// use simple_agent_type::prelude::*;
     /// use reqwest::Client;
     /// use std::time::Duration;
     ///
@@ -282,13 +282,13 @@ impl Provider for OpenAIProvider {
             headers: vec![
                 (
                     std::borrow::Cow::Borrowed(
-                        simple_agents_types::provider::headers::AUTHORIZATION,
+                        simple_agent_type::provider::headers::AUTHORIZATION,
                     ),
                     std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
                     std::borrow::Cow::Borrowed(
-                        simple_agents_types::provider::headers::CONTENT_TYPE,
+                        simple_agent_type::provider::headers::CONTENT_TYPE,
                     ),
                     std::borrow::Cow::Borrowed("application/json"),
                 ),

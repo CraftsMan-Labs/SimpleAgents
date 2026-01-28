@@ -6,7 +6,7 @@ authors = ["SimpleAgents Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rishub/simple-agents"
 homepage = "https://github.com/rishub/simple-agents"
-documentation = "https://docs.rs/simple-agents-types"
+documentation = "https://docs.rs/simple-agent-type"
 description = "C-compatible FFI bindings for SimpleAgents"
 readme = "README.md"
 
@@ -19,4 +19,4 @@ tokio = { workspace = true }
 
 simple-agents-core = { path = "../simple-agents-core" }
 simple-agents-providers = { path = "../simple-agents-providers" }
-simple-agents-types = { path = "../simple-agents-types" }
+simple-agent-type = { path = "../simple-agent-type" }

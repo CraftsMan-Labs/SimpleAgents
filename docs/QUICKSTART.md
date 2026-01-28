@@ -8,7 +8,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-simple-agents-types = "0.1.0"
+simple-agent-type = "0.1.0"
 simple-agents-providers = "0.1.0"
 simple-agents-cache = "0.1.0"  # Optional
 tokio = { version = "1.35", features = ["full"] }
@@ -25,7 +25,7 @@ export OPENAI_API_KEY="sk-..."
 ### 2. Create Your First Request
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -101,7 +101,7 @@ use std::time::Duration;
 let cache = InMemoryCache::new(10 * 1024 * 1024, 1000);
 
 // Before making request
-let cache_key = simple_agents_types::cache::CacheKey::from_parts(
+let cache_key = simple_agent_type::cache::CacheKey::from_parts(
     "openai",
     "gpt-4",
     "What is Rust?"
@@ -137,7 +137,7 @@ match provider.execute(provider_request).await {
 
 ```rust
 use simple_agents_providers::retry::execute_with_retry;
-use simple_agents_types::config::RetryConfig;
+use simple_agent_type::config::RetryConfig;
 
 let config = RetryConfig::default();
 

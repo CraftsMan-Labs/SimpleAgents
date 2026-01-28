@@ -17,7 +17,7 @@ use subtle::ConstantTimeEq;
 ///
 /// # Example
 /// ```
-/// use simple_agents_types::validation::ApiKey;
+/// use simple_agent_type::validation::ApiKey;
 ///
 /// let key = ApiKey::new("sk-1234567890abcdef1234567890").unwrap();
 /// let debug_str = format!("{:?}", key);
@@ -37,7 +37,7 @@ impl ApiKey {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::validation::ApiKey;
+    /// use simple_agent_type::validation::ApiKey;
     ///
     /// let key = ApiKey::new("sk-1234567890abcdef1234567890");
     /// assert!(key.is_ok());
@@ -82,7 +82,7 @@ impl ApiKey {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::validation::ApiKey;
+    /// use simple_agent_type::validation::ApiKey;
     ///
     /// let key = ApiKey::new("sk-1234567890abcdef1234567890").unwrap();
     /// let raw = key.expose();
@@ -98,7 +98,7 @@ impl ApiKey {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::validation::ApiKey;
+    /// use simple_agent_type::validation::ApiKey;
     ///
     /// let key = ApiKey::new("sk-1234567890abcdef1234567890").unwrap();
     /// let preview = key.preview();

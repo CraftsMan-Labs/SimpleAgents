@@ -79,7 +79,7 @@ use simple_agents_healing::prelude::*;
 use simple_agents_providers::metrics::RequestTimer;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::io::Write;
 use std::time::Duration;
 

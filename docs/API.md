@@ -4,7 +4,7 @@ Complete API reference for SimpleAgents.
 
  ## Table of Contents
 
- - [simple-agents-types](#simple-agents-types)
+ - [simple-agent-type](#simple-agent-type)
    - [Request Types](#request-types)
    - [Response Types](#response-types)
    - [Message Types](#message-types)
@@ -29,7 +29,7 @@ Complete API reference for SimpleAgents.
  - [simple-agents-macros](#simple-agents-macros)
    - [PartialType Macro](#partialtype-macro)
 
-## simple-agents-types
+## simple-agent-type
 
 ### Request Types
 
@@ -849,7 +849,7 @@ impl PartialUser {
 Import commonly used types:
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 // Includes:
 // - CompletionRequest, CompletionResponse
