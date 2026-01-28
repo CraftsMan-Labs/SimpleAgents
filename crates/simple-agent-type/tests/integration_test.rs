@@ -1,8 +1,8 @@
-//! Integration tests for simple-agents-types.
+//! Integration tests for simple-agent-type.
 //!
 //! Tests end-to-end usage of all types together.
 
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 #[test]
 fn test_complete_request_response_cycle() {
@@ -269,7 +269,7 @@ fn test_router_types() {
 
 #[test]
 fn test_cache_key_generation() {
-    use simple_agents_types::cache::CacheKey;
+    use simple_agent_type::cache::CacheKey;
 
     // Keys should be deterministic
     let key1 = CacheKey::from_parts("openai", "gpt-4", "test content");

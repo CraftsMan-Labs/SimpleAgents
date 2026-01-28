@@ -2,7 +2,7 @@
 //!
 //! Attempts providers in order, falling back on retryable errors.
 
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError,
 };
 use std::sync::Arc;
@@ -110,7 +110,7 @@ impl FallbackRouter {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use simple_agents_types::prelude::*;
+    use simple_agent_type::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockProvider {

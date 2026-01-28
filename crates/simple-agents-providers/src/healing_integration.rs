@@ -5,8 +5,8 @@
 use serde_json::Value;
 use simple_agents_healing::coercion::{CoercionConfig, CoercionEngine};
 use simple_agents_healing::parser::{JsonishParser, ParserConfig};
-use simple_agents_types::error::{HealingError, SimpleAgentsError, ValidationError};
-use simple_agents_types::response::HealingMetadata;
+use simple_agent_type::error::{HealingError, SimpleAgentsError, ValidationError};
+use simple_agent_type::response::HealingMetadata;
 
 use crate::schema_converter;
 
@@ -219,7 +219,7 @@ impl HealingIntegration {
 mod tests {
     use super::*;
     use serde_json::json;
-    use simple_agents_types::coercion::CoercionFlag;
+    use simple_agent_type::coercion::CoercionFlag;
 
     #[test]
     fn test_healing_config_default() {

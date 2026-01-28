@@ -15,7 +15,7 @@ use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
-use simple_agents_types::response::{ChoiceDelta, CompletionChunk, FinishReason, MessageDelta};
+use simple_agent_type::response::{ChoiceDelta, CompletionChunk, FinishReason, MessageDelta};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AnalysisResult {
@@ -40,14 +40,14 @@ async fn main() {
 }"#;
 
     // Split into chunks to simulate streaming
-    let chunks: Vec<Result<CompletionChunk, simple_agents_types::error::SimpleAgentsError>> = vec![
+    let chunks: Vec<Result<CompletionChunk, simple_agent_type::error::SimpleAgentsError>> = vec![
         Ok(CompletionChunk {
             id: "chunk_1".to_string(),
             model: "gpt-4".to_string(),
             choices: vec![ChoiceDelta {
                 index: 0,
                 delta: MessageDelta {
-                    role: Some(simple_agents_types::message::Role::Assistant),
+                    role: Some(simple_agent_type::message::Role::Assistant),
                     content: Some(json_response[..50].to_string()),
                 },
                 finish_reason: None,

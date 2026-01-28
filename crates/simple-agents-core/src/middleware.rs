@@ -1,7 +1,7 @@
 //! Middleware hooks for SimpleAgents core.
 
 use async_trait::async_trait;
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Result, SimpleAgentsError,
 };
 use std::time::Duration;

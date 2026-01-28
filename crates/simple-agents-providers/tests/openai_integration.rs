@@ -4,7 +4,7 @@
 //! Run with: `cargo test -p simple-agents-providers`
 
 use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 fn success_response(model: &str, content: &str) -> serde_json::Value {
     serde_json::json!({
         "id": "chatcmpl-test",

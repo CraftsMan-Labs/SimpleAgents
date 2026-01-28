@@ -1,6 +1,6 @@
 //! Anthropic-specific error handling.
 
-use simple_agents_types::error::ProviderError;
+use simple_agent_type::error::ProviderError;
 use thiserror::Error;
 
 use super::models::AnthropicErrorResponse;

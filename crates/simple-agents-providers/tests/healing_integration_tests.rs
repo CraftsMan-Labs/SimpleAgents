@@ -3,7 +3,7 @@
 use serde_json::json;
 use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
 use simple_agents_providers::schema_converter;
-use simple_agents_types::coercion::CoercionFlag;
+use simple_agent_type::coercion::CoercionFlag;
 
 #[test]
 fn test_schema_conversion_primitives() {

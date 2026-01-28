@@ -37,7 +37,7 @@
 //! assert_eq!(result.value["name"], "test");
 //! assert_eq!(result.value["age"], 25);
 //! assert!(result.flags.iter().any(|f| matches!(f,
-//!     simple_agents_types::coercion::CoercionFlag::StrippedMarkdown)));
+//!     simple_agent_type::coercion::CoercionFlag::StrippedMarkdown)));
 //! ```
 //!
 //! # Transparency
@@ -50,7 +50,7 @@
 //! - **0.5-0.69**: Multiple coercions or truncation
 //! - **<0.5**: Significant healing required, review recommended
 //!
-//! [`CoercionFlag`]: simple_agents_types::coercion::CoercionFlag
+//! [`CoercionFlag`]: simple_agent_type::coercion::CoercionFlag
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]
@@ -68,9 +68,9 @@ pub use parser::{JsonishParser, ParserConfig, ParserResult};
 pub use schema::{Field, ObjectSchema, Schema, StreamAnnotation};
 pub use streaming::{PartialExtractor, StreamingParser};
 
-// Re-export from simple-agents-types for convenience
-pub use simple_agents_types::coercion::{CoercionFlag, CoercionResult};
-pub use simple_agents_types::error::{HealingError, Result};
+// Re-export from simple-agent-type for convenience
+pub use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
+pub use simple_agent_type::error::{HealingError, Result};
 
 /// Prelude module for convenient imports.
 pub mod prelude {
@@ -78,8 +78,8 @@ pub mod prelude {
     pub use crate::parser::{JsonishParser, ParserConfig, ParserResult};
     pub use crate::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
     pub use crate::streaming::{PartialExtractor, StreamingParser};
-    pub use simple_agents_types::coercion::{CoercionFlag, CoercionResult};
-    pub use simple_agents_types::error::{HealingError, Result};
+    pub use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
+    pub use simple_agent_type::error::{HealingError, Result};
 }
 
 #[cfg(test)]

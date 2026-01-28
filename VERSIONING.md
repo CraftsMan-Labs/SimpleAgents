@@ -149,18 +149,18 @@ crate name already taken
 Options:
 1. **Wait**: If recently deleted, wait for the timeout period
 2. **Rename**: Choose a different crate name
-3. **Prefix**: Add an org prefix (e.g., `craftsman-simple-agents-types`)
+3. **Prefix**: Add an org prefix (e.g., `craftsman-simple-agent-type`)
 
 To rename a crate:
 ```bash
 # Edit Cargo.toml files
 # Update package name
-name = "craftsman-simple-agents-types"
+name = "craftsman-simple-agent-type"
 
 # Update all dependencies in other crates
-simple-agents-types = { path = "../simple-agents-types" }
+simple-agent-type = { path = "../simple-agent-type" }
 # becomes:
-craftsman-simple-agents-types = { path = "../simple-agents-types" }
+craftsman-simple-agent-type = { path = "../simple-agent-type" }
 ```
 
 ### Version Already Published
@@ -240,7 +240,7 @@ make version-get
 ### Verify Crate Metadata
 
 ```bash
-cargo package --list -p simple-agents-types
+cargo package --list -p simple-agent-type
 ```
 
 ### Test Publishing Locally
@@ -265,7 +265,7 @@ cargo publish --dry-run --registry test
 
 Publishing order for SimpleAgents:
 
-1. `simple-agents-types` (no internal deps)
+1. `simple-agent-type` (no internal deps)
 2. `simple-agents-cache` (no internal deps)
 3. `simple-agents-macros` (no internal deps)
 4. `simple-agents-healing` (depends on types)

@@ -15,8 +15,8 @@ pub use models::*;
 
 use async_trait::async_trait;
 use reqwest::Client;
-use simple_agents_types::prelude::*;
-use simple_agents_types::request::ResponseFormat;
+use simple_agent_type::prelude::*;
+use simple_agent_type::request::ResponseFormat;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -143,7 +143,7 @@ impl AnthropicProvider {
     }
 
     /// Enable rate limiting with the given configuration.
-    pub fn with_rate_limit(mut self, config: simple_agents_types::config::RateLimitConfig) -> Self {
+    pub fn with_rate_limit(mut self, config: simple_agent_type::config::RateLimitConfig) -> Self {
         self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
         self
     }
@@ -157,7 +157,7 @@ impl AnthropicProvider {
     /// ```
     /// use simple_agents_providers::anthropic::AnthropicProvider;
     /// use simple_agents_providers::healing_integration::HealingConfig;
-    /// use simple_agents_types::prelude::*;
+    /// use simple_agent_type::prelude::*;
     ///
     /// # fn example() -> Result<()> {
     /// let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890")?;
@@ -217,7 +217,7 @@ impl Provider for AnthropicProvider {
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
         use crate::anthropic::models::{AnthropicJsonSchema, AnthropicOutputFormat};
-        use simple_agents_types::request::ResponseFormat;
+        use simple_agent_type::request::ResponseFormat;
 
         // Store request context for potential healing
         if self.healing.is_some() && req.response_format.is_some() {
@@ -272,7 +272,7 @@ impl Provider for AnthropicProvider {
                 std::borrow::Cow::Borrowed(Self::API_VERSION),
             ),
             (
-                std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
+                std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::CONTENT_TYPE),
                 std::borrow::Cow::Borrowed("application/json"),
             ),
         ];

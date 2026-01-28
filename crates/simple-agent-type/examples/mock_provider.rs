@@ -5,7 +5,7 @@
 //! Run with: cargo run --example mock_provider
 
 use async_trait::async_trait;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::time::Duration;
 
 /// A mock provider for testing/demonstration.

@@ -2,7 +2,7 @@
 //!
 //! Routes requests to the lowest-cost provider.
 
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::collections::HashMap;
@@ -150,7 +150,7 @@ impl CostRouter {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use simple_agents_types::prelude::*;
+    use simple_agent_type::prelude::*;
 
     struct MockProvider {
         name: &'static str,

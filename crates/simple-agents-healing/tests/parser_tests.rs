@@ -157,7 +157,7 @@ fn test_min_confidence_threshold() {
     let result = parser.parse(input);
     assert!(result.is_err());
     match result.unwrap_err() {
-        simple_agents_types::error::SimpleAgentsError::Healing(HealingError::LowConfidence {
+        simple_agent_type::error::SimpleAgentsError::Healing(HealingError::LowConfidence {
             confidence,
             ..
         }) => {

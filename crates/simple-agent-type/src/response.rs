@@ -68,8 +68,8 @@ impl CompletionResponse {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::response::{CompletionResponse, CompletionChoice, Usage, FinishReason};
-    /// use simple_agents_types::message::Message;
+    /// use simple_agent_type::response::{CompletionResponse, CompletionChoice, Usage, FinishReason};
+    /// use simple_agent_type::message::Message;
     ///
     /// let response = CompletionResponse {
     ///     id: "resp_123".to_string(),
@@ -110,9 +110,9 @@ impl CompletionResponse {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
-    /// use simple_agents_types::message::Message;
-    /// use simple_agents_types::coercion::CoercionFlag;
+    /// use simple_agent_type::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
+    /// use simple_agent_type::message::Message;
+    /// use simple_agent_type::coercion::CoercionFlag;
     ///
     /// let mut response = CompletionResponse {
     ///     id: "resp_123".to_string(),
@@ -145,9 +145,9 @@ impl CompletionResponse {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
-    /// use simple_agents_types::message::Message;
-    /// use simple_agents_types::coercion::CoercionFlag;
+    /// use simple_agent_type::response::{CompletionResponse, CompletionChoice, Usage, FinishReason, HealingMetadata};
+    /// use simple_agent_type::message::Message;
+    /// use simple_agent_type::coercion::CoercionFlag;
     ///
     /// let mut response = CompletionResponse {
     ///     id: "resp_123".to_string(),

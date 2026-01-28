@@ -52,7 +52,7 @@ SimpleAgents is built on these core principles:
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
-│                  simple-agents-types                     │
+│                  simple-agent-type                     │
 │  ┌─────────────┐  ┌──────────────┐  ┌────────────────┐ │
 │  │   Request   │  │   Response   │  │    Message     │ │
 │  └─────────────┘  └──────────────┘  └────────────────┘ │
@@ -520,7 +520,7 @@ Separates:
 
 ### Why Separate Crates?
 
-**simple-agents-types:**
+**simple-agent-type:**
 - Pure interfaces
 - No implementation dependencies
 - Can be used standalone

@@ -53,7 +53,7 @@ Simple mode that ensures valid JSON but doesn't validate structure:
 ```rust
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -125,7 +125,7 @@ let request = CompletionRequest::builder()
 For advanced use cases, build your own response format:
 
 ```rust
-use simple_agents_types::request::{ResponseFormat, JsonSchemaFormat};
+use simple_agent_type::request::{ResponseFormat, JsonSchemaFormat};
 use serde_json::json;
 
 let response_format = ResponseFormat::JsonSchema {
@@ -320,7 +320,7 @@ Anthropic uses the same API in SimpleAgents, but with different underlying imple
 ```rust
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use serde_json::json;
 
 #[tokio::main]
@@ -440,7 +440,7 @@ If using `json_mode` (not `json_schema`), the model might still produce invalid 
 Strict mode enforces exact schema compliance:
 
 ```rust
-use simple_agents_types::request::{ResponseFormat, JsonSchemaFormat};
+use simple_agent_type::request::{ResponseFormat, JsonSchemaFormat};
 
 let response_format = ResponseFormat::JsonSchema {
     json_schema: JsonSchemaFormat {

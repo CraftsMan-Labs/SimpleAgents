@@ -36,7 +36,7 @@ use simple_agents_healing::string_utils::jaro_winkler;
 use simple_agents_providers::metrics::RequestTimer;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::io::Write;
 
 #[tokio::main]

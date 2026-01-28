@@ -22,7 +22,7 @@
 
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {

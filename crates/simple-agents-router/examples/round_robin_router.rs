@@ -10,7 +10,7 @@
 
 use async_trait::async_trait;
 use simple_agents_router::RoundRobinRouter;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::sync::Arc;
 
 struct MockProvider {
