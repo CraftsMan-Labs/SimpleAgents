@@ -14,6 +14,6 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 
-simple-agents-core = { path = "../simple-agents-core", version = "0.1.9" }
-simple-agents-providers = { path = "../simple-agents-providers", version = "0.1.9" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.1.10" }
+simple-agents-providers = { path = "../simple-agents-providers", version = "0.1.10" }
 simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
