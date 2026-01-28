@@ -23,6 +23,7 @@ dev = ["pytest>=8.0"]
 [tool.maturin]
 bindings = "pyo3"
 module-name = "simple_agents_py"
+include = ["simple_agents_py.pyi", "py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

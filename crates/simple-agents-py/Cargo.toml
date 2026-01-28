@@ -9,9 +9,10 @@ name = "simple_agents_py"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312", "serde"] }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+serde_json = { workspace = true }
 
 simple-agents-core = { path = "../simple-agents-core", version = "0.1.0" }
 simple-agents-providers = { path = "../simple-agents-providers", version = "0.1.0" }
