@@ -1,5 +1,5 @@
-use simple_agents_macros::PartialType;
 use serde::{Deserialize, Serialize};
+use simple_agents_macros::PartialType;
 
 #[derive(Debug, Clone, PartialEq, PartialType, Serialize, Deserialize)]
 struct User {

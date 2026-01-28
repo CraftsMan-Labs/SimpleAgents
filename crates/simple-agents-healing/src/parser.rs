@@ -199,9 +199,7 @@ impl JsonishParser {
         }
 
         // Fix trailing commas
-        if self.config.fix_trailing_commas
-            && (output.contains(",}") || output.contains(",]"))
-        {
+        if self.config.fix_trailing_commas && (output.contains(",}") || output.contains(",]")) {
             output = output.replace(",}", "}").replace(",]", "]");
             flags.push(CoercionFlag::FixedTrailingComma);
             *confidence *= 0.95;
@@ -378,12 +376,7 @@ impl LenientParserState {
     /// Process a single character.
     ///
     /// Returns the number of characters to advance (usually 1, but may be more for multi-char tokens).
-    fn process_char(
-        &mut self,
-        ch: char,
-        next: Option<char>,
-        next2: Option<char>,
-    ) -> Result<usize> {
+    fn process_char(&mut self, ch: char, next: Option<char>, next2: Option<char>) -> Result<usize> {
         // Handle escape sequences in strings
         if self.is_escaped {
             self.current_string.push(ch);
@@ -426,7 +419,8 @@ impl LenientParserState {
 
             // Start array
             '[' => {
-                self.stack.push(CollectionState::Array { values: Vec::new() });
+                self.stack
+                    .push(CollectionState::Array { values: Vec::new() });
                 Ok(1)
             }
 
@@ -482,7 +476,10 @@ impl LenientParserState {
 
             // Unexpected character
             _ => {
-                trace!("Skipping unexpected character '{}' when expecting value", ch);
+                trace!(
+                    "Skipping unexpected character '{}' when expecting value",
+                    ch
+                );
                 Ok(1) // Skip it
             }
         }
@@ -514,13 +511,17 @@ impl LenientParserState {
             }
 
             // End of regular string
-            ('"', StringDelimiter::Double) | ('\'', StringDelimiter::Single) | ('`', StringDelimiter::Backtick) => {
+            ('"', StringDelimiter::Double)
+            | ('\'', StringDelimiter::Single)
+            | ('`', StringDelimiter::Backtick) => {
                 self.finish_string();
                 Ok(1)
             }
 
             // End unquoted string (whitespace, comma, colon, brace, bracket)
-            (c, StringDelimiter::Unquoted) if c.is_whitespace() || matches!(c, ',' | ':' | '}' | ']') => {
+            (c, StringDelimiter::Unquoted)
+                if c.is_whitespace() || matches!(c, ',' | ':' | '}' | ']') =>
+            {
                 self.finish_string();
                 Ok(0) // Don't consume this character
             }
@@ -777,8 +778,11 @@ impl LenientParserState {
                 // Top-level value - only accept valid JSON types
                 // Reject arbitrary unquoted strings (they should only appear as object keys)
                 match &value {
-                    Value::Object(_) | Value::Array(_) | Value::Number(_)
-                    | Value::Bool(_) | Value::Null => {
+                    Value::Object(_)
+                    | Value::Array(_)
+                    | Value::Number(_)
+                    | Value::Bool(_)
+                    | Value::Null => {
                         self.completed.push(value);
                         self.state = ParseState::ExpectValue;
                     }
@@ -990,9 +994,7 @@ mod tests {
         let result = parser.parse(input).unwrap();
 
         assert_eq!(result.value["key"], "value");
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::StrippedMarkdown));
+        assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
         assert!(result.confidence < 1.0);
     }
 
@@ -1004,9 +1006,7 @@ mod tests {
 
         assert_eq!(result.value["key"], "value");
         assert_eq!(result.value["num"], 42);
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::FixedTrailingComma));
+        assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
         assert!(result.confidence < 1.0);
     }
 
@@ -1030,13 +1030,9 @@ mod tests {
         let result = parser.parse(input).unwrap();
 
         assert_eq!(result.value["key"], "value");
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::StrippedMarkdown));
+        assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
         assert!(result.flags.contains(&CoercionFlag::FixedQuotes));
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::FixedTrailingComma));
+        assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
         assert!(result.confidence < 0.9);
     }
 
@@ -1059,9 +1055,7 @@ mod tests {
         assert_eq!(result.value[0], 1);
         assert_eq!(result.value[1], 2);
         assert_eq!(result.value[2], 3);
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::FixedTrailingComma));
+        assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
     }
 
     #[test]
@@ -1071,9 +1065,7 @@ mod tests {
         let result = parser.parse(input).unwrap();
 
         assert_eq!(result.value["outer"]["inner"], "value");
-        assert!(result
-            .flags
-            .contains(&CoercionFlag::FixedTrailingComma));
+        assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
     }
 
     #[test]

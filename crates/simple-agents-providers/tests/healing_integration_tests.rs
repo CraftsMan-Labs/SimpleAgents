@@ -1,8 +1,8 @@
 //! Integration tests for healing system integration with providers.
 
+use serde_json::json;
 use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
 use simple_agents_providers::schema_converter;
-use serde_json::json;
 use simple_agents_types::coercion::CoercionFlag;
 
 #[test]
@@ -18,7 +18,10 @@ fn test_schema_conversion_primitives() {
     });
 
     let schema = schema_converter::convert(&json_schema).unwrap();
-    assert!(matches!(schema, simple_agents_healing::schema::Schema::Object(_)));
+    assert!(matches!(
+        schema,
+        simple_agents_healing::schema::Schema::Object(_)
+    ));
 }
 
 #[test]
@@ -29,7 +32,10 @@ fn test_schema_conversion_arrays() {
     });
 
     let schema = schema_converter::convert(&json_schema).unwrap();
-    assert!(matches!(schema, simple_agents_healing::schema::Schema::Array(_)));
+    assert!(matches!(
+        schema,
+        simple_agents_healing::schema::Schema::Array(_)
+    ));
 }
 
 #[test]
@@ -51,7 +57,10 @@ fn test_schema_conversion_nested_objects() {
     if let simple_agents_healing::schema::Schema::Object(obj) = schema {
         assert_eq!(obj.fields.len(), 1);
         assert_eq!(obj.fields[0].name, "person");
-        assert!(matches!(obj.fields[0].schema, simple_agents_healing::schema::Schema::Object(_)));
+        assert!(matches!(
+            obj.fields[0].schema,
+            simple_agents_healing::schema::Schema::Object(_)
+        ));
     } else {
         panic!("Expected object schema");
     }
@@ -74,13 +83,19 @@ fn test_healing_integration_markdown_fences() {
 }
 ```"#;
 
-    let result = integration.heal_response(malformed, &schema, "Parse error").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Parse error")
+        .unwrap();
 
     assert_eq!(result.value["message"], "Hello, world!");
     assert!(result.metadata.confidence > 0.0);
 
     // Should have stripped markdown
-    assert!(result.metadata.flags.iter().any(|f| matches!(f, CoercionFlag::StrippedMarkdown)));
+    assert!(result
+        .metadata
+        .flags
+        .iter()
+        .any(|f| matches!(f, CoercionFlag::StrippedMarkdown)));
 }
 
 #[test]
@@ -98,7 +113,9 @@ fn test_healing_integration_type_coercion() {
     // Age is a string but should be coerced to integer
     let malformed = r#"{"name": "Alice", "age": "25"}"#;
 
-    let result = integration.heal_response(malformed, &schema, "Type mismatch").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Type mismatch")
+        .unwrap();
 
     assert_eq!(result.value["name"], "Alice");
     assert_eq!(result.value["age"], 25);
@@ -121,7 +138,9 @@ fn test_healing_integration_default_values() {
     // Missing count field - should use default
     let malformed = r#"{"name": "Bob"}"#;
 
-    let result = integration.heal_response(malformed, &schema, "Missing field").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Missing field")
+        .unwrap();
 
     assert_eq!(result.value["name"], "Bob");
     assert_eq!(result.value["count"], 0);
@@ -172,7 +191,9 @@ fn test_healing_integration_lenient_mode() {
     // String to number - lenient mode should accept this
     let malformed = r#"{"count": "42"}"#;
 
-    let result = integration.heal_response(malformed, &schema, "Type mismatch").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Type mismatch")
+        .unwrap();
 
     // Should coerce string to number
     assert_eq!(result.value["count"], 42);
@@ -215,7 +236,9 @@ fn test_healing_metadata_structure() {
 {"text": "hello"}
 ```"#;
 
-    let result = integration.heal_response(malformed, &schema, "Original error message").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Original error message")
+        .unwrap();
 
     assert_eq!(result.metadata.original_error, "Original error message");
     assert!(!result.metadata.flags.is_empty());
@@ -236,10 +259,18 @@ fn test_schema_conversion_with_required_fields() {
     let schema = schema_converter::convert(&json_schema).unwrap();
 
     if let simple_agents_healing::schema::Schema::Object(obj) = schema {
-        let required_field = obj.fields.iter().find(|f| f.name == "required_field").unwrap();
+        let required_field = obj
+            .fields
+            .iter()
+            .find(|f| f.name == "required_field")
+            .unwrap();
         assert!(required_field.required);
 
-        let optional_field = obj.fields.iter().find(|f| f.name == "optional_field").unwrap();
+        let optional_field = obj
+            .fields
+            .iter()
+            .find(|f| f.name == "optional_field")
+            .unwrap();
         assert!(!optional_field.required);
     } else {
         panic!("Expected object schema");
@@ -253,7 +284,10 @@ fn test_schema_conversion_union_types() {
     });
 
     let schema = schema_converter::convert(&json_schema).unwrap();
-    assert!(matches!(schema, simple_agents_healing::schema::Schema::Union(_)));
+    assert!(matches!(
+        schema,
+        simple_agents_healing::schema::Schema::Union(_)
+    ));
 }
 
 #[test]
@@ -296,7 +330,9 @@ fn test_healing_with_complex_schema() {
 }
 ```"#;
 
-    let result = integration.heal_response(malformed, &schema, "Complex parse error").unwrap();
+    let result = integration
+        .heal_response(malformed, &schema, "Complex parse error")
+        .unwrap();
 
     assert_eq!(result.value["user"]["name"], "Alice");
     assert_eq!(result.value["user"]["contacts"][0]["type"], "email");

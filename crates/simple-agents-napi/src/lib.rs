@@ -32,10 +32,14 @@ fn build_request(
     temperature: Option<f64>,
 ) -> SaResult<CompletionRequest> {
     if model.is_empty() {
-        return Err(SimpleAgentsError::Config("model cannot be empty".to_string()));
+        return Err(SimpleAgentsError::Config(
+            "model cannot be empty".to_string(),
+        ));
     }
     if prompt.is_empty() {
-        return Err(SimpleAgentsError::Config("prompt cannot be empty".to_string()));
+        return Err(SimpleAgentsError::Config(
+            "prompt cannot be empty".to_string(),
+        ));
     }
 
     let mut builder = CompletionRequest::builder()

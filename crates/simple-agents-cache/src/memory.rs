@@ -96,7 +96,10 @@ impl InMemoryCache {
         }
 
         // Sort entries by last accessed time (oldest first)
-        let mut entries: Vec<_> = store.iter().map(|(k, v)| (k.clone(), v.last_accessed, v.data.len())).collect();
+        let mut entries: Vec<_> = store
+            .iter()
+            .map(|(k, v)| (k.clone(), v.last_accessed, v.data.len()))
+            .collect();
         entries.sort_by_key(|(_, accessed, _)| *accessed);
 
         // Remove oldest entries until we're under the limit
@@ -191,7 +194,10 @@ mod tests {
     async fn test_basic_set_get() {
         let cache = InMemoryCache::new(1024, 10);
 
-        cache.set("key1", b"value1".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
         let value = cache.get("key1").await.unwrap();
 
         assert_eq!(value, Some(b"value1".to_vec()));
@@ -209,7 +215,10 @@ mod tests {
         let cache = InMemoryCache::new(1024, 10);
 
         // Set with very short TTL
-        cache.set("key1", b"value1".to_vec(), Duration::from_millis(100)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_millis(100))
+            .await
+            .unwrap();
 
         // Should exist immediately
         let value = cache.get("key1").await.unwrap();
@@ -227,7 +236,10 @@ mod tests {
     async fn test_delete() {
         let cache = InMemoryCache::new(1024, 10);
 
-        cache.set("key1", b"value1".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
         assert!(cache.get("key1").await.unwrap().is_some());
 
         cache.delete("key1").await.unwrap();
@@ -238,8 +250,14 @@ mod tests {
     async fn test_clear() {
         let cache = InMemoryCache::new(1024, 10);
 
-        cache.set("key1", b"value1".to_vec(), Duration::from_secs(60)).await.unwrap();
-        cache.set("key2", b"value2".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set("key2", b"value2".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
 
         cache.clear().await.unwrap();
 
@@ -251,33 +269,54 @@ mod tests {
     async fn test_lru_eviction_by_count() {
         let cache = InMemoryCache::new(0, 2); // Max 2 entries
 
-        cache.set("key1", b"value1".to_vec(), Duration::from_secs(60)).await.unwrap();
-        cache.set("key2", b"value2".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set("key2", b"value2".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
 
         // At this point we have 2 entries (at limit)
 
         // Add a third entry, should trigger eviction
-        cache.set("key3", b"value3".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key3", b"value3".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
 
         // After eviction, we should have at most 2 entries
         let store = cache.store.read().await;
         assert!(store.len() <= 2, "Cache should not exceed max_entries");
         // key3 (most recent) should definitely exist
-        assert!(store.contains_key("key3"), "Most recently added key should exist");
+        assert!(
+            store.contains_key("key3"),
+            "Most recently added key should exist"
+        );
     }
 
     #[tokio::test]
     async fn test_lru_eviction_by_size() {
         let cache = InMemoryCache::new(10, 0); // Max 10 bytes
 
-        cache.set("key1", vec![1, 2, 3, 4, 5], Duration::from_secs(60)).await.unwrap();
-        cache.set("key2", vec![6, 7, 8, 9, 10], Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", vec![1, 2, 3, 4, 5], Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set("key2", vec![6, 7, 8, 9, 10], Duration::from_secs(60))
+            .await
+            .unwrap();
 
         // Access key1 to make it more recently used
         cache.get("key1").await.unwrap();
 
         // Add a new entry that would exceed size limit
-        cache.set("key3", vec![11, 12], Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key3", vec![11, 12], Duration::from_secs(60))
+            .await
+            .unwrap();
 
         // key1 should still exist, key2 should be evicted
         assert!(cache.get("key1").await.unwrap().is_some());

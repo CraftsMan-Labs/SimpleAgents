@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use simple_agents_core::{SimpleAgentsClientBuilder, RoutingMode};
+use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
 use simple_agents_types::prelude::*;
 use std::sync::Arc;
 
@@ -32,6 +32,7 @@ impl Provider for MockProvider {
             usage: Usage::new(1, 1),
             created: None,
             provider: Some("mock".to_string()),
+            healing_metadata: None,
         })
     }
 }

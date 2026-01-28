@@ -196,11 +196,11 @@ fn test_streaming_scientific_notation() {
 fn test_streaming_negative_numbers() {
     let mut parser = StreamingParser::new();
 
-    parser.feed(r#"{"int": -42, "float": -3.14}"#);
+    parser.feed(r#"{"int": -42, "float": -2.5}"#);
 
     let result = parser.finalize().unwrap();
     assert_eq!(result.value["int"], -42);
-    assert_eq!(result.value["float"], -3.14);
+    assert_eq!(result.value["float"], -2.5);
 }
 
 #[test]
@@ -292,8 +292,10 @@ fn test_streaming_with_comments_via_healing() {
 
     // JSON with comments (should be stripped by healing parser)
     parser.feed(r#"{"#);
-    parser.feed(r#""name": "Alice", // This is a name
-"#);
+    parser.feed(
+        r#""name": "Alice", // This is a name
+"#,
+    );
     parser.feed(r#""age": 30}"#);
 
     let result = parser.finalize().unwrap();

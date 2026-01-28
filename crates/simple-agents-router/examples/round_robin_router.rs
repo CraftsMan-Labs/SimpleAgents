@@ -50,6 +50,7 @@ impl Provider for MockProvider {
             usage: Usage::new(1, 1),
             created: None,
             provider: Some(self.name().to_string()),
+            healing_metadata: None,
         })
     }
 }
@@ -69,8 +70,14 @@ async fn main() -> Result<()> {
     let first = router.complete(&request).await?;
     let second = router.complete(&request).await?;
 
-    println!("First provider: {}", first.provider.as_deref().unwrap_or("unknown"));
-    println!("Second provider: {}", second.provider.as_deref().unwrap_or("unknown"));
+    println!(
+        "First provider: {}",
+        first.provider.as_deref().unwrap_or("unknown")
+    );
+    println!(
+        "Second provider: {}",
+        second.provider.as_deref().unwrap_or("unknown")
+    );
 
     Ok(())
 }

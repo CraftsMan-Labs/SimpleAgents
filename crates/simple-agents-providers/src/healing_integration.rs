@@ -412,7 +412,8 @@ mod tests {
 
     #[test]
     fn test_min_confidence() {
-        let integration = HealingIntegration::new(HealingConfig::default().with_min_confidence(0.85));
+        let integration =
+            HealingIntegration::new(HealingConfig::default().with_min_confidence(0.85));
         assert_eq!(integration.min_confidence(), 0.85);
     }
 }

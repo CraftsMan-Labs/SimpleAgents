@@ -35,20 +35,20 @@
 //! # }
 //! ```
 
-pub mod common;
-pub mod openai;
 pub mod anthropic;
-pub mod openrouter;
-pub mod retry;
-pub mod metrics;
-pub mod rate_limit;
-pub mod schema_converter;
+pub mod common;
 pub mod healing_integration;
+pub mod metrics;
+pub mod openai;
+pub mod openrouter;
+pub mod rate_limit;
+pub mod retry;
+pub mod schema_converter;
 pub mod streaming_structured;
 mod utils;
 
 // Re-export common utilities
-pub use common::{ProviderError, RetryableError, HttpClient};
+pub use common::{HttpClient, ProviderError, RetryableError};
 
 // Re-export Provider trait and types from simple-agents-types
 pub use simple_agents_types::prelude::{Provider, ProviderRequest, ProviderResponse};

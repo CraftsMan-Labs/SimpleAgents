@@ -34,6 +34,7 @@
 //! #             usage: Usage::new(1, 1),
 //! #             created: None,
 //! #             provider: Some("mock".to_string()),
+//! #             healing_metadata: None,
 //! #         })
 //! #     }
 //! # }

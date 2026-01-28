@@ -387,9 +387,18 @@ mod tests {
         let key3 = CacheKey::from_parts("openai", "gpt-3.5", "Hello");
         let key4 = CacheKey::from_parts("anthropic", "gpt-4", "Hello");
 
-        assert_ne!(key1, key2, "Different content should produce different hashes");
-        assert_ne!(key1, key3, "Different models should produce different hashes");
-        assert_ne!(key1, key4, "Different providers should produce different hashes");
+        assert_ne!(
+            key1, key2,
+            "Different content should produce different hashes"
+        );
+        assert_ne!(
+            key1, key3,
+            "Different models should produce different hashes"
+        );
+        assert_ne!(
+            key1, key4,
+            "Different providers should produce different hashes"
+        );
     }
 
     #[test]
@@ -401,7 +410,14 @@ mod tests {
         assert_eq!(parts.len(), 3, "Key should have 3 parts");
         assert_eq!(parts[0], "openai", "First part should be provider");
         assert_eq!(parts[1], "gpt-4", "Second part should be model");
-        assert_eq!(parts[2].len(), 64, "Blake3 hash should be 64 hex characters");
-        assert!(parts[2].chars().all(|c| c.is_ascii_hexdigit()), "Hash should be valid hex");
+        assert_eq!(
+            parts[2].len(),
+            64,
+            "Blake3 hash should be 64 hex characters"
+        );
+        assert!(
+            parts[2].chars().all(|c| c.is_ascii_hexdigit()),
+            "Hash should be valid hex"
+        );
     }
 }

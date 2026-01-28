@@ -88,10 +88,11 @@ where
 fn is_retryable(error: &SimpleAgentsError) -> bool {
     matches!(
         error,
-        SimpleAgentsError::Provider(ProviderError::RateLimit { .. }
-            | ProviderError::Timeout(_)
-            | ProviderError::ServerError(_))
-            | SimpleAgentsError::Network(_)
+        SimpleAgentsError::Provider(
+            ProviderError::RateLimit { .. }
+                | ProviderError::Timeout(_)
+                | ProviderError::ServerError(_)
+        ) | SimpleAgentsError::Network(_)
     )
 }
 
@@ -114,7 +115,8 @@ mod tests {
             jitter: false,
         };
 
-        let result = execute_with_retry(policy, || async { Ok::<_, SimpleAgentsError>("ok") }).await;
+        let result =
+            execute_with_retry(policy, || async { Ok::<_, SimpleAgentsError>("ok") }).await;
         assert_eq!(result.unwrap(), "ok");
     }
 
@@ -139,7 +141,9 @@ mod tests {
             async move {
                 let current = attempts.fetch_add(1, Ordering::Relaxed);
                 if current == 0 {
-                    Err(SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(1))))
+                    Err(SimpleAgentsError::Provider(ProviderError::Timeout(
+                        Duration::from_secs(1),
+                    )))
                 } else {
                     Ok("ok")
                 }

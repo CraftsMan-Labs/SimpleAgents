@@ -46,10 +46,7 @@ fn bench_parse_standard_json(c: &mut Criterion) {
                 "hobbies": ["reading", "gaming", "cooking"]
             }"#,
         ),
-        (
-            "large",
-            &large_json,
-        ),
+        ("large", &large_json),
     ];
 
     for (name, json) in test_cases {
@@ -109,14 +106,8 @@ fn bench_parse_trailing_commas(c: &mut Criterion) {
     let mut group = c.benchmark_group("parse_trailing_commas");
 
     let test_cases = vec![
-        (
-            "object_trailing",
-            r#"{"name": "Alice", "age": 30,}"#,
-        ),
-        (
-            "array_trailing",
-            r#"{"hobbies": ["reading", "gaming",]}"#,
-        ),
+        ("object_trailing", r#"{"name": "Alice", "age": 30,}"#),
+        ("array_trailing", r#"{"hobbies": ["reading", "gaming",]}"#),
         (
             "nested_trailing",
             r#"{
@@ -249,10 +240,7 @@ fn bench_parse_string_delimiters(c: &mut Criterion) {
             multi-line
             description"""}"#,
         ),
-        (
-            "backticks",
-            r#"{"code": `const x = 42;`, "lang": "js"}"#,
-        ),
+        ("backticks", r#"{"code": `const x = 42;`, "lang": "js"}"#),
     ];
 
     for (name, json) in test_cases {

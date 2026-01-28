@@ -20,7 +20,15 @@ fn rejects_null_client() {
     let model = CString::new("gpt-4").unwrap();
     let prompt = CString::new("hello").unwrap();
 
-    let response = unsafe { sa_complete(std::ptr::null_mut(), model.as_ptr(), prompt.as_ptr(), 0, -1.0) };
+    let response = unsafe {
+        sa_complete(
+            std::ptr::null_mut(),
+            model.as_ptr(),
+            prompt.as_ptr(),
+            0,
+            -1.0,
+        )
+    };
     assert!(response.is_null());
 
     let err = sa_last_error_message();

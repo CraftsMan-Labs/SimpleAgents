@@ -21,12 +21,12 @@
 //! ```
 
 use futures_util::StreamExt;
+use serde::{Deserialize, Serialize};
 use simple_agents_healing::streaming::StreamingParser;
 use simple_agents_macros::PartialType;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
 use simple_agents_types::prelude::*;
-use serde::{Deserialize, Serialize};
 
 /// Recipe structure to parse from LLM response
 #[derive(Debug, Clone, PartialType, Serialize, Deserialize)]
@@ -58,8 +58,7 @@ async fn main() -> Result<()> {
 
     println!("🍳 SimpleAgents - Streaming with Healing Example\n");
 
-    let model = std::env::var("OPENAI_API_MODEL")
-        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+    let model = std::env::var("OPENAI_API_MODEL").unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
 
     // Create request asking for JSON recipe
     let request = CompletionRequest::builder()
@@ -113,17 +112,24 @@ async fn main() -> Result<()> {
                         // Try to extract partial structured data
                         if let Some(current) = healing_parser.try_parse() {
                             // Update partial recipe from current JSON
-                            if let Some(name) = current.value.get("name").and_then(serde_json::Value::as_str)
+                            if let Some(name) = current
+                                .value
+                                .get("name")
+                                .and_then(serde_json::Value::as_str)
                             {
                                 partial_recipe.name = Some(name.to_string());
                             }
-                            if let Some(cuisine) =
-                                current.value.get("cuisine").and_then(serde_json::Value::as_str)
+                            if let Some(cuisine) = current
+                                .value
+                                .get("cuisine")
+                                .and_then(serde_json::Value::as_str)
                             {
                                 partial_recipe.cuisine = Some(cuisine.to_string());
                             }
-                            if let Some(prep_time) =
-                                current.value.get("prep_time").and_then(serde_json::Value::as_u64)
+                            if let Some(prep_time) = current
+                                .value
+                                .get("prep_time")
+                                .and_then(serde_json::Value::as_u64)
                             {
                                 partial_recipe.prep_time = Some(prep_time as u32);
                             }
