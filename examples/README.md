@@ -2,6 +2,25 @@
 
 This directory contains practical examples demonstrating SimpleAgents features.
 
+## python_client.py
+
+**Location:** `examples/python_client.py`
+
+Demonstrates using the Python bindings with an explicit provider, API base, and API key.
+
+### Running
+
+From the project root:
+```bash
+uv pip install -e crates/simple-agents-py
+uv run python examples/python_client.py
+```
+
+### Notes
+
+- Update `api_key` in the example with a real key before running.
+- You can switch to another provider by changing the first `Client` argument.
+
 ## custom_api.rs
 
 **Location:** `crates/simple-agents-providers/examples/custom_api.rs`
