@@ -19,7 +19,7 @@ SimpleAgents is a Rust framework for building LLM-powered applications with a fo
 ### Quick Start
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
 
 SimpleAgents is organized into multiple crates:
 
-- **`simple-agents-types`** - Core types, traits, and interfaces
+- **`simple-agent-type`** - Core types, traits, and interfaces
 - **`simple-agents-providers`** - Provider implementations (OpenAI, Anthropic, etc.)
 - **`simple-agents-cache`** - Caching implementations (in-memory, Redis, etc.)
 

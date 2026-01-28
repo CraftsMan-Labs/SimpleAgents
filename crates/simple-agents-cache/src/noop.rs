@@ -1,8 +1,8 @@
 //! No-op cache implementation for testing and disabling caching.
 
 use async_trait::async_trait;
-use simple_agents_types::cache::Cache;
-use simple_agents_types::error::Result;
+use simple_agent_type::cache::Cache;
+use simple_agent_type::error::Result;
 use std::time::Duration;
 
 /// A cache that doesn't actually cache anything.
@@ -15,7 +15,7 @@ use std::time::Duration;
 /// # Example
 /// ```no_run
 /// use simple_agents_cache::NoOpCache;
-/// use simple_agents_types::cache::Cache;
+/// use simple_agent_type::cache::Cache;
 /// use std::time::Duration;
 ///
 /// # async fn example() {

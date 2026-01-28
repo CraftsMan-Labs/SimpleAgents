@@ -1,10 +1,10 @@
-# simple-agents-types
+# simple-agent-type
 
 Core types and traits for the SimpleAgents LLM framework.
 
 ## Overview
 
-`simple-agents-types` is the foundational crate of SimpleAgents, providing all core types, traits, and error definitions. It has **zero runtime dependencies** - no HTTP client, no I/O, no async runtime - just pure types and traits.
+`simple-agent-type` is the foundational crate of SimpleAgents, providing all core types, traits, and error definitions. It has **zero runtime dependencies** - no HTTP client, no I/O, no async runtime - just pure types and traits.
 
 ## Features
 
@@ -26,7 +26,7 @@ SimpleAgents follows a trait-based architecture with three main traits:
 ## Quick Start
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 // Create a request
 let request = CompletionRequest::builder()
@@ -46,7 +46,7 @@ assert_eq!(request.messages.len(), 1);
 ### Messages
 
 ```rust
-use simple_agents_types::message::{Message, Role};
+use simple_agent_type::message::{Message, Role};
 
 let user_msg = Message::user("What is 2+2?");
 let assistant_msg = Message::assistant("4");
@@ -56,8 +56,8 @@ let system_msg = Message::system("You are a helpful assistant.");
 ### Requests
 
 ```rust
-use simple_agents_types::request::CompletionRequest;
-use simple_agents_types::message::Message;
+use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::message::Message;
 
 let request = CompletionRequest::builder()
     .model("gpt-4")
@@ -70,7 +70,7 @@ let request = CompletionRequest::builder()
 ### Responses
 
 ```rust
-use simple_agents_types::response::CompletionResponse;
+use simple_agent_type::response::CompletionResponse;
 
 // Get the first completion's content
 if let Some(content) = response.content() {
@@ -81,7 +81,7 @@ if let Some(content) = response.content() {
 ### Error Handling
 
 ```rust
-use simple_agents_types::error::{SimpleAgentsError, ProviderError};
+use simple_agent_type::error::{SimpleAgentsError, ProviderError};
 
 match result {
     Ok(response) => println!("{}", response.content().unwrap()),
@@ -95,7 +95,7 @@ match result {
 ### API Key Security
 
 ```rust
-use simple_agents_types::validation::ApiKey;
+use simple_agent_type::validation::ApiKey;
 
 let key = ApiKey::new("sk-...")?;
 
@@ -109,7 +109,7 @@ let raw_key = key.expose(); // Use for API calls only
 ### Coercion Tracking
 
 ```rust
-use simple_agents_types::coercion::{CoercionResult, CoercionFlag};
+use simple_agent_type::coercion::{CoercionResult, CoercionFlag};
 
 let result = CoercionResult::new(42)
     .with_flag(CoercionFlag::StrippedMarkdown)
@@ -138,7 +138,7 @@ if result.was_coerced() {
 ### Provider Trait
 
 ```rust
-use simple_agents_types::provider::Provider;
+use simple_agent_type::provider::Provider;
 use async_trait::async_trait;
 
 #[async_trait]
@@ -162,7 +162,7 @@ impl Provider for MyProvider {
 ### Cache Trait
 
 ```rust
-use simple_agents_types::cache::Cache;
+use simple_agent_type::cache::Cache;
 use async_trait::async_trait;
 
 #[async_trait]
@@ -177,7 +177,7 @@ impl Cache for MyCache {
 ### RoutingStrategy Trait
 
 ```rust
-use simple_agents_types::router::RoutingStrategy;
+use simple_agent_type::router::RoutingStrategy;
 use async_trait::async_trait;
 
 #[async_trait]
@@ -230,7 +230,7 @@ MIT OR Apache-2.0
 
 ## Next Steps
 
-After `simple-agents-types`, the next crates to implement are:
+After `simple-agent-type`, the next crates to implement are:
 
 1. `simple-agents-providers` - OpenAI, Anthropic, etc.
 2. `simple-agents-healing` - JSON parser with coercion

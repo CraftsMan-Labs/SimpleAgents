@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::sync::Arc;
 
 struct MockProvider;

@@ -5,8 +5,8 @@ use simple_agents_core::SimpleAgentsClientBuilder;
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_types::message::Message;
-use simple_agents_types::prelude::{
+use simple_agent_type::message::Message;
+use simple_agent_type::prelude::{
     ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError,
 };
 use std::cell::RefCell;

@@ -1398,7 +1398,7 @@ simple-agents/
 │   │   │   └── fallback.rs
 │   │   └── Cargo.toml
 │   ├── simple-agents-cache/      # Caching
-│   ├── simple-agents-types/      # Shared types & traits
+│   ├── simple-agent-type/      # Shared types & traits
 │   ├── simple-agents-ffi/        # C FFI layer
 │   ├── simple-agents-macros/     # Derive macros
 │   └── simple-agents-cli/        # CLI tool
@@ -1430,7 +1430,7 @@ pub mod prelude {
         CompletionResponse,
         SimpleAgentsError,
     };
-    pub use simple_agents_types::{Message, Role};
+    pub use simple_agent_type::{Message, Role};
 }
 
 // Internal modules
@@ -2018,7 +2018,7 @@ Use the `governor` crate with token bucket algorithm. Support both per-instance 
 ### Configuration
 
 ```rust
-use simple_agents_types::config::RateLimitConfig;
+use simple_agent_type::config::RateLimitConfig;
 
 // Per-instance rate limiting
 let config = RateLimitConfig::new(
@@ -2194,7 +2194,7 @@ pub use error::ProviderNameError;
 
 use async_trait::async_trait;
 use reqwest::Client;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::time::Duration;
 
 #[derive(Clone)]

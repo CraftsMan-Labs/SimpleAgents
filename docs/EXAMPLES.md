@@ -18,7 +18,7 @@ Practical examples for using SimpleAgents.
 ### Hello World
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
 ### Simple Chat
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
 
 ```rust
 use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 let api_key = ApiKey::new("sk-...")?;
 let provider = OpenAIProvider::new(api_key)?;
@@ -107,7 +107,7 @@ let response = provider.transform_response(provider_response)?;
 
 ```rust
 use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 let api_key = ApiKey::new(std::env::var("AZURE_OPENAI_KEY")?)?;
 
@@ -131,7 +131,7 @@ let response = provider.transform_response(provider_response)?;
 ### Multi-Turn Conversation
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -184,7 +184,7 @@ async fn main() -> Result<()> {
 
 ```rust
 use simple_agents_cache::InMemoryCache;
-use simple_agents_types::cache::Cache;
+use simple_agent_type::cache::Cache;
 use std::time::Duration;
 
 #[tokio::main]
@@ -214,7 +214,7 @@ async fn main() -> Result<()> {
 
 ```rust
 use simple_agents_cache::InMemoryCache;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 use std::time::Duration;
 
@@ -224,7 +224,7 @@ async fn get_completion_cached(
     request: &CompletionRequest,
 ) -> Result<CompletionResponse> {
     // Generate cache key
-    let cache_key = simple_agents_types::cache::CacheKey::from_parts(
+    let cache_key = simple_agent_type::cache::CacheKey::from_parts(
         "openai",
         &request.model,
         &serde_json::to_string(&request.messages)?
@@ -277,7 +277,7 @@ async fn main() -> Result<()> {
 
 ```rust
 use simple_agents_cache::NoOpCache;
-use simple_agents_types::cache::Cache;
+use simple_agent_type::cache::Cache;
 use std::time::Duration;
 
 #[tokio::test]
@@ -300,7 +300,7 @@ async fn test_without_cache() {
 ### Basic Error Handling
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -344,7 +344,7 @@ async fn main() {
 ### Detailed Error Handling
 
 ```rust
-use simple_agents_types::error::{SimpleAgentsError, ProviderError, ValidationError};
+use simple_agent_type::error::{SimpleAgentsError, ProviderError, ValidationError};
 
 match result {
     Ok(response) => {
@@ -379,8 +379,8 @@ match result {
 
 ```rust
 use simple_agents_providers::retry::execute_with_retry;
-use simple_agents_types::config::RetryConfig;
-use simple_agents_types::prelude::*;
+use simple_agent_type::config::RetryConfig;
+use simple_agent_type::prelude::*;
 use std::time::Duration;
 
 #[tokio::main]
@@ -430,7 +430,7 @@ async fn main() -> Result<()> {
 ```rust
 use futures_util::StreamExt;
 use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -715,7 +715,7 @@ async fn main() -> Result<()> {
 ### Concurrent Requests
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 use tokio::task::JoinSet;
 
@@ -769,7 +769,7 @@ async fn main() -> Result<()> {
 
 ```rust
 use async_trait::async_trait;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -842,7 +842,7 @@ impl<P: Provider + Send + Sync> Provider for ProviderWithStats<P> {
 ### Building a Simple CLI
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 use std::io::{self, Write};
 
@@ -908,7 +908,7 @@ async fn main() -> Result<()> {
 ```rust
 use simple_agents_cache::InMemoryCache;
 use simple_agents_providers::{openai::OpenAIProvider, retry::execute_with_retry};
-use simple_agents_types::{
+use simple_agent_type::{
     cache::{Cache, CacheKey},
     config::RetryConfig,
     prelude::*,

@@ -30,8 +30,8 @@
 use crate::schema::{Field, ObjectSchema, Schema};
 use crate::string_utils::{jaro_winkler, to_camel_case, to_snake_case};
 use serde_json::Value;
-use simple_agents_types::coercion::{CoercionFlag, CoercionResult};
-use simple_agents_types::error::HealingError;
+use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
+use simple_agent_type::error::HealingError;
 
 /// Configuration for the coercion engine.
 #[derive(Debug, Clone)]

@@ -2024,11 +2024,26 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-agents-cache"
-version = "0.1.0"
+name = "simple-agent-type"
+version = "0.1.1"
 dependencies = [
  "async-trait",
- "simple-agents-types",
+ "blake3",
+ "futures-core",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "simple-agents-cache"
+version = "0.1.1"
+dependencies = [
+ "async-trait",
+ "simple-agent-type",
  "tokio",
 ]
 
@@ -2040,10 +2055,10 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
  "simple-agents-router",
- "simple-agents-types",
  "thiserror 1.0.69",
  "tokio",
  "toml",
@@ -2051,15 +2066,15 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "serde",
  "serde_json",
+ "simple-agent-type",
  "simple-agents-cache",
  "simple-agents-healing",
  "simple-agents-router",
- "simple-agents-types",
  "tokio",
 ]
 
@@ -2070,9 +2085,9 @@ dependencies = [
  "dotenv",
  "futures-util",
  "serde_json",
+ "simple-agent-type",
  "simple-agents-healing",
  "simple-agents-providers",
- "simple-agents-types",
  "tokio",
 ]
 
@@ -2081,9 +2096,9 @@ name = "simple-agents-ffi"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
- "simple-agents-types",
  "tokio",
 ]
 
@@ -2096,8 +2111,8 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "simple-agent-type",
  "simple-agents-macros",
- "simple-agents-types",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
@@ -2111,7 +2126,7 @@ dependencies = [
  "quote",
  "serde",
  "serde_json",
- "simple-agents-types",
+ "simple-agent-type",
  "syn",
 ]
 
@@ -2121,9 +2136,9 @@ version = "0.1.0"
 dependencies = [
  "napi",
  "napi-derive",
+ "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
- "simple-agents-types",
  "tokio",
 ]
 
@@ -2144,10 +2159,10 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "simple-agent-type",
  "simple-agents-cache",
  "simple-agents-healing",
  "simple-agents-macros",
- "simple-agents-types",
  "thiserror 2.0.17",
  "tokio",
  "tokio-test",
@@ -2157,38 +2172,23 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "pyo3",
+ "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
- "simple-agents-types",
  "tokio",
 ]
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "rand 0.8.5",
  "serde_json",
- "simple-agents-types",
- "tokio",
-]
-
-[[package]]
-name = "simple-agents-types"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "blake3",
- "futures-core",
- "rand 0.8.5",
- "serde",
- "serde_json",
- "subtle",
- "thiserror 1.0.69",
+ "simple-agent-type",
  "tokio",
 ]
 

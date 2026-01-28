@@ -8,8 +8,8 @@ use simple_agents_cache::Cache;
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
-use simple_agents_types::cache::CacheKey;
-use simple_agents_types::prelude::{
+use simple_agent_type::cache::CacheKey;
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::collections::HashMap;
@@ -121,7 +121,7 @@ impl SimpleAgentsClient {
         self.ensure_healing_enabled()?;
         let response = self.complete(request).await?;
         let content = response.content().ok_or_else(|| {
-            SimpleAgentsError::Healing(simple_agents_types::error::HealingError::ParseFailed {
+            SimpleAgentsError::Healing(simple_agent_type::error::HealingError::ParseFailed {
                 error_message: "response contained no content".to_string(),
                 input: String::new(),
             })
@@ -326,7 +326,7 @@ impl Middleware for () {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simple_agents_types::prelude::*;
+    use simple_agent_type::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockProvider {

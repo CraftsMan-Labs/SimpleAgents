@@ -14,4 +14,4 @@ tokio = { workspace = true }
 
 simple-agents-core = { path = "../simple-agents-core" }
 simple-agents-providers = { path = "../simple-agents-providers" }
-simple-agents-types = { path = "../simple-agents-types" }
+simple-agent-type = { path = "../simple-agent-type" }

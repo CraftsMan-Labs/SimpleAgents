@@ -24,7 +24,7 @@ Add SimpleAgents to your `Cargo.toml`:
 
 ```toml
  [dependencies]
- simple-agents-types = "0.1.0"
+ simple-agent-type = "0.1.0"
  simple-agents-providers = "0.1.0"
  simple-agents-cache = "0.1.0"
  simple-agents-healing = "0.1.0"
@@ -38,7 +38,7 @@ Add SimpleAgents to your `Cargo.toml`:
 ### Creating a Provider
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 // Create an API key (validated automatically)
@@ -265,7 +265,7 @@ SimpleAgents provides built-in caching to reduce API calls and costs.
 
 ```rust
 use simple_agents_cache::InMemoryCache;
-use simple_agents_types::cache::Cache;
+use simple_agent_type::cache::Cache;
 use std::time::Duration;
 
 // Create cache with limits
@@ -289,7 +289,7 @@ if let Some(cached) = cache.get(key).await? {
 ### Cache Key Generation
 
 ```rust
-use simple_agents_types::cache::CacheKey;
+use simple_agent_type::cache::CacheKey;
 
 let key = CacheKey::from_parts(
     "openai",
@@ -318,7 +318,7 @@ Implement retry with exponential backoff:
 
 ```rust
 use simple_agents_providers::retry::execute_with_retry;
-use simple_agents_types::config::RetryConfig;
+use simple_agent_type::config::RetryConfig;
 use std::time::Duration;
 
 let config = RetryConfig {
@@ -355,7 +355,7 @@ let config = RetryConfig::default();
 SimpleAgents uses a comprehensive error type:
 
 ```rust
-use simple_agents_types::error::{SimpleAgentsError, ProviderError, ValidationError};
+use simple_agent_type::error::{SimpleAgentsError, ProviderError, ValidationError};
 
 match result {
     Ok(response) => {
@@ -421,7 +421,7 @@ let stream = provider.execute_stream(provider_request).await?;
 ### Custom Headers
 
 ```rust
-use simple_agents_types::provider::{ProviderRequest, headers};
+use simple_agent_type::provider::{ProviderRequest, headers};
 use std::borrow::Cow;
 
 let request = ProviderRequest::new("https://api.example.com/v1/chat")
@@ -759,7 +759,7 @@ let header_value = format!("Bearer {}", api_key.expose());
 ### Example: Complete Application
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_cache::InMemoryCache;
 use std::time::Duration;
@@ -781,7 +781,7 @@ async fn main() -> Result<()> {
         .build()?;
 
     // Generate cache key
-    let cache_key = simple_agents_types::cache::CacheKey::from_parts(
+    let cache_key = simple_agent_type::cache::CacheKey::from_parts(
         "openai",
         &request.model,
         &serde_json::to_string(&request.messages)?

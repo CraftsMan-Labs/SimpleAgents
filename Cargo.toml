@@ -10,7 +10,7 @@ authors = ["SimpleAgents Contributors"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/rishub/simple-agents"
 homepage = "https://github.com/rishub/simple-agents"
-documentation = "https://docs.rs/simple-agents-types"
+documentation = "https://docs.rs/simple-agent-type"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

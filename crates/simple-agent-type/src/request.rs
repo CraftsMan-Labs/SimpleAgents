@@ -79,8 +79,8 @@ impl CompletionRequest {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::request::CompletionRequest;
-    /// use simple_agents_types::message::Message;
+    /// use simple_agent_type::request::CompletionRequest;
+    /// use simple_agent_type::message::Message;
     ///
     /// let request = CompletionRequest::builder()
     ///     .model("gpt-4")

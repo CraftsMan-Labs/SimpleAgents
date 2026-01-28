@@ -6,8 +6,8 @@
 
 **High-performance, type-safe abstraction layer for building production-ready LLM applications**
 
-[![Crates.io](https://img.shields.io/crates/v/simple-agents-types?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-types)
-[![Documentation](https://img.shields.io/docsrs/simple-agents-types?style=flat-square&logo=docs.rs)](https://docs.rs/simple-agents-types)
+[![Crates.io](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust)](https://crates.io/crates/simple-agent-type)
+[![Documentation](https://img.shields.io/docsrs/simple-agent-type?style=flat-square&logo=docs.rs)](https://docs.rs/simple-agent-type)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue?style=flat-square)](LICENSE-MIT)
 [![Rust Version](https://img.shields.io/badge/rust-1.75%2B-orange?style=flat-square&logo=rust)](https://www.rust-lang.org/)
 [![CI Status](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square&logo=github-actions)](https://github.com/rishub/simple-agents)
@@ -209,7 +209,7 @@ let response = client.complete(&request).await?;
 └─────────────┘    └────────────────┘  └────────┘  └──────────┘
        │
 ┌──────▼──────────────────────────────────────────────────────┐
-│                    simple-agents-types                       │
+│                    simple-agent-type                       │
 │            Core Types & Traits ✅ 3,885 LOC                 │
 └──────────────────────────────────────────────────────────────┘
 
@@ -240,7 +240,7 @@ Add to your `Cargo.toml`:
 [dependencies]
 simple-agents-core = "0.1"
 simple-agents-providers = "0.1"
-simple-agents-types = "0.1"
+simple-agent-type = "0.1"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
@@ -256,7 +256,7 @@ pip install simple-agents-py
 ### Basic Example
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
@@ -290,7 +290,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ```rust
 use simple_agents_cache::InMemoryCache;
-use simple_agents_types::config::RetryConfig;
+use simple_agent_type::config::RetryConfig;
 use std::time::Duration;
 
 // Create cache
@@ -547,7 +547,7 @@ let response = client.complete(&conversation).await?;
 
 | Resource | Description | Link |
 |----------|-------------|------|
-| 📘 **API Documentation** | Complete API reference with examples | [docs.rs](https://docs.rs/simple-agents-types) |
+| 📘 **API Documentation** | Complete API reference with examples | [docs.rs](https://docs.rs/simple-agent-type) |
 | 🚀 **Quick Start Guide** | Get up and running in 5 minutes | [Above](#-quick-start) |
 | 📋 **Examples** | Real-world usage patterns | [examples/](crates/simple-agents-providers/examples/) |
 | 🏗️ **Architecture Guide** | System design and patterns | [research/](research/) |
@@ -729,7 +729,7 @@ See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for dependencies.
 
 ### Get Help
 
-- 📖 **Documentation** - [docs.rs](https://docs.rs/simple-agents-types)
+- 📖 **Documentation** - [docs.rs](https://docs.rs/simple-agent-type)
 - 💬 **Discussions** - [GitHub Discussions](https://github.com/rishub/simple-agents/discussions)
 - 🐛 **Bug Reports** - [GitHub Issues](https://github.com/rishub/simple-agents/issues)
 - 💡 **Feature Requests** - [GitHub Issues](https://github.com/rishub/simple-agents/issues/new?template=feature_request.md)

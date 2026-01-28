@@ -1,6 +1,6 @@
 //! Retry logic with exponential backoff.
 
-use simple_agents_types::{
+use simple_agent_type::{
     config::RetryConfig,
     error::{Result, SimpleAgentsError},
 };
@@ -24,8 +24,8 @@ use std::future::Future;
 /// # Example
 /// ```no_run
 /// use simple_agents_providers::retry::execute_with_retry;
-/// use simple_agents_types::config::RetryConfig;
-/// use simple_agents_types::error::{SimpleAgentsError, ProviderError};
+/// use simple_agent_type::config::RetryConfig;
+/// use simple_agent_type::error::{SimpleAgentsError, ProviderError};
 ///
 /// # async fn example() -> Result<String, SimpleAgentsError> {
 /// let config = RetryConfig::default();
@@ -92,7 +92,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simple_agents_types::error::ProviderError;
+    use simple_agent_type::error::ProviderError;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -204,7 +204,7 @@ mod tests {
 
                     // Return a non-retryable error
                     Err::<String, _>(SimpleAgentsError::Validation(
-                        simple_agents_types::error::ValidationError::Empty {
+                        simple_agent_type::error::ValidationError::Empty {
                             field: "test".to_string(),
                         },
                     ))

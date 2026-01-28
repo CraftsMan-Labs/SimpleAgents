@@ -1,8 +1,8 @@
 //! OpenAI API request and response types.
 
 use serde::{Deserialize, Serialize};
-use simple_agents_types::prelude::Message;
-use simple_agents_types::request::ResponseFormat;
+use simple_agent_type::prelude::Message;
+use simple_agent_type::request::ResponseFormat;
 
 /// OpenAI chat completion request
 ///
@@ -174,7 +174,7 @@ pub struct OpenAIDelta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simple_agents_types::prelude::Role;
+    use simple_agent_type::prelude::Role;
 
     #[test]
     fn test_serialize_request() {

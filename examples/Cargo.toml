@@ -9,7 +9,7 @@ futures-util = { workspace = true }
 serde_json = { workspace = true }
 simple-agents-healing = { path = "../crates/simple-agents-healing", version = "0.1.0" }
 simple-agents-providers = { path = "../crates/simple-agents-providers", version = "0.1.0" }
-simple-agents-types = { path = "../crates/simple-agents-types", version = "0.1.0" }
+simple-agent-type = { path = "../crates/simple-agent-type", version = "0.1.0" }
 tokio = { workspace = true }
 
 [[example]]

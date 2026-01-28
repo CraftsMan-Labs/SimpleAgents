@@ -26,7 +26,7 @@ use simple_agents_healing::streaming::StreamingParser;
 use simple_agents_macros::PartialType;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 /// Recipe structure to parse from LLM response
 #[derive(Debug, Clone, PartialType, Serialize, Deserialize)]

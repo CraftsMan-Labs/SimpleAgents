@@ -4,7 +4,7 @@ use simple_agents_router::{
     CostRouter, CostRouterConfig, FallbackRouter, FallbackRouterConfig, LatencyRouter,
     LatencyRouterConfig, RoundRobinRouter,
 };
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::sync::Arc;

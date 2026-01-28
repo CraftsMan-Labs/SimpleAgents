@@ -8,13 +8,13 @@ This document tracks all tasks for the SimpleAgents project, organized by crate 
 
 ## ✅ COMPLETED TASKS
 
-### Phase 1: Foundation - `simple-agents-types` (Week 1-2) ✅ COMPLETE
+### Phase 1: Foundation - `simple-agent-type` (Week 1-2) ✅ COMPLETE
 
 #### Setup & Infrastructure ✅
 - [x] Create workspace `Cargo.toml` at repository root
 - [x] Configure workspace with proper Rust edition (2021)
 - [x] Set up workspace-level dependencies (serde, thiserror, async-trait)
-- [x] Create `crates/simple-agents-types/` directory structure
+- [x] Create `crates/simple-agent-type/` directory structure
 - [x] Create crate-level `Cargo.toml` with workspace inheritance
 - [x] Set up proper licensing (MIT OR Apache-2.0)
 
@@ -180,7 +180,7 @@ Currently: **None** - Foundation phase is complete!
 #### Setup
 - [ ] Create `crates/simple-agents-providers/` directory
 - [ ] Set up Cargo.toml with dependencies
-  - [ ] Add `simple-agents-types` as dependency
+  - [ ] Add `simple-agent-type` as dependency
   - [ ] Add `reqwest` for HTTP client
   - [ ] Add `tokio` for async runtime
   - [ ] Add provider-specific dependencies
@@ -250,7 +250,7 @@ Currently: **None** - Foundation phase is complete!
 #### Setup
 - [ ] Create `crates/simple-agents-healing/` directory
 - [ ] Set up Cargo.toml
-  - [ ] Add `simple-agents-types` dependency
+  - [ ] Add `simple-agent-type` dependency
   - [ ] Add JSON parsing libraries
   - [ ] Add fuzzy matching libraries
 
@@ -498,7 +498,7 @@ Currently: **None** - Foundation phase is complete!
 ## 📊 Overall Progress
 
 ### Completed
-- ✅ **Phase 1**: Foundation (`simple-agents-types`) - 100% complete
+- ✅ **Phase 1**: Foundation (`simple-agent-type`) - 100% complete
   - 12 modules implemented
   - 114 tests passing
   - Full documentation

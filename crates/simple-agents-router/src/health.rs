@@ -2,7 +2,7 @@
 //!
 //! Maintains per-provider metrics and health state.
 
-use simple_agents_types::prelude::{ProviderHealth, ProviderMetrics};
+use simple_agent_type::prelude::{ProviderHealth, ProviderMetrics};
 use std::sync::Mutex;
 use std::time::Duration;
 

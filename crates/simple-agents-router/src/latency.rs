@@ -2,7 +2,7 @@
 //!
 //! Routes requests to the provider with the lowest observed latency.
 
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -178,7 +178,7 @@ impl LatencyRouter {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use simple_agents_types::prelude::*;
+    use simple_agent_type::prelude::*;
 
     struct MockProvider {
         name: &'static str,

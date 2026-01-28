@@ -3,7 +3,7 @@
 //! Tracks provider failures and opens the circuit after a threshold,
 //! then allows half-open probes after a cooldown.
 
-use simple_agents_types::prelude::{ProviderError, SimpleAgentsError};
+use simple_agent_type::prelude::{ProviderError, SimpleAgentsError};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 

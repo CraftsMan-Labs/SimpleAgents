@@ -20,11 +20,11 @@ use std::time::Duration;
 /// # Example Implementation
 ///
 /// ```rust
-/// use simple_agents_types::router::RoutingStrategy;
-/// use simple_agents_types::config::ProviderConfig;
-/// use simple_agents_types::request::CompletionRequest;
-/// use simple_agents_types::message::Message;
-/// use simple_agents_types::error::{Result, SimpleAgentsError};
+/// use simple_agent_type::router::RoutingStrategy;
+/// use simple_agent_type::config::ProviderConfig;
+/// use simple_agent_type::request::CompletionRequest;
+/// use simple_agent_type::message::Message;
+/// use simple_agent_type::error::{Result, SimpleAgentsError};
 /// use async_trait::async_trait;
 /// use std::sync::atomic::{AtomicUsize, Ordering};
 ///

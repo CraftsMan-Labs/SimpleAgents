@@ -1,6 +1,6 @@
 //! OpenAI-specific error handling.
 
-use simple_agents_types::ProviderError;
+use simple_agent_type::ProviderError;
 use std::time::Duration;
 use thiserror::Error;
 

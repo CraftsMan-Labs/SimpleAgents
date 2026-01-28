@@ -23,7 +23,7 @@ simple-agents/
 │   ├── simple-agents-healing/      # JSON parser, coercion engine, scoring
 │   ├── simple-agents-router/       # Routing strategies, retry, fallback
 │   ├── simple-agents-cache/        # Cache trait + implementations
-│   ├── simple-agents-types/        # Shared types, traits, errors
+│   ├── simple-agent-type/        # Shared types, traits, errors
 │   ├── simple-agents-ffi/          # C-compatible FFI layer
 │   ├── simple-agents-macros/       # Derive macros for Schema
 │   └── simple-agents-cli/          # CLI tool
@@ -235,7 +235,7 @@ SHA256 hash of deterministic request fields:
 
 ---
 
-### 5. Type System & Schema (`simple-agents-types` + `simple-agents-macros`)
+### 5. Type System & Schema (`simple-agent-type` + `simple-agents-macros`)
 
 #### Derive Macro for Schemas
 
@@ -695,7 +695,7 @@ redis = { version = "0.24", features = ["tokio-comp"] }
 5. Build configuration system (TOML loading, builder pattern)
 
 **Critical Files**:
-- `crates/simple-agents-types/src/lib.rs`
+- `crates/simple-agent-type/src/lib.rs`
 - `crates/simple-agents-core/src/config.rs`
 - `crates/simple-agents-core/src/http.rs`
 
@@ -1038,7 +1038,7 @@ pub struct MockProvider {
 
 ## Critical Files (Priority Order)
 
-1. **`crates/simple-agents-types/src/lib.rs`**
+1. **`crates/simple-agent-type/src/lib.rs`**
    - Core types, traits, errors
    - Foundation for entire project
 

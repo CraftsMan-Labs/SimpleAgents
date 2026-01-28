@@ -7,7 +7,7 @@ use simple_agents_providers::{
 use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
-use simple_agents_types::prelude::{ApiKey, CompletionRequest, Message, SimpleAgentsError};
+use simple_agent_type::prelude::{ApiKey, CompletionRequest, Message, SimpleAgentsError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -686,7 +686,7 @@ async fn execute_completion(
     prompt: &str,
     system: Option<&str>,
     overrides: &RequestOverrides,
-) -> Result<simple_agents_types::response::CompletionResponse> {
+) -> Result<simple_agent_type::response::CompletionResponse> {
     let messages = build_messages(prompt, system);
     let request = build_request(model, messages, overrides)?;
     let response = client.complete(&request).await?;
@@ -892,7 +892,7 @@ fn percentile_ms(values: &[Duration], percentile: f64) -> f64 {
 
 fn print_completion(
     output: OutputFormat,
-    response: &simple_agents_types::response::CompletionResponse,
+    response: &simple_agent_type::response::CompletionResponse,
     include_metadata: bool,
 ) -> Result<()> {
     match output {

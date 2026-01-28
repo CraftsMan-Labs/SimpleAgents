@@ -24,8 +24,8 @@
 //! ```
 
 use serde_json::Value;
-use simple_agents_types::coercion::{CoercionFlag, CoercionResult};
-use simple_agents_types::error::{HealingError, Result};
+use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
+use simple_agent_type::error::{HealingError, Result};
 use std::fmt;
 use tracing::{debug, trace, warn};
 
@@ -84,7 +84,7 @@ pub type ParserResult = CoercionResult<Value>;
 /// let parser = JsonishParser::new();
 /// let result = parser.parse(r#"{"key": "value",}"#).unwrap();
 /// assert!(result.flags.iter().any(|f| matches!(f,
-///     simple_agents_types::coercion::CoercionFlag::FixedTrailingComma)));
+///     simple_agent_type::coercion::CoercionFlag::FixedTrailingComma)));
 /// ```
 pub struct JsonishParser {
     config: ParserConfig,
@@ -1083,7 +1083,7 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            simple_agents_types::error::SimpleAgentsError::Healing(
+            simple_agent_type::error::SimpleAgentsError::Healing(
                 HealingError::LowConfidence { .. },
             ) => {}
             e => panic!("Expected LowConfidence error, got: {:?}", e),

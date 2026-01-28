@@ -1,5 +1,5 @@
 [package]
-name = "simple-agents-types"
+name = "simple-agent-type"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

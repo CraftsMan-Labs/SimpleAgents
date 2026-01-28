@@ -1,8 +1,8 @@
 //! In-memory cache implementation with LRU eviction.
 
 use async_trait::async_trait;
-use simple_agents_types::cache::Cache;
-use simple_agents_types::error::Result;
+use simple_agent_type::cache::Cache;
+use simple_agent_type::error::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -40,7 +40,7 @@ impl CacheEntry {
 /// # Example
 /// ```no_run
 /// use simple_agents_cache::InMemoryCache;
-/// use simple_agents_types::cache::Cache;
+/// use simple_agent_type::cache::Cache;
 /// use std::time::Duration;
 ///
 /// # async fn example() {

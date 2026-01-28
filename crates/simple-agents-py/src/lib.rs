@@ -8,8 +8,8 @@ use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_types::message::Message;
-use simple_agents_types::prelude::{CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agent_type::message::Message;
+use simple_agent_type::prelude::{CompletionRequest, Provider, Result, SimpleAgentsError};
 use std::sync::{Arc, Mutex};
 
 type Runtime = tokio::runtime::Runtime;
