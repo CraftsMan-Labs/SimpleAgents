@@ -6,7 +6,9 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_types::message::Message;
-use simple_agents_types::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError,
+};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -26,7 +28,7 @@ pub struct SAClient {
 }
 
 thread_local! {
-    static LAST_ERROR: RefCell<Option<String>> = RefCell::new(None);
+    static LAST_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn set_last_error(message: impl Into<String>) {
@@ -80,7 +82,9 @@ unsafe fn cstr_to_string(ptr: *const c_char, field: &str) -> Result<String> {
         .to_str()
         .map_err(|_| SimpleAgentsError::Config(format!("{field} must be valid UTF-8")))?;
     if value.is_empty() {
-        return Err(SimpleAgentsError::Config(format!("{field} cannot be empty")));
+        return Err(SimpleAgentsError::Config(format!(
+            "{field} cannot be empty"
+        )));
     }
 
     Ok(value.to_string())
@@ -149,6 +153,11 @@ where
 /// Create a client from environment variables for a provider.
 ///
 /// `provider_name` must be one of: "openai", "anthropic", "openrouter".
+///
+/// # Safety
+///
+/// The `provider_name` pointer must be a valid null-terminated C string or null.
+/// The returned pointer must be freed with `sa_client_free`.
 #[no_mangle]
 pub unsafe extern "C" fn sa_client_new_from_env(provider_name: *const c_char) -> *mut SAClient {
     let result = catch_unwind(AssertUnwindSafe(|| -> Result<Box<SAClient>> {
@@ -182,6 +191,11 @@ pub unsafe extern "C" fn sa_client_new_from_env(provider_name: *const c_char) ->
 }
 
 /// Free a client created by `sa_client_new_from_env`.
+///
+/// # Safety
+///
+/// The `client` pointer must be null or a valid pointer returned by `sa_client_new_from_env`.
+/// After calling this function, the pointer is no longer valid and must not be used.
 #[no_mangle]
 pub unsafe extern "C" fn sa_client_free(client: *mut SAClient) {
     if client.is_null() {
@@ -194,6 +208,12 @@ pub unsafe extern "C" fn sa_client_free(client: *mut SAClient) {
 /// Execute a completion request with a single user prompt.
 ///
 /// Use `max_tokens <= 0` to omit, and `temperature < 0.0` to omit.
+///
+/// # Safety
+///
+/// The `client` pointer must be a valid pointer returned by `sa_client_new_from_env`.
+/// The `model` and `prompt` pointers must be valid null-terminated C strings.
+/// The returned pointer must be freed with `sa_string_free`.
 #[no_mangle]
 pub unsafe extern "C" fn sa_complete(
     client: *mut SAClient,
@@ -238,6 +258,11 @@ pub extern "C" fn sa_last_error_message() -> *mut c_char {
 }
 
 /// Free a string returned by SimpleAgents FFI.
+///
+/// # Safety
+///
+/// The `value` pointer must be null or a valid pointer returned by a SimpleAgents FFI function.
+/// After calling this function, the pointer is no longer valid and must not be used.
 #[no_mangle]
 pub unsafe extern "C" fn sa_string_free(value: *mut c_char) {
     if value.is_null() {

@@ -103,22 +103,12 @@ pub struct AnthropicStreamError {
 }
 
 /// State for tracking streaming response (internal)
+#[derive(Default)]
 struct StreamState {
     id: Option<String>,
     model: Option<String>,
     content_buffer: String,
     finish_reason: Option<FinishReason>,
-}
-
-impl Default for StreamState {
-    fn default() -> Self {
-        Self {
-            id: None,
-            model: None,
-            content_buffer: String::new(),
-            finish_reason: None,
-        }
-    }
 }
 
 /// Parse SSE line to extract Anthropic stream event
@@ -146,13 +136,13 @@ pub fn parse_sse_line(event_type: &str, data: &str) -> Option<Result<AnthropicSt
             },
             Err(_) => None,
         },
-        "content_block_start" => serde_json::from_str(data).map(|event| Ok(event)).ok(),
-        "content_block_delta" => serde_json::from_str(data).map(|event| Ok(event)).ok(),
-        "content_block_stop" => serde_json::from_str(data).map(|event| Ok(event)).ok(),
-        "message_delta" => serde_json::from_str(data).map(|event| Ok(event)).ok(),
+        "content_block_start" => serde_json::from_str(data).map(Ok).ok(),
+        "content_block_delta" => serde_json::from_str(data).map(Ok).ok(),
+        "content_block_stop" => serde_json::from_str(data).map(Ok).ok(),
+        "message_delta" => serde_json::from_str(data).map(Ok).ok(),
         "message_stop" => Some(Ok(AnthropicStreamEvent::MessageStop)),
         "ping" => None,
-        "error" => serde_json::from_str(data).map(|event| Ok(event)).ok(),
+        "error" => serde_json::from_str(data).map(Ok).ok(),
         _ => None,
     }
 }
@@ -325,10 +315,10 @@ impl AnthropicSseStream {
                 continue;
             }
 
-            if line.starts_with("event:") {
-                event_type = Some(line[6..].trim().to_string());
-            } else if line.starts_with("data:") {
-                data = Some(line[5..].trim().to_string());
+            if let Some(stripped) = line.strip_prefix("event:") {
+                event_type = Some(stripped.trim().to_string());
+            } else if let Some(stripped) = line.strip_prefix("data:") {
+                data = Some(stripped.trim().to_string());
             }
 
             // Check if we have a complete event (blank line separates events)
