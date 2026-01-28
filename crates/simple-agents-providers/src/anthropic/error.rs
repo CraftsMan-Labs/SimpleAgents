@@ -41,7 +41,10 @@ impl AnthropicError {
     pub fn from_response(status: u16, body: &str) -> Self {
         // Try to parse as structured error response
         if let Ok(error_response) = serde_json::from_str::<AnthropicErrorResponse>(body) {
-            return Self::from_error_type(&error_response.error.error_type, &error_response.error.message);
+            return Self::from_error_type(
+                &error_response.error.error_type,
+                &error_response.error.message,
+            );
         }
 
         // Fall back to status code mapping
@@ -71,21 +74,11 @@ impl AnthropicError {
 impl From<AnthropicError> for ProviderError {
     fn from(error: AnthropicError) -> Self {
         match error {
-            AnthropicError::InvalidApiKey => {
-                ProviderError::InvalidApiKey
-            }
-            AnthropicError::RateLimitExceeded => {
-                ProviderError::RateLimit { retry_after: None }
-            }
-            AnthropicError::InvalidRequest(msg) => {
-                ProviderError::BadRequest(msg)
-            }
-            AnthropicError::Overloaded => {
-                ProviderError::ServerError(error.to_string())
-            }
-            AnthropicError::Unknown(msg) => {
-                ProviderError::BadRequest(msg)
-            }
+            AnthropicError::InvalidApiKey => ProviderError::InvalidApiKey,
+            AnthropicError::RateLimitExceeded => ProviderError::RateLimit { retry_after: None },
+            AnthropicError::InvalidRequest(msg) => ProviderError::BadRequest(msg),
+            AnthropicError::Overloaded => ProviderError::ServerError(error.to_string()),
+            AnthropicError::Unknown(msg) => ProviderError::BadRequest(msg),
         }
     }
 }

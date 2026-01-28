@@ -41,7 +41,9 @@ async fn main() -> Result<()> {
     // Note: System messages are automatically extracted by the Anthropic provider
     let request = CompletionRequest::builder()
         .model("claude-3-opus-20240229")
-        .message(Message::system("You are a helpful AI assistant specialized in technology."))
+        .message(Message::system(
+            "You are a helpful AI assistant specialized in technology.",
+        ))
         .message(Message::user("Explain what Rust is in one sentence."))
         .temperature(0.7)
         .max_tokens(100)
@@ -68,10 +70,9 @@ async fn main() -> Result<()> {
     // Print metadata
     println!("\n📊 Metadata:");
     println!("  Model: {}", response.model);
-    println!("  Tokens: {} prompt + {} completion = {} total",
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        response.usage.total_tokens
+    println!(
+        "  Tokens: {} prompt + {} completion = {} total",
+        response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens
     );
 
     println!("\n💡 Note: System messages were automatically extracted and sent");

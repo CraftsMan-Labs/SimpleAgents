@@ -1,5 +1,5 @@
-use simple_agents_healing::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
 use serde_json::json;
+use simple_agents_healing::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
 
 #[test]
 fn test_stream_annotation_default() {
@@ -9,8 +9,8 @@ fn test_stream_annotation_default() {
 
 #[test]
 fn test_stream_annotation_not_null() {
-    let field = Field::required("id", Schema::Int)
-        .with_stream_annotation(StreamAnnotation::NotNull);
+    let field =
+        Field::required("id", Schema::Int).with_stream_annotation(StreamAnnotation::NotNull);
 
     assert_eq!(field.stream_annotation, StreamAnnotation::NotNull);
     assert_eq!(field.name, "id");
@@ -19,8 +19,8 @@ fn test_stream_annotation_not_null() {
 
 #[test]
 fn test_stream_annotation_done() {
-    let field = Field::required("status", Schema::String)
-        .with_stream_annotation(StreamAnnotation::Done);
+    let field =
+        Field::required("status", Schema::String).with_stream_annotation(StreamAnnotation::Done);
 
     assert_eq!(field.stream_annotation, StreamAnnotation::Done);
     assert_eq!(field.name, "status");
@@ -30,12 +30,9 @@ fn test_stream_annotation_done() {
 #[test]
 fn test_multiple_fields_with_different_annotations() {
     let schema = Schema::Object(ObjectSchema::new(vec![
-        Field::required("id", Schema::Int)
-            .with_stream_annotation(StreamAnnotation::NotNull),
-        Field::required("name", Schema::String)
-            .with_stream_annotation(StreamAnnotation::Normal),
-        Field::required("status", Schema::String)
-            .with_stream_annotation(StreamAnnotation::Done),
+        Field::required("id", Schema::Int).with_stream_annotation(StreamAnnotation::NotNull),
+        Field::required("name", Schema::String).with_stream_annotation(StreamAnnotation::Normal),
+        Field::required("status", Schema::String).with_stream_annotation(StreamAnnotation::Done),
     ]));
 
     if let Schema::Object(obj_schema) = schema {
@@ -59,8 +56,8 @@ fn test_multiple_fields_with_different_annotations() {
 
 #[test]
 fn test_stream_annotation_with_optional_field() {
-    let field = Field::optional("email", Schema::String)
-        .with_stream_annotation(StreamAnnotation::NotNull);
+    let field =
+        Field::optional("email", Schema::String).with_stream_annotation(StreamAnnotation::NotNull);
 
     assert_eq!(field.stream_annotation, StreamAnnotation::NotNull);
     assert_eq!(field.name, "email");
@@ -99,8 +96,8 @@ fn test_stream_annotation_with_description() {
 
 #[test]
 fn test_stream_annotation_serialization() {
-    let field = Field::required("id", Schema::Int)
-        .with_stream_annotation(StreamAnnotation::NotNull);
+    let field =
+        Field::required("id", Schema::Int).with_stream_annotation(StreamAnnotation::NotNull);
 
     // Serialize to JSON
     let json = serde_json::to_string(&field).unwrap();
@@ -136,25 +133,22 @@ fn test_stream_annotation_builder_chain() {
 
     assert_eq!(field.name, "user");
     assert_eq!(field.aliases, vec!["userProfile"]);
-    assert_eq!(
-        field.description,
-        Some("User profile object".to_string())
-    );
+    assert_eq!(field.description, Some("User profile object".to_string()));
     assert_eq!(field.stream_annotation, StreamAnnotation::Done);
 }
 
 #[test]
 fn test_nested_object_with_stream_annotations() {
     let inner_schema = Schema::Object(ObjectSchema::new(vec![
-        Field::required("id", Schema::Int)
-            .with_stream_annotation(StreamAnnotation::NotNull),
+        Field::required("id", Schema::Int).with_stream_annotation(StreamAnnotation::NotNull),
         Field::required("name", Schema::String),
     ]));
 
-    let outer_schema = Schema::Object(ObjectSchema::new(vec![
-        Field::required("user", inner_schema)
-            .with_stream_annotation(StreamAnnotation::Done),
-    ]));
+    let outer_schema = Schema::Object(ObjectSchema::new(vec![Field::required(
+        "user",
+        inner_schema,
+    )
+    .with_stream_annotation(StreamAnnotation::Done)]));
 
     if let Schema::Object(obj_schema) = outer_schema {
         let user_field = obj_schema.get_field("user").unwrap();

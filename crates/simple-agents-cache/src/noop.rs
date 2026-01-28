@@ -64,7 +64,10 @@ mod tests {
     async fn test_noop_always_returns_none() {
         let cache = NoOpCache;
 
-        cache.set("key1", b"value1".to_vec(), Duration::from_secs(60)).await.unwrap();
+        cache
+            .set("key1", b"value1".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
         let value = cache.get("key1").await.unwrap();
         assert_eq!(value, None);
     }

@@ -18,18 +18,18 @@
 //! - Guaranteed structured output format
 //! - Beta feature usage
 
+use serde_json::json;
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::Provider;
 use simple_agents_types::prelude::*;
-use serde_json::json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup API key
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY environment variable not set");
+    let api_key =
+        std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY environment variable not set");
     let api_key = ApiKey::new(api_key)?;
 
     // Create provider
@@ -81,8 +81,12 @@ async fn simple_structured_output(provider: &AnthropicProvider) -> Result<()> {
 
     let request = CompletionRequest::builder()
         .model("claude-sonnet-4.5")
-        .message(Message::system("Generate user profiles matching the schema."))
-        .message(Message::user("Create a profile for Maria Garcia, a 35-year-old premium user"))
+        .message(Message::system(
+            "Generate user profiles matching the schema.",
+        ))
+        .message(Message::user(
+            "Create a profile for Maria Garcia, a 35-year-old premium user",
+        ))
         .json_schema("user_profile", schema)
         .build()?;
 
@@ -150,9 +154,11 @@ async fn complex_nested_schema(provider: &AnthropicProvider) -> Result<()> {
 
     let request = CompletionRequest::builder()
         .model("claude-sonnet-4.5")
-        .message(Message::system("Generate company data matching the schema."))
+        .message(Message::system(
+            "Generate company data matching the schema.",
+        ))
         .message(Message::user(
-            "Create a technology company with 3 employees from different departments"
+            "Create a technology company with 3 employees from different departments",
         ))
         .json_schema("company_data", schema)
         .build()?;
@@ -169,7 +175,10 @@ async fn complex_nested_schema(provider: &AnthropicProvider) -> Result<()> {
     // Validate structure
     assert!(json_output.get("company").is_some());
     assert!(json_output.get("industry").is_some());
-    assert!(json_output.get("employees").and_then(|e| e.as_array()).is_some());
+    assert!(json_output
+        .get("employees")
+        .and_then(|e| e.as_array())
+        .is_some());
 
     let employees = json_output["employees"].as_array().unwrap();
     assert!(employees.len() >= 2, "Should have at least 2 employees");

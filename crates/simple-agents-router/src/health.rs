@@ -50,7 +50,8 @@ impl HealthTracker {
         if let Some(entry) = metrics.get_mut(provider_index) {
             entry.total_requests = entry.total_requests.saturating_add(1);
             entry.successful_requests = entry.successful_requests.saturating_add(1);
-            entry.avg_latency = update_latency(entry.avg_latency, latency, self.config.latency_alpha);
+            entry.avg_latency =
+                update_latency(entry.avg_latency, latency, self.config.latency_alpha);
             entry.health = compute_health_with_config(entry, self.config);
         }
     }
@@ -62,7 +63,8 @@ impl HealthTracker {
             entry.total_requests = entry.total_requests.saturating_add(1);
             entry.failed_requests = entry.failed_requests.saturating_add(1);
             if let Some(value) = latency {
-                entry.avg_latency = update_latency(entry.avg_latency, value, self.config.latency_alpha);
+                entry.avg_latency =
+                    update_latency(entry.avg_latency, value, self.config.latency_alpha);
             }
             entry.health = compute_health_with_config(entry, self.config);
         }

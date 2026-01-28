@@ -4,15 +4,18 @@ use simple_agents_router::{
     CostRouter, CostRouterConfig, FallbackRouter, FallbackRouterConfig, LatencyRouter,
     LatencyRouterConfig, RoundRobinRouter,
 };
-use simple_agents_types::prelude::{CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+};
 use std::sync::Arc;
 
 /// Routing modes supported by the core client.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum RoutingMode {
     /// Direct execution against the first provider.
     Direct,
     /// Round-robin routing across providers.
+    #[default]
     RoundRobin,
     /// Latency-based routing with configurable smoothing.
     Latency(LatencyRouterConfig),
@@ -20,12 +23,6 @@ pub enum RoutingMode {
     Cost(CostRouterConfig),
     /// Fallback routing (try providers in order).
     Fallback(FallbackRouterConfig),
-}
-
-impl Default for RoutingMode {
-    fn default() -> Self {
-        Self::RoundRobin
-    }
 }
 
 pub(crate) enum RouterEngine {
@@ -53,12 +50,11 @@ impl RouterEngine {
 }
 
 impl RoutingMode {
-    pub(crate) fn build_router(
-        &self,
-        providers: Vec<Arc<dyn Provider>>,
-    ) -> Result<RouterEngine> {
+    pub(crate) fn build_router(&self, providers: Vec<Arc<dyn Provider>>) -> Result<RouterEngine> {
         if providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         match self {
@@ -70,22 +66,20 @@ impl RoutingMode {
                     })?
                     .clone(),
             )),
-            RoutingMode::RoundRobin => Ok(RouterEngine::RoundRobin(RoundRobinRouter::new(providers)?)),
-            RoutingMode::Latency(config) => {
-                Ok(RouterEngine::Latency(LatencyRouter::with_config(
-                    providers,
-                    config.clone(),
-                )?))
+            RoutingMode::RoundRobin => {
+                Ok(RouterEngine::RoundRobin(RoundRobinRouter::new(providers)?))
             }
-            RoutingMode::Cost(config) => {
-                Ok(RouterEngine::Cost(CostRouter::new(providers, config.clone())?))
-            }
-            RoutingMode::Fallback(config) => {
-                Ok(RouterEngine::Fallback(FallbackRouter::with_config(
-                    providers,
-                    *config,
-                )?))
-            }
+            RoutingMode::Latency(config) => Ok(RouterEngine::Latency(LatencyRouter::with_config(
+                providers,
+                config.clone(),
+            )?)),
+            RoutingMode::Cost(config) => Ok(RouterEngine::Cost(CostRouter::new(
+                providers,
+                config.clone(),
+            )?)),
+            RoutingMode::Fallback(config) => Ok(RouterEngine::Fallback(
+                FallbackRouter::with_config(providers, *config)?,
+            )),
         }
     }
 }

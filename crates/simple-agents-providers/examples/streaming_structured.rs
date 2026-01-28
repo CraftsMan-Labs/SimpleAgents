@@ -13,9 +13,9 @@
 
 use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use simple_agents_types::response::{ChoiceDelta, CompletionChunk, FinishReason, MessageDelta};
-use serde_json::json;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AnalysisResult {
@@ -136,7 +136,10 @@ async fn main() {
             }) => {
                 println!("✅ Complete result (event #{})", event_count);
                 println!("   Confidence: {:.2}%", confidence * 100.0);
-                println!("   Healing applied: {}", if was_healed { "Yes" } else { "No" });
+                println!(
+                    "   Healing applied: {}",
+                    if was_healed { "Yes" } else { "No" }
+                );
                 println!();
                 println!("Final analysis:");
                 println!("   Sentiment: {}", value.sentiment);

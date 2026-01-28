@@ -67,7 +67,10 @@ fn demonstrate_parse(parser: &JsonishParser, input: &str) {
         Ok(result) => {
             println!("✓ Parse successful!");
             println!("  Confidence: {:.2}", result.confidence);
-            println!("  Value: {}", serde_json::to_string_pretty(&result.value).unwrap());
+            println!(
+                "  Value: {}",
+                serde_json::to_string_pretty(&result.value).unwrap()
+            );
 
             if !result.flags.is_empty() {
                 println!("  Healing applied:");

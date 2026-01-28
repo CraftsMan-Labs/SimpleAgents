@@ -107,7 +107,11 @@ impl CoercionEngine {
     /// assert_eq!(result.value, json!(42));
     /// assert!(result.confidence < 1.0);  // String→Int coercion reduces confidence
     /// ```
-    pub fn coerce(&self, value: &Value, schema: &Schema) -> Result<CoercionResult<Value>, HealingError> {
+    pub fn coerce(
+        &self,
+        value: &Value,
+        schema: &Schema,
+    ) -> Result<CoercionResult<Value>, HealingError> {
         let mut flags = Vec::new();
         let mut confidence = 1.0;
 
@@ -196,10 +200,12 @@ impl CoercionEngine {
         }
 
         let trimmed = s.trim();
-        let parsed = trimmed.parse::<i64>().map_err(|_| HealingError::ParseError {
-            input: s.to_string(),
-            expected_type: "int".to_string(),
-        })?;
+        let parsed = trimmed
+            .parse::<i64>()
+            .map_err(|_| HealingError::ParseError {
+                input: s.to_string(),
+                expected_type: "int".to_string(),
+            })?;
 
         flags.push(CoercionFlag::TypeCoercion {
             from: "string".to_string(),
@@ -225,10 +231,12 @@ impl CoercionEngine {
         }
 
         let trimmed = s.trim();
-        let parsed = trimmed.parse::<u64>().map_err(|_| HealingError::ParseError {
-            input: s.to_string(),
-            expected_type: "uint".to_string(),
-        })?;
+        let parsed = trimmed
+            .parse::<u64>()
+            .map_err(|_| HealingError::ParseError {
+                input: s.to_string(),
+                expected_type: "uint".to_string(),
+            })?;
 
         flags.push(CoercionFlag::TypeCoercion {
             from: "string".to_string(),
@@ -254,10 +262,12 @@ impl CoercionEngine {
         }
 
         let trimmed = s.trim();
-        let parsed = trimmed.parse::<f64>().map_err(|_| HealingError::ParseError {
-            input: s.to_string(),
-            expected_type: "float".to_string(),
-        })?;
+        let parsed = trimmed
+            .parse::<f64>()
+            .map_err(|_| HealingError::ParseError {
+                input: s.to_string(),
+                expected_type: "float".to_string(),
+            })?;
 
         flags.push(CoercionFlag::TypeCoercion {
             from: "string".to_string(),
@@ -620,10 +630,7 @@ mod tests {
         assert_eq!(result.value, json!(42));
         assert!(result.confidence < 1.0);
         assert_eq!(result.flags.len(), 1);
-        assert!(matches!(
-            result.flags[0],
-            CoercionFlag::TypeCoercion { .. }
-        ));
+        assert!(matches!(result.flags[0], CoercionFlag::TypeCoercion { .. }));
     }
 
     #[test]
@@ -750,10 +757,10 @@ mod tests {
         let result = engine.coerce(&input, &schema).unwrap();
         assert_eq!(result.value["name"], "Alice");
         assert_eq!(result.value["age"], 25);
-        assert!(result.flags.iter().any(|f| matches!(
-            f,
-            CoercionFlag::UsedDefaultValue { .. }
-        )));
+        assert!(result
+            .flags
+            .iter()
+            .any(|f| matches!(f, CoercionFlag::UsedDefaultValue { .. })));
     }
 
     #[test]

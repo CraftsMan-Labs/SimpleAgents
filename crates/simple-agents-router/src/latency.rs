@@ -2,7 +2,9 @@
 //!
 //! Routes requests to the provider with the lowest observed latency.
 
-use simple_agents_types::prelude::{CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -86,7 +88,9 @@ impl LatencyRouter {
         config: LatencyRouterConfig,
     ) -> Result<Self> {
         if providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let stats = vec![LatencyStats::new(); providers.len()];
@@ -118,7 +122,9 @@ impl LatencyRouter {
     fn select_provider_index(&self) -> Result<usize> {
         let len = self.providers.len();
         if len == 0 {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let stats = self.stats.lock().expect("latency stats lock poisoned");
@@ -211,6 +217,7 @@ mod tests {
                 usage: Usage::new(1, 1),
                 created: None,
                 provider: Some(self.name().to_string()),
+                healing_metadata: None,
             })
         }
     }

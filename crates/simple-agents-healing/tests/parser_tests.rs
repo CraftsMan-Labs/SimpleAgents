@@ -1,7 +1,7 @@
 //! Integration tests for the Jsonish parser.
 
-use simple_agents_healing::prelude::*;
 use serde_json::json;
+use simple_agents_healing::prelude::*;
 
 #[test]
 fn test_markdown_variants() {
@@ -13,9 +13,7 @@ fn test_markdown_variants() {
 ```"#;
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["key"], "value");
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::StrippedMarkdown));
+    assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
 
     // Plain ``` wrapper
     let input = r#"```
@@ -23,18 +21,14 @@ fn test_markdown_variants() {
 ```"#;
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["key"], "value");
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::StrippedMarkdown));
+    assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
 
     // Incomplete closing fence
     let input = r#"```json
 {"key": "value"}"#;
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["key"], "value");
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::StrippedMarkdown));
+    assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
 }
 
 #[test]
@@ -46,9 +40,7 @@ fn test_trailing_comma_variants() {
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["a"], 1);
     assert_eq!(result.value["b"], 2);
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::FixedTrailingComma));
+    assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
 
     // Array with trailing comma
     let input = r#"[1, 2, 3,]"#;
@@ -56,18 +48,14 @@ fn test_trailing_comma_variants() {
     assert_eq!(result.value[0], 1);
     assert_eq!(result.value[1], 2);
     assert_eq!(result.value[2], 3);
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::FixedTrailingComma));
+    assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
 
     // Nested with trailing commas
     let input = r#"{"arr": [1, 2,], "obj": {"x": 1,}}"#;
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["arr"][0], 1);
     assert_eq!(result.value["obj"]["x"], 1);
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::FixedTrailingComma));
+    assert!(result.flags.contains(&CoercionFlag::FixedTrailingComma));
 }
 
 #[test]
@@ -115,9 +103,7 @@ fn test_complex_nested_structures() {
     assert_eq!(result.value["metadata"]["tags"][0], "important");
 
     // Should have markdown flag
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::StrippedMarkdown));
+    assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
 }
 
 #[test]
@@ -171,9 +157,10 @@ fn test_min_confidence_threshold() {
     let result = parser.parse(input);
     assert!(result.is_err());
     match result.unwrap_err() {
-        simple_agents_types::error::SimpleAgentsError::Healing(
-            HealingError::LowConfidence { confidence, .. },
-        ) => {
+        simple_agents_types::error::SimpleAgentsError::Healing(HealingError::LowConfidence {
+            confidence,
+            ..
+        }) => {
             assert!(confidence < 0.96);
         }
         e => panic!("Expected LowConfidence error, got: {:?}", e),
@@ -195,9 +182,7 @@ fn test_bom_variants() {
     let result = parser.parse(input).unwrap();
     assert_eq!(result.value["key"], "value");
     assert!(result.flags.contains(&CoercionFlag::RemovedBom));
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::StrippedMarkdown));
+    assert!(result.flags.contains(&CoercionFlag::StrippedMarkdown));
 }
 
 #[test]
@@ -207,9 +192,7 @@ fn test_control_characters() {
     // JSON with control characters (should be removed)
     let input = "{\"key\": \"val\x00ue\"}";
     let result = parser.parse(input).unwrap();
-    assert!(result
-        .flags
-        .contains(&CoercionFlag::FixedControlCharacters));
+    assert!(result.flags.contains(&CoercionFlag::FixedControlCharacters));
 }
 
 #[test]

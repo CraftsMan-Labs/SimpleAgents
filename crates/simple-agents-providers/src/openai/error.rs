@@ -148,10 +148,8 @@ mod tests {
 
     #[test]
     fn test_context_length_exceeded() {
-        let error = OpenAIError::from_response(
-            400,
-            "This model's maximum context length is 4096 tokens"
-        );
+        let error =
+            OpenAIError::from_response(400, "This model's maximum context length is 4096 tokens");
         assert!(matches!(error, OpenAIError::ContextLengthExceeded(_)));
     }
 }

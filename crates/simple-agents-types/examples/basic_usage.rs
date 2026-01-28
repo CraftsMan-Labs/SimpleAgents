@@ -61,8 +61,11 @@ fn demo_requests() -> Result<()> {
         .message(Message::user("Hello!"))
         .build()?;
 
-    println!("  Basic request: model={}, messages={}",
-             request.model, request.messages.len());
+    println!(
+        "  Basic request: model={}, messages={}",
+        request.model,
+        request.messages.len()
+    );
 
     // Request with all options
     let full_request = CompletionRequest::builder()
@@ -74,8 +77,10 @@ fn demo_requests() -> Result<()> {
         .top_p(0.9)
         .build()?;
 
-    println!("  Full request: temp={:?}, max_tokens={:?}",
-             full_request.temperature, full_request.max_tokens);
+    println!(
+        "  Full request: temp={:?}, max_tokens={:?}",
+        full_request.temperature, full_request.max_tokens
+    );
 
     // Serialization
     let json = serde_json::to_string_pretty(&request)?;
@@ -91,14 +96,12 @@ fn demo_responses() {
     let response = CompletionResponse {
         id: "resp_abc123".to_string(),
         model: "gpt-4".to_string(),
-        choices: vec![
-            CompletionChoice {
-                index: 0,
-                message: Message::assistant("Hello! How can I help you today?"),
-                finish_reason: FinishReason::Stop,
-                logprobs: None,
-            }
-        ],
+        choices: vec![CompletionChoice {
+            index: 0,
+            message: Message::assistant("Hello! How can I help you today?"),
+            finish_reason: FinishReason::Stop,
+            logprobs: None,
+        }],
         usage: Usage::new(10, 15),
         created: Some(1234567890),
         provider: Some("openai".to_string()),
@@ -107,10 +110,10 @@ fn demo_responses() {
 
     println!("  Response ID: {}", response.id);
     println!("  Content: {:?}", response.content());
-    println!("  Usage: {} prompt + {} completion = {} total tokens",
-             response.usage.prompt_tokens,
-             response.usage.completion_tokens,
-             response.usage.total_tokens);
+    println!(
+        "  Usage: {} prompt + {} completion = {} total tokens",
+        response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens
+    );
     println!("  Finish reason: {:?}", response.choices[0].finish_reason);
 
     println!();
@@ -176,8 +179,11 @@ fn demo_coercion() {
 
     // No coercion
     let perfect = CoercionResult::new(42);
-    println!("  Perfect result: value={}, coerced={}",
-             perfect.value, perfect.was_coerced());
+    println!(
+        "  Perfect result: value={}, coerced={}",
+        perfect.value,
+        perfect.was_coerced()
+    );
 
     // With minor coercion
     let minor = CoercionResult::new("Hello")
@@ -185,8 +191,12 @@ fn demo_coercion() {
         .with_flag(CoercionFlag::FixedTrailingComma)
         .set_confidence(0.95);
 
-    println!("  Minor coercion: flags={}, confidence={}, major={}",
-             minor.flags.len(), minor.confidence, minor.has_major_coercions());
+    println!(
+        "  Minor coercion: flags={}, confidence={}, major={}",
+        minor.flags.len(),
+        minor.confidence,
+        minor.has_major_coercions()
+    );
 
     for flag in &minor.flags {
         println!("    - {}", flag.description());
@@ -200,9 +210,11 @@ fn demo_coercion() {
         })
         .set_confidence(0.7);
 
-    println!("  Major coercion: major={}, confident={}",
-             major.has_major_coercions(),
-             major.is_confident(0.8));
+    println!(
+        "  Major coercion: major={}, confident={}",
+        major.has_major_coercions(),
+        major.is_confident(0.8)
+    );
 
     println!();
 }
@@ -233,7 +245,10 @@ fn demo_configuration() {
     println!("  Strict healing: min_confidence={}", strict.min_confidence);
 
     let lenient = HealingConfig::lenient();
-    println!("  Lenient healing: min_confidence={}", lenient.min_confidence);
+    println!(
+        "  Lenient healing: min_confidence={}",
+        lenient.min_confidence
+    );
 
     // Provider config
     let provider = ProviderConfig::new("openai", "https://api.openai.com/v1")
