@@ -12,7 +12,7 @@ PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
 PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
 DOPPLER_RUN ?= doppler run --command
-PUBLISH_CRATES ?= simple-agents-types simple-agents-cache simple-agents-macros \
+PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
 	simple-agents-core simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml

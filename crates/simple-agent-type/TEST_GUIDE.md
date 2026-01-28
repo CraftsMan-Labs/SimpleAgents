@@ -1,12 +1,12 @@
-# Testing Guide for simple-agents-types
+# Testing Guide for simple-agent-type
 
-This guide shows you how to test and explore the `simple-agents-types` crate.
+This guide shows you how to test and explore the `simple-agent-type` crate.
 
 ## Quick Test Commands
 
 ### 1. Run All Unit Tests (83 tests)
 ```bash
-cd crates/simple-agents-types
+cd crates/simple-agent-type
 cargo test
 ```
 
@@ -110,7 +110,7 @@ These doctests are fully runnable (including cache/provider/router examples) and
 Create a new file `examples/my_test.rs`:
 
 ```rust
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 fn main() -> Result<()> {
     // Create your own request
@@ -215,11 +215,11 @@ This re-runs tests whenever you change files.
 - Update dependencies: `cargo update`
 
 ### Examples don't run
-- Make sure you're in the crate directory: `cd crates/simple-agents-types`
+- Make sure you're in the crate directory: `cd crates/simple-agent-type`
 - Check that tokio is installed for async examples
 
 ### Documentation doesn't open
-- Try: `cargo doc --no-deps` then manually open `target/doc/simple_agents_types/index.html`
+- Try: `cargo doc --no-deps` then manually open `target/doc/simple_agent_type/index.html`
 
 ## Next Steps
 
@@ -229,4 +229,4 @@ After testing this crate, you'll be ready to build:
 3. `simple-agents-router` - Retry/fallback using these error types
 4. `simple-agents-core` - Client using all these types
 
-All these crates will depend on `simple-agents-types` as their foundation!
+All these crates will depend on `simple-agent-type` as their foundation!

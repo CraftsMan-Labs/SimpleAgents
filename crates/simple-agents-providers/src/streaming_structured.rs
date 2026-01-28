@@ -6,8 +6,8 @@ use futures_core::Stream;
 use pin_project_lite::pin_project;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use simple_agents_types::error::{HealingError, SimpleAgentsError};
-use simple_agents_types::response::CompletionChunk;
+use simple_agent_type::error::{HealingError, SimpleAgentsError};
+use simple_agent_type::response::CompletionChunk;
 use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -78,7 +78,7 @@ where
     /// Try to parse accumulated content as structured output.
     fn try_parse(accumulated: &str) -> Result<T, SimpleAgentsError> {
         serde_json::from_str(accumulated).map_err(|e| {
-            SimpleAgentsError::Provider(simple_agents_types::error::ProviderError::InvalidResponse(
+            SimpleAgentsError::Provider(simple_agent_type::error::ProviderError::InvalidResponse(
                 format!("Failed to parse JSON: {}", e),
             ))
         })
@@ -200,7 +200,7 @@ mod tests {
     use super::*;
     use futures_util::stream;
     use serde::{Deserialize, Serialize};
-    use simple_agents_types::response::{ChoiceDelta, MessageDelta};
+    use simple_agent_type::response::{ChoiceDelta, MessageDelta};
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
     struct TestData {
@@ -235,7 +235,7 @@ mod tests {
                         role: None,
                         content: None,
                     },
-                    finish_reason: Some(simple_agents_types::response::FinishReason::Stop),
+                    finish_reason: Some(simple_agent_type::response::FinishReason::Stop),
                 }],
                 created: None,
             }),

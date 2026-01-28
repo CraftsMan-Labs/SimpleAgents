@@ -21,7 +21,7 @@ This crate provides concrete implementations of LLM providers that integrate wit
 
 ```rust
 use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## Architecture
 
-Each provider implements the `Provider` trait from `simple-agents-types`:
+Each provider implements the `Provider` trait from `simple-agent-type`:
 
 ```rust
 #[async_trait]

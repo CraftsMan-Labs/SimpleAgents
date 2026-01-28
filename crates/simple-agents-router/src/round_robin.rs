@@ -2,7 +2,7 @@
 //!
 //! Distributes requests evenly across configured providers.
 
-use simple_agents_types::prelude::{
+use simple_agent_type::prelude::{
     CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -63,7 +63,7 @@ impl RoundRobinRouter {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use simple_agents_types::prelude::*;
+    use simple_agent_type::prelude::*;
 
     struct MockProvider {
         name: &'static str,

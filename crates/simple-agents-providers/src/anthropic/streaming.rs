@@ -14,7 +14,7 @@
 use bytes::Bytes;
 use futures_util::Stream;
 use serde::{Deserialize, Serialize};
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 

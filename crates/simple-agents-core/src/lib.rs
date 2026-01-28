@@ -6,7 +6,7 @@
 //! # Example
 //! ```no_run
 //! use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder, RoutingMode};
-//! use simple_agents_types::prelude::*;
+//! use simple_agent_type::prelude::*;
 //! # use async_trait::async_trait;
 //! # use std::sync::Arc;
 //! #
@@ -70,4 +70,4 @@ pub use middleware::Middleware;
 pub use routing::RoutingMode;
 
 // Re-export commonly used types.
-pub use simple_agents_types::prelude;
+pub use simple_agent_type::prelude;

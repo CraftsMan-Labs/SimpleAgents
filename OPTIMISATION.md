@@ -39,7 +39,7 @@ This document tracks performance bottlenecks, optimization opportunities, and po
 ## 🔴 Critical Issues
 
 ### 1. Non-Constant Time API Key Comparison ✅ FIXED
-**Location:** `crates/simple-agents-types/src/validation.rs:146-150`
+**Location:** `crates/simple-agent-type/src/validation.rs:146-150`
 
 **Status:** ✅ **FIXED** - Implemented constant-time comparison using `subtle::ConstantTimeEq`
 
@@ -59,7 +59,7 @@ impl PartialEq for ApiKey {
 ```
 
 ### 2. Weak Random Number Generation ✅ FIXED
-**Location:** `crates/simple-agents-types/src/config.rs:68-74`
+**Location:** `crates/simple-agent-type/src/config.rs:68-74`
 
 **Status:** ✅ **FIXED** - Now using `rand::thread_rng().gen()` for cryptographically secure randomness
 
@@ -141,7 +141,7 @@ let body = response.json::<serde_json::Value>().await
 - Unnecessary parsing
 
 ### 7. String Allocations in Headers ✅ FIXED
-**Location:** `crates/simple-agents-types/src/provider.rs:122`
+**Location:** `crates/simple-agent-type/src/provider.rs:122`
 
 **Issue:** Headers stored as `Vec<(String, String)>` requiring allocations:
 ```rust
@@ -153,7 +153,7 @@ pub headers: Vec<(String, String)>,
 - Could use `&'static str` for common headers like "Content-Type"
 
 ### 8. No Request Size Limits ✅ FIXED
-**Location:** `crates/simple-agents-types/src/request.rs:89`
+**Location:** `crates/simple-agent-type/src/request.rs:89`
 
 **Issue:** Validation allows up to 1MB per message, 1000 messages:
 ```rust
@@ -167,7 +167,7 @@ if self.messages.len() > 1000 { ... }
 - Potential DoS vector
 
 ### 9. Cache Key Uses DefaultHasher ✅ FIXED
-**Location:** `crates/simple-agents-types/src/cache.rs:136-144`
+**Location:** `crates/simple-agent-type/src/cache.rs:136-144`
 
 **Issue:** Uses `DefaultHasher` for cache key generation:
 ```rust
@@ -185,7 +185,7 @@ let mut hasher = DefaultHasher::new();
 ## 🟡 Missing Implementations (Resolved)
 
 ### 10. No Cache Implementation Provided ✅ FIXED
-**Location:** `crates/simple-agents-types/src/cache.rs`
+**Location:** `crates/simple-agent-type/src/cache.rs`
 
 **Issue:** Cache trait defined but no concrete implementation provided.
 
@@ -228,7 +228,7 @@ let mut hasher = DefaultHasher::new();
 ## 🔵 Design Considerations
 
 ### 14. Synchronous Validation
-**Location:** `crates/simple-agents-types/src/request.rs:71`
+**Location:** `crates/simple-agent-type/src/request.rs:71`
 
 **Issue:** All validation is synchronous:
 ```rust

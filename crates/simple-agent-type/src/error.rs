@@ -88,7 +88,7 @@ impl ProviderError {
     ///
     /// # Example
     /// ```
-    /// use simple_agents_types::error::ProviderError;
+    /// use simple_agent_type::error::ProviderError;
     /// use std::time::Duration;
     ///
     /// let err = ProviderError::RateLimit { retry_after: None };

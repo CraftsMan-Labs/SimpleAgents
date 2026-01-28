@@ -195,7 +195,7 @@ Based on the research, the recommended implementation order:
 
 Based on research, these are the most important files (in order):
 
-1. **`crates/simple-agents-types/src/lib.rs`**
+1. **`crates/simple-agent-type/src/lib.rs`**
    - Foundation for entire project
    - Core types, traits, errors
 
@@ -321,7 +321,7 @@ SimpleAgents/
 │   ├── simple-agents-healing/
 │   ├── simple-agents-router/
 │   ├── simple-agents-cache/
-│   ├── simple-agents-types/
+│   ├── simple-agent-type/
 │   ├── simple-agents-ffi/
 │   ├── simple-agents-macros/
 │   └── simple-agents-cli/

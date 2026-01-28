@@ -1,10 +1,10 @@
-//! Basic usage example for simple-agents-types.
+//! Basic usage example for simple-agent-type.
 //!
 //! This example demonstrates how to use all the core types.
 //!
 //! Run with: cargo run --example basic_usage
 
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 
 fn main() -> Result<()> {
     println!("=== SimpleAgents Types Demo ===\n");

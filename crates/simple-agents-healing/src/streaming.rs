@@ -25,8 +25,8 @@
 
 use crate::parser::{JsonishParser, ParserConfig};
 use serde_json::Value;
-use simple_agents_types::coercion::CoercionResult;
-use simple_agents_types::error::HealingError;
+use simple_agent_type::coercion::CoercionResult;
+use simple_agent_type::error::HealingError;
 use std::collections::VecDeque;
 
 /// Parser state for tracking incomplete JSON structures.
@@ -155,9 +155,9 @@ impl StreamingParser {
     /// ```
     pub fn finalize(
         self,
-    ) -> std::result::Result<CoercionResult<Value>, simple_agents_types::SimpleAgentsError> {
+    ) -> std::result::Result<CoercionResult<Value>, simple_agent_type::SimpleAgentsError> {
         if self.buffer.trim().is_empty() {
-            return Err(simple_agents_types::SimpleAgentsError::Healing(
+            return Err(simple_agent_type::SimpleAgentsError::Healing(
                 HealingError::ParseFailed {
                     error_message: "Empty buffer".to_string(),
                     input: String::new(),
@@ -238,7 +238,7 @@ impl PartialExtractor {
     }
 
     /// Get the final complete value.
-    pub fn finalize(self) -> std::result::Result<Value, simple_agents_types::SimpleAgentsError> {
+    pub fn finalize(self) -> std::result::Result<Value, simple_agent_type::SimpleAgentsError> {
         self.parser.finalize().map(|result| result.value)
     }
 }
@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(result.value["name"], "Alice");
         assert!(result.flags.iter().any(|f| matches!(
             f,
-            simple_agents_types::coercion::CoercionFlag::StrippedMarkdown
+            simple_agent_type::coercion::CoercionFlag::StrippedMarkdown
         )));
     }
 
@@ -396,7 +396,7 @@ mod tests {
         assert_eq!(result.value["name"], "Alice");
         assert!(result.flags.iter().any(|f| matches!(
             f,
-            simple_agents_types::coercion::CoercionFlag::FixedTrailingComma
+            simple_agent_type::coercion::CoercionFlag::FixedTrailingComma
         )));
     }
 

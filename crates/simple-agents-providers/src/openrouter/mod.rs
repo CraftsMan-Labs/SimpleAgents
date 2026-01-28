@@ -16,7 +16,7 @@
 //! ```no_run
 //! use simple_agents_providers::openrouter::OpenRouterProvider;
 //! use simple_agents_providers::Provider;
-//! use simple_agents_types::prelude::*;
+//! use simple_agent_type::prelude::*;
 //!
 //! # async fn example() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
 //! let api_key = ApiKey::new(std::env::var("OPENROUTER_API_KEY")?)?;
@@ -38,7 +38,7 @@
 
 use async_trait::async_trait;
 use reqwest::Client;
-use simple_agents_types::prelude::*;
+use simple_agent_type::prelude::*;
 use std::time::Duration;
 
 use crate::openai::{OpenAICompletionRequest, OpenAICompletionResponse};
@@ -81,7 +81,7 @@ impl OpenRouterProvider {
     ///
     /// ```
     /// use simple_agents_providers::openrouter::OpenRouterProvider;
-    /// use simple_agents_types::prelude::*;
+    /// use simple_agent_type::prelude::*;
     ///
     /// # fn example() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
     /// let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890")?;
@@ -139,7 +139,7 @@ impl OpenRouterProvider {
     }
 
     /// Enable rate limiting with the given configuration.
-    pub fn with_rate_limit(mut self, config: simple_agents_types::config::RateLimitConfig) -> Self {
+    pub fn with_rate_limit(mut self, config: simple_agent_type::config::RateLimitConfig) -> Self {
         self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
         self
     }
@@ -178,13 +178,13 @@ impl Provider for OpenRouterProvider {
             headers: vec![
                 (
                     std::borrow::Cow::Borrowed(
-                        simple_agents_types::provider::headers::AUTHORIZATION,
+                        simple_agent_type::provider::headers::AUTHORIZATION,
                     ),
                     std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
                     std::borrow::Cow::Borrowed(
-                        simple_agents_types::provider::headers::CONTENT_TYPE,
+                        simple_agent_type::provider::headers::CONTENT_TYPE,
                     ),
                     std::borrow::Cow::Borrowed("application/json"),
                 ),
