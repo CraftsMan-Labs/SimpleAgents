@@ -7,7 +7,7 @@ def main() -> None:
         api_base="http://localhost:4000/v1",
         api_key="sk-skpHy0DGeJP3Bq7JExw_QQ",
     )
-    text = client.complete("gpt-4.1", "Give me three project ideas.")
+    text = client.complete("grok-code-fast-1", "Give me three project ideas.")
     print(text)
 
 
