@@ -169,39 +169,48 @@ fn build_request_with_messages(
 }
 
 fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
-    let list: &PyList = messages.downcast().map_err(|_| {
+    let list: &Bound<'_, PyList> = messages.downcast().map_err(|_| {
         SimpleAgentsError::Config("messages must be a list of dicts".to_string())
     })?;
     let mut result = Vec::with_capacity(list.len());
 
     for (idx, item) in list.iter().enumerate() {
-        let dict: &PyDict = item
+        let dict: &Bound<'_, PyDict> = item
             .downcast()
             .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] must be a dict")))?;
 
-        let role_obj = dict.get_item("role").ok_or_else(|| {
-            SimpleAgentsError::Config(format!("message[{idx}] missing 'role'"))
-        })?;
-        let role: &str = role_obj.extract().map_err(|_| {
+        let role_obj = dict
+            .get_item("role")
+            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] missing 'role'")))?
+            .ok_or_else(|| SimpleAgentsError::Config(format!("message[{idx}] missing 'role'")))?;
+        let role: String = role_obj.extract().map_err(|_| {
             SimpleAgentsError::Config(format!("message[{idx}].role must be a string"))
         })?;
 
-        let content_obj = dict.get_item("content").ok_or_else(|| {
-            SimpleAgentsError::Config(format!("message[{idx}] missing 'content'"))
-        })?;
-        let content: &str = content_obj.extract().map_err(|_| {
+        let content_obj = dict
+            .get_item("content")
+            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] missing 'content'")))?
+            .ok_or_else(|| {
+                SimpleAgentsError::Config(format!("message[{idx}] missing 'content'"))
+            })?;
+        let content: String = content_obj.extract().map_err(|_| {
             SimpleAgentsError::Config(format!(
                 "message[{idx}].content must be a string"
             ))
         })?;
 
-        let mut message = match role {
-            "user" => Message::user(content),
-            "assistant" => Message::assistant(content),
-            "system" => Message::system(content),
+        let mut message = match role.as_str() {
+            "user" => Message::user(&content),
+            "assistant" => Message::assistant(&content),
+            "system" => Message::system(&content),
             "tool" => {
                 let tool_call_id = dict
                     .get_item("tool_call_id")
+                    .map_err(|_| {
+                        SimpleAgentsError::Config(format!(
+                            "message[{idx}] missing 'tool_call_id' for tool role"
+                        ))
+                    })?
                     .ok_or_else(|| {
                         SimpleAgentsError::Config(format!(
                             "message[{idx}] missing 'tool_call_id' for tool role"
@@ -213,7 +222,7 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
                             "message[{idx}].tool_call_id must be a string"
                         ))
                     })?;
-                Message::tool(content, tool_call_id)
+                Message::tool(&content, tool_call_id)
             }
             _ => {
                 return Err(SimpleAgentsError::Config(format!(
@@ -222,7 +231,10 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
             }
         };
 
-        if let Some(name_obj) = dict.get_item("name") {
+        if let Some(name_obj) = dict
+            .get_item("name")
+            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}].name must be a string")))?
+        {
             if !name_obj.is_none() {
                 let name: String = name_obj.extract().map_err(|_| {
                     SimpleAgentsError::Config(format!("message[{idx}].name must be a string"))
