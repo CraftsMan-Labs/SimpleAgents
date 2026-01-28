@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agent-type"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2040,7 +2040,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "serde",
@@ -2172,9 +2172,10 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "pyo3",
+ "reqwest",
  "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
@@ -2183,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "async-trait",
  "rand 0.8.5",
