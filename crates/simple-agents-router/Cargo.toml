@@ -11,7 +11,7 @@ documentation.workspace = true
 description = "Routing strategies for SimpleAgents providers"
 
 [dependencies]
-simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
+simple-agent-type = { path = "../simple-agent-type", version.workspace = true }
 tokio = { workspace = true, features = ["time"] }
 rand.workspace = true
 

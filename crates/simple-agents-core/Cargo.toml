@@ -16,10 +16,10 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 
-simple-agent-type = { path = "../simple-agent-type" }
-simple-agents-router = { path = "../simple-agents-router" }
-simple-agents-cache = { path = "../simple-agents-cache" }
-simple-agents-healing = { path = "../simple-agents-healing" }
+simple-agent-type = { path = "../simple-agent-type", version.workspace = true }
+simple-agents-router = { path = "../simple-agents-router", version.workspace = true }
+simple-agents-cache = { path = "../simple-agents-cache", version.workspace = true }
+simple-agents-healing = { path = "../simple-agents-healing", version.workspace = true }
 
 [dev-dependencies]
 tokio.workspace = true
