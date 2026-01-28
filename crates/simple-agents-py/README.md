@@ -45,9 +45,87 @@ response = client.complete("gpt-4", "Hello from Python!", max_tokens=128, temper
 print(response)
 ```
 
+## Examples
+
+OpenAI with a short prompt:
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+text = client.complete("gpt-4o-mini", "Summarize this in one sentence.")
+print(text)
+```
+
+Anthropic with custom tokens and temperature:
+
+```python
+from simple_agents_py import Client
+
+client = Client("anthropic")
+text = client.complete(
+    "claude-3-5-sonnet-20240620",
+    "Write a friendly welcome message for a new user.",
+    max_tokens=120,
+    temperature=0.5,
+)
+print(text)
+```
+
+OpenRouter with a specific model:
+
+```python
+from simple_agents_py import Client
+
+client = Client("openrouter")
+text = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
+print(text)
+```
+
+OpenRouter with explicit API base and key:
+
+```python
+from simple_agents_py import Client
+
+client = Client(
+    "openrouter",
+    api_base="https://openrouter.ai/api/v1",
+    api_key="sk-your-openrouter-key",
+)
+text = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
+print(text)
+```
+
+OpenAI with a custom gateway:
+
+```python
+from simple_agents_py import Client
+
+client = Client(
+    "openai",
+    api_base="http://localhost:4000/v1",
+    api_key="sk-your-openai-key",
+)
+text = client.complete("gpt-4o-mini", "Say hello from a local proxy.")
+print(text)
+```
+
+Basic error handling:
+
+```python
+from simple_agents_py import Client
+
+try:
+    client = Client("openai")
+    print(client.complete("gpt-4o-mini", "Hello!"))
+except RuntimeError as exc:
+    print(f"Request failed: {exc}")
+```
+
 ## Notes
 
-- `Client` reads provider configuration from environment variables (e.g. `OPENAI_API_KEY`).
+- `Client` reads provider configuration from environment variables (e.g. `OPENAI_API_KEY`) when `api_key` is not provided.
+- `api_base` lets you override the default API base URL.
 - `max_tokens` and `temperature` are optional.
 
 ## Tests
