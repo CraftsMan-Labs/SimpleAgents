@@ -92,12 +92,18 @@ publish-crates:
 
 publish-python:
 	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && rm -f dist/*.tar.gz && uv build --sdist"
-	$(DOPPLER_RUN) "cd $(PYTHON_PROJECT_DIR) && \
-		VERSION=$$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = \"\\(.*\\)\"/\\1/'); \
+	$(DOPPLER_RUN) "echo \"[publish-python] pwd=$$(pwd)\"; \
+		echo \"[publish-python] python_project_dir=$(PYTHON_PROJECT_DIR)\"; \
+		echo \"[publish-python] pyproject_exists=$$(test -f $(CURDIR)/$(PYTHON_PROJECT_DIR)/pyproject.toml && echo yes || echo no)\"; \
+		ls -la $(CURDIR)/$(PYTHON_PROJECT_DIR) $(CURDIR)/$(PYTHON_PROJECT_DIR)/dist; \
+		RAW_VERSION_LINE=$$(grep '^version = ' $(CURDIR)/$(PYTHON_PROJECT_DIR)/pyproject.toml | head -1); \
+		VERSION=$$(awk -F'\"' '/^version = / {print $$2; exit}' $(CURDIR)/$(PYTHON_PROJECT_DIR)/pyproject.toml); \
+		echo \"[publish-python] raw_version_line=\$$RAW_VERSION_LINE\"; \
 		TOKEN_SOURCE=$$(if [ -n \"\$$V_PUBLISH_TOKEN\" ]; then echo V_PUBLISH_TOKEN; elif [ -n \"\$$UV_PUBLISH_TOKEN\" ]; then echo UV_PUBLISH_TOKEN; else echo NONE; fi); \
 		TOKEN_VALUE=\$${V_PUBLISH_TOKEN:-\$$UV_PUBLISH_TOKEN}; \
+		echo \"[publish-python] version=\$$VERSION\"; \
 		echo \"[publish-python] token_source=\$$TOKEN_SOURCE token_len=\$${#TOKEN_VALUE}\"; \
-		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish dist/simple_agents_py-\$$VERSION.tar.gz"
+		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish $(CURDIR)/$(PYTHON_PROJECT_DIR)/dist/simple_agents_py-\$$VERSION.tar.gz"
 
 publish-all: publish-crates publish-python
 
