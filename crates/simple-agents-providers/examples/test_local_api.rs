@@ -10,11 +10,11 @@ async fn main() -> Result<()> {
     println!("✓ API Key created: {}", api_key.preview());
 
     // Create provider with custom base URL
-    let provider = OpenAIProvider::with_base_url(
-        api_key,
-        "http://localhost:4000".to_string()
-    )?;
-    println!("✓ Provider created with base URL: {}\n", provider.base_url());
+    let provider = OpenAIProvider::with_base_url(api_key, "http://localhost:4000".to_string())?;
+    println!(
+        "✓ Provider created with base URL: {}\n",
+        provider.base_url()
+    );
 
     // Build request
     let request = CompletionRequest::builder()
@@ -36,7 +36,10 @@ async fn main() -> Result<()> {
     let provider_request = provider.transform_request(&request)?;
     println!("✓ Request transformed");
     println!("  URL: {}", provider_request.url);
-    println!("  Headers: {} headers set\n", provider_request.headers.len());
+    println!(
+        "  Headers: {} headers set\n",
+        provider_request.headers.len()
+    );
 
     // Execute request
     println!("→ Sending request to API...");
@@ -44,7 +47,10 @@ async fn main() -> Result<()> {
         Ok(provider_response) => {
             println!("✓ Response received!");
             println!("  Status: {}", provider_response.status);
-            println!("  Body:\n{}\n", serde_json::to_string_pretty(&provider_response.body)?);
+            println!(
+                "  Body:\n{}\n",
+                serde_json::to_string_pretty(&provider_response.body)?
+            );
 
             // Transform response
             println!("→ Transforming response...");
@@ -55,10 +61,12 @@ async fn main() -> Result<()> {
             println!("ID: {}", response.id);
             println!("Model: {}", response.model);
             println!("Content: {}", response.content().unwrap_or("No content"));
-            println!("Usage: {} prompt + {} completion = {} total tokens",
-                     response.usage.prompt_tokens,
-                     response.usage.completion_tokens,
-                     response.usage.total_tokens);
+            println!(
+                "Usage: {} prompt + {} completion = {} total tokens",
+                response.usage.prompt_tokens,
+                response.usage.completion_tokens,
+                response.usage.total_tokens
+            );
             println!("\n=== Success! ===");
         }
         Err(e) => {

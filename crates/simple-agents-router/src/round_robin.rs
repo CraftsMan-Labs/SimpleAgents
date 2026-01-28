@@ -2,7 +2,9 @@
 //!
 //! Distributes requests evenly across configured providers.
 
-use simple_agents_types::prelude::{CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -19,7 +21,9 @@ impl RoundRobinRouter {
     /// Returns a routing error if no providers are supplied.
     pub fn new(providers: Vec<Arc<dyn Provider>>) -> Result<Self> {
         if providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         Ok(Self {
@@ -45,7 +49,9 @@ impl RoundRobinRouter {
     fn select_provider_index(&self) -> Result<usize> {
         let len = self.providers.len();
         if len == 0 {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let index = self.counter.fetch_add(1, Ordering::Relaxed);
@@ -96,6 +102,7 @@ mod tests {
                 usage: Usage::new(1, 1),
                 created: None,
                 provider: Some(self.name().to_string()),
+                healing_metadata: None,
             })
         }
     }

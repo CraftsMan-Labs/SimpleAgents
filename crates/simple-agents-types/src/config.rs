@@ -422,9 +422,7 @@ mod tests {
         };
 
         // Generate multiple backoffs and verify they're different (with high probability)
-        let backoffs: Vec<Duration> = (0..10)
-            .map(|_| config.calculate_backoff(1))
-            .collect();
+        let backoffs: Vec<Duration> = (0..10).map(|_| config.calculate_backoff(1)).collect();
 
         // All values should be within expected range (50-150ms for attempt 1 with jitter)
         for backoff in &backoffs {
@@ -434,7 +432,13 @@ mod tests {
         }
 
         // At least some values should be different (very high probability with true randomness)
-        let unique_count = backoffs.iter().collect::<std::collections::HashSet<_>>().len();
-        assert!(unique_count > 1, "All jitter values are the same - RNG may not be working");
+        let unique_count = backoffs
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        assert!(
+            unique_count > 1,
+            "All jitter values are the same - RNG may not be working"
+        );
     }
 }

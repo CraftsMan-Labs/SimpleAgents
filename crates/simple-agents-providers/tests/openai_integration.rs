@@ -60,7 +60,9 @@ async fn test_local_proxy_connection() {
     // Create a simple test request
     let request = CompletionRequest::builder()
         .model(model)
-        .message(Message::user("Say 'Hello from SimpleAgents!' and nothing else."))
+        .message(Message::user(
+            "Say 'Hello from SimpleAgents!' and nothing else.",
+        ))
         .temperature(0.7)
         .max_tokens(50)
         .build()
@@ -74,10 +76,8 @@ async fn test_local_proxy_connection() {
     println!("Making request to: {}", provider_request.url);
     println!("Model: {}", model);
 
-    let provider_response = ProviderResponse::new(
-        200,
-        success_response(model, "Hello from SimpleAgents!"),
-    );
+    let provider_response =
+        ProviderResponse::new(200, success_response(model, "Hello from SimpleAgents!"));
 
     // Transform response
     let response = provider
@@ -92,12 +92,13 @@ async fn test_local_proxy_connection() {
         model,
         response.model
     );
-    assert!(!response.choices.is_empty(), "Response should have at least one choice");
+    assert!(
+        !response.choices.is_empty(),
+        "Response should have at least one choice"
+    );
 
     // Get the content
-    let content = response
-        .content()
-        .expect("Response should have content");
+    let content = response.content().expect("Response should have content");
 
     println!("Response content: {}", content);
     assert!(!content.is_empty(), "Content should not be empty");
@@ -131,9 +132,7 @@ async fn test_local_proxy_multiple_requests() {
         .expect("Failed to create API key");
     let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
 
-    let test_prompts = ["Count from 1 to 3.",
-        "What is 2+2?",
-        "Say 'test complete'."];
+    let test_prompts = ["Count from 1 to 3.", "What is 2+2?", "Say 'test complete'."];
 
     for (i, prompt) in test_prompts.iter().enumerate() {
         println!("\n--- Request {} ---", i + 1);
@@ -157,12 +156,14 @@ async fn test_local_proxy_multiple_requests() {
             .transform_response(provider_response)
             .expect("Failed to transform response");
 
-        let content = response
-            .content()
-            .expect("Response should have content");
+        let content = response.content().expect("Response should have content");
 
         println!("Response: {}", content);
-        assert!(!content.is_empty(), "Content should not be empty for request {}", i + 1);
+        assert!(
+            !content.is_empty(),
+            "Content should not be empty for request {}",
+            i + 1
+        );
     }
 
     println!("\n✅ Multiple requests test passed!");
@@ -221,9 +222,7 @@ async fn test_local_proxy_temperature_variations() {
             .transform_response(provider_response)
             .expect("Failed to transform response");
 
-        let content = response
-            .content()
-            .expect("Response should have content");
+        let content = response.content().expect("Response should have content");
 
         println!("Response: {}", content);
         assert!(!content.is_empty(), "Content should not be empty");
@@ -255,18 +254,21 @@ async fn test_local_proxy_conversation() {
         .transform_request(&request)
         .expect("Failed to transform request");
 
-    println!("Testing conversation with {} messages", request.messages.len());
+    println!(
+        "Testing conversation with {} messages",
+        request.messages.len()
+    );
 
-    let provider_response =
-        ProviderResponse::new(200, success_response(model, "Paris has about 2 million people."));
+    let provider_response = ProviderResponse::new(
+        200,
+        success_response(model, "Paris has about 2 million people."),
+    );
 
     let response = provider
         .transform_response(provider_response)
         .expect("Failed to transform response");
 
-    let content = response
-        .content()
-        .expect("Response should have content");
+    let content = response.content().expect("Response should have content");
 
     println!("Response: {}", content);
     assert!(!content.is_empty(), "Content should not be empty");

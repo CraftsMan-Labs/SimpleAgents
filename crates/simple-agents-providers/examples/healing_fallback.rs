@@ -8,10 +8,10 @@
 //! OPENAI_API_KEY=your_key cargo run --example healing_fallback
 //! ```
 
+use serde_json::json;
 use simple_agents_providers::healing_integration::HealingConfig;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_types::prelude::*;
-use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -21,8 +21,8 @@ async fn main() -> Result<()> {
     println!("=== Healing System Fallback Example ===\n");
 
     // Create provider with healing enabled
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY environment variable required");
+    let api_key =
+        std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY environment variable required");
     let api_key = ApiKey::new(api_key)?;
 
     // Configure healing with default settings
@@ -32,8 +32,7 @@ async fn main() -> Result<()> {
     println!("  - Min confidence: {}", healing_config.min_confidence);
     println!();
 
-    let provider = OpenAIProvider::new(api_key)?
-        .with_healing(healing_config);
+    let provider = OpenAIProvider::new(api_key)?.with_healing(healing_config);
 
     // Define a JSON schema for structured output
     let schema = json!({
@@ -66,12 +65,12 @@ async fn main() -> Result<()> {
         .model("gpt-4o-mini")
         .message(Message::system(
             "You are a helpful assistant that extracts person information from text. \
-             Always respond with valid JSON matching the schema."
+             Always respond with valid JSON matching the schema.",
         ))
         .message(Message::user(
             "Extract information about this person: \
              John Doe is 30 years old. He enjoys reading, hiking, and photography. \
-             You can reach him at john.doe@example.com"
+             You can reach him at john.doe@example.com",
         ))
         .json_schema("PersonInfo", schema)
         .build()?;
@@ -80,8 +79,15 @@ async fn main() -> Result<()> {
     println!("Model: {}", request.model);
     println!();
 
-    // Execute request
-    match provider.complete(request).await {
+    // Execute request using three-phase provider pattern
+    let result = async {
+        let provider_request = provider.transform_request(&request)?;
+        let provider_response = provider.execute(provider_request).await?;
+        provider.transform_response(provider_response)
+    }
+    .await;
+
+    match result {
         Ok(response) => {
             println!("✓ Response received successfully");
             println!();

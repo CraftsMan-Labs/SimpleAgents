@@ -43,6 +43,7 @@ impl Provider for MockProvider {
             usage: Usage::new(1, 1),
             created: None,
             provider: Some("mock".to_string()),
+            healing_metadata: None,
         })
     }
 }
@@ -97,6 +98,7 @@ use simple_agents_healing::schema::Schema;
 #             usage: Usage::new(1, 1),
 #             created: None,
 #             provider: Some("mock".to_string()),
+#             healing_metadata: None,
 #         })
 #     }
 # }

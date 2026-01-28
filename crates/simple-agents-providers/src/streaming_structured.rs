@@ -64,11 +64,7 @@ where
     T: DeserializeOwned,
 {
     /// Create a new structured stream.
-    pub fn new(
-        stream: S,
-        json_schema: Value,
-        healing: Option<HealingIntegration>,
-    ) -> Self {
+    pub fn new(stream: S, json_schema: Value, healing: Option<HealingIntegration>) -> Self {
         Self {
             inner: stream,
             accumulated: String::new(),
@@ -81,12 +77,11 @@ where
 
     /// Try to parse accumulated content as structured output.
     fn try_parse(accumulated: &str) -> Result<T, SimpleAgentsError> {
-        serde_json::from_str(accumulated)
-            .map_err(|e| SimpleAgentsError::Provider(
-                simple_agents_types::error::ProviderError::InvalidResponse(
-                    format!("Failed to parse JSON: {}", e)
-                )
+        serde_json::from_str(accumulated).map_err(|e| {
+            SimpleAgentsError::Provider(simple_agents_types::error::ProviderError::InvalidResponse(
+                format!("Failed to parse JSON: {}", e),
             ))
+        })
     }
 
     /// Try to parse with healing if available.
@@ -107,13 +102,12 @@ where
                         &parse_error.to_string(),
                     )?;
 
-                    let value: T = serde_json::from_value(healed.value)
-                        .map_err(|e| SimpleAgentsError::Healing(
-                            HealingError::ParseFailed {
-                                error_message: format!("Deserialization failed: {}", e),
-                                input: accumulated.to_string(),
-                            }
-                        ))?;
+                    let value: T = serde_json::from_value(healed.value).map_err(|e| {
+                        SimpleAgentsError::Healing(HealingError::ParseFailed {
+                            error_message: format!("Deserialization failed: {}", e),
+                            input: accumulated.to_string(),
+                        })
+                    })?;
 
                     Ok((value, healed.metadata.confidence, true))
                 } else {
@@ -150,7 +144,11 @@ where
                     if choice.finish_reason.is_some() {
                         *this.completed = true;
 
-                        match Self::try_parse_with_healing(this.accumulated, this.json_schema, this.healing) {
+                        match Self::try_parse_with_healing(
+                            this.accumulated,
+                            this.json_schema,
+                            this.healing,
+                        ) {
                             Ok((value, confidence, was_healed)) => {
                                 return Poll::Ready(Some(Ok(StructuredEvent::Complete {
                                     value,
@@ -180,7 +178,8 @@ where
                     return Poll::Ready(None);
                 }
 
-                match Self::try_parse_with_healing(this.accumulated, this.json_schema, this.healing) {
+                match Self::try_parse_with_healing(this.accumulated, this.json_schema, this.healing)
+                {
                     Ok((value, confidence, was_healed)) => {
                         Poll::Ready(Some(Ok(StructuredEvent::Complete {
                             value,
@@ -262,7 +261,12 @@ mod tests {
         assert_eq!(events.len(), 1);
 
         // Event should be Complete
-        if let StructuredEvent::Complete { value, confidence, was_healed } = &events[0] {
+        if let StructuredEvent::Complete {
+            value,
+            confidence,
+            was_healed,
+        } = &events[0]
+        {
             assert_eq!(value.message, "Hello");
             assert_eq!(*confidence, 1.0);
             assert!(!was_healed);

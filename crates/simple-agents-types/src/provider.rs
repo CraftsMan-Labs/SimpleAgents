@@ -3,9 +3,9 @@
 //! Defines the interface for LLM providers with transformation hooks.
 
 use crate::config::{Capabilities, RetryConfig};
-use crate::error::{Result, SimpleAgentsError, ProviderError};
+use crate::error::{ProviderError, Result, SimpleAgentsError};
 use crate::request::CompletionRequest;
-use crate::response::{CompletionResponse, CompletionChunk};
+use crate::response::{CompletionChunk, CompletionResponse};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -80,6 +80,7 @@ pub mod headers {
 ///             usage: Usage::new(1, 1),
 ///             created: None,
 ///             provider: Some(self.name().to_string()),
+///             healing_metadata: None,
 ///         })
 ///     }
 /// }
@@ -207,6 +208,7 @@ pub trait Provider: Send + Sync {
     ///             usage: Usage::new(1, 1),
     ///             created: None,
     ///             provider: None,
+    ///             healing_metadata: None,
     ///         })
     ///     }
     ///
@@ -237,7 +239,7 @@ pub trait Provider: Send + Sync {
         _req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         Err(SimpleAgentsError::Provider(
-            ProviderError::UnsupportedFeature("streaming".to_string())
+            ProviderError::UnsupportedFeature("streaming".to_string()),
         ))
     }
 }
@@ -282,9 +284,7 @@ mod header_serde {
         string_headers.serialize(serializer)
     }
 
-    pub fn deserialize<'de, D>(
-        deserializer: D,
-    ) -> std::result::Result<Headers, D::Error>
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Headers, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -309,13 +309,15 @@ impl ProviderRequest {
 
     /// Add a header with owned strings.
     pub fn with_header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
-        self.headers.push((Cow::Owned(name.into()), Cow::Owned(value.into())));
+        self.headers
+            .push((Cow::Owned(name.into()), Cow::Owned(value.into())));
         self
     }
 
     /// Add a header with static strings (zero allocation).
     pub fn with_static_header(mut self, name: &'static str, value: &'static str) -> Self {
-        self.headers.push((Cow::Borrowed(name), Cow::Borrowed(value)));
+        self.headers
+            .push((Cow::Borrowed(name), Cow::Borrowed(value)));
         self
     }
 

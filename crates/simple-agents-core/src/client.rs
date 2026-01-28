@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 struct ClientState {
     providers: Vec<Arc<dyn Provider>>,
     provider_map: HashMap<String, Arc<dyn Provider>>,
-    router: RouterEngine,
+    router: Arc<RouterEngine>,
 }
 
 /// Unified SimpleAgents client.
@@ -40,31 +40,30 @@ impl SimpleAgentsClient {
 
     /// List registered provider names.
     pub fn provider_names(&self) -> Result<Vec<String>> {
-        let state = self
-            .state
-            .read()
-            .map_err(|_| SimpleAgentsError::Config("provider registry lock poisoned".to_string()))?;
+        let state = self.state.read().map_err(|_| {
+            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
+        })?;
         Ok(state.provider_map.keys().cloned().collect())
     }
 
     /// Retrieve a provider by name.
     pub fn provider(&self, name: &str) -> Result<Option<Arc<dyn Provider>>> {
-        let state = self
-            .state
-            .read()
-            .map_err(|_| SimpleAgentsError::Config("provider registry lock poisoned".to_string()))?;
+        let state = self.state.read().map_err(|_| {
+            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
+        })?;
         Ok(state.provider_map.get(name).cloned())
     }
 
     /// Register an additional provider and rebuild the router.
     pub fn register_provider(&self, provider: Arc<dyn Provider>) -> Result<()> {
-        let mut state = self
-            .state
-            .write()
-            .map_err(|_| SimpleAgentsError::Config("provider registry lock poisoned".to_string()))?;
-        state.provider_map.insert(provider.name().to_string(), provider.clone());
+        let mut state = self.state.write().map_err(|_| {
+            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
+        })?;
+        state
+            .provider_map
+            .insert(provider.name().to_string(), provider.clone());
         state.providers.push(provider);
-        state.router = self.routing_mode.build_router(state.providers.clone())?;
+        state.router = Arc::new(self.routing_mode.build_router(state.providers.clone())?);
         Ok(())
     }
 
@@ -92,17 +91,18 @@ impl SimpleAgentsClient {
         }
 
         let start = Instant::now();
-        let response = {
-            let state = self
-                .state
-                .read()
-                .map_err(|_| SimpleAgentsError::Config("provider registry lock poisoned".to_string()))?;
-            state.router.complete(request).await
+        let router = {
+            let state = self.state.read().map_err(|_| {
+                SimpleAgentsError::Config("provider registry lock poisoned".to_string())
+            })?;
+            state.router.clone()
         };
+        let response = router.complete(request).await;
 
         match response {
             Ok(response) => {
-                self.after_response(request, &response, start.elapsed()).await?;
+                self.after_response(request, &response, start.elapsed())
+                    .await?;
                 if let (Some(cache), Some(key)) = (&self.cache, cache_key) {
                     let payload = serde_json::to_vec(&response)?;
                     cache.set(&key, payload, self.cache_ttl).await?;
@@ -120,12 +120,12 @@ impl SimpleAgentsClient {
     pub async fn complete_json(&self, request: &CompletionRequest) -> Result<HealedJsonResponse> {
         self.ensure_healing_enabled()?;
         let response = self.complete(request).await?;
-        let content = response
-            .content()
-            .ok_or_else(|| SimpleAgentsError::Healing(simple_agents_types::error::HealingError::ParseFailed {
+        let content = response.content().ok_or_else(|| {
+            SimpleAgentsError::Healing(simple_agents_types::error::HealingError::ParseFailed {
                 error_message: "response contained no content".to_string(),
                 input: String::new(),
-            }))?;
+            })
+        })?;
 
         let parser = JsonishParser::with_config(self.healing.parser_config.clone());
         let parsed = parser.parse(content)?;
@@ -182,7 +182,9 @@ impl SimpleAgentsClient {
         latency: Duration,
     ) -> Result<()> {
         for middleware in &self.middleware {
-            middleware.after_response(request, response, latency).await?;
+            middleware
+                .after_response(request, response, latency)
+                .await?;
         }
         Ok(())
     }
@@ -290,7 +292,7 @@ impl SimpleAgentsClientBuilder {
             .map(|provider| (provider.name().to_string(), provider.clone()))
             .collect::<HashMap<_, _>>();
 
-        let router = self.routing_mode.build_router(self.providers.clone())?;
+        let router = Arc::new(self.routing_mode.build_router(self.providers.clone())?);
         let state = ClientState {
             providers: self.providers,
             provider_map,
@@ -339,7 +341,6 @@ mod tests {
                 calls: AtomicUsize::new(0),
             }
         }
-
     }
 
     #[async_trait]
@@ -373,6 +374,7 @@ mod tests {
                 usage: Usage::new(1, 1),
                 created: None,
                 provider: Some(self.name.to_string()),
+                healing_metadata: None,
             })
         }
     }

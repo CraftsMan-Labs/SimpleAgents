@@ -137,17 +137,26 @@ fn example_4_union_resolution() {
     // Case 1: Pure int
     let result = engine.coerce(&json!(42), &schema).unwrap();
     println!("Input: 42 (int)");
-    println!("Output: {} (confidence: {:.2})", result.value, result.confidence);
+    println!(
+        "Output: {} (confidence: {:.2})",
+        result.value, result.confidence
+    );
 
     // Case 2: Pure string
     let result = engine.coerce(&json!("hello"), &schema).unwrap();
     println!("Input: \"hello\" (string)");
-    println!("Output: {} (confidence: {:.2})", result.value, result.confidence);
+    println!(
+        "Output: {} (confidence: {:.2})",
+        result.value, result.confidence
+    );
 
     // Case 3: Ambiguous (string that could be int)
     let result = engine.coerce(&json!("123"), &schema).unwrap();
     println!("Input: \"123\" (string)");
-    println!("Output: {} (confidence: {:.2})", result.value, result.confidence);
+    println!(
+        "Output: {} (confidence: {:.2})",
+        result.value, result.confidence
+    );
     println!("  Note: String is exact match (1.0), Int requires coercion (0.9)");
     println!();
 }
@@ -187,8 +196,10 @@ fn example_5_parser_with_coercion() {
     println!("\nStep 2 - Coerce to schema:");
     println!("  Output: {}", coerce_result.value);
     println!("  Confidence: {:.2}", coerce_result.confidence);
-    println!("  Total transformations: {}",
-             parse_result.flags.len() + coerce_result.flags.len());
+    println!(
+        "  Total transformations: {}",
+        parse_result.flags.len() + coerce_result.flags.len()
+    );
     println!();
 }
 
@@ -218,7 +229,10 @@ fn example_6_confidence_threshold() {
             println!("Success: {}", result.value);
             println!("Confidence: {:.2}", result.confidence);
         }
-        Err(HealingError::LowConfidence { confidence, threshold }) => {
+        Err(HealingError::LowConfidence {
+            confidence,
+            threshold,
+        }) => {
             println!("❌ Coercion failed!");
             println!("  Confidence: {:.2}", confidence);
             println!("  Threshold:  {:.2}", threshold);

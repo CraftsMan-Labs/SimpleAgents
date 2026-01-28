@@ -19,18 +19,18 @@
 //! - No need for healing/coercion
 //! - Type-safe schema definition
 
+use serde_json::json;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
 use simple_agents_types::prelude::*;
-use serde_json::json;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     // Setup API key
-    let api_key = std::env::var("OPENAI_API_KEY")
-        .expect("OPENAI_API_KEY environment variable not set");
+    let api_key =
+        std::env::var("OPENAI_API_KEY").expect("OPENAI_API_KEY environment variable not set");
     let api_key = ApiKey::new(api_key)?;
 
     // Create provider
@@ -62,9 +62,13 @@ async fn simple_json_mode(provider: &OpenAIProvider) -> Result<()> {
 
     let request = CompletionRequest::builder()
         .model("gpt-4o-mini")
-        .message(Message::system("You are a helpful assistant that outputs JSON."))
-        .message(Message::user("Generate a user profile with name, age, and email"))
-        .json_mode()  // Enable JSON object mode
+        .message(Message::system(
+            "You are a helpful assistant that outputs JSON.",
+        ))
+        .message(Message::user(
+            "Generate a user profile with name, age, and email",
+        ))
+        .json_mode() // Enable JSON object mode
         .build()?;
 
     let provider_request = provider.transform_request(&request)?;
@@ -81,9 +85,7 @@ async fn simple_json_mode(provider: &OpenAIProvider) -> Result<()> {
 
 /// Example 2: Structured Output with JSON Schema
 /// This mode validates the output against a JSON schema, guaranteeing the structure.
-async fn structured_output_with_schema(
-    provider: &OpenAIProvider,
-) -> Result<()> {
+async fn structured_output_with_schema(provider: &OpenAIProvider) -> Result<()> {
     println!("2. Structured Output with JSON Schema");
     println!("{}", "-".repeat(60));
 
@@ -117,9 +119,13 @@ async fn structured_output_with_schema(
 
     let request = CompletionRequest::builder()
         .model("gpt-4o-mini")
-        .message(Message::system("Generate a user profile matching the schema."))
-        .message(Message::user("Create a profile for Sarah Chen, a 28-year-old premium user"))
-        .json_schema("user_profile", schema)  // Use structured output with schema
+        .message(Message::system(
+            "Generate a user profile matching the schema.",
+        ))
+        .message(Message::user(
+            "Create a profile for Sarah Chen, a 28-year-old premium user",
+        ))
+        .json_schema("user_profile", schema) // Use structured output with schema
         .build()?;
 
     let provider_request = provider.transform_request(&request)?;
@@ -144,9 +150,7 @@ async fn structured_output_with_schema(
 
 /// Example 3: Complex Nested Schema
 /// Demonstrates structured output with nested objects and arrays.
-async fn complex_nested_schema(
-    provider: &OpenAIProvider,
-) -> Result<()> {
+async fn complex_nested_schema(provider: &OpenAIProvider) -> Result<()> {
     println!("3. Complex Nested Schema");
     println!("{}", "-".repeat(60));
 
@@ -206,7 +210,10 @@ async fn complex_nested_schema(
 
     // Validate structure
     assert!(json_output.get("company").is_some());
-    assert!(json_output.get("employees").and_then(|e| e.as_array()).is_some());
+    assert!(json_output
+        .get("employees")
+        .and_then(|e| e.as_array())
+        .is_some());
     assert!(json_output.get("total_budget").is_some());
 
     let employees = json_output["employees"].as_array().unwrap();

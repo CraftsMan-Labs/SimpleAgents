@@ -153,13 +153,15 @@ impl StreamingParser {
     /// let result = parser.finalize().unwrap();
     /// assert_eq!(result.value["name"], "Alice");
     /// ```
-    pub fn finalize(self) -> std::result::Result<CoercionResult<Value>, simple_agents_types::SimpleAgentsError> {
+    pub fn finalize(
+        self,
+    ) -> std::result::Result<CoercionResult<Value>, simple_agents_types::SimpleAgentsError> {
         if self.buffer.trim().is_empty() {
             return Err(simple_agents_types::SimpleAgentsError::Healing(
                 HealingError::ParseFailed {
                     error_message: "Empty buffer".to_string(),
                     input: String::new(),
-                }
+                },
             ));
         }
 
@@ -376,10 +378,10 @@ mod tests {
 
         let result = parser.finalize().unwrap();
         assert_eq!(result.value["name"], "Alice");
-        assert!(result
-            .flags
-            .iter()
-            .any(|f| matches!(f, simple_agents_types::coercion::CoercionFlag::StrippedMarkdown)));
+        assert!(result.flags.iter().any(|f| matches!(
+            f,
+            simple_agents_types::coercion::CoercionFlag::StrippedMarkdown
+        )));
     }
 
     #[test]

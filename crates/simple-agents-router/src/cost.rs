@@ -2,7 +2,9 @@
 //!
 //! Routes requests to the lowest-cost provider.
 
-use simple_agents_types::prelude::{CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -60,7 +62,9 @@ impl CostRouter {
     /// Returns a routing error if providers or costs are missing.
     pub fn new(providers: Vec<Arc<dyn Provider>>, config: CostRouterConfig) -> Result<Self> {
         if providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let mut cost_map = HashMap::new();
@@ -105,7 +109,9 @@ impl CostRouter {
 
     fn select_provider_index(&self) -> Result<usize> {
         if self.providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let mut min_cost = f64::INFINITY;
@@ -116,7 +122,9 @@ impl CostRouter {
         }
 
         if !min_cost.is_finite() {
-            return Err(SimpleAgentsError::Routing("invalid provider costs".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "invalid provider costs".to_string(),
+            ));
         }
 
         let min_indices: Vec<usize> = self
@@ -128,7 +136,9 @@ impl CostRouter {
             .collect();
 
         if min_indices.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         let offset = self.counter.fetch_add(1, Ordering::Relaxed);
@@ -179,6 +189,7 @@ mod tests {
                 usage: Usage::new(1, 1),
                 created: None,
                 provider: Some(self.name().to_string()),
+                healing_metadata: None,
             })
         }
     }
@@ -204,7 +215,10 @@ mod tests {
     fn missing_cost_returns_error() {
         let config = build_costs(vec![ProviderCost::new("p1", 0.5).unwrap()]);
         let result = CostRouter::new(
-            vec![Arc::new(MockProvider::new("p1")), Arc::new(MockProvider::new("p2"))],
+            vec![
+                Arc::new(MockProvider::new("p1")),
+                Arc::new(MockProvider::new("p2")),
+            ],
             config,
         );
 
@@ -224,7 +238,10 @@ mod tests {
             ProviderCost::new("p2", 0.2).unwrap(),
         ]);
         let router = CostRouter::new(
-            vec![Arc::new(MockProvider::new("p1")), Arc::new(MockProvider::new("p2"))],
+            vec![
+                Arc::new(MockProvider::new("p1")),
+                Arc::new(MockProvider::new("p2")),
+            ],
             config,
         )
         .unwrap();
