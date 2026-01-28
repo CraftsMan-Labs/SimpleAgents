@@ -168,7 +168,7 @@ fn build_request_with_messages(
     builder.build()
 }
 
-fn parse_messages(messages: &PyAny) -> Result<Vec<Message>> {
+fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
     let list: &PyList = messages.downcast().map_err(|_| {
         SimpleAgentsError::Config("messages must be a list of dicts".to_string())
     })?;
@@ -289,7 +289,7 @@ impl Client {
     fn complete_messages(
         &self,
         model: &str,
-        messages: &PyAny,
+        messages: &Bound<'_, PyAny>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         top_p: Option<f32>,
@@ -319,7 +319,7 @@ impl Client {
     fn complete_json(
         &self,
         model: &str,
-        messages: &PyAny,
+        messages: &Bound<'_, PyAny>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         top_p: Option<f32>,
@@ -345,12 +345,12 @@ impl Client {
         Ok(response.content().unwrap_or_default().to_string())
     }
 
-    #[pyo3(signature = (model, messages, schema, schema_name, max_tokens=None, temperature=None, top_p=None, strict=True))]
+    #[pyo3(signature = (model, messages, schema, schema_name, max_tokens=None, temperature=None, top_p=None, strict=true))]
     fn complete_json_schema(
         &self,
         model: &str,
-        messages: &PyAny,
-        schema: &PyAny,
+        messages: &Bound<'_, PyAny>,
+        schema: &Bound<'_, PyAny>,
         schema_name: &str,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
