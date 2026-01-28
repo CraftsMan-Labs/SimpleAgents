@@ -8,6 +8,7 @@ edition = "2021"
 rust-version = "1.75"
 authors = ["SimpleAgents Contributors"]
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/rishub/simple-agents"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }

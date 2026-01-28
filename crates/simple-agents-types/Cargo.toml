@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core types and traits for SimpleAgents"
 readme = "README.md"
 

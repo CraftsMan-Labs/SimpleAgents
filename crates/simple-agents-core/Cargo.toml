@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Core SimpleAgents client API integrating providers, routing, caching, and healing"
 
 [dependencies]

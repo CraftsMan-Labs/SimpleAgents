@@ -2,10 +2,11 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use simple_agents_core::{RoutingMode, SimpleAgentsClient, SimpleAgentsClientBuilder};
 use simple_agents_providers::{
-    anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider,
-    Provider,
+    anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, Provider,
 };
-use simple_agents_router::{CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost};
+use simple_agents_router::{
+    CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
+};
 use simple_agents_types::prelude::{ApiKey, CompletionRequest, Message, SimpleAgentsError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -306,28 +307,38 @@ async fn run() -> Result<()> {
             let defaults = config.as_ref().and_then(|cfg| cfg.defaults.clone());
             let providers = resolve_providers(config.as_ref())?;
             let providers = filter_providers(providers, args.provider.as_deref())?;
-            let model = resolve_model(
-                args.model.as_deref(),
+            let model = resolve_model(args.model.as_deref(), defaults.as_ref(), &providers)?;
+            let overrides = resolve_overrides(
                 defaults.as_ref(),
-                &providers,
-            )?;
-            let overrides = resolve_overrides(defaults.as_ref(), &args.user, args.max_tokens, args.temperature, args.top_p);
-            let system = args.system.or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
+                &args.user,
+                args.max_tokens,
+                args.temperature,
+                args.top_p,
+            );
+            let system = args
+                .system
+                .or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
             let client = build_client(&providers, config.as_ref())?;
-            let response = execute_completion(&client, &model, &args.prompt, system.as_deref(), &overrides).await?;
+            let response =
+                execute_completion(&client, &model, &args.prompt, system.as_deref(), &overrides)
+                    .await?;
             print_completion(output, &response, true)?;
         }
         Commands::Chat(args) => {
             let defaults = config.as_ref().and_then(|cfg| cfg.defaults.clone());
             let providers = resolve_providers(config.as_ref())?;
             let providers = filter_providers(providers, args.provider.as_deref())?;
-            let model = resolve_model(
-                args.model.as_deref(),
+            let model = resolve_model(args.model.as_deref(), defaults.as_ref(), &providers)?;
+            let overrides = resolve_overrides(
                 defaults.as_ref(),
-                &providers,
-            )?;
-            let overrides = resolve_overrides(defaults.as_ref(), &args.user, args.max_tokens, args.temperature, args.top_p);
-            let system = args.system.or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
+                &args.user,
+                args.max_tokens,
+                args.temperature,
+                args.top_p,
+            );
+            let system = args
+                .system
+                .or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
             let client = build_client(&providers, config.as_ref())?;
             run_chat(&client, &model, system.as_deref(), &overrides, output).await?;
         }
@@ -335,13 +346,17 @@ async fn run() -> Result<()> {
             let defaults = config.as_ref().and_then(|cfg| cfg.defaults.clone());
             let providers = resolve_providers(config.as_ref())?;
             let providers = filter_providers(providers, args.provider.as_deref())?;
-            let model = resolve_model(
-                args.model.as_deref(),
+            let model = resolve_model(args.model.as_deref(), defaults.as_ref(), &providers)?;
+            let overrides = resolve_overrides(
                 defaults.as_ref(),
-                &providers,
-            )?;
-            let overrides = resolve_overrides(defaults.as_ref(), &args.user, args.max_tokens, args.temperature, args.top_p);
-            let system = args.system.or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
+                &args.user,
+                args.max_tokens,
+                args.temperature,
+                args.top_p,
+            );
+            let system = args
+                .system
+                .or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
             let client = build_client(&providers, config.as_ref())?;
             let summary = run_benchmark(
                 &client,
@@ -359,8 +374,16 @@ async fn run() -> Result<()> {
             let defaults = config.as_ref().and_then(|cfg| cfg.defaults.clone());
             let providers = resolve_providers(config.as_ref())?;
             let providers = filter_providers(providers, args.provider.as_deref())?;
-            let overrides = resolve_overrides(defaults.as_ref(), &args.user, args.max_tokens, args.temperature, args.top_p);
-            let system = args.system.or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
+            let overrides = resolve_overrides(
+                defaults.as_ref(),
+                &args.user,
+                args.max_tokens,
+                args.temperature,
+                args.top_p,
+            );
+            let system = args
+                .system
+                .or_else(|| defaults.as_ref().and_then(|d| d.system.clone()));
             let report = run_provider_tests(
                 &providers,
                 config.as_ref(),
@@ -531,7 +554,10 @@ fn resolve_overrides(
     }
 }
 
-fn build_client(providers: &[ProviderEntry], config: Option<&ConfigFile>) -> Result<SimpleAgentsClient> {
+fn build_client(
+    providers: &[ProviderEntry],
+    config: Option<&ConfigFile>,
+) -> Result<SimpleAgentsClient> {
     let configured = build_provider_instances(providers)?;
     let routing = resolve_routing(config)?;
     let mut builder = SimpleAgentsClientBuilder::new().with_routing_mode(routing);
@@ -582,7 +608,9 @@ fn resolve_routing(config: Option<&ConfigFile>) -> Result<RoutingMode> {
                 .fallback
                 .and_then(|fallback| fallback.retryable_only)
                 .unwrap_or(true);
-            Ok(RoutingMode::Fallback(FallbackRouterConfig { retryable_only }))
+            Ok(RoutingMode::Fallback(FallbackRouterConfig {
+                retryable_only,
+            }))
         }
     }
 }
@@ -636,9 +664,8 @@ fn resolve_api_key(entry: &ProviderEntry) -> Result<ApiKey> {
     }
 
     if let Some(env_key) = &entry.api_key_env {
-        let value = std::env::var(env_key).map_err(|_| {
-            CliError::Config(format!("missing API key in env var {}", env_key))
-        })?;
+        let value = std::env::var(env_key)
+            .map_err(|_| CliError::Config(format!("missing API key in env var {}", env_key)))?;
         return ApiKey::new(value).map_err(CliError::from);
     }
 
@@ -769,8 +796,14 @@ async fn run_benchmark(
 
     durations.sort_by_key(|duration| duration.as_millis());
 
-    let min_ms = durations.first().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
-    let max_ms = durations.last().map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0);
+    let min_ms = durations
+        .first()
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
+    let max_ms = durations
+        .last()
+        .map(|d| d.as_secs_f64() * 1000.0)
+        .unwrap_or(0.0);
     let avg_ms = if durations.is_empty() {
         0.0
     } else {
@@ -877,10 +910,8 @@ fn print_completion(
                     println!("Provider: {}", provider);
                 }
                 println!("Model: {}", response.model);
-            } else {
-                if let Some(content) = response.content() {
-                    println!("assistant> {}", content);
-                }
+            } else if let Some(content) = response.content() {
+                println!("assistant> {}", content);
             }
         }
         OutputFormat::Json => {
@@ -959,10 +990,7 @@ fn print_provider_report(output: OutputFormat, report: &ProviderTestReport) -> R
                     println!(
                         "{}: failed ({})",
                         result.provider,
-                        result
-                            .error
-                            .as_deref()
-                            .unwrap_or("unknown error")
+                        result.error.as_deref().unwrap_or("unknown error")
                     );
                 }
             }
@@ -985,10 +1013,7 @@ fn print_provider_report(output: OutputFormat, report: &ProviderTestReport) -> R
                     println!(
                         "- {}: failed ({})",
                         result.provider,
-                        result
-                            .error
-                            .as_deref()
-                            .unwrap_or("unknown error")
+                        result.error.as_deref().unwrap_or("unknown error")
                     );
                 }
             }
