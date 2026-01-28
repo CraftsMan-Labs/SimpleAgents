@@ -2,7 +2,7 @@
 	release-ffi release-python release-go release-node release-all \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
-	version-get version-patch version-minor version-major version-set \
+	version-get version-sync version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major
 
 EXAMPLE ?= openai_basic
@@ -46,6 +46,7 @@ help:
 	@echo ""
 	@echo "Versioning:"
 	@echo "  make version-get           - Show current version"
+	@echo "  make version-sync          - Sync versions across manifests"
 	@echo "  make version-patch         - Bump patch version (0.1.0 -> 0.1.1)"
 	@echo "  make version-minor         - Bump minor version (0.1.0 -> 0.2.0)"
 	@echo "  make version-major         - Bump major version (0.1.0 -> 1.0.0)"
@@ -172,6 +173,9 @@ publish-python-dry:
 version-get:
 	@grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'
 
+version-sync:
+	@./scripts/sync-versions.sh
+
 version-next-patch:
 	@current=$$($(MAKE) --no-print-directory version-get); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
@@ -200,6 +204,9 @@ version-patch:
 	rm -f $(PY_CRATE_MANIFEST).bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
+	rm -f examples/pyproject.toml.bak; \
+	$(MAKE) --no-print-directory version-sync; \
 	echo "Version bumped to $$new"; \
 	echo ""; \
 	echo "Next steps:"; \
@@ -219,6 +226,9 @@ version-minor:
 	rm -f $(PY_CRATE_MANIFEST).bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
+	rm -f examples/pyproject.toml.bak; \
+	$(MAKE) --no-print-directory version-sync; \
 	echo "Version bumped to $$new"; \
 	echo ""; \
 	echo "Next steps:"; \
@@ -238,6 +248,9 @@ version-major:
 	rm -f $(PY_CRATE_MANIFEST).bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' crates/simple-agents-py/pyproject.toml; \
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
+	rm -f examples/pyproject.toml.bak; \
+	$(MAKE) --no-print-directory version-sync; \
 	echo "Version bumped to $$new"; \
 	echo ""; \
 	echo "Next steps:"; \
@@ -261,6 +274,9 @@ version-set:
 	rm -f $(PY_CRATE_MANIFEST).bak; \
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' crates/simple-agents-py/pyproject.toml; \
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
+	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
+	rm -f examples/pyproject.toml.bak; \
+	$(MAKE) --no-print-directory version-sync; \
 	echo "Version set to $(VERSION)"; \
 	echo ""; \
 	echo "Next steps:"; \

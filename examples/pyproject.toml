@@ -1,9 +1,9 @@
 [project]
 name = "examples"
-version = "0.1.0"
+version = "0.1.8"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "simple-agents-py>=0.1.6",
+    "simple-agents-py>=0.1.8",
 ]
