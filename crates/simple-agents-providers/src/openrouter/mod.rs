@@ -97,7 +97,8 @@ impl OpenRouterProvider {
     ///
     /// Required:
     /// - `OPENROUTER_API_KEY`
-    /// Optional:
+    ///
+    ///   Optional:
     /// - `OPENROUTER_API_BASE`
     pub fn from_env() -> Result<Self> {
         let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
@@ -125,7 +126,9 @@ impl OpenRouterProvider {
             .pool_idle_timeout(Duration::from_secs(90))
             .http2_prior_knowledge()
             .build()
-            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             api_key,
@@ -174,12 +177,16 @@ impl Provider for OpenRouterProvider {
             url: format!("{}/chat/completions", self.base_url),
             headers: vec![
                 (
-                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::AUTHORIZATION),
-                    std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose()))
+                    std::borrow::Cow::Borrowed(
+                        simple_agents_types::provider::headers::AUTHORIZATION,
+                    ),
+                    std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
-                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
-                    std::borrow::Cow::Borrowed("application/json")
+                    std::borrow::Cow::Borrowed(
+                        simple_agents_types::provider::headers::CONTENT_TYPE,
+                    ),
+                    std::borrow::Cow::Borrowed("application/json"),
                 ),
             ],
             body,
@@ -189,7 +196,9 @@ impl Provider for OpenRouterProvider {
 
     async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Extract model for metrics
         let model = req.body["model"].as_str().unwrap_or("unknown");
@@ -202,7 +211,8 @@ impl Provider for OpenRouterProvider {
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
         // Make HTTP request (same as OpenAI)
-        let response = match self.client
+        let response = match self
+            .client
             .post(&req.url)
             .headers(headers)
             .json(&req.body)
@@ -213,7 +223,9 @@ impl Provider for OpenRouterProvider {
             Err(e) => {
                 if e.is_timeout() {
                     timer.complete_timeout();
-                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(30))));
+                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
+                        Duration::from_secs(30),
+                    )));
                 } else {
                     timer.complete_error("network");
                     return Err(SimpleAgentsError::Network(format!("Network error: {}", e)));
@@ -236,7 +248,8 @@ impl Provider for OpenRouterProvider {
             );
 
             // Use OpenAI error parsing (compatible format)
-            let openai_error = crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error =
+                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
             timer.complete_error(format!("http_{}", status.as_u16()));
 
             return Err(SimpleAgentsError::Provider(openai_error.into()));
@@ -247,9 +260,9 @@ impl Provider for OpenRouterProvider {
             Ok(b) => b,
             Err(e) => {
                 timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidResponse(format!("Failed to parse JSON response: {}", e))
-                ));
+                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    format!("Failed to parse JSON response: {}", e),
+                )));
             }
         };
 
@@ -269,17 +282,24 @@ impl Provider for OpenRouterProvider {
 
     fn transform_response(&self, resp: ProviderResponse) -> Result<CompletionResponse> {
         // OpenRouter uses the same response format as OpenAI
-        let openai_response: OpenAICompletionResponse = serde_json::from_value(resp.body)
-            .map_err(|e| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", e))
-            ))?;
+        let openai_response: OpenAICompletionResponse =
+            serde_json::from_value(resp.body).map_err(|e| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(format!(
+                    "Failed to deserialize response: {}",
+                    e
+                )))
+            })?;
 
         // Transform to unified format (same as OpenAI)
-        let choices: Vec<CompletionChoice> = openai_response.choices.iter().map(|choice| {
-            CompletionChoice {
+        let choices: Vec<CompletionChoice> = openai_response
+            .choices
+            .iter()
+            .map(|choice| CompletionChoice {
                 index: choice.index,
                 message: choice.message.clone(),
-                finish_reason: choice.finish_reason.as_ref()
+                finish_reason: choice
+                    .finish_reason
+                    .as_ref()
                     .map(|s: &String| match s.as_str() {
                         "stop" => FinishReason::Stop,
                         "length" => FinishReason::Length,
@@ -289,8 +309,8 @@ impl Provider for OpenRouterProvider {
                     })
                     .unwrap_or(FinishReason::Stop),
                 logprobs: None,
-            }
-        }).collect();
+            })
+            .collect();
 
         Ok(CompletionResponse {
             id: openai_response.id,
@@ -312,7 +332,9 @@ impl Provider for OpenRouterProvider {
         req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
@@ -348,7 +370,8 @@ impl Provider for OpenRouterProvider {
                 "OpenRouter streaming request failed"
             );
 
-            let openai_error = crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error =
+                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 
@@ -378,7 +401,7 @@ mod tests {
         let provider = OpenRouterProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
-            .model("openai/gpt-4")  // Model with prefix
+            .model("openai/gpt-4") // Model with prefix
             .message(Message::user("Hello"))
             .temperature(0.7)
             .build()
@@ -386,8 +409,14 @@ mod tests {
 
         let provider_request = provider.transform_request(&request).unwrap();
 
-        assert_eq!(provider_request.url, "https://openrouter.ai/api/v1/chat/completions");
-        assert!(provider_request.headers.iter().any(|(k, _)| k == "Authorization"));
+        assert_eq!(
+            provider_request.url,
+            "https://openrouter.ai/api/v1/chat/completions"
+        );
+        assert!(provider_request
+            .headers
+            .iter()
+            .any(|(k, _)| k == "Authorization"));
         assert_eq!(provider_request.body["model"], "openai/gpt-4");
     }
 

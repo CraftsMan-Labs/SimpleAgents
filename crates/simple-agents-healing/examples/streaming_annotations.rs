@@ -23,17 +23,13 @@ fn main() {
     // Define schema with stream annotations
     let schema = ObjectSchema::new(vec![
         // ID should only be emitted when non-null
-        Field::optional("id", Schema::String)
-            .with_stream_annotation(StreamAnnotation::NotNull),
+        Field::optional("id", Schema::String).with_stream_annotation(StreamAnnotation::NotNull),
         // Name can be emitted as soon as available
-        Field::required("name", Schema::String)
-            .with_stream_annotation(StreamAnnotation::Normal),
+        Field::required("name", Schema::String).with_stream_annotation(StreamAnnotation::Normal),
         // Status should only be emitted when complete
-        Field::required("status", Schema::String)
-            .with_stream_annotation(StreamAnnotation::Done),
+        Field::required("status", Schema::String).with_stream_annotation(StreamAnnotation::Done),
         // Progress can be emitted normally
-        Field::optional("progress", Schema::UInt)
-            .with_stream_annotation(StreamAnnotation::Normal),
+        Field::optional("progress", Schema::UInt).with_stream_annotation(StreamAnnotation::Normal),
     ]);
 
     println!("📋 Schema with annotations:");
@@ -48,7 +44,7 @@ fn main() {
     println!();
 
     // Simulate streaming chunks
-    let chunks = vec![
+    let chunks = [
         r#"{"id": null, "name": "Task 1""#,
         r#", "progress": 10"#,
         r#", "status": "in_progr"#,
@@ -69,12 +65,16 @@ fn main() {
 
             // Check which fields should be emitted based on annotations
             // Get the field annotations from schema
-            let id_annotation = schema.fields.iter()
+            let id_annotation = schema
+                .fields
+                .iter()
                 .find(|f| f.name == "id")
                 .map(|f| f.stream_annotation)
                 .unwrap_or(StreamAnnotation::Normal);
 
-            let status_annotation = schema.fields.iter()
+            let status_annotation = schema
+                .fields
+                .iter()
                 .find(|f| f.name == "status")
                 .map(|f| f.stream_annotation)
                 .unwrap_or(StreamAnnotation::Normal);

@@ -1,5 +1,7 @@
 //! Python bindings for SimpleAgents using PyO3.
 
+#![allow(clippy::useless_conversion)]
+
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder};
@@ -36,10 +38,14 @@ fn build_request(
     temperature: Option<f32>,
 ) -> Result<CompletionRequest> {
     if model.is_empty() {
-        return Err(SimpleAgentsError::Config("model cannot be empty".to_string()));
+        return Err(SimpleAgentsError::Config(
+            "model cannot be empty".to_string(),
+        ));
     }
     if prompt.is_empty() {
-        return Err(SimpleAgentsError::Config("prompt cannot be empty".to_string()));
+        return Err(SimpleAgentsError::Config(
+            "prompt cannot be empty".to_string(),
+        ));
     }
 
     let mut builder = CompletionRequest::builder()
@@ -61,6 +67,7 @@ fn py_err(error: SimpleAgentsError) -> PyErr {
 }
 
 #[pymethods]
+#[allow(clippy::useless_conversion)]
 impl Client {
     #[new]
     fn new(provider: &str) -> PyResult<Self> {
