@@ -613,10 +613,16 @@ async fn example_streaming_healing(provider: &OpenAIProvider, model: &str) -> Re
                                 heal_count = parse_result.flags.len();
                             }
 
-                            let current_size = serde_json::to_string(&parse_result.value).unwrap_or_default().len();
-                            if current_size > last_parse_size + 500 || parse_result.value.get("projects").is_some() && last_parse_size == 0 {
+                            let current_size = serde_json::to_string(&parse_result.value)
+                                .unwrap_or_default()
+                                .len();
+                            if current_size > last_parse_size + 500
+                                || parse_result.value.get("projects").is_some()
+                                    && last_parse_size == 0
+                            {
                                 last_parse_size = current_size;
-                                println!("\n\n🔍 Progressive parse ({} bytes, {:.2}% complete):",
+                                println!(
+                                    "\n\n🔍 Progressive parse ({} bytes, {:.2}% complete):",
                                     current_size,
                                     (full_content.len() as f32 / 500.0 * 100.0).min(100.0)
                                 );
@@ -638,8 +644,16 @@ async fn example_streaming_healing(provider: &OpenAIProvider, model: &str) -> Re
 
     println!("\n✅ Final Healed Result:");
     println!("  Confidence: {:.2}", final_result.confidence);
-    println!("  Total fields: {}", final_result.value.as_object().map(|o| o.len()).unwrap_or(0));
-    println!("  JSON size: {} bytes", serde_json::to_string(&final_result.value).unwrap_or_default().len());
+    println!(
+        "  Total fields: {}",
+        final_result.value.as_object().map(|o| o.len()).unwrap_or(0)
+    );
+    println!(
+        "  JSON size: {} bytes",
+        serde_json::to_string(&final_result.value)
+            .unwrap_or_default()
+            .len()
+    );
 
     // Show summary of nested structures
     if let Some(obj) = final_result.value.as_object() {
@@ -722,11 +736,13 @@ async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) ->
                         if let Some(parse_result) = streaming_parser.try_parse() {
                             partial_count += 1;
 
-                            let current_items = parse_result.value.as_array().map(|a| a.len()).unwrap_or(0);
+                            let current_items =
+                                parse_result.value.as_array().map(|a| a.len()).unwrap_or(0);
 
                             if partial_count == 1 || current_items > last_item_count {
                                 last_item_count = current_items;
-                                println!("\n\n🔍 Progressive parse #{} ({} items, {:.2}% complete):",
+                                println!(
+                                    "\n\n🔍 Progressive parse #{} ({} items, {:.2}% complete):",
                                     partial_count,
                                     current_items,
                                     (full_content.len() as f32 / 500.0 * 100.0).min(100.0)
@@ -735,8 +751,12 @@ async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) ->
                                 // Show last few items if available
                                 if let Some(arr) = parse_result.value.as_array() {
                                     let start = if arr.len() > 3 { arr.len() - 3 } else { 0 };
-                                    for i in start..arr.len() {
-                                        println!("  [{}] {}", i, serde_json::to_string(&arr[i]).unwrap_or_default());
+                                    for (i, item) in arr.iter().enumerate().skip(start) {
+                                        println!(
+                                            "  [{}] {}",
+                                            i,
+                                            serde_json::to_string(item).unwrap_or_default()
+                                        );
                                     }
                                 }
                                 println!("{}", "━".repeat(60));
@@ -758,10 +778,16 @@ async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) ->
 
     println!("\n✅ Final Structured Output:");
     println!("  Confidence: {:.2}", final_result.confidence);
-    println!("  Total items in array: {}",
+    println!(
+        "  Total items in array: {}",
         final_result.value.as_array().map(|a| a.len()).unwrap_or(0)
     );
-    println!("  JSON size: {} bytes", serde_json::to_string(&final_result.value).unwrap_or_default().len());
+    println!(
+        "  JSON size: {} bytes",
+        serde_json::to_string(&final_result.value)
+            .unwrap_or_default()
+            .len()
+    );
 
     if !final_result.flags.is_empty() {
         println!("\n  🔧 Healing applied:");
@@ -774,7 +800,7 @@ async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) ->
     if let Some(arr) = final_result.value.as_array() {
         if arr.len() > 4 {
             println!("\n  Sample items:");
-            for i in [0, 1, arr.len()-2, arr.len()-1] {
+            for i in [0, 1, arr.len() - 2, arr.len() - 1] {
                 println!("    [{}]", i);
                 for (k, v) in arr[i].as_object().unwrap_or(&serde_json::Map::new()) {
                     println!("      {}: {}", k, v);
@@ -846,12 +872,16 @@ async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Resu
                         if let Some(parse_result) = streaming_parser.try_parse() {
                             partial_count += 1;
 
-                            let nodes = parse_result.value.get("nodes")
+                            let nodes = parse_result
+                                .value
+                                .get("nodes")
                                 .and_then(|v| v.as_array())
                                 .map(|a| a.len())
                                 .unwrap_or(0);
 
-                            let edges = parse_result.value.get("edges")
+                            let edges = parse_result
+                                .value
+                                .get("edges")
                                 .and_then(|v| v.as_array())
                                 .map(|a| a.len())
                                 .unwrap_or(0);
@@ -863,19 +893,29 @@ async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Resu
 
                                 println!("\n\n🔍 Progressive graph update #{}", partial_count);
                                 println!("  📊 Nodes: {} | Edges: {}", nodes, edges);
-                                println!("  📈 Progress: {:.1}%", (full_content.len() as f32 / 600.0 * 100.0).min(100.0));
+                                println!(
+                                    "  📈 Progress: {:.1}%",
+                                    (full_content.len() as f32 / 600.0 * 100.0).min(100.0)
+                                );
                                 println!("  🔧 Confidence: {:.2}", parse_result.confidence);
 
                                 // Draw ASCII graph representation
-                                if let Some(node_arr) = parse_result.value.get("nodes").and_then(|v| v.as_array()) {
+                                if let Some(node_arr) =
+                                    parse_result.value.get("nodes").and_then(|v| v.as_array())
+                                {
                                     println!("\n  🎨 Live Graph Preview:");
                                     println!("  {}", "─".repeat(50));
 
                                     // Group nodes by type
-                                    let mut groups: std::collections::HashMap<&str, Vec<&str>> = std::collections::HashMap::new();
+                                    let mut groups: std::collections::HashMap<&str, Vec<&str>> =
+                                        std::collections::HashMap::new();
                                     for node in node_arr.iter() {
-                                        if let Some(name) = node.get("name").and_then(|v| v.as_str()) {
-                                            if let Some(typ) = node.get("type").and_then(|v| v.as_str()) {
+                                        if let Some(name) =
+                                            node.get("name").and_then(|v| v.as_str())
+                                        {
+                                            if let Some(typ) =
+                                                node.get("type").and_then(|v| v.as_str())
+                                            {
                                                 groups.entry(typ).or_default().push(name);
                                             }
                                         }
@@ -914,13 +954,19 @@ async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Resu
 
     println!("\n✅ Final Graph Structure:");
     println!("  Confidence: {:.2}", final_result.confidence);
-    println!("  JSON size: {} bytes", serde_json::to_string(&final_result.value).unwrap_or_default().len());
+    println!(
+        "  JSON size: {} bytes",
+        serde_json::to_string(&final_result.value)
+            .unwrap_or_default()
+            .len()
+    );
 
     if let Some(nodes) = final_result.value.get("nodes").and_then(|v| v.as_array()) {
         println!("  📊 Total nodes: {}", nodes.len());
 
         // Node type breakdown
-        let mut type_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        let mut type_counts: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
         for node in nodes.iter() {
             if let Some(typ) = node.get("type").and_then(|v| v.as_str()) {
                 *type_counts.entry(typ).or_insert(0) += 1;
@@ -960,8 +1006,10 @@ async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Resu
                 let target = obj.get("target").and_then(|v| v.as_str()).unwrap_or("?");
                 let typ = obj.get("type").and_then(|v| v.as_str()).unwrap_or("-");
                 let label = obj.get("label").and_then(|v| v.as_str()).unwrap_or("");
-                println!("    [{}] {} --> {} | type: {} | label: '{}'",
-                    i, source, target, typ, label);
+                println!(
+                    "    [{}] {} --> {} | type: {} | label: '{}'",
+                    i, source, target, typ, label
+                );
             }
         }
         if edges.len() > 3 {

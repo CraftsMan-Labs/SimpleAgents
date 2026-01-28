@@ -197,7 +197,6 @@ pub mod prometheus {
 
         // Start HTTP server for /metrics endpoint
         tokio::spawn(async move {
-            use std::convert::Infallible;
             use std::net::TcpListener;
 
             let listener = TcpListener::bind(addr).expect("Failed to bind Prometheus exporter");
@@ -235,7 +234,10 @@ mod tests {
     #[test]
     fn test_metric_constants() {
         assert_eq!(names::REQUESTS_TOTAL, "simple_agents_requests_total");
-        assert_eq!(names::REQUEST_DURATION, "simple_agents_request_duration_seconds");
+        assert_eq!(
+            names::REQUEST_DURATION,
+            "simple_agents_request_duration_seconds"
+        );
         assert_eq!(names::TOKENS_TOTAL, "simple_agents_tokens_total");
     }
 }

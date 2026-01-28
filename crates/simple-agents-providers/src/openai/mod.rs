@@ -6,12 +6,12 @@
 //! - Function calling and vision capabilities
 //! - Comprehensive error handling and retry logic
 
-mod models;
 mod error;
+mod models;
 pub mod streaming;
 
-pub use models::*;
 pub use error::OpenAIError;
+pub use models::*;
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -62,14 +62,16 @@ impl OpenAIProvider {
     ///
     /// Required:
     /// - `OPENAI_API_KEY`
-    /// Optional:
+    ///
+    ///   Optional:
     /// - `OPENAI_API_BASE`
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .map_err(|_| SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string()))?;
+        let api_key = std::env::var("OPENAI_API_KEY").map_err(|_| {
+            SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string())
+        })?;
         let api_key = ApiKey::new(api_key)?;
-        let base_url = std::env::var("OPENAI_API_BASE")
-            .unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
+        let base_url =
+            std::env::var("OPENAI_API_BASE").unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
         let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
 
         let mut client_builder = Client::builder()
@@ -81,9 +83,9 @@ impl OpenAIProvider {
         } else {
             client_builder = client_builder.http2_prior_knowledge();
         }
-        let client = client_builder
-            .build()
-            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+        let client = client_builder.build().map_err(|e| {
+            SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
+        })?;
 
         Self::with_client(api_key, base_url, client)
     }
@@ -133,7 +135,9 @@ impl OpenAIProvider {
             .pool_idle_timeout(Duration::from_secs(90)) // Keep connections alive
             .http2_prior_knowledge() // Use HTTP/2 for multiplexing
             .build()
-            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             api_key,
@@ -277,12 +281,16 @@ impl Provider for OpenAIProvider {
             url: format!("{}/chat/completions", self.base_url),
             headers: vec![
                 (
-                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::AUTHORIZATION),
-                    std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose()))
+                    std::borrow::Cow::Borrowed(
+                        simple_agents_types::provider::headers::AUTHORIZATION,
+                    ),
+                    std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
-                    std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
-                    std::borrow::Cow::Borrowed("application/json")
+                    std::borrow::Cow::Borrowed(
+                        simple_agents_types::provider::headers::CONTENT_TYPE,
+                    ),
+                    std::borrow::Cow::Borrowed("application/json"),
                 ),
             ],
             body,
@@ -292,7 +300,9 @@ impl Provider for OpenAIProvider {
 
     async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Extract model for metrics
         let model = req.body["model"].as_str().unwrap_or("unknown");
@@ -305,7 +315,8 @@ impl Provider for OpenAIProvider {
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
         // Make HTTP request
-        let response = match self.client
+        let response = match self
+            .client
             .post(&req.url)
             .headers(headers)
             .json(&req.body)
@@ -316,7 +327,9 @@ impl Provider for OpenAIProvider {
             Err(e) => {
                 if e.is_timeout() {
                     timer.complete_timeout();
-                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(30))));
+                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
+                        Duration::from_secs(30),
+                    )));
                 } else {
                     timer.complete_error("network");
                     return Err(SimpleAgentsError::Network(format!("Network error: {}", e)));
@@ -380,9 +393,9 @@ impl Provider for OpenAIProvider {
             Ok(b) => b,
             Err(e) => {
                 timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidResponse(format!("Failed to parse JSON response: {}", e))
-                ));
+                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    format!("Failed to parse JSON response: {}", e),
+                )));
             }
         };
 
@@ -405,11 +418,15 @@ impl Provider for OpenAIProvider {
         match serde_json::from_value::<OpenAICompletionResponse>(resp.body.clone()) {
             Ok(openai_response) => {
                 // Native parsing succeeded - transform to unified format
-                let choices: Vec<CompletionChoice> = openai_response.choices.iter().map(|choice| {
-                    CompletionChoice {
+                let choices: Vec<CompletionChoice> = openai_response
+                    .choices
+                    .iter()
+                    .map(|choice| CompletionChoice {
                         index: choice.index,
                         message: choice.message.clone(),
-                        finish_reason: choice.finish_reason.as_ref()
+                        finish_reason: choice
+                            .finish_reason
+                            .as_ref()
                             .map(|s: &String| match s.as_str() {
                                 "stop" => FinishReason::Stop,
                                 "length" => FinishReason::Length,
@@ -419,8 +436,8 @@ impl Provider for OpenAIProvider {
                             })
                             .unwrap_or(FinishReason::Stop),
                         logprobs: None,
-                    }
-                }).collect();
+                    })
+                    .collect();
 
                 Ok(CompletionResponse {
                     id: openai_response.id,
@@ -441,45 +458,54 @@ impl Provider for OpenAIProvider {
                 if self.healing.is_some() {
                     self.try_healing(&resp, parse_error)
                 } else {
-                    Err(SimpleAgentsError::Provider(
-                        ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", parse_error))
-                    ))
+                    Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                        format!("Failed to deserialize response: {}", parse_error),
+                    )))
                 }
             }
         }
     }
-
 }
 
 impl OpenAIProvider {
     /// Attempt to heal a malformed response using the healing system.
-    fn try_healing(&self, resp: &ProviderResponse, original_error: serde_json::Error) -> Result<CompletionResponse> {
+    fn try_healing(
+        &self,
+        resp: &ProviderResponse,
+        original_error: serde_json::Error,
+    ) -> Result<CompletionResponse> {
         let healing = self.healing.as_ref().unwrap();
 
         // Get the stored request context
-        let request = self.current_request.lock()
+        let request = self
+            .current_request
+            .lock()
             .ok()
             .and_then(|guard| guard.clone())
-            .ok_or_else(|| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse("No request context available for healing".to_string())
-            ))?;
+            .ok_or_else(|| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No request context available for healing".to_string(),
+                ))
+            })?;
 
         // Extract JSON schema from request
         let json_schema = match request.response_format.as_ref() {
             Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
             _ => {
-                return Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidResponse("No JSON schema available for healing".to_string())
-                ))
+                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No JSON schema available for healing".to_string(),
+                )))
             }
         };
 
         // Extract the content from the response
         let content = resp.body["choices"][0]["message"]["content"]
             .as_str()
-            .ok_or_else(|| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse("No content field in response".to_string())
-            ))?;
+            .ok_or_else(|| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No content field in response".to_string(),
+                ))
+            })?;
 
         // Attempt healing
         let healed = healing.heal_response(
@@ -502,7 +528,9 @@ impl OpenAIProvider {
             }],
             usage: Usage {
                 prompt_tokens: resp.body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: resp.body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
+                completion_tokens: resp.body["usage"]["completion_tokens"]
+                    .as_u64()
+                    .unwrap_or(0) as u32,
                 total_tokens: resp.body["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
             },
             created: resp.body["created"].as_i64(),
@@ -511,12 +539,15 @@ impl OpenAIProvider {
         })
     }
 
+    #[allow(dead_code)]
     async fn execute_stream(
         &self,
         req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
@@ -589,8 +620,14 @@ mod tests {
 
         let provider_request = provider.transform_request(&request).unwrap();
 
-        assert_eq!(provider_request.url, "https://api.openai.com/v1/chat/completions");
-        assert!(provider_request.headers.iter().any(|(k, _)| k == "Authorization"));
+        assert_eq!(
+            provider_request.url,
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert!(provider_request
+            .headers
+            .iter()
+            .any(|(k, _)| k == "Authorization"));
         assert!(provider_request.body["model"] == "gpt-4");
     }
 
@@ -613,10 +650,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_integration() {
-        use futures_util::StreamExt;
+        use crate::openai::streaming::SseStream;
         use bytes::Bytes;
         use futures_util::stream;
-        use crate::openai::streaming::SseStream;
+        use futures_util::StreamExt;
 
         let stream_body = concat!(
             "data: {\"id\":\"chatcmpl-test\",\"object\":\"chat.completion.chunk\",\"created\":123,\"model\":\"gpt-4\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Hello\"},\"finish_reason\":null}]}\n",

@@ -9,10 +9,10 @@
 //! cargo run --example streaming_partial_types
 //! ```
 
-use simple_agents_healing::streaming::StreamingParser;
-use simple_agents_macros::PartialType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use simple_agents_healing::streaming::StreamingParser;
+use simple_agents_macros::PartialType;
 
 /// Character information that we'll parse incrementally
 #[derive(Debug, Clone, PartialType, Serialize, Deserialize)]
@@ -35,7 +35,7 @@ fn main() {
     println!("🌊 SimpleAgents - Streaming Partial Types Example\n");
 
     // Simulate LLM streaming response in chunks
-    let chunks = vec![
+    let chunks = [
         r#"{"name": "Aria"#,
         r#", "age": 2"#,
         r#"5, "class": "Mage""#,

@@ -6,12 +6,12 @@
 //! - Comprehensive error handling and retry logic
 //! - Connection pooling
 
-mod models;
 mod error;
+mod models;
 pub mod streaming;
 
-pub use models::*;
 pub use error::AnthropicError;
+pub use models::*;
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -65,11 +65,15 @@ impl AnthropicProvider {
     ///
     /// Required:
     /// - `ANTHROPIC_API_KEY`
-    /// Optional:
+    ///
+    ///   Optional:
     /// - `ANTHROPIC_API_BASE` (or `ANTHROPIC__API_BASE`)
     pub fn from_env() -> Result<Self> {
-        let api_key = std::env::var("ANTHROPIC_API_KEY")
-            .map_err(|_| SimpleAgentsError::Config("ANTHROPIC_API_KEY environment variable is required".to_string()))?;
+        let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+            SimpleAgentsError::Config(
+                "ANTHROPIC_API_KEY environment variable is required".to_string(),
+            )
+        })?;
         let api_key = ApiKey::new(api_key)?;
 
         let base_url = std::env::var("ANTHROPIC_API_BASE")
@@ -86,9 +90,9 @@ impl AnthropicProvider {
         } else {
             client_builder = client_builder.http2_prior_knowledge();
         }
-        let client = client_builder
-            .build()
-            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+        let client = client_builder.build().map_err(|e| {
+            SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
+        })?;
 
         Self::with_client(api_key, base_url, client)
     }
@@ -106,7 +110,9 @@ impl AnthropicProvider {
             .pool_idle_timeout(Duration::from_secs(90))
             .http2_prior_knowledge()
             .build()
-            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))?;
+            .map_err(|e| {
+                SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             api_key,
@@ -195,7 +201,7 @@ impl AnthropicProvider {
                     Role::User => "user",
                     Role::Assistant => "assistant",
                     Role::System => "user", // Fallback (shouldn't happen)
-                    Role::Tool => "user", // Tool messages treated as user messages
+                    Role::Tool => "user",   // Tool messages treated as user messages
                 },
                 content: &m.content,
             })
@@ -210,8 +216,8 @@ impl Provider for AnthropicProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
+        use crate::anthropic::models::{AnthropicJsonSchema, AnthropicOutputFormat};
         use simple_agents_types::request::ResponseFormat;
-        use crate::anthropic::models::{AnthropicOutputFormat, AnthropicJsonSchema};
 
         // Store request context for potential healing
         if self.healing.is_some() && req.response_format.is_some() {
@@ -259,15 +265,15 @@ impl Provider for AnthropicProvider {
         let mut headers = vec![
             (
                 std::borrow::Cow::Borrowed("x-api-key"),
-                std::borrow::Cow::Owned(self.api_key.expose().to_string())
+                std::borrow::Cow::Owned(self.api_key.expose().to_string()),
             ),
             (
                 std::borrow::Cow::Borrowed("anthropic-version"),
-                std::borrow::Cow::Borrowed(Self::API_VERSION)
+                std::borrow::Cow::Borrowed(Self::API_VERSION),
             ),
             (
                 std::borrow::Cow::Borrowed(simple_agents_types::provider::headers::CONTENT_TYPE),
-                std::borrow::Cow::Borrowed("application/json")
+                std::borrow::Cow::Borrowed("application/json"),
             ),
         ];
 
@@ -275,7 +281,7 @@ impl Provider for AnthropicProvider {
         if req.response_format.is_some() {
             headers.push((
                 std::borrow::Cow::Borrowed("anthropic-beta"),
-                std::borrow::Cow::Borrowed("structured-outputs-2025-11-13")
+                std::borrow::Cow::Borrowed("structured-outputs-2025-11-13"),
             ));
         }
 
@@ -289,7 +295,9 @@ impl Provider for AnthropicProvider {
 
     async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Extract model for metrics
         let model = req.body["model"].as_str().unwrap_or("unknown");
@@ -302,7 +310,8 @@ impl Provider for AnthropicProvider {
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
         // Make HTTP request
-        let response = match self.client
+        let response = match self
+            .client
             .post(&req.url)
             .headers(headers)
             .json(&req.body)
@@ -313,7 +322,9 @@ impl Provider for AnthropicProvider {
             Err(e) => {
                 if e.is_timeout() {
                     timer.complete_timeout();
-                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(30))));
+                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
+                        Duration::from_secs(30),
+                    )));
                 } else {
                     timer.complete_error("network");
                     return Err(SimpleAgentsError::Network(format!("Network error: {}", e)));
@@ -357,9 +368,9 @@ impl Provider for AnthropicProvider {
             Ok(b) => b,
             Err(e) => {
                 timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidResponse(format!("Failed to parse JSON response: {}", e))
-                ));
+                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    format!("Failed to parse JSON response: {}", e),
+                )));
             }
         };
 
@@ -382,7 +393,8 @@ impl Provider for AnthropicProvider {
         match serde_json::from_value::<AnthropicCompletionResponse>(resp.body.clone()) {
             Ok(anthropic_response) => {
                 // Extract text content from content blocks
-                let content = anthropic_response.content
+                let content = anthropic_response
+                    .content
                     .iter()
                     .map(|block| {
                         let AnthropicContent::Text { text } = block;
@@ -400,13 +412,15 @@ impl Provider for AnthropicProvider {
                         name: None,
                         tool_call_id: None,
                     },
-                    finish_reason: anthropic_response.stop_reason.map(|s| match s.as_str() {
-                        "end_turn" => FinishReason::Stop,
-                        "max_tokens" => FinishReason::Length,
-                        "stop_sequence" => FinishReason::Stop,
-                        _ => FinishReason::Stop,
-                    })
-                    .unwrap_or(FinishReason::Stop),
+                    finish_reason: anthropic_response
+                        .stop_reason
+                        .map(|s| match s.as_str() {
+                            "end_turn" => FinishReason::Stop,
+                            "max_tokens" => FinishReason::Length,
+                            "stop_sequence" => FinishReason::Stop,
+                            _ => FinishReason::Stop,
+                        })
+                        .unwrap_or(FinishReason::Stop),
                     logprobs: None,
                 };
 
@@ -417,7 +431,8 @@ impl Provider for AnthropicProvider {
                     usage: Usage {
                         prompt_tokens: anthropic_response.usage.input_tokens,
                         completion_tokens: anthropic_response.usage.output_tokens,
-                        total_tokens: anthropic_response.usage.input_tokens + anthropic_response.usage.output_tokens,
+                        total_tokens: anthropic_response.usage.input_tokens
+                            + anthropic_response.usage.output_tokens,
                     },
                     created: None,
                     provider: Some(self.name().to_string()),
@@ -429,9 +444,9 @@ impl Provider for AnthropicProvider {
                 if self.healing.is_some() {
                     self.try_healing(&resp, parse_error)
                 } else {
-                    Err(SimpleAgentsError::Provider(
-                        ProviderError::InvalidResponse(format!("Failed to deserialize response: {}", parse_error))
-                    ))
+                    Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                        format!("Failed to deserialize response: {}", parse_error),
+                    )))
                 }
             }
         }
@@ -440,24 +455,32 @@ impl Provider for AnthropicProvider {
 
 impl AnthropicProvider {
     /// Attempt to heal a malformed response using the healing system.
-    fn try_healing(&self, resp: &ProviderResponse, original_error: serde_json::Error) -> Result<CompletionResponse> {
+    fn try_healing(
+        &self,
+        resp: &ProviderResponse,
+        original_error: serde_json::Error,
+    ) -> Result<CompletionResponse> {
         let healing = self.healing.as_ref().unwrap();
 
         // Get the stored request context
-        let request = self.current_request.lock()
+        let request = self
+            .current_request
+            .lock()
             .ok()
             .and_then(|guard| guard.clone())
-            .ok_or_else(|| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse("No request context available for healing".to_string())
-            ))?;
+            .ok_or_else(|| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No request context available for healing".to_string(),
+                ))
+            })?;
 
         // Extract JSON schema from request
         let json_schema = match request.response_format.as_ref() {
             Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
             _ => {
-                return Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidResponse("No JSON schema available for healing".to_string())
-                ))
+                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No JSON schema available for healing".to_string(),
+                )))
             }
         };
 
@@ -466,9 +489,11 @@ impl AnthropicProvider {
             .as_array()
             .and_then(|arr| arr.first())
             .and_then(|block| block["text"].as_str())
-            .ok_or_else(|| SimpleAgentsError::Provider(
-                ProviderError::InvalidResponse("No text content in response".to_string())
-            ))?;
+            .ok_or_else(|| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "No text content in response".to_string(),
+                ))
+            })?;
 
         // Attempt healing
         let healed = healing.heal_response(
@@ -492,7 +517,9 @@ impl AnthropicProvider {
             usage: Usage {
                 prompt_tokens: resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
                 completion_tokens: resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-                total_tokens: (resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0) + resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0)) as u32,
+                total_tokens: (resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0)
+                    + resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0))
+                    as u32,
             },
             created: None,
             provider: Some(self.name().to_string()),
@@ -500,12 +527,15 @@ impl AnthropicProvider {
         })
     }
 
+    #[allow(dead_code)]
     async fn execute_stream(
         &self,
         req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         // Apply rate limiting
-        self.rate_limiter.until_ready(Some(self.api_key.expose())).await;
+        self.rate_limiter
+            .until_ready(Some(self.api_key.expose()))
+            .await;
 
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
@@ -624,9 +654,18 @@ mod tests {
 
         let provider_request = provider.transform_request(&request).unwrap();
 
-        assert_eq!(provider_request.url, "https://api.anthropic.com/v1/messages");
-        assert!(provider_request.headers.iter().any(|(k, _)| k == "x-api-key"));
-        assert!(provider_request.headers.iter().any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
+        assert_eq!(
+            provider_request.url,
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert!(provider_request
+            .headers
+            .iter()
+            .any(|(k, _)| k == "x-api-key"));
+        assert!(provider_request
+            .headers
+            .iter()
+            .any(|(k, v)| k == "anthropic-version" && v == "2023-06-01"));
         assert_eq!(provider_request.body["model"], "claude-3-opus-20240229");
         assert_eq!(provider_request.body["system"], "You are helpful");
     }
@@ -663,10 +702,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_integration() {
+        use crate::anthropic::streaming::AnthropicSseStream;
         use bytes::Bytes;
         use futures_util::stream;
         use futures_util::StreamExt;
-        use crate::anthropic::streaming::AnthropicSseStream;
 
         let stream_body = concat!(
             "event: message_start\n",
@@ -692,7 +731,9 @@ mod tests {
             match result {
                 Ok(chunk) => {
                     chunks_received += 1;
-                    if let Some(delta) = chunk.choices.first().and_then(|c| c.delta.content.as_ref()) {
+                    if let Some(delta) =
+                        chunk.choices.first().and_then(|c| c.delta.content.as_ref())
+                    {
                         content.push_str(delta);
                     }
                     println!("Chunk {}: {:?}", chunks_received, chunk);
