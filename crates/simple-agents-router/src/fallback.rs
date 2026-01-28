@@ -2,7 +2,9 @@
 //!
 //! Attempts providers in order, falling back on retryable errors.
 
-use simple_agents_types::prelude::{CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError};
+use simple_agents_types::prelude::{
+    CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError,
+};
 use std::sync::Arc;
 
 /// Configuration for fallback routing.
@@ -14,7 +16,9 @@ pub struct FallbackRouterConfig {
 
 impl Default for FallbackRouterConfig {
     fn default() -> Self {
-        Self { retryable_only: true }
+        Self {
+            retryable_only: true,
+        }
     }
 }
 
@@ -42,7 +46,9 @@ impl FallbackRouter {
         config: FallbackRouterConfig,
     ) -> Result<Self> {
         if providers.is_empty() {
-            return Err(SimpleAgentsError::Routing("no providers configured".to_string()));
+            return Err(SimpleAgentsError::Routing(
+                "no providers configured".to_string(),
+            ));
         }
 
         Ok(Self { providers, config })
@@ -70,9 +76,8 @@ impl FallbackRouter {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
-            SimpleAgentsError::Routing("no providers configured".to_string())
-        }))
+        Err(last_error
+            .unwrap_or_else(|| SimpleAgentsError::Routing("no providers configured".to_string())))
     }
 
     async fn execute_provider(
@@ -92,10 +97,11 @@ impl FallbackRouter {
 
         matches!(
             error,
-            SimpleAgentsError::Provider(ProviderError::RateLimit { .. }
-                | ProviderError::Timeout(_)
-                | ProviderError::ServerError(_))
-                | SimpleAgentsError::Network(_)
+            SimpleAgentsError::Provider(
+                ProviderError::RateLimit { .. }
+                    | ProviderError::Timeout(_)
+                    | ProviderError::ServerError(_)
+            ) | SimpleAgentsError::Network(_)
         )
     }
 }
@@ -146,9 +152,9 @@ mod tests {
                 MockResult::RetryableError => Err(SimpleAgentsError::Provider(
                     ProviderError::Timeout(std::time::Duration::from_secs(1)),
                 )),
-                MockResult::NonRetryableError => Err(SimpleAgentsError::Provider(
-                    ProviderError::InvalidApiKey,
-                )),
+                MockResult::NonRetryableError => {
+                    Err(SimpleAgentsError::Provider(ProviderError::InvalidApiKey))
+                }
             }
         }
 
@@ -165,6 +171,7 @@ mod tests {
                 usage: Usage::new(1, 1),
                 created: None,
                 provider: Some(self.name().to_string()),
+                healing_metadata: None,
             })
         }
     }

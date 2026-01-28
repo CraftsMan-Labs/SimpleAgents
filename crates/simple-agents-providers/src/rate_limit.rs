@@ -99,10 +99,7 @@ impl SharedRateLimiters {
         }
 
         // Create new limiter
-        let limiter = RateLimiter::new(
-            self.config.requests_per_second,
-            self.config.burst_size,
-        );
+        let limiter = RateLimiter::new(self.config.requests_per_second, self.config.burst_size);
         limiters.insert(key, limiter.clone());
         limiter
     }
@@ -128,10 +125,7 @@ impl MaybeRateLimiter {
 
         match config.scope {
             RateLimitScope::PerInstance => {
-                let limiter = RateLimiter::new(
-                    config.requests_per_second,
-                    config.burst_size,
-                );
+                let limiter = RateLimiter::new(config.requests_per_second, config.burst_size);
                 MaybeRateLimiter::PerInstance(limiter)
             }
             RateLimitScope::Shared => {

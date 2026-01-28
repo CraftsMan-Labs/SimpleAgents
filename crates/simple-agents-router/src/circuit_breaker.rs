@@ -124,11 +124,15 @@ impl CircuitBreaker {
             InternalState::Closed => {
                 inner.consecutive_failures = inner.consecutive_failures.saturating_add(1);
                 if inner.consecutive_failures >= self.config.failure_threshold {
-                    inner.state = InternalState::Open { opened_at: Instant::now() };
+                    inner.state = InternalState::Open {
+                        opened_at: Instant::now(),
+                    };
                 }
             }
             InternalState::HalfOpen => {
-                inner.state = InternalState::Open { opened_at: Instant::now() };
+                inner.state = InternalState::Open {
+                    opened_at: Instant::now(),
+                };
                 inner.consecutive_failures = 1;
                 inner.consecutive_successes = 0;
             }
@@ -143,10 +147,11 @@ impl CircuitBreaker {
             Err(error) => {
                 if matches!(
                     error,
-                    SimpleAgentsError::Provider(ProviderError::RateLimit { .. }
-                        | ProviderError::Timeout(_)
-                        | ProviderError::ServerError(_))
-                        | SimpleAgentsError::Network(_)
+                    SimpleAgentsError::Provider(
+                        ProviderError::RateLimit { .. }
+                            | ProviderError::Timeout(_)
+                            | ProviderError::ServerError(_)
+                    ) | SimpleAgentsError::Network(_)
                 ) {
                     self.record_failure();
                 }

@@ -87,6 +87,7 @@ impl CompletionResponse {
     ///     },
     ///     created: None,
     ///     provider: None,
+    ///     healing_metadata: None,
     /// };
     ///
     /// assert_eq!(response.content(), Some("Hello!"));
@@ -428,18 +429,10 @@ mod tests {
 
     #[test]
     fn test_healing_metadata_confidence_clamped() {
-        let metadata = HealingMetadata::new(
-            vec![],
-            1.5,
-            "error".to_string(),
-        );
+        let metadata = HealingMetadata::new(vec![], 1.5, "error".to_string());
         assert_eq!(metadata.confidence, 1.0);
 
-        let metadata = HealingMetadata::new(
-            vec![],
-            -0.5,
-            "error".to_string(),
-        );
+        let metadata = HealingMetadata::new(vec![], -0.5, "error".to_string());
         assert_eq!(metadata.confidence, 0.0);
     }
 
@@ -448,7 +441,10 @@ mod tests {
         use crate::coercion::CoercionFlag;
 
         let metadata = HealingMetadata::new(
-            vec![CoercionFlag::StrippedMarkdown, CoercionFlag::FixedTrailingComma],
+            vec![
+                CoercionFlag::StrippedMarkdown,
+                CoercionFlag::FixedTrailingComma,
+            ],
             0.85,
             "JSON parse error".to_string(),
         );

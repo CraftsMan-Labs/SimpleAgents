@@ -37,8 +37,7 @@ async fn main() -> Result<()> {
 
     println!("🤖 SimpleAgents - OpenAI Basic Example\n");
 
-    let model = std::env::var("OPENAI_API_MODEL")
-        .unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
+    let model = std::env::var("OPENAI_API_MODEL").unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
 
     // Build completion request
     let request = CompletionRequest::builder()
@@ -70,10 +69,9 @@ async fn main() -> Result<()> {
     // Print metadata
     println!("\n📊 Metadata:");
     println!("  Model: {}", response.model);
-    println!("  Tokens: {} prompt + {} completion = {} total",
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        response.usage.total_tokens
+    println!(
+        "  Tokens: {} prompt + {} completion = {} total",
+        response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens
     );
 
     Ok(())

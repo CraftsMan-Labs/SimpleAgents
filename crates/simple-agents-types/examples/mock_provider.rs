@@ -101,8 +101,7 @@ impl Provider for MockProvider {
             }],
             usage: Usage {
                 prompt_tokens: body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: body["usage"]["completion_tokens"].as_u64().unwrap_or(0)
-                    as u32,
+                completion_tokens: body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
                 total_tokens: body["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
             },
             created: None,
@@ -143,7 +142,10 @@ async fn main() -> Result<()> {
     println!("📦 Provider: {}", provider.name());
     println!("⚙️  Capabilities:");
     println!("   Streaming: {}", provider.capabilities().streaming);
-    println!("   Function calling: {}", provider.capabilities().function_calling);
+    println!(
+        "   Function calling: {}",
+        provider.capabilities().function_calling
+    );
     println!("   Max tokens: {}", provider.capabilities().max_tokens);
     println!();
 

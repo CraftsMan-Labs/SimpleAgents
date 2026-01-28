@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
     // - meta-llama/llama-2-70b-chat
     // - etc.
     let request = CompletionRequest::builder()
-        .model("openai/gpt-3.5-turbo")  // Model with provider prefix
+        .model("openai/gpt-3.5-turbo") // Model with provider prefix
         .message(Message::system("You are a helpful assistant."))
         .message(Message::user("Explain what OpenRouter is in one sentence."))
         .temperature(0.7)
@@ -74,10 +74,9 @@ async fn main() -> Result<()> {
     // Print metadata
     println!("\n📊 Metadata:");
     println!("  Model: {}", response.model);
-    println!("  Tokens: {} prompt + {} completion = {} total",
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        response.usage.total_tokens
+    println!(
+        "  Tokens: {} prompt + {} completion = {} total",
+        response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens
     );
 
     println!("\n💡 Try other models:");

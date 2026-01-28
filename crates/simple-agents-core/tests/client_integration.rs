@@ -55,6 +55,7 @@ impl Provider for MockProvider {
             usage: Usage::new(1, 1),
             created: None,
             provider: Some(self.name.to_string()),
+            healing_metadata: None,
         })
     }
 }
@@ -152,10 +153,7 @@ async fn complete_uses_cache() {
 
 #[tokio::test]
 async fn complete_json_parses_markdown() {
-    let provider = Arc::new(MockProvider::new(
-        "p1",
-        "```json\n{\"value\": 42,}\n```",
-    ));
+    let provider = Arc::new(MockProvider::new("p1", "```json\n{\"value\": 42,}\n```"));
     let client = SimpleAgentsClientBuilder::new()
         .with_provider(provider)
         .with_healing_settings(HealingSettings::default())
