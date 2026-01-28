@@ -87,7 +87,19 @@ release-all: release-ffi release-python release-go release-node
 
 publish-crates:
 	@set -e; for crate in $(PUBLISH_CRATES); do \
-		$(DOPPLER_RUN) "cargo publish -p $$crate"; \
+		echo "==> Publishing $$crate..."; \
+		set +e; \
+		out=$$($(DOPPLER_RUN) "cargo publish -p $$crate" 2>&1); \
+		status=$$?; \
+		set -e; \
+		echo "$$out"; \
+		if [ $$status -ne 0 ]; then \
+			if echo "$$out" | grep -q "already exists"; then \
+				echo "==> Skipping $$crate (already exists)"; \
+			else \
+				exit $$status; \
+			fi; \
+		fi; \
 	done
 
 publish-python:

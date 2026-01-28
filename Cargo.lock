@@ -1494,6 +1494,7 @@ dependencies = [
  "pyo3-build-config",
  "pyo3-ffi",
  "pyo3-macros",
+ "serde",
  "unindent",
 ]
 
@@ -2025,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agent-type"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2040,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2049,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "clap",
  "serde",
@@ -2066,7 +2067,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "serde",
@@ -2093,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2104,7 +2105,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "criterion",
  "proptest",
@@ -2120,7 +2121,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2132,7 +2133,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "napi",
  "napi-derive",
@@ -2144,7 +2145,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2172,10 +2173,11 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "pyo3",
  "reqwest",
+ "serde_json",
  "simple-agent-type",
  "simple-agents-core",
  "simple-agents-providers",
@@ -2184,7 +2186,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "async-trait",
  "rand 0.8.5",

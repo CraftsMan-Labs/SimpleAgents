@@ -11,10 +11,10 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "simple-agents-py", specifier = ">=0.1.5" }]
+requires-dist = [{ name = "simple-agents-py", specifier = ">=0.1.6" }]
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.5"
+version = "0.1.6"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8a/84/c3a5f432941ed47e52fd65b75cccf96c1e539051831a109c01c43ebea46a/simple_agents_py-0.1.5.tar.gz", hash = "sha256:1472d857c98e73970f128f351d417f2c09ca9f75dcbc0fb52f47fffef5242eb6", size = 181905, upload-time = "2026-01-28T13:38:32.923Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/19/f29f0db4cac341a2834a382061b8d4fc5599011c77cbe8aab31ddecf35bd/simple_agents_py-0.1.6.tar.gz", hash = "sha256:3a6c43e218d62f4476203227420d9b28232a09d1f75ee2a84aa008dc4ab926ee", size = 183417, upload-time = "2026-01-28T13:57:39.615Z" }
