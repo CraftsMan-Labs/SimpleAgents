@@ -4,17 +4,17 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "examples"
-version = "0.1.0"
+version = "0.1.9"
 source = { virtual = "." }
 dependencies = [
     { name = "simple-agents-py" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "simple-agents-py", specifier = ">=0.1.8" }]
+requires-dist = [{ name = "simple-agents-py", specifier = ">=0.1.9" }]
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.8"
+version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4d/4b/dfbb0f55194a442000daed4581364ea250fca8520232ce27ea247e550378/simple_agents_py-0.1.8.tar.gz", hash = "sha256:dc34f5bb68745241dbec3cdea656ea9f5833b3d326fcddb4ecc8eea5101ee78c", size = 183450, upload-time = "2026-01-28T15:28:58.619Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/54/ca/8d71d9d348d72bda1791d0a3d74c7baf7897b89336ec59ad2ba05f69c006/simple_agents_py-0.1.9.tar.gz", hash = "sha256:42006c60efa8e3b11e10967226c98d54beee1f5d838d1cc19fec4a9acb5cf342", size = 183460, upload-time = "2026-01-28T16:16:11.045Z" }
