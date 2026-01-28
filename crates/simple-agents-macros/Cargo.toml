@@ -1,6 +1,6 @@
 [package]
 name = "simple-agents-macros"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 rust-version = "1.70"
 authors = ["Rishub Kumar"]
@@ -20,6 +20,6 @@ quote = "1.0"
 proc-macro2 = "1.0"
 
 [dev-dependencies]
-simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
+simple-agent-type = { path = "../simple-agent-type", version.workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
