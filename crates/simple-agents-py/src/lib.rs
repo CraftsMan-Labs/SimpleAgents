@@ -427,9 +427,18 @@ impl PyStreamIterator {
         top_p: Option<f32>,
     ) -> PyResult<Self> {
         let messages = parse_messages(messages).map_err(py_err)?;
-        let request =
-            build_request_with_messages(model, messages, max_tokens, temperature, top_p, None, None, None)
-                .map_err(py_err)?;
+        let request = build_request_with_messages(
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            None,
+            None,
+            None,
+            Some(true),
+        )
+        .map_err(py_err)?;
 
         let runtime = client
             .runtime
@@ -1488,6 +1497,7 @@ fn build_request_with_messages(
     response_format: Option<ResponseFormat>,
     tools: Option<Vec<ToolDefinition>>,
     tool_choice: Option<ToolChoice>,
+    stream: Option<bool>,
 ) -> Result<CompletionRequest> {
     if model.is_empty() {
         return Err(SimpleAgentsError::Config(
@@ -1522,6 +1532,9 @@ fn build_request_with_messages(
     }
     if let Some(tool_choice) = tool_choice {
         builder = builder.tool_choice(tool_choice);
+    }
+    if let Some(stream) = stream {
+        builder = builder.stream(stream);
     }
 
     builder.build()
@@ -2004,9 +2017,18 @@ impl Client {
         top_p: Option<f32>,
     ) -> PyResult<String> {
         let messages = parse_messages(messages).map_err(py_err)?;
-        let request =
-            build_request_with_messages(model, messages, max_tokens, temperature, top_p, None, None, None)
-                .map_err(py_err)?;
+        let request = build_request_with_messages(
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(py_err)?;
         let runtime = self
             .runtime
             .lock()
@@ -2045,6 +2067,7 @@ impl Client {
             None,
             Some(tools),
             tool_choice,
+            None,
         )
         .map_err(py_err)?;
         let runtime = self
@@ -2111,9 +2134,18 @@ impl Client {
         top_p: Option<f32>,
     ) -> PyResult<ResponseWithMetadata> {
         let messages = parse_messages(messages).map_err(py_err)?;
-        let request =
-            build_request_with_messages(model, messages, max_tokens, temperature, top_p, None, None, None)
-                .map_err(py_err)?;
+        let request = build_request_with_messages(
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            None,
+            None,
+            None,
+            None,
+        )
+        .map_err(py_err)?;
         let runtime = self
             .runtime
             .lock()
@@ -2186,6 +2218,7 @@ impl Client {
             Some(ResponseFormat::JsonObject),
             None,
             None,
+            None,
         )
         .map_err(py_err)?;
         let runtime = self
@@ -2216,6 +2249,7 @@ impl Client {
             temperature,
             top_p,
             Some(ResponseFormat::JsonObject),
+            None,
             None,
             None,
         )
@@ -2283,6 +2317,7 @@ impl Client {
             temperature,
             top_p,
             Some(response_format),
+            None,
             None,
             None,
         )
@@ -2391,11 +2426,25 @@ impl Client {
         let schema_value: Value = pythonize::depythonize(schema)
             .map_err(|_| PyRuntimeError::new_err("schema must be JSON-serializable".to_string()))?;
 
+        // Validate schema is an object
+        if !schema_value.is_object() {
+            return Err(PyRuntimeError::new_err("schema must be a dict/object".to_string()));
+        }
+
         // Parse messages and build request
         let messages = parse_messages(messages).map_err(py_err)?;
-        let request =
-            build_request_with_messages(model, messages, max_tokens, temperature, top_p, None, None, None)
-                .map_err(py_err)?;
+        let request = build_request_with_messages(
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            Some(ResponseFormat::JsonObject),
+            None,
+            None,
+            Some(true),
+        )
+        .map_err(py_err)?;
 
         // Get runtime and create stream
         let runtime = self
