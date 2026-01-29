@@ -4,13 +4,13 @@ use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 use crate::middleware::Middleware;
 use crate::routing::{RouterEngine, RoutingMode};
 use async_trait::async_trait;
-use simple_agents_cache::Cache;
+use simple_agent_type::cache::Cache;
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
 use simple_agent_type::cache::CacheKey;
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -151,6 +151,24 @@ impl SimpleAgentsClient {
             parsed: healed.parsed,
             coerced,
         })
+    }
+
+    /// Execute a streaming completion request.
+    pub async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        request.validate()?;
+        self.before_request(request).await?;
+
+        let router = {
+            let state = self.state.read().map_err(|_| {
+                SimpleAgentsError::Config("provider registry lock poisoned".to_string())
+            })?;
+            state.router.clone()
+        };
+
+        router.stream(request).await
     }
 
     fn ensure_healing_enabled(&self) -> Result<()> {

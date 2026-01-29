@@ -1,9 +1,9 @@
 //! Cost-based routing implementation.
 //!
-//! Routes requests to the lowest-cost provider.
+//! Routes requests to lowest-cost provider.
 
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -105,6 +105,17 @@ impl CostRouter {
         let provider_request = provider.transform_request(request)?;
         let provider_response = provider.execute(provider_request).await?;
         provider.transform_response(provider_response)
+    }
+
+    /// Execute a streaming request using cost-based selection.
+    pub async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let index = self.select_provider_index()?;
+        let provider = &self.providers[index];
+        let provider_request = provider.transform_request(request)?;
+        provider.execute_stream(provider_request).await
     }
 
     fn select_provider_index(&self) -> Result<usize> {

@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agent-type"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "clap",
  "serde",
@@ -2076,9 +2076,10 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
+ "futures-core",
  "serde",
  "serde_json",
  "simple-agent-type",
@@ -2103,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2114,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "criterion",
  "proptest",
@@ -2130,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2142,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "napi",
  "napi-derive",
@@ -2154,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2182,23 +2183,29 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
+ "async-trait",
+ "futures-util",
  "pyo3",
  "pythonize",
  "reqwest",
  "serde_json",
  "simple-agent-type",
+ "simple-agents-cache",
  "simple-agents-core",
+ "simple-agents-healing",
  "simple-agents-providers",
+ "simple-agents-router",
  "tokio",
 ]
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "async-trait",
+ "futures-core",
  "rand 0.8.5",
  "serde_json",
  "simple-agent-type",
