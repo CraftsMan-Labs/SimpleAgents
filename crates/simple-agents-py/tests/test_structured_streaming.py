@@ -130,39 +130,33 @@ class TestStructuredStreaming:
             assert isinstance(event.confidence, (int, float))
             assert isinstance(event.was_healed, bool)
 
-    def test_stream_structured_empty_messages(self, client, simple_schema):
+    def test_stream_structured_empty_messages(self, client, model, simple_schema):
         """Test structured streaming with empty messages raises error."""
         with pytest.raises(Exception):
-            list(client.stream_structured("gpt-4o-mini", [], simple_schema))
+            list(client.stream_structured(model, [], simple_schema))
 
-    def test_stream_structured_invalid_schema(self, client):
+    def test_stream_structured_invalid_schema(self, client, model):
         """Test structured streaming with invalid schema."""
         messages = [{"role": "user", "content": "Test"}]
         # Non-dict schema should raise error
         with pytest.raises(Exception):
-            list(client.stream_structured("gpt-4o-mini", messages, "not a dict"))
+            list(client.stream_structured(model, messages, "not a dict"))
 
-    def test_stream_structured_array_output(self, client, array_schema):
+    def test_stream_structured_array_output(self, client, model, array_schema):
         """Test structured streaming with array schema."""
         messages = [{"role": "user", "content": "List three fruits"}]
 
-        events = list(
-            client.stream_structured(
-                "gpt-4o-mini", messages, array_schema, max_tokens=50
-            )
-        )
+        events = list(client.stream_structured(model, messages, array_schema, max_tokens=50))
 
         # Should have at least one complete event
         complete_events = [e for e in events if e.is_complete]
         assert len(complete_events) >= 1
 
-    def test_stream_structured_top_p(self, client, simple_schema):
+    def test_stream_structured_top_p(self, client, model, simple_schema):
         """Test structured streaming with top_p parameter."""
         messages = [{"role": "user", "content": "Create a person"}]
 
-        for event in client.stream_structured(
-            "gpt-4o-mini", messages, simple_schema, top_p=0.9
-        ):
+        for event in client.stream_structured(model, messages, simple_schema, top_p=0.9):
             if event.is_complete:
                 break
 
