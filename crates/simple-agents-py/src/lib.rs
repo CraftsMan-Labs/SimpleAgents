@@ -519,20 +519,55 @@ pub struct HealedJsonResult {
     confidence: f32,
     #[pyo3(get)]
     was_healed: bool,
+    #[pyo3(get)]
+    provider: Option<String>,
+    #[pyo3(get)]
+    model: String,
+    #[pyo3(get)]
+    finish_reason: String,
+    #[pyo3(get)]
+    created: Option<i64>,
+    #[pyo3(get)]
+    latency_ms: u64,
+    usage: PyObject,
     flags: Vec<String>,
 }
 
 #[pymethods]
 impl HealedJsonResult {
     #[new]
-    #[pyo3(signature = (content, confidence, was_healed, flags))]
-    fn new(content: String, confidence: f32, was_healed: bool, flags: Vec<String>) -> Self {
+    #[pyo3(signature = (content, confidence, was_healed, flags, provider=None, model=None, finish_reason=None, created=None, latency_ms=0, usage=None))]
+    fn new(
+        py: Python<'_>,
+        content: String,
+        confidence: f32,
+        was_healed: bool,
+        flags: Vec<String>,
+        provider: Option<String>,
+        model: Option<String>,
+        finish_reason: Option<String>,
+        created: Option<i64>,
+        latency_ms: u64,
+        usage: Option<PyObject>,
+    ) -> Self {
+        let usage = usage.unwrap_or_else(|| py.None().into());
         Self {
             content,
             confidence,
             was_healed,
+            provider,
+            model: model.unwrap_or_default(),
+            finish_reason: finish_reason.unwrap_or_default(),
+            created,
+            latency_ms,
+            usage,
             flags,
         }
+    }
+
+    #[getter]
+    fn usage(&self, py: Python<'_>) -> PyObject {
+        self.usage.clone_ref(py).into()
     }
 
     #[getter]
@@ -1933,26 +1968,6 @@ impl Client {
     #[pyo3(signature = (model, prompt, max_tokens=None, temperature=None))]
     fn complete(
         &self,
-        model: &str,
-        prompt: &str,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-    ) -> PyResult<String> {
-        let request = build_request(model, prompt, max_tokens, temperature).map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-
-        Ok(response.content().unwrap_or_default().to_string())
-    }
-
-    #[pyo3(signature = (model, prompt, max_tokens=None, temperature=None))]
-    fn complete_with_metadata(
-        &self,
         py: Python<'_>,
         model: &str,
         prompt: &str,
@@ -2011,12 +2026,13 @@ impl Client {
     #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
     fn complete_messages(
         &self,
+        py: Python<'_>,
         model: &str,
         messages: &Bound<'_, PyAny>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         top_p: Option<f32>,
-    ) -> PyResult<String> {
+    ) -> PyResult<ResponseWithMetadata> {
         let messages = parse_messages(messages).map_err(py_err)?;
         let request = build_request_with_messages(
             model,
@@ -2034,11 +2050,53 @@ impl Client {
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let start = Instant::now();
         let response = runtime
             .block_on(self.client.complete(&request))
             .map_err(py_err)?;
+        let latency_ms = start.elapsed().as_millis() as u64;
+        let usage = usage_to_pydict(py, &response.usage)?;
+        let content = response.content().unwrap_or_default().to_string();
+        let finish_reason = response
+            .choices
+            .first()
+            .map(|c| format!("{:?}", c.finish_reason))
+            .unwrap_or_else(|| "unknown".to_string());
 
-        Ok(response.content().unwrap_or_default().to_string())
+        let (was_healed, healing_confidence, healing_error, flags) =
+            if let Some(meta) = &response.healing_metadata {
+                (
+                    true,
+                    Some(meta.confidence),
+                    Some(meta.original_error.clone()),
+                    meta.flags.iter().map(|f| f.description()).collect(),
+                )
+            } else {
+                (false, None, None, Vec::new())
+            };
+
+        let tool_calls = response
+            .choices
+            .first()
+            .and_then(|c| c.message.tool_calls.clone())
+            .unwrap_or_default();
+        let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
+            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
+
+        Ok(ResponseWithMetadata {
+            content,
+            provider: response.provider.clone(),
+            model: response.model.clone(),
+            finish_reason,
+            created: response.created,
+            latency_ms,
+            was_healed,
+            healing_confidence,
+            healing_error,
+            flags,
+            usage,
+            tool_calls: tool_calls_obj.into(),
+        })
     }
 
     #[pyo3(signature = (model, messages, tools, tool_choice=None, max_tokens=None, temperature=None, top_p=None))]
@@ -2124,81 +2182,6 @@ impl Client {
         })
     }
 
-    #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn complete_messages_with_metadata(
-        &self,
-        py: Python<'_>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<ResponseWithMetadata> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let start = Instant::now();
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-        let usage = usage_to_pydict(py, &response.usage)?;
-        let content = response.content().unwrap_or_default().to_string();
-        let finish_reason = response
-            .choices
-            .first()
-            .map(|c| format!("{:?}", c.finish_reason))
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let (was_healed, healing_confidence, healing_error, flags) =
-            if let Some(meta) = &response.healing_metadata {
-                (
-                    true,
-                    Some(meta.confidence),
-                    Some(meta.original_error.clone()),
-                    meta.flags.iter().map(|f| f.description()).collect(),
-                )
-            } else {
-                (false, None, None, Vec::new())
-            };
-
-        let tool_calls = response
-            .choices
-            .first()
-            .and_then(|c| c.message.tool_calls.clone())
-            .unwrap_or_default();
-        let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
-            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-        Ok(ResponseWithMetadata {
-            content,
-            provider: response.provider.clone(),
-            model: response.model.clone(),
-            finish_reason,
-            created: response.created,
-            latency_ms,
-            was_healed,
-            healing_confidence,
-            healing_error,
-            flags,
-            usage,
-            tool_calls: tool_calls_obj.into(),
-        })
-    }
 
     #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
     fn complete_json(
@@ -2236,6 +2219,7 @@ impl Client {
     #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
     fn complete_json_healed(
         &self,
+        py: Python<'_>,
         model: &str,
         messages: &Bound<'_, PyAny>,
         max_tokens: Option<u32>,
@@ -2260,9 +2244,11 @@ impl Client {
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
 
+        let start = Instant::now();
         let healed_response: HealedJsonResponse = runtime
             .block_on(self.client.complete_json(&request))
             .map_err(py_err)?;
+        let latency_ms = start.elapsed().as_millis() as u64;
 
         let content = healed_response
             .response
@@ -2277,11 +2263,24 @@ impl Client {
             .iter()
             .map(|f| f.description())
             .collect();
+        let usage = usage_to_pydict(py, &healed_response.response.usage)?;
+        let finish_reason = healed_response
+            .response
+            .choices
+            .first()
+            .map(|c| format!("{:?}", c.finish_reason))
+            .unwrap_or_else(|| "unknown".to_string());
 
         Ok(HealedJsonResult {
             content,
             confidence,
             was_healed,
+            provider: healed_response.response.provider.clone(),
+            model: healed_response.response.model.clone(),
+            finish_reason,
+            created: healed_response.response.created,
+            latency_ms,
+            usage,
             flags,
         })
     }

@@ -8,7 +8,7 @@ dependencies = [
     "pyright>=1.1.408",
     "python-dotenv>=1.2.1",
     "ruff>=0.14.14",
-    "simple-agents-py==0.1.14",
+    "simple-agents-py",
 ]
 
 [tool.uv.sources]
