@@ -39,7 +39,6 @@
 - [Examples](#-examples)
 - [Performance](#-performance)
 - [Use Cases](#-use-cases)
-- [Comparison](#-comparison)
 - [Documentation](#-documentation)
 - [Testing](#-testing)
 - [Contributing](#-contributing)
@@ -507,37 +506,6 @@ let mut conversation = Conversation::new();
 conversation.add_user_message("Hello!");
 let response = client.complete(&conversation).await?;
 ```
-
----
-
-## 🔍 Comparison
-
-| Feature | SimpleAgents | LangChain | LiteLLM | BAML |
-|---------|--------------|-----------|---------|------|
-| **Language** | Rust 🦀 | Python | Python | Python/TS |
-| **Type Safety** | ✅ Compile-time | ❌ Runtime | ❌ Runtime | ✅ Codegen |
-| **Multi-Provider** | ✅ 100+ | ✅ 100+ | ✅ 100+ | ⚠️ Limited |
-| **Response Healing** | ✅ Built-in | ❌ No | ❌ No | ✅ Core feature |
-| **Streaming** | ✅ Native | ✅ Yes | ✅ Yes | ⚠️ Limited |
-| **Memory Safety** | ✅ Guaranteed | ⚠️ Python | ⚠️ Python | ⚠️ Python/TS |
-| **Performance** | ⚡ Native | 🐌 Interpreted | 🐌 Interpreted | 🐌 Interpreted |
-| **Caching** | ✅ Blake3 LRU | ✅ Redis | ⚠️ Basic | ❌ No |
-| **Zero Dependencies** | ✅ Modular | ❌ Heavy | ❌ Heavy | ⚠️ Medium |
-
-### When to Choose SimpleAgents
-
-- ✅ You need **type safety** and compile-time guarantees
-- ✅ **Performance** is critical (high-throughput applications)
-- ✅ You want **memory safety** without GC pauses
-- ✅ You need to parse **malformed JSON** from LLMs
-- ✅ You want **zero-cost abstractions**
-- ✅ You're building in **Rust** or need **FFI bindings**
-
-### When to Choose Alternatives
-
-- Use **LangChain** if you need the extensive ecosystem
-- Use **LiteLLM** if you only need provider abstraction in Python
-- Use **BAML** if you only need response healing in Python/TS
 
 ---
 

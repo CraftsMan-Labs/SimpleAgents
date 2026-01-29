@@ -3,11 +3,12 @@
 //! Defines the interface for LLM providers with transformation hooks.
 
 use crate::config::{Capabilities, RetryConfig};
-use crate::error::{ProviderError, Result, SimpleAgentsError};
+use crate::error::Result;
 use crate::request::CompletionRequest;
 use crate::response::{CompletionChunk, CompletionResponse};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::borrow::Cow;
 use std::time::Duration;
 
@@ -236,11 +237,55 @@ pub trait Provider: Send + Sync {
     /// ```
     async fn execute_stream(
         &self,
-        _req: ProviderRequest,
+        mut req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
-        Err(SimpleAgentsError::Provider(
-            ProviderError::UnsupportedFeature("streaming".to_string()),
-        ))
+        if let Value::Object(map) = &mut req.body {
+            if let Some(stream_value) = map.get_mut("stream") {
+                *stream_value = Value::Bool(false);
+            }
+        }
+
+        let provider_response = self.execute(req).await?;
+        let response = self.transform_response(provider_response)?;
+
+        struct SingleChunkStream {
+            chunk: Option<Result<CompletionChunk>>,
+        }
+
+        impl futures_core::Stream for SingleChunkStream {
+            type Item = Result<CompletionChunk>;
+
+            fn poll_next(
+                mut self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+            ) -> std::task::Poll<Option<Self::Item>> {
+                std::task::Poll::Ready(self.chunk.take())
+            }
+        }
+
+        let choices = response
+            .choices
+            .into_iter()
+            .map(|choice| crate::response::ChoiceDelta {
+                index: choice.index,
+                delta: crate::response::MessageDelta {
+                    role: Some(choice.message.role),
+                    content: Some(choice.message.content),
+                },
+                finish_reason: Some(choice.finish_reason),
+            })
+            .collect();
+
+        let chunk = CompletionChunk {
+            id: response.id,
+            model: response.model,
+            choices,
+            created: response.created,
+        };
+
+        Ok(Box::new(SingleChunkStream {
+            chunk: Some(Ok(chunk)),
+        }))
     }
 }
 

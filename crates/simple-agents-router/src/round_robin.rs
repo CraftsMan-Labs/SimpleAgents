@@ -53,6 +53,11 @@ impl RoundRobinRouter {
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         let index = self.select_provider_index()?;
         let provider = &self.providers[index];
+        eprintln!(
+            "RoundRobinRouter.stream: provider={}, stream={:?}",
+            provider.name(),
+            request.stream
+        );
         let provider_request = provider.transform_request(request)?;
         provider.execute_stream(provider_request).await
     }
