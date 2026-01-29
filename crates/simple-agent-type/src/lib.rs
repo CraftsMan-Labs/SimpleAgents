@@ -58,6 +58,7 @@ pub mod provider;
 pub mod request;
 pub mod response;
 pub mod router;
+pub mod tool;
 pub mod validation;
 
 // Re-export commonly used types at crate root
@@ -100,6 +101,12 @@ pub mod prelude {
 
     // Coercion
     pub use crate::coercion::{CoercionFlag, CoercionResult};
+
+    // Tool calling
+    pub use crate::tool::{
+        ToolCall, ToolCallFunction, ToolChoice, ToolChoiceFunction, ToolChoiceMode, ToolChoiceTool,
+        ToolDefinition, ToolFunction, ToolType,
+    };
 
     // Traits
     pub use crate::cache::Cache;

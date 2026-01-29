@@ -216,6 +216,12 @@ impl Provider for AnthropicProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
+        if req.tools.is_some() || req.tool_choice.is_some() {
+            return Err(SimpleAgentsError::Config(
+                "tool calling is not supported by the anthropic provider".to_string(),
+            ));
+        }
+
         use crate::anthropic::models::{AnthropicJsonSchema, AnthropicOutputFormat};
         use simple_agent_type::request::ResponseFormat;
 
@@ -411,6 +417,7 @@ impl Provider for AnthropicProvider {
                         content,
                         name: None,
                         tool_call_id: None,
+                        tool_calls: None,
                     },
                     finish_reason: anthropic_response
                         .stop_reason

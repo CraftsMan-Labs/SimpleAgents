@@ -3,7 +3,7 @@
 //! Distributes requests evenly across configured providers.
 
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -44,6 +44,17 @@ impl RoundRobinRouter {
         let provider_request = provider.transform_request(request)?;
         let provider_response = provider.execute(provider_request).await?;
         provider.transform_response(provider_response)
+    }
+
+    /// Execute a streaming request using round-robin provider selection.
+    pub async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let index = self.select_provider_index()?;
+        let provider = &self.providers[index];
+        let provider_request = provider.transform_request(request)?;
+        provider.execute_stream(provider_request).await
     }
 
     fn select_provider_index(&self) -> Result<usize> {
