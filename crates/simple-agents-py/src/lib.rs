@@ -27,6 +27,7 @@ use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
+use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -2457,9 +2458,11 @@ impl Client {
             .block_on(self.client.stream(&request))
             .map_err(py_err)?;
 
+        let healing = HealingIntegration::new(HealingConfig::lenient());
+
         // Create structured stream
         let structured_stream: StructuredStream<_, Value> =
-            StructuredStream::new(raw_stream, schema_value, None);
+            StructuredStream::new(raw_stream, schema_value, Some(healing));
 
         // Create Python iterator
         let iterator = StructuredStreamIterator {
