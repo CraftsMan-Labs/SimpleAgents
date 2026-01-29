@@ -45,6 +45,121 @@ response = client.complete("gpt-4", "Hello from Python!", max_tokens=128, temper
 print(response)
 ```
 
+## Feature Guide
+
+### Streaming
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+messages = [{"role": "user", "content": "Say hello in one sentence."}]
+for chunk in client.stream("gpt-4o-mini", messages, max_tokens=64):
+    if chunk.content:
+        print(chunk.content, end="", flush=True)
+print()
+```
+
+### Structured Output (JSON Mode)
+
+```python
+from simple_agents_py import Client
+import json
+
+client = Client("openai")
+schema = {
+    "type": "object",
+    "properties": {
+        "name": {"type": "string"},
+        "age": {"type": "number"},
+    },
+    "required": ["name", "age"],
+}
+messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
+json_text = client.complete_json_schema("gpt-4o-mini", messages, schema, "person")
+print(json.loads(json_text))
+```
+
+### Structured Streaming
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+schema = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "age": {"type": "number"}},
+    "required": ["name", "age"],
+}
+messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
+for event in client.stream_structured("gpt-4o-mini", messages, schema, max_tokens=64):
+    if event.is_partial:
+        print("partial:", event.partial_value)
+    else:
+        print("complete:", event.value)
+```
+
+### Response Healing
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":30}"}]
+healed = client.complete_json_healed("gpt-4o-mini", messages, max_tokens=64)
+print(healed.content)
+print(healed.was_healed, healed.confidence)
+```
+
+### Tool Calling
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": "Get the weather for a city",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "city": {"type": "string"},
+                    "unit": {"type": "string", "enum": ["c", "f"]},
+                },
+                "required": ["city"],
+            },
+        },
+    }
+]
+messages = [{"role": "user", "content": "What's the weather in Tokyo?"}]
+response = client.complete_with_tools("gpt-4o-mini", messages, tools)
+print(response.tool_calls)
+```
+
+### ClientBuilder (Routing, Cache, Healing, Middleware)
+
+```python
+from simple_agents_py import ClientBuilder
+
+class TimingMiddleware:
+    def before_request(self, request):
+        print("sending", request.model)
+
+builder = (
+    ClientBuilder()
+    .add_provider("openai", api_key="sk-...")
+    .with_routing("direct")
+    .with_cache(ttl_seconds=60)
+    .with_healing_config({"enabled": True, "min_confidence": 0.7})
+    .add_middleware(TimingMiddleware())
+)
+client = builder.build()
+print(client.complete("gpt-4o-mini", "Give me one idea."))
+```
+
 ## Examples
 
 OpenAI with a short prompt:
