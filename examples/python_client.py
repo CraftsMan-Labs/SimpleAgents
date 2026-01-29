@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 from dotenv import load_dotenv
 from simple_agents_py import Client, ClientBuilder
@@ -20,27 +20,29 @@ def load_settings() -> Optional[Tuple[str, str, str]]:
     return api_base, api_key, model
 
 
+def _text_from_response(response: Any) -> str:
+    return response.content if hasattr(response, "content") else str(response)
+
+
 def example_basic_completion(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "system", "content": "You are a concise assistant."},
         {"role": "user", "content": "Give me one project idea."},
     ]
-    text = client.complete_messages(model, messages)
-    print("basic_completion:", text)
+    response = client.complete_messages(model, messages)
+    print("basic_completion:", _text_from_response(response))
 
 
 def example_metadata(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Summarize why tests matter."}
     ]
-    response = client.complete_messages_with_metadata(
-        model,
-        messages,
-        max_tokens=80,
-    )
-    print("metadata:", response.content)
-    print("metadata: usage", response.usage)
-    print("metadata: latency_ms", response.latency_ms)
+    response = client.complete_messages(model, messages, max_tokens=80)
+    print("metadata:", _text_from_response(response))
+    if hasattr(response, "usage"):
+        print("metadata: usage", response.usage)
+    if hasattr(response, "latency_ms"):
+        print("metadata: latency_ms", response.latency_ms)
 
 
 def example_streaming(client: Client, model: str) -> None:
@@ -105,9 +107,18 @@ def example_healing(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": 'Return JSON: {"name":"Sam","age":30}'}
     ]
-    healed = client.complete_json_healed(model, messages, max_tokens=80)
+    healed = client.complete_json_healed(model, messages, max_tokens=9)
     print("healed:", healed.content)
     print("healed: was_healed", healed.was_healed)
+    print("healed: confidence", healed.confidence)
+    print("healed: usage type", type(healed.usage))
+    print("healed: usage value", healed.usage)
+    if hasattr(healed, "usage") and isinstance(healed.usage, dict):
+        print("healed: prompt_tokens", healed.usage.get("prompt_tokens"))
+        print("healed: completion_tokens", healed.usage.get("completion_tokens"))
+        print("healed: total_tokens", healed.usage.get("total_tokens"))
+    else:
+        print("healed: total_tokens", None)
 
 
 def example_tool_calling(client: Client, model: str) -> None:
@@ -144,8 +155,8 @@ def example_client_builder(api_base: str, api_key: str, model: str) -> None:
         .with_healing_config({"enabled": True, "min_confidence": 0.7})
     )
     client = builder.build()
-    text = client.complete(model, "Give me a quick checklist.", max_tokens=80)
-    print("builder_completion:", text)
+    response = client.complete(model, "Give me a quick checklist.", max_tokens=80)
+    print("builder_completion:", _text_from_response(response))
 
 
 def main() -> None:
@@ -155,14 +166,14 @@ def main() -> None:
     api_base, api_key, model = settings
     client = Client("openai", api_base=api_base, api_key=api_key)
 
-    example_basic_completion(client, model)
-    example_metadata(client, model)
-    example_streaming(client, model)
-    example_structured_json(client, model)
-    example_structured_streaming(client, model)
+    # example_basic_completion(client, model)
+    # example_metadata(client, model)
+    # example_streaming(client, model)
+    # example_structured_json(client, model)
+    # example_structured_streaming(client, model)
     example_healing(client, model)
-    example_tool_calling(client, model)
-    example_client_builder(api_base, api_key, model)
+    # example_tool_calling(client, model)
+    # example_client_builder(api_base, api_key, model)
 
 
 if __name__ == "__main__":

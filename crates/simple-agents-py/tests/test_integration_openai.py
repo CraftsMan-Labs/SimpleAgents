@@ -22,7 +22,7 @@ def _client():
 
 def test_local_proxy_connection():
     client, model = _client()
-    response = client.complete_with_metadata(
+    response = client.complete(
         model,
         "Say 'Hello from SimpleAgents!' and nothing else.",
         max_tokens=50,
@@ -42,9 +42,7 @@ def test_local_proxy_multiple_requests():
     client, model = _client()
     prompts = ["Count from 1 to 3.", "What is 2+2?", "Say 'test complete'."]
     for prompt in prompts:
-        response = client.complete_with_metadata(
-            model, prompt, max_tokens=50, temperature=0.7
-        )
+        response = client.complete(model, prompt, max_tokens=50, temperature=0.7)
         assert response.content
 
 
@@ -52,15 +50,13 @@ def test_local_proxy_invalid_model():
     client, model = _client()
     bad_model = f"{model}-does-not-exist"
     with pytest.raises(Exception):
-        client.complete_with_metadata(bad_model, "Test", max_tokens=20)
+        client.complete(bad_model, "Test", max_tokens=20)
 
 
 def test_local_proxy_temperature_variations():
     client, model = _client()
     for temp in [0.0, 0.5, 1.0]:
-        response = client.complete_with_metadata(
-            model, "Say hello.", max_tokens=20, temperature=temp
-        )
+        response = client.complete(model, "Say hello.", max_tokens=20, temperature=temp)
         assert response.content
 
 
@@ -72,7 +68,5 @@ def test_local_proxy_conversation():
         {"role": "assistant", "content": "The capital is Paris."},
         {"role": "user", "content": "And Germany?"},
     ]
-    response = client.complete_messages_with_metadata(
-        model, messages, max_tokens=30, temperature=0.2
-    )
+    response = client.complete_messages(model, messages, max_tokens=30, temperature=0.2)
     assert response.content
