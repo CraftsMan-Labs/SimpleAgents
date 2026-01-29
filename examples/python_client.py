@@ -2,7 +2,10 @@ import json
 import os
 from typing import Optional, Tuple
 
+from dotenv import load_dotenv
 from simple_agents_py import Client, ClientBuilder
+
+load_dotenv()
 
 
 def load_settings() -> Optional[Tuple[str, str, str]]:
@@ -10,13 +13,15 @@ def load_settings() -> Optional[Tuple[str, str, str]]:
     api_key = os.getenv("CUSTOM_API_KEY")
     model = os.getenv("CUSTOM_API_MODEL")
     if not api_base or not api_key or not model:
-        print("Set CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL to run this example.")
+        print(
+            "Set CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL to run this example."
+        )
         return None
     return api_base, api_key, model
 
 
 def example_basic_completion(client: Client, model: str) -> None:
-    messages = [
+    messages: list[dict[str, object]] = [
         {"role": "system", "content": "You are a concise assistant."},
         {"role": "user", "content": "Give me one project idea."},
     ]
@@ -25,9 +30,12 @@ def example_basic_completion(client: Client, model: str) -> None:
 
 
 def example_metadata(client: Client, model: str) -> None:
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": "Summarize why tests matter."}
+    ]
     response = client.complete_messages_with_metadata(
         model,
-        [{"role": "user", "content": "Summarize why tests matter."}],
+        messages,
         max_tokens=80,
     )
     print("metadata:", response.content)
@@ -36,7 +44,9 @@ def example_metadata(client: Client, model: str) -> None:
 
 
 def example_streaming(client: Client, model: str) -> None:
-    messages = [{"role": "user", "content": "Say hello in one sentence."}]
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": "Say hello in one sentence."}
+    ]
     print("streaming:", end=" ")
     for chunk in client.stream(model, messages, max_tokens=40):
         if chunk.content:
@@ -65,7 +75,9 @@ def example_structured_json(client: Client, model: str) -> None:
         "required": ["ideas"],
         "additionalProperties": False,
     }
-    messages = [{"role": "user", "content": "Give me two project ideas as JSON."}]
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": "Give me two project ideas as JSON."}
+    ]
     json_text = client.complete_json_schema(model, messages, schema, "project_ideas")
     print("structured_json:", json.dumps(json.loads(json_text), indent=2))
 
@@ -79,7 +91,7 @@ def example_structured_streaming(client: Client, model: str) -> None:
         },
         "required": ["name", "age"],
     }
-    messages = [
+    messages: list[dict[str, object]] = [
         {"role": "user", "content": "Extract name and age: Alice is 28."}
     ]
     for event in client.stream_structured(model, messages, schema, max_tokens=80):
@@ -90,7 +102,9 @@ def example_structured_streaming(client: Client, model: str) -> None:
 
 
 def example_healing(client: Client, model: str) -> None:
-    messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":30}"}]
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": 'Return JSON: {"name":"Sam","age":30}'}
+    ]
     healed = client.complete_json_healed(model, messages, max_tokens=80)
     print("healed:", healed.content)
     print("healed: was_healed", healed.was_healed)
@@ -114,7 +128,9 @@ def example_tool_calling(client: Client, model: str) -> None:
             },
         }
     ]
-    messages = [{"role": "user", "content": "What's the weather in Tokyo?"}]
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": "What's the weather in Tokyo?"}
+    ]
     response = client.complete_with_tools(model, messages, tools)
     print("tool_calls:", response.tool_calls)
 
