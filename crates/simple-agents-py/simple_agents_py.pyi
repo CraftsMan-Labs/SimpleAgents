@@ -69,8 +69,27 @@ class HealedJsonResult:
     content: str
     confidence: float
     was_healed: bool
+    provider: str | None
+    model: str
+    finish_reason: str
+    created: int | None
+    latency_ms: int
 
-    def __init__(self, content: str, confidence: float, was_healed: bool, flags: list[str]) -> None: ...
+    def __init__(
+        self,
+        content: str,
+        confidence: float,
+        was_healed: bool,
+        flags: list[str],
+        provider: str | None = None,
+        model: str | None = None,
+        finish_reason: str | None = None,
+        created: int | None = None,
+        latency_ms: int = 0,
+        usage: Any | None = None,
+    ) -> None: ...
+    @property
+    def usage(self) -> Any: ...
     @property
     def flags(self) -> list[str]: ...
 
@@ -121,14 +140,6 @@ class Client:
         prompt: str,
         max_tokens: int | None = None,
         temperature: float | None = None,
-    ) -> str: ...
-
-    def complete_with_metadata(
-        self,
-        model: str,
-        prompt: str,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
     ) -> ResponseWithMetadata: ...
 
     def complete_messages(
@@ -138,23 +149,13 @@ class Client:
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-    ) -> str: ...
-
+    ) -> ResponseWithMetadata: ...
     def complete_with_tools(
         self,
         model: str,
         messages: Sequence[Mapping[str, object]],
         tools: Sequence[Mapping[str, object]],
         tool_choice: object | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> ResponseWithMetadata: ...
-
-    def complete_messages_with_metadata(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,

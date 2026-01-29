@@ -42,7 +42,7 @@ from simple_agents_py import Client
 
 client = Client("openai")
 response = client.complete("gpt-4", "Hello from Python!", max_tokens=128, temperature=0.7)
-print(response)
+print(response.content)
 ```
 
 ## Feature Guide
@@ -109,6 +109,7 @@ messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":
 healed = client.complete_json_healed("gpt-4o-mini", messages, max_tokens=64)
 print(healed.content)
 print(healed.was_healed, healed.confidence)
+print(healed.usage.get("total_tokens"))
 ```
 
 ### Tool Calling
@@ -157,7 +158,7 @@ builder = (
     .add_middleware(TimingMiddleware())
 )
 client = builder.build()
-print(client.complete("gpt-4o-mini", "Give me one idea."))
+print(client.complete("gpt-4o-mini", "Give me one idea.").content)
 ```
 
 ## Examples
@@ -168,8 +169,8 @@ OpenAI with a short prompt:
 from simple_agents_py import Client
 
 client = Client("openai")
-text = client.complete("gpt-4o-mini", "Summarize this in one sentence.")
-print(text)
+response = client.complete("gpt-4o-mini", "Summarize this in one sentence.")
+print(response.content)
 ```
 
 Anthropic with custom tokens and temperature:
@@ -178,13 +179,13 @@ Anthropic with custom tokens and temperature:
 from simple_agents_py import Client
 
 client = Client("anthropic")
-text = client.complete(
+response = client.complete(
     "claude-3-5-sonnet-20240620",
     "Write a friendly welcome message for a new user.",
     max_tokens=120,
     temperature=0.5,
 )
-print(text)
+print(response.content)
 ```
 
 OpenRouter with a specific model:
@@ -193,8 +194,8 @@ OpenRouter with a specific model:
 from simple_agents_py import Client
 
 client = Client("openrouter")
-text = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
-print(text)
+response = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
+print(response.content)
 ```
 
 OpenRouter with explicit API base and key:
@@ -207,8 +208,8 @@ client = Client(
     api_base="https://openrouter.ai/api/v1",
     api_key="sk-your-openrouter-key",
 )
-text = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
-print(text)
+response = client.complete("openai/gpt-4o-mini", "Give me three project ideas.")
+print(response.content)
 ```
 
 OpenAI with a custom gateway:
@@ -221,8 +222,8 @@ client = Client(
     api_base="http://localhost:4000/v1",
     api_key="sk-your-openai-key",
 )
-text = client.complete("gpt-4o-mini", "Say hello from a local proxy.")
-print(text)
+response = client.complete("gpt-4o-mini", "Say hello from a local proxy.")
+print(response.content)
 ```
 
 Basic error handling:
@@ -232,7 +233,7 @@ from simple_agents_py import Client
 
 try:
     client = Client("openai")
-    print(client.complete("gpt-4o-mini", "Hello!"))
+    print(client.complete("gpt-4o-mini", "Hello!").content)
 except RuntimeError as exc:
     print(f"Request failed: {exc}")
 ```
