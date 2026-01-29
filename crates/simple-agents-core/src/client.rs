@@ -160,6 +160,10 @@ impl SimpleAgentsClient {
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         request.validate()?;
         self.before_request(request).await?;
+        eprintln!(
+            "SimpleAgentsClient.stream: model={}, stream={:?}",
+            request.model, request.stream
+        );
 
         let router = {
             let state = self.state.read().map_err(|_| {
