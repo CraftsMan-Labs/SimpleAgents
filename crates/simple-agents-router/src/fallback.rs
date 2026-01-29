@@ -3,7 +3,7 @@
 //! Attempts providers in order, falling back on retryable errors.
 
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError,
 };
 use std::sync::Arc;
 
@@ -78,6 +78,27 @@ impl FallbackRouter {
 
         Err(last_error
             .unwrap_or_else(|| SimpleAgentsError::Routing("no providers configured".to_string())))
+    }
+
+    /// Execute a streaming request with fallback logic.
+    pub async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        for provider in &self.providers {
+            let provider_request = provider.transform_request(request)?;
+            match provider.execute_stream(provider_request).await {
+                Ok(stream) => return Ok(stream),
+                Err(err) => {
+                    if !self.should_fallback(&err) {
+                        return Err(err);
+                    }
+                    // Continue to next provider
+                }
+            }
+        }
+
+        Err(SimpleAgentsError::Routing("no providers configured".to_string()))
     }
 
     async fn execute_provider(

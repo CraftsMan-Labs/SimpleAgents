@@ -5,7 +5,7 @@ use simple_agents_router::{
     LatencyRouterConfig, RoundRobinRouter,
 };
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::sync::Arc;
 
@@ -45,6 +45,22 @@ impl RouterEngine {
             Self::Latency(router) => router.complete(request).await,
             Self::Cost(router) => router.complete(request).await,
             Self::Fallback(router) => router.complete(request).await,
+        }
+    }
+
+    pub(crate) async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        match self {
+            Self::Direct(provider) => {
+                let provider_request = provider.transform_request(request)?;
+                provider.execute_stream(provider_request).await
+            }
+            Self::RoundRobin(router) => router.stream(request).await,
+            Self::Latency(router) => router.stream(request).await,
+            Self::Cost(router) => router.stream(request).await,
+            Self::Fallback(router) => router.stream(request).await,
         }
     }
 }

@@ -20,6 +20,7 @@ simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
 simple-agents-router = { path = "../simple-agents-router", version = "0.1.11" }
 simple-agents-cache = { path = "../simple-agents-cache", version = "0.1.11" }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.1.11" }
+futures-core = "0.3"
 
 [dev-dependencies]
 tokio.workspace = true
