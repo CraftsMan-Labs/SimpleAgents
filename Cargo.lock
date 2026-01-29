@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agent-type"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2050,7 +2050,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2059,7 +2059,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "clap",
  "serde",
@@ -2076,7 +2076,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2104,7 +2104,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2115,7 +2115,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "criterion",
  "proptest",
@@ -2131,7 +2131,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "napi",
  "napi-derive",
@@ -2155,7 +2155,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2183,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "async-trait",
  "futures-core",
