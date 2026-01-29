@@ -5,8 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "simple-agents-py",
+    "simple-agents-py==0.1.11",
 ]
 
-[tool.uv.sources]
-simple-agents-py = { path = "../crates/simple-agents-py" }
+# [tool.uv.sources]
+# simple-agents-py = { path = "../crates/simple-agents-py" }

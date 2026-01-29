@@ -1,4 +1,4 @@
-.PHONY: help test clippy fmt example-providers example-full-api examples \
+.PHONY: help test test-rust test-python clippy fmt example-providers example-full-api examples \
 	release-ffi release-python release-go release-node release-all \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
@@ -53,8 +53,13 @@ help:
 	@echo "  make version-set VERSION=X - Set specific version"
 	@echo "  make tag-release           - Create git tag for current version"
 
-test:
+test: test-rust test-python
+
+test-rust:
 	cargo test --all
+
+test-python:
+	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" pytest
 
 clippy:
 	cargo clippy --all-targets

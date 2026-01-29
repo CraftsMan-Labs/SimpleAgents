@@ -1,9 +1,9 @@
 //! Latency-based routing implementation.
 //!
-//! Routes requests to the provider with the lowest observed latency.
+//! Routes requests to provider with lowest observed latency.
 
 use simple_agent_type::prelude::{
-    CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -117,6 +117,17 @@ impl LatencyRouter {
         let response = provider.transform_response(provider_response)?;
         self.record_latency(index, start.elapsed());
         Ok(response)
+    }
+
+    /// Execute a streaming request using latency-based selection.
+    pub async fn stream(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let index = self.select_provider_index()?;
+        let provider = &self.providers[index];
+        let provider_request = provider.transform_request(request)?;
+        provider.execute_stream(provider_request).await
     }
 
     fn select_provider_index(&self) -> Result<usize> {

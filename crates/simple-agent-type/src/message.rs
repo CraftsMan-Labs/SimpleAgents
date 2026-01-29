@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::tool::ToolCall;
+
 /// Role of a message in a conversation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -32,6 +34,9 @@ pub struct Message {
     /// Tool call ID (for tool role messages)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// Tool calls emitted by the assistant.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
 }
 
 impl Message {
@@ -51,6 +56,7 @@ impl Message {
             content: content.into(),
             name: None,
             tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -69,6 +75,7 @@ impl Message {
             content: content.into(),
             name: None,
             tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -87,6 +94,7 @@ impl Message {
             content: content.into(),
             name: None,
             tool_call_id: None,
+            tool_calls: None,
         }
     }
 
@@ -106,6 +114,7 @@ impl Message {
             content: content.into(),
             name: None,
             tool_call_id: Some(tool_call_id.into()),
+            tool_calls: None,
         }
     }
 
@@ -122,6 +131,12 @@ impl Message {
         self.name = Some(name.into());
         self
     }
+
+    /// Set tool calls for assistant messages.
+    pub fn with_tool_calls(mut self, tool_calls: Vec<ToolCall>) -> Self {
+        self.tool_calls = Some(tool_calls);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -135,6 +150,7 @@ mod tests {
         assert_eq!(msg.content, "test");
         assert_eq!(msg.name, None);
         assert_eq!(msg.tool_call_id, None);
+        assert_eq!(msg.tool_calls, None);
     }
 
     #[test]
@@ -142,6 +158,7 @@ mod tests {
         let msg = Message::assistant("response");
         assert_eq!(msg.role, Role::Assistant);
         assert_eq!(msg.content, "response");
+        assert_eq!(msg.tool_calls, None);
     }
 
     #[test]
@@ -149,6 +166,7 @@ mod tests {
         let msg = Message::system("instruction");
         assert_eq!(msg.role, Role::System);
         assert_eq!(msg.content, "instruction");
+        assert_eq!(msg.tool_calls, None);
     }
 
     #[test]
@@ -157,6 +175,7 @@ mod tests {
         assert_eq!(msg.role, Role::Tool);
         assert_eq!(msg.content, "result");
         assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
+        assert_eq!(msg.tool_calls, None);
     }
 
     #[test]
@@ -194,6 +213,7 @@ mod tests {
         let json = serde_json::to_value(&msg).unwrap();
         assert!(json.get("name").is_none());
         assert!(json.get("tool_call_id").is_none());
+        assert!(json.get("tool_calls").is_none());
     }
 
     #[test]

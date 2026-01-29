@@ -4,6 +4,7 @@
 
 use crate::error::{Result, ValidationError};
 use crate::message::Message;
+use crate::tool::{ToolChoice, ToolDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -72,6 +73,12 @@ pub struct CompletionRequest {
     /// Response format for structured outputs (OpenAI only)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<ResponseFormat>,
+    /// Tool definitions for tool calling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ToolDefinition>>,
+    /// Tool choice configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<ToolChoice>,
 }
 
 impl CompletionRequest {
@@ -237,6 +244,8 @@ pub struct CompletionRequestBuilder {
     frequency_penalty: Option<f32>,
     user: Option<String>,
     response_format: Option<ResponseFormat>,
+    tools: Option<Vec<ToolDefinition>>,
+    tool_choice: Option<ToolChoice>,
 }
 
 impl CompletionRequestBuilder {
@@ -318,6 +327,18 @@ impl CompletionRequestBuilder {
         self
     }
 
+    /// Set tool definitions for tool calling.
+    pub fn tools(mut self, tools: Vec<ToolDefinition>) -> Self {
+        self.tools = Some(tools);
+        self
+    }
+
+    /// Set tool choice configuration.
+    pub fn tool_choice(mut self, tool_choice: ToolChoice) -> Self {
+        self.tool_choice = Some(tool_choice);
+        self
+    }
+
     /// Enable JSON object mode (no schema validation).
     pub fn json_mode(mut self) -> Self {
         self.response_format = Some(ResponseFormat::JsonObject);
@@ -355,6 +376,8 @@ impl CompletionRequestBuilder {
             frequency_penalty: self.frequency_penalty,
             user: self.user,
             response_format: self.response_format,
+            tools: self.tools,
+            tool_choice: self.tool_choice,
         };
 
         request.validate()?;

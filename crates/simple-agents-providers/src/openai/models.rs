@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::Message;
 use simple_agent_type::request::ResponseFormat;
+use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 
 /// OpenAI chat completion request
 ///
@@ -42,6 +43,12 @@ pub struct OpenAICompletionRequest<'a> {
     /// Response format for structured outputs
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_format: Option<&'a ResponseFormat>,
+    /// Tool definitions for tool calling
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<&'a Vec<ToolDefinition>>,
+    /// Tool choice configuration
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<&'a ToolChoice>,
 }
 
 /// OpenAI chat completion response
@@ -183,6 +190,7 @@ mod tests {
             content: "Hello".to_string(),
             name: None,
             tool_call_id: None,
+            tool_calls: None,
         }];
 
         let request = OpenAICompletionRequest {
@@ -195,6 +203,8 @@ mod tests {
             stream: Some(false),
             stop: None,
             response_format: None,
+            tools: None,
+            tool_choice: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();
