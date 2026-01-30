@@ -163,6 +163,24 @@ impl CoercionEngine {
             (Value::Number(n), Schema::UInt) if n.is_f64() => {
                 self.coerce_float_to_uint(n.as_f64().unwrap(), flags, confidence)
             }
+            // Int to Float coercion (integers are valid numbers in JSON Schema)
+            (Value::Number(n), Schema::Float) if n.is_i64() || n.is_u64() => {
+                // Convert integer to float - this is lossless for most practical values
+                let float_val = if let Some(i) = n.as_i64() {
+                    i as f64
+                } else if let Some(u) = n.as_u64() {
+                    u as f64
+                } else {
+                    unreachable!()
+                };
+                Ok(Value::Number(
+                    serde_json::Number::from_f64(float_val)
+                        .ok_or_else(|| HealingError::ParseError {
+                            input: format!("{}", n),
+                            expected_type: "float".to_string(),
+                        })?,
+                ))
+            }
 
             // Array coercion
             (Value::Array(arr), Schema::Array(elem_schema)) => {
@@ -427,6 +445,13 @@ impl CoercionEngine {
                     });
                     *confidence *= 0.9;
                     result.insert(field.name.clone(), default.clone());
+                } else if flags.contains(&CoercionFlag::TruncatedJson) {
+                    // If response was truncated, allow missing required fields by injecting null
+                    flags.push(CoercionFlag::UsedDefaultValue {
+                        field: field.name.clone(),
+                    });
+                    *confidence *= 0.7; // Lower confidence for missing required field
+                    result.insert(field.name.clone(), Value::Null);
                 } else {
                     return Err(HealingError::MissingField {
                         field: field.name.clone(),
