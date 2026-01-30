@@ -1727,6 +1727,34 @@ fn parse_schema_from_py(
     Ok(schema)
 }
 
+fn pydantic_schema_value(schema: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
+    for attr_name in ["model_json_schema", "schema"] {
+        if schema.hasattr(attr_name)? {
+            let attr = schema.getattr(attr_name)?;
+            if attr.is_callable() {
+                let result = attr.call0()?;
+                let value: Value = pythonize::depythonize(&result).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Invalid Pydantic schema: {}", e))
+                })?;
+                return Ok(Some(value));
+            }
+        }
+    }
+    Ok(None)
+}
+
+fn schema_to_json_value(schema: &Bound<'_, PyAny>) -> PyResult<Value> {
+    if let Some(value) = pydantic_schema_value(schema)? {
+        return Ok(value);
+    }
+
+    pythonize::depythonize(schema).map_err(|_| {
+        PyRuntimeError::new_err(
+            "schema must be JSON-serializable (dict) or a Pydantic model/class".to_string(),
+        )
+    })
+}
+
 fn usage_to_pydict(py: Python<'_>, usage: &Usage) -> PyResult<PyObject> {
     let dict = PyDict::new_bound(py);
     dict.set_item("prompt_tokens", usage.prompt_tokens)?;
@@ -1783,11 +1811,17 @@ fn coerce_to_schema(
     let schema_obj = if let Ok(schema_ref) = schema.extract::<PyRef<PySchema>>() {
         schema_ref.schema.clone()
     } else {
-        let schema_dict: &Bound<'_, PyDict> = schema
-            .downcast()
-            .map_err(|_| PyRuntimeError::new_err("schema must be a dict or Schema".to_string()))?;
-        let schema_value: serde_json::Value = pythonize::depythonize(schema_dict)
-            .map_err(|e| PyRuntimeError::new_err(format!("Invalid schema: {}", e)))?;
+        let schema_value: serde_json::Value = if let Some(value) = pydantic_schema_value(schema)? {
+            value
+        } else {
+            let schema_dict: &Bound<'_, PyDict> = schema.downcast().map_err(|_| {
+                PyRuntimeError::new_err(
+                    "schema must be a dict, Schema, or Pydantic model/class".to_string(),
+                )
+            })?;
+            pythonize::depythonize(schema_dict)
+                .map_err(|e| PyRuntimeError::new_err(format!("Invalid schema: {}", e)))?
+        };
 
         match schema_value {
             serde_json::Value::Object(map) => {
@@ -2298,11 +2332,7 @@ impl Client {
         strict: bool,
     ) -> PyResult<String> {
         let messages = parse_messages(messages).map_err(py_err)?;
-        let schema_value: serde_json::Value = pythonize::depythonize(schema).map_err(|_| {
-            py_err(SimpleAgentsError::Config(
-                "schema must be JSON-serializable".to_string(),
-            ))
-        })?;
+        let schema_value = schema_to_json_value(schema)?;
         let response_format = ResponseFormat::JsonSchema {
             json_schema: JsonSchemaFormat {
                 name: schema_name.to_string(),
@@ -2423,8 +2453,7 @@ impl Client {
         top_p: Option<f32>,
     ) -> PyResult<Bound<'py, PyAny>> {
         // Parse schema
-        let schema_value: Value = pythonize::depythonize(schema)
-            .map_err(|_| PyRuntimeError::new_err("schema must be JSON-serializable".to_string()))?;
+        let schema_value: Value = schema_to_json_value(schema)?;
 
         // Validate schema is an object
         if !schema_value.is_object() {

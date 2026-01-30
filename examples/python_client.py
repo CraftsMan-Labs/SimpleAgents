@@ -20,17 +20,13 @@ def load_settings() -> Optional[Tuple[str, str, str]]:
     return api_base, api_key, model
 
 
-def _text_from_response(response: Any) -> str:
-    return response.content if hasattr(response, "content") else str(response)
-
-
 def example_basic_completion(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "system", "content": "You are a concise assistant."},
         {"role": "user", "content": "Give me one project idea."},
     ]
     response = client.complete_messages(model, messages)
-    print("basic_completion:", _text_from_response(response))
+    print("basic_completion:", response.content)
 
 
 def example_metadata(client: Client, model: str) -> None:
@@ -38,7 +34,7 @@ def example_metadata(client: Client, model: str) -> None:
         {"role": "user", "content": "Summarize why tests matter."}
     ]
     response = client.complete_messages(model, messages, max_tokens=80)
-    print("metadata:", _text_from_response(response))
+    print("metadata:", response.content)
     if hasattr(response, "usage"):
         print("metadata: usage", response.usage)
     if hasattr(response, "latency_ms"):
@@ -84,6 +80,24 @@ def example_structured_json(client: Client, model: str) -> None:
     print("structured_json:", json.dumps(json.loads(json_text), indent=2))
 
 
+def example_structured_pydantic(client: Client, model: str) -> None:
+    try:
+        from pydantic import BaseModel
+    except ImportError:
+        print("structured_pydantic: skipped (pydantic not installed)")
+        return
+
+    class Person(BaseModel):
+        name: str
+        age: int
+
+    messages: list[dict[str, object]] = [
+        {"role": "user", "content": "Extract name and age: Alice is 28."}
+    ]
+    json_text = client.complete_json_schema(model, messages, Person, "person")
+    print("structured_pydantic:", json.loads(json_text))
+
+
 def example_structured_streaming(client: Client, model: str) -> None:
     schema = {
         "type": "object",
@@ -113,12 +127,9 @@ def example_healing(client: Client, model: str) -> None:
     print("healed: confidence", healed.confidence)
     print("healed: usage type", type(healed.usage))
     print("healed: usage value", healed.usage)
-    if hasattr(healed, "usage") and isinstance(healed.usage, dict):
-        print("healed: prompt_tokens", healed.usage.get("prompt_tokens"))
-        print("healed: completion_tokens", healed.usage.get("completion_tokens"))
-        print("healed: total_tokens", healed.usage.get("total_tokens"))
-    else:
-        print("healed: total_tokens", None)
+    print("healed: prompt_tokens", healed.usage.get("prompt_tokens"))
+    print("healed: completion_tokens", healed.usage.get("completion_tokens"))
+    print("healed: total_tokens", healed.usage.get("total_tokens"))
 
 
 def example_tool_calling(client: Client, model: str) -> None:
@@ -156,7 +167,7 @@ def example_client_builder(api_base: str, api_key: str, model: str) -> None:
     )
     client = builder.build()
     response = client.complete(model, "Give me a quick checklist.", max_tokens=80)
-    print("builder_completion:", _text_from_response(response))
+    print("builder_completion:", response.content)
 
 
 def main() -> None:
@@ -170,8 +181,9 @@ def main() -> None:
     # example_metadata(client, model)
     # example_streaming(client, model)
     # example_structured_json(client, model)
+    example_structured_pydantic(client, model)
     # example_structured_streaming(client, model)
-    example_healing(client, model)
+    # example_healing(client, model)
     # example_tool_calling(client, model)
     # example_client_builder(api_base, api_key, model)
 
