@@ -79,7 +79,12 @@ class TestStructuredStreaming:
         assert any(e.is_complete for e in events)
 
     def test_stream_structured_complete_event(self, client, model, simple_schema):
-        """Test that complete event has correct properties."""
+        """Test that complete event has correct properties.
+
+        This test uses 'type': 'number' in the schema, which should accept both
+        integers and floats. The healing system automatically handles int-to-float
+        coercion when the model returns an integer (e.g., age: 25).
+        """
         messages = [{"role": "user", "content": "Create a person named Alice, age 25"}]
 
         events = list(
@@ -97,6 +102,9 @@ class TestStructuredStreaming:
         assert not event.is_partial
         assert event.confidence > 0.0
         assert event.confidence <= 1.0
+
+        # Verify the value can be parsed (healing handled any type mismatches)
+        assert event.value is not None
 
     def test_stream_structured_with_temperature(self, client, model, simple_schema):
         """Test structured streaming with temperature parameter."""

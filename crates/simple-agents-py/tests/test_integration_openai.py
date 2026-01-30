@@ -40,7 +40,12 @@ def test_local_proxy_connection():
 
 def test_local_proxy_multiple_requests():
     client, model = _client()
-    prompts = ["Count from 1 to 3.", "What is 2+2?", "Say 'test complete'."]
+    # Use simple, safe prompts to avoid triggering content filters
+    prompts = [
+        "List three colors.",
+        "Name a programming language.",
+        "Say hello world."
+    ]
     for prompt in prompts:
         response = client.complete(model, prompt, max_tokens=50, temperature=0.7)
         assert response.content

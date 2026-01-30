@@ -119,17 +119,17 @@ def example_structured_streaming(client: Client, model: str) -> None:
 
 def example_healing(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
-        {"role": "user", "content": 'Return JSON: {"name":"Sam","age":30}'}
+        {
+            "role": "user",
+            "content": 'Return JSON: {"firstName":"Sam","lastName":"Smith","age":30}',
+        }
     ]
-    healed = client.complete_json_healed(model, messages, max_tokens=9)
-    print("healed:", healed.content)
-    print("healed: was_healed", healed.was_healed)
-    print("healed: confidence", healed.confidence)
-    print("healed: usage type", type(healed.usage))
-    print("healed: usage value", healed.usage)
-    print("healed: prompt_tokens", healed.usage.get("prompt_tokens"))
-    print("healed: completion_tokens", healed.usage.get("completion_tokens"))
-    print("healed: total_tokens", healed.usage.get("total_tokens"))
+    healed = client.complete_json_healed("gpt-4.1", messages, max_tokens=20)
+    print("healed JSON:", healed.content)
+    print("raw response:", repr(healed.raw_response))
+    print("was_healed:", healed.was_healed)
+    print("confidence:", healed.confidence)
+    print("usage:", healed.usage)
 
 
 def example_tool_calling(client: Client, model: str) -> None:
@@ -181,9 +181,9 @@ def main() -> None:
     # example_metadata(client, model)
     # example_streaming(client, model)
     # example_structured_json(client, model)
-    example_structured_pydantic(client, model)
+    # example_structured_pydantic(client, model)
     # example_structured_streaming(client, model)
-    # example_healing(client, model)
+    example_healing(client, model)
     # example_tool_calling(client, model)
     # example_client_builder(api_base, api_key, model)
 
