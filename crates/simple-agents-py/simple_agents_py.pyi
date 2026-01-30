@@ -67,6 +67,7 @@ class PyStreamIterator:
 
 class HealedJsonResult:
     content: str
+    raw_response: str
     confidence: float
     was_healed: bool
     provider: str | None
@@ -81,6 +82,7 @@ class HealedJsonResult:
         confidence: float,
         was_healed: bool,
         flags: list[str],
+        raw_response: str | None = None,
         provider: str | None = None,
         model: str | None = None,
         finish_reason: str | None = None,
@@ -183,7 +185,7 @@ class Client:
         self,
         model: str,
         messages: Sequence[Mapping[str, object]],
-        schema: Mapping[str, object],
+        schema: Mapping[str, object] | type[Any],
         schema_name: str,
         max_tokens: int | None = None,
         temperature: float | None = None,

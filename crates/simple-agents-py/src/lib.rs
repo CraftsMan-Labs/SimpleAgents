@@ -516,6 +516,8 @@ pub struct HealedJsonResult {
     #[pyo3(get)]
     content: String,
     #[pyo3(get)]
+    raw_response: String,
+    #[pyo3(get)]
     confidence: f32,
     #[pyo3(get)]
     was_healed: bool,
@@ -536,13 +538,14 @@ pub struct HealedJsonResult {
 #[pymethods]
 impl HealedJsonResult {
     #[new]
-    #[pyo3(signature = (content, confidence, was_healed, flags, provider=None, model=None, finish_reason=None, created=None, latency_ms=0, usage=None))]
+    #[pyo3(signature = (content, confidence, was_healed, flags, raw_response=None, provider=None, model=None, finish_reason=None, created=None, latency_ms=0, usage=None))]
     fn new(
         py: Python<'_>,
         content: String,
         confidence: f32,
         was_healed: bool,
         flags: Vec<String>,
+        raw_response: Option<String>,
         provider: Option<String>,
         model: Option<String>,
         finish_reason: Option<String>,
@@ -553,6 +556,7 @@ impl HealedJsonResult {
         let usage = usage.unwrap_or_else(|| py.None().into());
         Self {
             content,
+            raw_response: raw_response.unwrap_or_default(),
             confidence,
             was_healed,
             provider,
@@ -970,6 +974,7 @@ fn provider_from_params(
     provider_name: &str,
     api_key: Option<&str>,
     api_base: Option<&str>,
+    enable_healing: bool,
 ) -> Result<Arc<dyn Provider>> {
     let api_key = match api_key {
         Some(value) => Some(ApiKey::new(value)?),
@@ -978,7 +983,7 @@ fn provider_from_params(
 
     match provider_name {
         "openai" => {
-            let provider = match api_key {
+            let mut provider = match api_key {
                 Some(api_key) => match api_base {
                     Some(api_base) => {
                         if is_local_base(api_base) {
@@ -1003,10 +1008,13 @@ fn provider_from_params(
                 },
                 None => OpenAIProvider::from_env()?,
             };
+            if enable_healing {
+                provider = provider.with_healing(HealingConfig::default());
+            }
             Ok(Arc::new(provider))
         }
         "anthropic" => {
-            let provider = match api_key {
+            let mut provider = match api_key {
                 Some(api_key) => match api_base {
                     Some(api_base) => {
                         AnthropicProvider::with_base_url(api_key, api_base.to_string())?
@@ -1015,6 +1023,9 @@ fn provider_from_params(
                 },
                 None => AnthropicProvider::from_env()?,
             };
+            if enable_healing {
+                provider = provider.with_healing(HealingConfig::default());
+            }
             Ok(Arc::new(provider))
         }
         "openrouter" => {
@@ -1118,7 +1129,8 @@ impl ClientBuilder {
         api_key: Option<String>,
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
-        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref())
+        // Enable healing by default for providers added through ClientBuilder
+        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), true)
             .map_err(py_err)?;
 
         slf.providers.push(provider);
@@ -1983,9 +1995,9 @@ impl SchemaExt for Schema {
 #[allow(clippy::useless_conversion)]
 impl Client {
     #[new]
-    #[pyo3(signature = (provider, api_key=None, api_base=None))]
-    fn new(provider: &str, api_key: Option<String>, api_base: Option<String>) -> PyResult<Self> {
-        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref())
+    #[pyo3(signature = (provider, api_key=None, api_base=None, healing=true))]
+    fn new(provider: &str, api_key: Option<String>, api_base: Option<String>, healing: bool) -> PyResult<Self> {
+        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), healing)
             .map_err(py_err)?;
         let client = SimpleAgentsClientBuilder::new()
             .with_provider(provider)
@@ -2284,7 +2296,10 @@ impl Client {
             .map_err(py_err)?;
         let latency_ms = start.elapsed().as_millis() as u64;
 
-        let content = healed_response
+        // Use the healed/parsed JSON value, not the raw response content
+        let content = serde_json::to_string(&healed_response.parsed.value)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e)))?;
+        let raw_response = healed_response
             .response
             .content()
             .unwrap_or_default()
@@ -2307,6 +2322,7 @@ impl Client {
 
         Ok(HealedJsonResult {
             content,
+            raw_response,
             confidence,
             was_healed,
             provider: healed_response.response.provider.clone(),

@@ -96,6 +96,12 @@ json_text = client.complete_json_schema("gpt-4o-mini", messages, Person, "person
 print(json_text)
 ```
 
+**Healing for Structured Outputs**: Healing is enabled by default for structured outputs, automatically fixing malformed JSON, type mismatches, and missing fields. To disable healing:
+
+```python
+client = Client("openai", healing=False)
+```
+
 ### Structured Streaming
 
 ```python
