@@ -80,6 +80,22 @@ json_text = client.complete_json_schema("gpt-4o-mini", messages, schema, "person
 print(json.loads(json_text))
 ```
 
+Pydantic models are accepted too:
+
+```python
+from pydantic import BaseModel
+from simple_agents_py import Client
+
+class Person(BaseModel):
+    name: str
+    age: int
+
+client = Client("openai")
+messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
+json_text = client.complete_json_schema("gpt-4o-mini", messages, Person, "person")
+print(json_text)
+```
+
 ### Structured Streaming
 
 ```python
