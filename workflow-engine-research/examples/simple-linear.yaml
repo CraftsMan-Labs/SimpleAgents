@@ -1,0 +1,78 @@
+# Simple Linear Workflow
+# Demonstrates: Basic DAG, LLM call, transform
+
+id: simple-linear-workflow
+version: 1.0.0
+
+metadata:
+  name: "Simple Linear Workflow"
+  description: "A basic workflow with LLM analysis and transformation"
+  tags: ["example", "simple"]
+
+entry_node: analyze_text
+
+defaults:
+  timeout: 30s
+  retry:
+    max_attempts: 3
+    backoff:
+      type: exponential
+      initial: 1s
+
+nodes:
+  # Step 1: Analyze input text with LLM
+  - id: analyze_text
+    name: "Analyze Input Text"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4
+        temperature: 0.7
+        max_tokens: 500
+
+    config:
+      prompt: |
+        Analyze the following text and provide:
+        1. Main topic
+        2. Sentiment (positive/negative/neutral)
+        3. Key points (3-5 bullet points)
+
+        Text: {{ input.text }}
+
+        Respond in JSON format:
+        {
+          "topic": "...",
+          "sentiment": "...",
+          "key_points": ["...", "..."]
+        }
+
+    output_schema:
+      type: object
+      required: ["topic", "sentiment", "key_points"]
+      properties:
+        topic:
+          type: string
+        sentiment:
+          type: string
+          enum: ["positive", "negative", "neutral"]
+        key_points:
+          type: array
+          items:
+            type: string
+
+  # Step 2: Transform to summary format
+  - id: create_summary
+    name: "Create Summary"
+    node_type:
+      transform:
+        expression: |
+          {
+            "summary": "Topic: " + $.nodes.analyze_text.output.topic + " (Sentiment: " + $.nodes.analyze_text.output.sentiment + ")",
+            "points": $.nodes.analyze_text.output.key_points,
+            "timestamp": now()
+          }
+
+edges:
+  - from: analyze_text
+    to: create_summary
+

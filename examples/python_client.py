@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Optional, Tuple
+from typing import Optional, Tuple
 
 from dotenv import load_dotenv
 from simple_agents_py import Client, ClientBuilder
