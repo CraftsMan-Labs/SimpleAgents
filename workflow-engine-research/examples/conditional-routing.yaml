@@ -1,0 +1,133 @@
+# Conditional Routing Workflow
+# Demonstrates: Switch node, conditional branching, multiple LLM calls
+
+id: conditional-routing-workflow
+version: 1.0.0
+
+metadata:
+  name: "Conditional Routing Workflow"
+  description: "Routes based on sentiment analysis"
+  tags: ["example", "branching", "sentiment"]
+
+entry_node: analyze_sentiment
+
+nodes:
+  # Step 1: Analyze sentiment
+  - id: analyze_sentiment
+    name: "Analyze Sentiment"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4-turbo
+        temperature: 0.3
+
+    config:
+      prompt: |
+        Analyze the sentiment of this customer feedback:
+
+        {{ input.feedback }}
+
+        Respond with JSON:
+        {
+          "sentiment": "positive|negative|neutral",
+          "confidence": 0.0-1.0,
+          "urgency": "low|medium|high"
+        }
+
+    output_schema:
+      type: object
+      required: ["sentiment", "confidence", "urgency"]
+      properties:
+        sentiment:
+          type: string
+          enum: ["positive", "negative", "neutral"]
+        confidence:
+          type: number
+        urgency:
+          type: string
+          enum: ["low", "medium", "high"]
+
+  # Step 2: Route by sentiment
+  - id: route_by_sentiment
+    name: "Route by Sentiment"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.analyze_sentiment.output.sentiment == "positive"'
+            target: handle_positive
+
+          - condition: '$.nodes.analyze_sentiment.output.sentiment == "negative" && $.nodes.analyze_sentiment.output.urgency == "high"'
+            target: handle_urgent_negative
+
+          - condition: '$.nodes.analyze_sentiment.output.sentiment == "negative"'
+            target: handle_negative
+
+        default: handle_neutral
+
+  # Positive sentiment handler
+  - id: handle_positive
+    name: "Generate Thank You Message"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4
+        temperature: 0.8
+
+    config:
+      prompt: |
+        Generate a warm thank you message for this positive feedback:
+
+        {{ input.feedback }}
+
+  # Urgent negative handler
+  - id: handle_urgent_negative
+    name: "Generate Urgent Response"
+    node_type:
+      llm_call:
+        provider: anthropic
+        model: claude-3-opus-20240229
+        temperature: 0.5
+
+    config:
+      prompt: |
+        Generate an urgent, empathetic response to this critical negative feedback:
+
+        {{ input.feedback }}
+
+        Include:
+        1. Immediate acknowledgment
+        2. Apology
+        3. Action plan
+        4. Timeline for resolution
+
+  # Regular negative handler
+  - id: handle_negative
+    name: "Generate Standard Response"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4
+        temperature: 0.7
+
+    config:
+      prompt: |
+        Generate a professional response to this negative feedback:
+
+        {{ input.feedback }}
+
+  # Neutral handler
+  - id: handle_neutral
+    name: "Generate Acknowledgment"
+    node_type:
+      transform:
+        expression: |
+          {
+            "response": "Thank you for your feedback. We've noted your comments.",
+            "action": "log_only"
+          }
+
+edges:
+  - from: analyze_sentiment
+    to: route_by_sentiment
+
+  # No edges from route_by_sentiment - switch node handles routing
