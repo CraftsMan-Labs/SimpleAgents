@@ -1,0 +1,109 @@
+# Parallel Processing Workflow
+# Demonstrates: Parallel fan-out, merge, map/reduce
+
+id: parallel-processing-workflow
+version: 1.0.0
+
+metadata:
+  name: "Parallel Processing Workflow"
+  description: "Processes data with multiple analyses in parallel"
+  tags: ["example", "parallel", "map-reduce"]
+
+entry_node: parallel_analysis
+
+defaults:
+  max_concurrency: 5
+
+nodes:
+  # Step 1: Fan out to multiple analyses
+  - id: parallel_analysis
+    name: "Run Parallel Analyses"
+    node_type:
+      parallel:
+        nodes:
+          - sentiment_analysis
+          - topic_classification
+          - entity_extraction
+          - keyword_extraction
+
+  # Parallel branch 1: Sentiment
+  - id: sentiment_analysis
+    name: "Sentiment Analysis"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4-turbo
+
+    config:
+      prompt: "Analyze sentiment: {{ input.text }}"
+
+  # Parallel branch 2: Topics
+  - id: topic_classification
+    name: "Topic Classification"
+    node_type:
+      llm_call:
+        provider: anthropic
+        model: claude-3-sonnet-20240229
+
+    config:
+      prompt: "Classify topics: {{ input.text }}"
+
+  # Parallel branch 3: Entities
+  - id: entity_extraction
+    name: "Entity Extraction"
+    node_type:
+      custom_worker:
+        language: python
+        handler: ExtractEntities
+
+  # Parallel branch 4: Keywords
+  - id: keyword_extraction
+    name: "Keyword Extraction"
+    node_type:
+      custom_worker:
+        language: python
+        handler: ExtractKeywords
+
+  # Step 2: Merge all results
+  - id: merge_results
+    name: "Merge All Results"
+    node_type:
+      merge:
+        policy:
+          type: all
+          timeout: 60s
+
+  # Step 3: Synthesize final analysis
+  - id: synthesize
+    name: "Synthesize Analysis"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4
+
+    config:
+      prompt: |
+        Synthesize these analyses into a comprehensive summary:
+
+        Sentiment: {{ $.nodes.merge_results.output[0] }}
+        Topics: {{ $.nodes.merge_results.output[1] }}
+        Entities: {{ $.nodes.merge_results.output[2] }}
+        Keywords: {{ $.nodes.merge_results.output[3] }}
+
+edges:
+  # Parallel branches connect to merge
+  - from: sentiment_analysis
+    to: merge_results
+
+  - from: topic_classification
+    to: merge_results
+
+  - from: entity_extraction
+    to: merge_results
+
+  - from: keyword_extraction
+    to: merge_results
+
+  # Merge to synthesis
+  - from: merge_results
+    to: synthesize
