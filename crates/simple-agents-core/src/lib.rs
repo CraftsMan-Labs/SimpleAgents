@@ -5,7 +5,10 @@
 //!
 //! # Example
 //! ```no_run
-//! use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder, RoutingMode};
+//! use simple_agents_core::{
+//!     CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClient,
+//!     SimpleAgentsClientBuilder,
+//! };
 //! use simple_agent_type::prelude::*;
 //! # use async_trait::async_trait;
 //! # use std::sync::Arc;
@@ -50,7 +53,11 @@
 //!     .message(Message::user("Hello!"))
 //!     .build()?;
 //!
-//! let response = client.complete(&request).await?;
+//! let outcome = client.complete(&request, CompletionOptions::default()).await?;
+//! let response = match outcome {
+//!     CompletionOutcome::Response(response) => response,
+//!     _ => return Ok(()),
+//! };
 //! println!("{}", response.content().unwrap_or_default());
 //! # Ok(())
 //! # }
@@ -64,7 +71,9 @@ mod healing;
 mod middleware;
 mod routing;
 
-pub use client::{SimpleAgentsClient, SimpleAgentsClientBuilder};
+pub use client::{
+    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
+};
 pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 pub use middleware::Middleware;
 pub use routing::RoutingMode;

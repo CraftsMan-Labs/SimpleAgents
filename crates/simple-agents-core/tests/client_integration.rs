@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use simple_agents_cache::InMemoryCache;
-use simple_agents_core::{HealingSettings, Middleware, RoutingMode, SimpleAgentsClientBuilder};
+use simple_agents_core::{
+    CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware, RoutingMode,
+    SimpleAgentsClientBuilder,
+};
 use simple_agents_healing::schema::Schema;
 use simple_agent_type::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -143,8 +146,23 @@ async fn complete_uses_cache() {
         .unwrap();
 
     let request = build_request();
-    let first = client.complete(&request).await.unwrap();
-    let second = client.complete(&request).await.unwrap();
+    let first = client
+        .complete(&request, CompletionOptions::default())
+        .await
+        .unwrap();
+    let second = client
+        .complete(&request, CompletionOptions::default())
+        .await
+        .unwrap();
+
+    let first = match first {
+        CompletionOutcome::Response(response) => response,
+        _ => panic!("expected response"),
+    };
+    let second = match second {
+        CompletionOutcome::Response(response) => response,
+        _ => panic!("expected response"),
+    };
 
     assert_eq!(first.content(), Some("ok"));
     assert_eq!(second.content(), Some("ok"));
@@ -160,7 +178,19 @@ async fn complete_json_parses_markdown() {
         .build()
         .unwrap();
 
-    let healed = client.complete_json(&build_request()).await.unwrap();
+    let healed = client
+        .complete(
+            &build_request(),
+            CompletionOptions {
+                mode: CompletionMode::HealedJson,
+            },
+        )
+        .await
+        .unwrap();
+    let healed = match healed {
+        CompletionOutcome::HealedJson(healed) => healed,
+        _ => panic!("expected healed json"),
+    };
     assert_eq!(healed.parsed.value["value"], 42);
 }
 
@@ -175,9 +205,18 @@ async fn complete_with_schema_coerces_types() {
 
     let schema = Schema::object(vec![("count".into(), Schema::Int, true)]);
     let healed = client
-        .complete_with_schema(&build_request(), &schema)
+        .complete(
+            &build_request(),
+            CompletionOptions {
+                mode: CompletionMode::CoercedSchema(schema),
+            },
+        )
         .await
         .unwrap();
+    let healed = match healed {
+        CompletionOutcome::CoercedSchema(healed) => healed,
+        _ => panic!("expected coerced schema"),
+    };
 
     assert_eq!(healed.coerced.value["count"], 5);
 }
@@ -194,7 +233,10 @@ async fn middleware_hooks_fire() {
         .build()
         .unwrap();
 
-    let _ = client.complete(&build_request()).await.unwrap();
+    let _ = client
+        .complete(&build_request(), CompletionOptions::default())
+        .await
+        .unwrap();
 
     assert_eq!(middleware.before.load(Ordering::Relaxed), 1);
     assert_eq!(middleware.after.load(Ordering::Relaxed), 1);

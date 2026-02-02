@@ -25,7 +25,7 @@ def example_basic_completion(client: Client, model: str) -> None:
         {"role": "system", "content": "You are a concise assistant."},
         {"role": "user", "content": "Give me one project idea."},
     ]
-    response = client.complete_messages(model, messages)
+    response = client.complete(model, messages)
     print("basic_completion:", response.content)
 
 
@@ -33,7 +33,7 @@ def example_metadata(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Summarize why tests matter."}
     ]
-    response = client.complete_messages(model, messages, max_tokens=80)
+    response = client.complete(model, messages, max_tokens=80)
     print("metadata:", response.content)
     if hasattr(response, "usage"):
         print("metadata: usage", response.usage)
@@ -46,7 +46,7 @@ def example_streaming(client: Client, model: str) -> None:
         {"role": "user", "content": "Say hello in one sentence."}
     ]
     print("streaming:", end=" ")
-    for chunk in client.stream(model, messages, max_tokens=40):
+    for chunk in client.complete(model, messages, max_tokens=40, stream=True):
         if chunk.content:
             print(chunk.content, end="", flush=True)
     print()
@@ -76,7 +76,12 @@ def example_structured_json(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Give me two project ideas as JSON."}
     ]
-    json_text = client.complete_json_schema(model, messages, schema, "project_ideas")
+    json_text = client.complete(
+        model,
+        messages,
+        schema=schema,
+        schema_name="project_ideas",
+    )
     print("structured_json:", json.dumps(json.loads(json_text), indent=2))
 
 
@@ -94,7 +99,12 @@ def example_structured_pydantic(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Extract name and age: Alice is 28."}
     ]
-    json_text = client.complete_json_schema(model, messages, Person, "person")
+    json_text = client.complete(
+        model,
+        messages,
+        schema=Person,
+        schema_name="person",
+    )
     print("structured_pydantic:", json.loads(json_text))
 
 
@@ -110,7 +120,13 @@ def example_structured_streaming(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Extract name and age: Alice is 28."}
     ]
-    for event in client.stream_structured(model, messages, schema, max_tokens=80):
+    for event in client.complete(
+        model,
+        messages,
+        schema=schema,
+        max_tokens=80,
+        stream=True,
+    ):
         if event.is_partial:
             print("structured_partial:", event.partial_value)
         else:
@@ -124,7 +140,13 @@ def example_healing(client: Client, model: str) -> None:
             "content": 'Return JSON: {"firstName":"Sam","lastName":"Smith","age":30}',
         }
     ]
-    healed = client.complete_json_healed("gpt-4.1", messages, max_tokens=20)
+    healed = client.complete(
+        "gpt-4.1",
+        messages,
+        max_tokens=20,
+        response_format="json",
+        heal=True,
+    )
     print("healed JSON:", healed.content)
     print("raw response:", repr(healed.raw_response))
     print("was_healed:", healed.was_healed)
@@ -153,7 +175,7 @@ def example_tool_calling(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "What's the weather in Tokyo?"}
     ]
-    response = client.complete_with_tools(model, messages, tools)
+    response = client.complete(model, messages, tools=tools)
     print("tool_calls:", response.tool_calls)
 
 
