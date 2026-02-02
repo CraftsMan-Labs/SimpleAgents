@@ -204,7 +204,7 @@ def example_healing(client: Client, model: str) -> None:
     ]
     healed = expect_healed(
         client.complete(
-            "gpt-4.1",
+            model,
             messages,
             max_tokens=20,
             response_format="json",
@@ -265,13 +265,13 @@ def main() -> None:
     api_base, api_key, model = settings
     client = Client("openai", api_base=api_base, api_key=api_key)
 
-    # example_basic_completion(client, model)
+    example_basic_completion(client, model)
     # example_metadata(client, model)
     # example_streaming(client, model)
     # example_structured_json(client, model)
     # example_structured_pydantic(client, model)
     # example_structured_streaming(client, model)
-    example_healing(client, model)
+    # example_healing(client, model)
     # example_tool_calling(client, model)
     # example_client_builder(api_base, api_key, model)
 

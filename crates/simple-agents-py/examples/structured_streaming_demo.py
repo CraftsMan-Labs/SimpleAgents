@@ -2,13 +2,20 @@
 
 import sys
 import os
+from typing import Iterator
 
 # Add the target directory to path
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "target", "debug")
 )
 
-from simple_agents_py import Client
+from simple_agents_py import Client, PyStructuredEvent, StructuredStreamIterator
+
+
+def expect_structured_stream(result: object) -> Iterator[PyStructuredEvent]:
+    if isinstance(result, StructuredStreamIterator):
+        return result
+    raise TypeError(f"Expected structured stream, got {type(result).__name__}")
 
 
 def demo_basic_structured_streaming():
@@ -32,9 +39,10 @@ def demo_basic_structured_streaming():
     print("\nStreaming structured output:")
     print(f"Schema: {schema}\n")
 
-    for event in client.complete(
-        "gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True
-    ):
+    stream = expect_structured_stream(
+        client.complete("gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True)
+    )
+    for event in stream:
         if event.is_partial:
             print(f"Partial: {event.partial_value}")
         elif event.is_complete:
@@ -64,9 +72,10 @@ def demo_structured_streaming_with_arrays():
     print("\nStreaming array output:")
     print(f"Schema: {schema}\n")
 
-    for event in client.complete(
-        "gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True
-    ):
+    stream = expect_structured_stream(
+        client.complete("gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True)
+    )
+    for event in stream:
         if event.is_complete:
             print(f"Final result: {event.value}")
             print(f"Confidence: {event.confidence:.2%}")
@@ -107,9 +116,10 @@ def demo_structured_streaming_nested():
     print("\nStreaming nested object output:")
     print(f"Schema: {schema}\n")
 
-    for event in client.complete(
-        "gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True
-    ):
+    stream = expect_structured_stream(
+        client.complete("gpt-4o-mini", messages, schema=schema, max_tokens=50, stream=True)
+    )
+    for event in stream:
         if event.is_complete:
             print(f"Final result: {event.value}")
             print(f"Confidence: {event.confidence:.2%}")
@@ -139,15 +149,18 @@ def demo_structured_streaming_with_params():
     print("\nStreaming with temperature=0.7, top_p=0.9:")
     print(f"Schema: {schema}\n")
 
-    for event in client.complete(
-        "gpt-4o-mini",
-        messages,
-        schema=schema,
-        temperature=0.7,
-        top_p=0.9,
-        max_tokens=50,
-        stream=True,
-    ):
+    stream = expect_structured_stream(
+        client.complete(
+            "gpt-4o-mini",
+            messages,
+            schema=schema,
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=50,
+            stream=True,
+        )
+    )
+    for event in stream:
         if event.is_complete:
             print(f"Final result: {event.value}")
             print(f"Confidence: {event.confidence:.2%}")
@@ -174,9 +187,10 @@ def demo_structured_streaming_event_details():
     print("\nIterating through events:")
 
     event_count = 0
-    for event in client.complete(
-        "gpt-4o-mini", messages, schema=schema, max_tokens=30, stream=True
-    ):
+    stream = expect_structured_stream(
+        client.complete("gpt-4o-mini", messages, schema=schema, max_tokens=30, stream=True)
+    )
+    for event in stream:
         event_count += 1
         print(f"\nEvent {event_count}:")
         print(f"  Is partial: {event.is_partial}")
@@ -203,7 +217,7 @@ def demo_structured_streaming_error_handling():
     # Try with empty messages (should fail)
     print("\nTrying to stream with empty messages:")
     try:
-        list(client.complete("gpt-4o-mini", [], schema=schema, stream=True))
+        list(expect_structured_stream(client.complete("gpt-4o-mini", [], schema=schema, stream=True)))
     except Exception as e:
         print(f"  Caught expected error: {type(e).__name__}: {e}")
 
@@ -211,11 +225,13 @@ def demo_structured_streaming_error_handling():
     print("\nTrying to stream with invalid schema:")
     try:
         list(
-            client.complete(
-                "gpt-4o-mini",
-                [{"role": "user", "content": "Test"}],
-                schema="invalid",
-                stream=True,
+            expect_structured_stream(
+                client.complete(
+                    "gpt-4o-mini",
+                    [{"role": "user", "content": "Test"}],
+                    schema="invalid",  # type: ignore[reportArgumentType]
+                    stream=True,
+                )
             )
         )
     except Exception as e:
