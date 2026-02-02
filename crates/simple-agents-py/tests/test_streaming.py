@@ -8,7 +8,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "target", "debug")
 )
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 
 def _require_env():

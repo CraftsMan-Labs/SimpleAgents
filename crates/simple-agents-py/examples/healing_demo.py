@@ -8,6 +8,7 @@ This script demonstrates the new HealedJsonResult class and the unified complete
 # Import the module (this would be installed via maturin)
 try:
     import simple_agents_py
+    from simple_agents_py import HealedJsonResult
 except ImportError:
     print("Note: simple_agents_py module not installed.")
     print("Run: maturin develop --release")
@@ -33,6 +34,8 @@ messages = [
 
 # Use the new healing metadata API
 result = client.complete("gpt-4o-mini", messages, response_format="json", heal=True)
+if not isinstance(result, HealedJsonResult):
+    raise TypeError(f"Expected HealedJsonResult, got {type(result).__name__}")
 
 print(f"Content: {result.content}")
 print(f"Confidence: {result.confidence}")
