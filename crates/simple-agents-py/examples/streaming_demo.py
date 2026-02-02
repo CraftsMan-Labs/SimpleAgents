@@ -2,13 +2,20 @@
 
 import sys
 import os
+from typing import Iterator
 
 # Add the target directory to path
 sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "target", "debug")
 )
 
-from simple_agents_py import Client
+from simple_agents_py import Client, PyStreamIterator, StreamChunk
+
+
+def expect_stream(result: object) -> Iterator[StreamChunk]:
+    if isinstance(result, PyStreamIterator):
+        return result
+    raise TypeError(f"Expected streaming iterator, got {type(result).__name__}")
 
 
 def demo_basic_streaming():
@@ -22,7 +29,8 @@ def demo_basic_streaming():
 
     print("\nStreaming response:")
     full_content = []
-    for chunk in client.complete("gpt-4o-mini", messages, stream=True):
+    stream = expect_stream(client.complete("gpt-4o-mini", messages, stream=True))
+    for chunk in stream:
         print(chunk.content, end="", flush=True)
         full_content.append(chunk.content)
         if chunk.finish_reason:
@@ -46,13 +54,16 @@ def demo_streaming_with_params():
     ]
 
     print("\nStreaming with temperature=0.9:")
-    for chunk in client.complete(
-        "gpt-4o-mini",
-        messages,
-        temperature=0.9,
-        max_tokens=50,
-        stream=True,
-    ):
+    stream = expect_stream(
+        client.complete(
+            "gpt-4o-mini",
+            messages,
+            temperature=0.9,
+            max_tokens=50,
+            stream=True,
+        )
+    )
+    for chunk in stream:
         print(chunk.content, end="", flush=True)
 
     print("\n")
@@ -69,9 +80,10 @@ def demo_streaming_chunks():
 
     print("\nIterating through chunks:")
     chunk_count = 0
-    for i, chunk in enumerate(
+    stream = expect_stream(
         client.complete("gpt-4o-mini", messages, max_tokens=10, stream=True)
-    ):
+    )
+    for i, chunk in enumerate(stream):
         chunk_count += 1
         print(f"\nChunk {i}:")
         print(f"  Content: {repr(chunk.content[:50])}")  # First 50 chars
@@ -95,7 +107,7 @@ def demo_streaming_error_handling():
     # Try with empty messages (should fail)
     print("\nTrying to stream with empty messages:")
     try:
-        list(client.complete("gpt-4o-mini", [], stream=True))
+        list(expect_stream(client.complete("gpt-4o-mini", [], stream=True)))
     except Exception as e:
         print(f"  Caught expected error: {type(e).__name__}: {e}")
 
