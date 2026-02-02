@@ -14,8 +14,8 @@ use simple_agent_type::prelude::{
     ApiKey, CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
 };
 use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
-use simple_agent_type::response::Usage;
-use simple_agent_type::tool::{ToolChoice, ToolDefinition};
+use simple_agent_type::response::{CompletionResponse, Usage};
+use simple_agent_type::tool::{ToolCall, ToolChoice, ToolDefinition};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
     SimpleAgentsClient, SimpleAgentsClientBuilder,
@@ -35,6 +35,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 type Runtime = tokio::runtime::Runtime;
+type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
+type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
+
+struct ResponsePlan {
+    response_format: Option<ResponseFormat>,
+    schema_value: Option<Value>,
+    expects_json: bool,
+}
 
 /// Result from parsing JSON-ish text with healing metadata.
 #[pyclass]
@@ -143,6 +151,7 @@ impl SchemaBuilder {
     /// * `stream` - Optional stream annotation: "normal", "not_null", "done"
     /// * `items` - For arrays, the item type (string or Schema)
     #[pyo3(signature = (name, field_type, required=true, aliases=None, default=None, description=None, stream=None, items=None))]
+    #[allow(clippy::too_many_arguments)]
     fn field(
         &mut self,
         py: Python<'_>,
@@ -558,6 +567,7 @@ pub struct HealedJsonResult {
 impl HealedJsonResult {
     #[new]
     #[pyo3(signature = (content, confidence, was_healed, flags, raw_response=None, provider=None, model=None, finish_reason=None, created=None, latency_ms=0, usage=None))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         content: String,
@@ -709,7 +719,7 @@ impl ResponseWithMetadata {
 /// Bridges Rust's StructuredStream to Python's iterator protocol.
 #[pyclass]
 pub struct StructuredStreamIterator {
-    stream: Option<Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>>,
+    stream: Option<StructuredStreamBox>,
 }
 
 #[pymethods]
@@ -1524,37 +1534,7 @@ impl ClientBuilder {
     }
 }
 
-fn build_request(
-    model: &str,
-    prompt: &str,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-) -> Result<CompletionRequest> {
-    if model.is_empty() {
-        return Err(SimpleAgentsError::Config(
-            "model cannot be empty".to_string(),
-        ));
-    }
-    if prompt.is_empty() {
-        return Err(SimpleAgentsError::Config(
-            "prompt cannot be empty".to_string(),
-        ));
-    }
-
-    let mut builder = CompletionRequest::builder()
-        .model(model)
-        .message(Message::user(prompt));
-
-    if let Some(max_tokens) = max_tokens {
-        builder = builder.max_tokens(max_tokens);
-    }
-    if let Some(temperature) = temperature {
-        builder = builder.temperature(temperature);
-    }
-
-    builder.build()
-}
-
+#[allow(clippy::too_many_arguments)]
 fn build_request_with_messages(
     model: &str,
     messages: Vec<Message>,
@@ -1607,6 +1587,141 @@ fn build_request_with_messages(
     builder.build()
 }
 
+fn resolve_response_plan(
+    schema: Option<&Bound<'_, PyAny>>,
+    schema_name: Option<String>,
+    strict: bool,
+    response_format: Option<String>,
+) -> PyResult<ResponsePlan> {
+    if let Some(schema_obj) = schema {
+        let schema_json = schema_to_json_value(schema_obj)?;
+        let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
+        return Ok(ResponsePlan {
+            response_format: Some(ResponseFormat::JsonSchema {
+                json_schema: JsonSchemaFormat {
+                    name: schema_name,
+                    schema: schema_json.clone(),
+                    strict: Some(strict),
+                },
+            }),
+            schema_value: Some(schema_json),
+            expects_json: true,
+        });
+    }
+
+    if let Some(format) = response_format {
+        match format.to_lowercase().as_str() {
+            "json" | "json_object" => {
+                return Ok(ResponsePlan {
+                    response_format: Some(ResponseFormat::JsonObject),
+                    schema_value: None,
+                    expects_json: true,
+                })
+            }
+            "text" => {
+                return Ok(ResponsePlan {
+                    response_format: None,
+                    schema_value: None,
+                    expects_json: false,
+                })
+            }
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "response_format must be 'json', 'json_object', or 'text'".to_string(),
+                ))
+            }
+        }
+    }
+
+    Ok(ResponsePlan {
+        response_format: None,
+        schema_value: None,
+        expects_json: false,
+    })
+}
+
+fn expect_stream(outcome: CompletionOutcome) -> PyResult<CompletionStream> {
+    match outcome {
+        CompletionOutcome::Stream(stream) => Ok(stream),
+        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
+            "expected streaming response, got completion response".to_string(),
+        )),
+        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
+            "expected streaming response, got healed json response".to_string(),
+        )),
+        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
+            "expected streaming response, got schema response".to_string(),
+        )),
+    }
+}
+
+fn expect_healed_json(outcome: CompletionOutcome) -> PyResult<simple_agents_core::HealedJsonResponse> {
+    match outcome {
+        CompletionOutcome::HealedJson(healed) => Ok(healed),
+        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
+            "expected healed json response, got completion response".to_string(),
+        )),
+        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
+            "expected healed json response, got streaming response".to_string(),
+        )),
+        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
+            "expected healed json response, got schema response".to_string(),
+        )),
+    }
+}
+
+fn expect_response(outcome: CompletionOutcome) -> PyResult<CompletionResponse> {
+    match outcome {
+        CompletionOutcome::Response(response) => Ok(response),
+        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
+            "expected completion response, got streaming response".to_string(),
+        )),
+        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
+            "expected completion response, got healed json response".to_string(),
+        )),
+        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
+            "expected completion response, got schema response".to_string(),
+        )),
+    }
+}
+
+fn healed_json_to_py(
+    py: Python<'_>,
+    healed: simple_agents_core::HealedJsonResponse,
+    latency_ms: u64,
+) -> PyResult<PyObject> {
+    let content = serde_json::to_string(&healed.parsed.value).map_err(|e| {
+        PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e))
+    })?;
+    let raw_response = healed.response.content().unwrap_or_default().to_string();
+    let confidence = healed.parsed.confidence;
+    let was_healed = !healed.parsed.flags.is_empty();
+    let flags = healed.parsed.flags.iter().map(|f| f.description()).collect();
+    let usage = usage_to_pydict(py, &healed.response.usage)?;
+    let finish_reason = healed
+        .response
+        .choices
+        .first()
+        .map(|c| format!("{:?}", c.finish_reason))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let result = HealedJsonResult {
+        content,
+        raw_response,
+        confidence,
+        was_healed,
+        provider: healed.response.provider.clone(),
+        model: healed.response.model.clone(),
+        finish_reason,
+        created: healed.response.created,
+        latency_ms,
+        usage,
+        flags,
+    };
+
+    Ok(Py::new(py, result)?.into_py(py))
+}
+
 fn response_with_metadata_from_response(
     py: Python<'_>,
     response: CompletionResponse,
@@ -1626,7 +1741,10 @@ fn response_with_metadata_from_response(
                 true,
                 Some(meta.confidence),
                 Some(meta.original_error.clone()),
-                meta.flags.iter().map(|f| f.description()).collect(),
+                meta.flags
+                    .iter()
+                    .map(|f: &simple_agent_type::coercion::CoercionFlag| f.description())
+                    .collect::<Vec<String>>(),
             )
         } else {
             (false, None, None, Vec::new())
@@ -1766,7 +1884,7 @@ fn py_err(error: SimpleAgentsError) -> PyErr {
 }
 
 fn parse_schema_from_py(
-    py: Python<'_>,
+    _py: Python<'_>,
     field_type: &Bound<'_, PyAny>,
     items: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Schema> {
@@ -1786,7 +1904,7 @@ fn parse_schema_from_py(
         "any" => Schema::Any,
         "array" => {
             let item_schema = if let Some(items_obj) = items {
-                parse_schema_from_py(py, items_obj, None)?
+                parse_schema_from_py(_py, items_obj, None)?
             } else {
                 Schema::Any
             };
@@ -1906,24 +2024,22 @@ fn coerce_to_schema(
         match schema_value {
             serde_json::Value::Object(map) => {
                 let mut fields = Vec::new();
-                if let Some(props) = map.get("properties") {
-                    if let serde_json::Value::Object(props_obj) = props {
-                        let required_fields = map.get("required").and_then(|r| {
-                            if let serde_json::Value::Array(arr) = r {
-                                Some(arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                            } else {
-                                None
-                            }
-                        });
-
-                        for (key, val) in props_obj {
-                            let is_required = required_fields
-                                .as_ref()
-                                .map(|req| req.contains(&key.as_str()))
-                                .unwrap_or(false);
-                            let schema = Schema::from_json_schema_value(val).map_err(py_err)?;
-                            fields.push((key.clone(), schema, is_required));
+                if let Some(serde_json::Value::Object(props_obj)) = map.get("properties") {
+                    let required_fields = map.get("required").and_then(|r| {
+                        if let serde_json::Value::Array(arr) = r {
+                            Some(arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
+                        } else {
+                            None
                         }
+                    });
+
+                    for (key, val) in props_obj {
+                        let is_required = required_fields
+                            .as_ref()
+                            .map(|req| req.contains(&key.as_str()))
+                            .unwrap_or(false);
+                        let schema = Schema::from_json_schema_value(val).map_err(py_err)?;
+                        fields.push((key.clone(), schema, is_required));
                     }
                 }
                 Schema::object(fields)
@@ -1987,68 +2103,63 @@ impl SchemaExt for Schema {
                 _ => Ok(Schema::Any),
             },
             serde_json::Value::Object(map) => {
-                if let Some(type_val) = map.get("type") {
-                    if let serde_json::Value::String(type_name) = type_val {
-                        match type_name.as_str() {
-                            "object" => {
-                                let mut fields = Vec::new();
-                                if let Some(props) = map.get("properties") {
-                                    if let serde_json::Value::Object(props_obj) = props {
-                                        let required_fields = map.get("required").and_then(|r| {
-                                            if let serde_json::Value::Array(arr) = r {
-                                                Some(
-                                                    arr.iter()
-                                                        .filter_map(|v| v.as_str())
-                                                        .collect::<Vec<_>>(),
-                                                )
-                                            } else {
-                                                None
-                                            }
-                                        });
-
-                                        for (key, val) in props_obj {
-                                            let is_required = required_fields
-                                                .as_ref()
-                                                .map(|req| req.contains(&key.as_str()))
-                                                .unwrap_or(false);
-                                            let schema = Schema::from_json_schema_value(val)?;
-                                            fields.push(simple_agents_healing::schema::Field {
-                                                name: key.clone(),
-                                                schema,
-                                                required: is_required,
-                                                aliases: Vec::new(),
-                                                default: None,
-                                                description: None,
-                                                stream_annotation: simple_agents_healing::schema::StreamAnnotation::Normal,
-                                            });
-                                        }
+                if let Some(serde_json::Value::String(type_name)) = map.get("type") {
+                    match type_name.as_str() {
+                        "object" => {
+                            let mut fields = Vec::new();
+                            if let Some(serde_json::Value::Object(props_obj)) =
+                                map.get("properties")
+                            {
+                                let required_fields = map.get("required").and_then(|r| {
+                                    if let serde_json::Value::Array(arr) = r {
+                                        Some(
+                                            arr.iter()
+                                                .filter_map(|v| v.as_str())
+                                                .collect::<Vec<_>>(),
+                                        )
+                                    } else {
+                                        None
                                     }
+                                });
+
+                                for (key, val) in props_obj {
+                                    let is_required = required_fields
+                                        .as_ref()
+                                        .map(|req| req.contains(&key.as_str()))
+                                        .unwrap_or(false);
+                                    let schema = Schema::from_json_schema_value(val)?;
+                                    fields.push(simple_agents_healing::schema::Field {
+                                        name: key.clone(),
+                                        schema,
+                                        required: is_required,
+                                        aliases: Vec::new(),
+                                        default: None,
+                                        description: None,
+                                        stream_annotation:
+                                            simple_agents_healing::schema::StreamAnnotation::Normal,
+                                    });
                                 }
-                                Ok(Schema::Object(
-                                    simple_agents_healing::schema::ObjectSchema {
-                                        fields,
-                                        allow_additional_fields: true,
-                                    },
-                                ))
                             }
-                            "array" => {
-                                if let Some(items) = map.get("items") {
-                                    Ok(Schema::Array(Box::new(Schema::from_json_schema_value(
-                                        items,
-                                    )?)))
-                                } else {
-                                    Ok(Schema::Array(Box::new(Schema::Any)))
-                                }
-                            }
-                            "string" => Ok(Schema::String),
-                            "number" => Ok(Schema::Float),
-                            "integer" => Ok(Schema::Int),
-                            "boolean" => Ok(Schema::Bool),
-                            "null" => Ok(Schema::Null),
-                            _ => Ok(Schema::Any),
+                            Ok(Schema::Object(simple_agents_healing::schema::ObjectSchema {
+                                fields,
+                                allow_additional_fields: true,
+                            }))
                         }
-                    } else {
-                        Ok(Schema::Any)
+                        "array" => {
+                            if let Some(items) = map.get("items") {
+                                Ok(Schema::Array(Box::new(Schema::from_json_schema_value(
+                                    items,
+                                )?)))
+                            } else {
+                                Ok(Schema::Array(Box::new(Schema::Any)))
+                            }
+                        }
+                        "string" => Ok(Schema::String),
+                        "number" => Ok(Schema::Float),
+                        "integer" => Ok(Schema::Int),
+                        "boolean" => Ok(Schema::Bool),
+                        "null" => Ok(Schema::Null),
+                        _ => Ok(Schema::Any),
                     }
                 } else {
                     Ok(Schema::Any)
@@ -2080,6 +2191,7 @@ impl Client {
     }
 
     #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, schema=None, schema_name=None, strict=true, stream=false, heal=false))]
+    #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
         py: Python<'_>,
@@ -2115,36 +2227,8 @@ impl Client {
             None => None,
         };
 
-        let mut schema_value: Option<Value> = None;
-        let mut response_format_value = None;
-        let mut expects_json = false;
-
-        if let Some(schema_obj) = schema {
-            let schema_json = schema_to_json_value(schema_obj)?;
-            let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
-            response_format_value = Some(ResponseFormat::JsonSchema {
-                json_schema: JsonSchemaFormat {
-                    name: schema_name,
-                    schema: schema_json.clone(),
-                    strict: Some(strict),
-                },
-            });
-            expects_json = true;
-            schema_value = Some(schema_json);
-        } else if let Some(format) = response_format {
-            match format.to_lowercase().as_str() {
-                "json" | "json_object" => {
-                    response_format_value = Some(ResponseFormat::JsonObject);
-                    expects_json = true;
-                }
-                "text" => {}
-                _ => {
-                    return Err(PyRuntimeError::new_err(
-                        "response_format must be 'json', 'json_object', or 'text'".to_string(),
-                    ))
-                }
-            }
-        }
+        let response_plan =
+            resolve_response_plan(schema, schema_name, strict, response_format)?;
 
         let request = build_request_with_messages(
             model,
@@ -2152,7 +2236,7 @@ impl Client {
             max_tokens,
             temperature,
             top_p,
-            response_format_value.clone(),
+            response_plan.response_format.clone(),
             tools,
             tool_choice,
             if stream { Some(true) } else { None },
@@ -2173,26 +2257,9 @@ impl Client {
             let outcome = runtime
                 .block_on(self.client.complete(&request, CompletionOptions::default()))
                 .map_err(py_err)?;
-            let stream = match outcome {
-                CompletionOutcome::Stream(stream) => stream,
-                CompletionOutcome::Response(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected streaming response, got completion response".to_string(),
-                    ))
-                }
-                CompletionOutcome::HealedJson(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected streaming response, got healed json response".to_string(),
-                    ))
-                }
-                CompletionOutcome::CoercedSchema(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected streaming response, got schema response".to_string(),
-                    ))
-                }
-            };
+            let stream = expect_stream(outcome)?;
 
-            if let Some(schema_value) = schema_value {
+            if let Some(schema_value) = response_plan.schema_value {
                 if !schema_value.is_object() {
                     return Err(PyRuntimeError::new_err(
                         "schema must be a dict/object".to_string(),
@@ -2220,7 +2287,7 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let start = Instant::now();
 
-        let outcome = if heal && expects_json {
+        let outcome = if heal && response_plan.expects_json {
             runtime
                 .block_on(self.client.complete(
                     &request,
@@ -2237,78 +2304,14 @@ impl Client {
 
         let latency_ms = start.elapsed().as_millis() as u64;
 
-        if heal && expects_json {
-            let healed = match outcome {
-                CompletionOutcome::HealedJson(healed) => healed,
-                CompletionOutcome::Response(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected healed json response, got completion response".to_string(),
-                    ))
-                }
-                CompletionOutcome::Stream(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected healed json response, got streaming response".to_string(),
-                    ))
-                }
-                CompletionOutcome::CoercedSchema(_) => {
-                    return Err(PyRuntimeError::new_err(
-                        "expected healed json response, got schema response".to_string(),
-                    ))
-                }
-            };
-
-            let content = serde_json::to_string(&healed.parsed.value).map_err(|e| {
-                PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e))
-            })?;
-            let raw_response = healed.response.content().unwrap_or_default().to_string();
-            let confidence = healed.parsed.confidence;
-            let was_healed = !healed.parsed.flags.is_empty();
-            let flags = healed.parsed.flags.iter().map(|f| f.description()).collect();
-            let usage = usage_to_pydict(py, &healed.response.usage)?;
-            let finish_reason = healed
-                .response
-                .choices
-                .first()
-                .map(|c| format!("{:?}", c.finish_reason))
-                .unwrap_or_else(|| "unknown".to_string());
-
-            let result = HealedJsonResult {
-                content,
-                raw_response,
-                confidence,
-                was_healed,
-                provider: healed.response.provider.clone(),
-                model: healed.response.model.clone(),
-                finish_reason,
-                created: healed.response.created,
-                latency_ms,
-                usage,
-                flags,
-            };
-
-            return Ok(Py::new(py, result)?.into_py(py));
+        if heal && response_plan.expects_json {
+            let healed = expect_healed_json(outcome)?;
+            return healed_json_to_py(py, healed, latency_ms);
         }
 
-        let response = match outcome {
-            CompletionOutcome::Response(response) => response,
-            CompletionOutcome::Stream(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected completion response, got streaming response".to_string(),
-                ))
-            }
-            CompletionOutcome::HealedJson(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected completion response, got healed json response".to_string(),
-                ))
-            }
-            CompletionOutcome::CoercedSchema(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected completion response, got schema response".to_string(),
-                ))
-            }
-        };
+        let response = expect_response(outcome)?;
 
-        if expects_json {
+        if response_plan.expects_json {
             let content = response.content().unwrap_or_default().to_string();
             return Ok(content.into_py(py));
         }
