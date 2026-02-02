@@ -73,5 +73,5 @@ def test_local_proxy_conversation():
         {"role": "assistant", "content": "The capital is Paris."},
         {"role": "user", "content": "And Germany?"},
     ]
-    response = client.complete_messages(model, messages, max_tokens=30, temperature=0.2)
+    response = client.complete(model, messages, max_tokens=30, temperature=0.2)
     assert response.content

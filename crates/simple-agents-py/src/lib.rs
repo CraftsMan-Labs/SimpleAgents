@@ -15,9 +15,10 @@ use simple_agent_type::prelude::{
 };
 use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
 use simple_agent_type::response::Usage;
-use simple_agent_type::tool::{ToolCall, ToolChoice, ToolDefinition};
+use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 use simple_agents_core::{
-    HealedJsonResponse, HealingSettings, Middleware, SimpleAgentsClient, SimpleAgentsClientBuilder,
+    CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
+    SimpleAgentsClient, SimpleAgentsClientBuilder,
 };
 use simple_agents_healing::coercion::CoercionConfig;
 use simple_agents_healing::parser::ParserConfig;
@@ -370,7 +371,7 @@ impl StreamingParser {
 /// from simple_agents_py import Client
 ///
 /// client = Client("openai")
-/// for chunk in client.stream("gpt-4o-mini", "Hello!"):
+/// for chunk in client.complete("gpt-4o-mini", "Hello!", stream=True):
 ///     print(chunk.content, end="", flush=True)
 /// ```
 #[pyclass]
@@ -447,9 +448,27 @@ impl PyStreamIterator {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
 
         let client_ref = &client.client;
-        let stream_result = runtime.block_on(client_ref.stream(&request));
-
-        let stream = stream_result.map_err(py_err)?;
+        let outcome = runtime
+            .block_on(client_ref.complete(&request, CompletionOptions::default()))
+            .map_err(py_err)?;
+        let stream = match outcome {
+            CompletionOutcome::Stream(stream) => stream,
+            CompletionOutcome::Response(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected streaming response, got completion response",
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected streaming response, got healed json response",
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected streaming response, got schema response",
+                ))
+            }
+        };
 
         Ok(Self {
             stream: Some(Box::pin(stream)),
@@ -1588,6 +1607,55 @@ fn build_request_with_messages(
     builder.build()
 }
 
+fn response_with_metadata_from_response(
+    py: Python<'_>,
+    response: CompletionResponse,
+    latency_ms: u64,
+) -> PyResult<ResponseWithMetadata> {
+    let usage = usage_to_pydict(py, &response.usage)?;
+    let content = response.content().unwrap_or_default().to_string();
+    let finish_reason = response
+        .choices
+        .first()
+        .map(|c| format!("{:?}", c.finish_reason))
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let (was_healed, healing_confidence, healing_error, flags) =
+        if let Some(meta) = &response.healing_metadata {
+            (
+                true,
+                Some(meta.confidence),
+                Some(meta.original_error.clone()),
+                meta.flags.iter().map(|f| f.description()).collect(),
+            )
+        } else {
+            (false, None, None, Vec::new())
+        };
+
+    let tool_calls = response
+        .choices
+        .first()
+        .and_then(|c| c.message.tool_calls.clone())
+        .unwrap_or_default();
+    let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
+        .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
+
+    Ok(ResponseWithMetadata {
+        content,
+        provider: response.provider.clone(),
+        model: response.model.clone(),
+        finish_reason,
+        created: response.created,
+        latency_ms,
+        was_healed,
+        healing_confidence,
+        healing_error,
+        flags,
+        usage,
+        tool_calls: tool_calls_obj.into(),
+    })
+}
+
 fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
     let list: &Bound<'_, PyList> = messages
         .downcast()
@@ -2011,510 +2079,245 @@ impl Client {
         })
     }
 
-    #[pyo3(signature = (model, prompt, max_tokens=None, temperature=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, schema=None, schema_name=None, strict=true, stream=false, heal=false))]
     fn complete(
         &self,
         py: Python<'_>,
         model: &str,
-        prompt: &str,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-    ) -> PyResult<ResponseWithMetadata> {
-        let request = build_request(model, prompt, max_tokens, temperature).map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let start = Instant::now();
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-        let usage = usage_to_pydict(py, &response.usage)?;
-        let content = response.content().unwrap_or_default().to_string();
-        let finish_reason = response
-            .choices
-            .first()
-            .map(|c| format!("{:?}", c.finish_reason))
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let (was_healed, healing_confidence, healing_error, flags) =
-            if let Some(meta) = &response.healing_metadata {
-                (
-                    true,
-                    Some(meta.confidence),
-                    Some(meta.original_error.clone()),
-                    meta.flags.iter().map(|f| f.description()).collect(),
-                )
-            } else {
-                (false, None, None, Vec::new())
-            };
-
-        let tool_calls_obj = pythonize::pythonize(py, &Vec::<ToolCall>::new())
-            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-        Ok(ResponseWithMetadata {
-            content,
-            provider: response.provider.clone(),
-            model: response.model.clone(),
-            finish_reason,
-            created: response.created,
-            latency_ms,
-            was_healed,
-            healing_confidence,
-            healing_error,
-            flags,
-            usage,
-            tool_calls: tool_calls_obj.into(),
-        })
-    }
-
-    #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn complete_messages(
-        &self,
-        py: Python<'_>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
+        input: &Bound<'_, PyAny>,
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         top_p: Option<f32>,
-    ) -> PyResult<ResponseWithMetadata> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            None,
-            None,
-            None,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let start = Instant::now();
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-        let usage = usage_to_pydict(py, &response.usage)?;
-        let content = response.content().unwrap_or_default().to_string();
-        let finish_reason = response
-            .choices
-            .first()
-            .map(|c| format!("{:?}", c.finish_reason))
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let (was_healed, healing_confidence, healing_error, flags) =
-            if let Some(meta) = &response.healing_metadata {
-                (
-                    true,
-                    Some(meta.confidence),
-                    Some(meta.original_error.clone()),
-                    meta.flags.iter().map(|f| f.description()).collect(),
-                )
-            } else {
-                (false, None, None, Vec::new())
-            };
-
-        let tool_calls = response
-            .choices
-            .first()
-            .and_then(|c| c.message.tool_calls.clone())
-            .unwrap_or_default();
-        let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
-            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-        Ok(ResponseWithMetadata {
-            content,
-            provider: response.provider.clone(),
-            model: response.model.clone(),
-            finish_reason,
-            created: response.created,
-            latency_ms,
-            was_healed,
-            healing_confidence,
-            healing_error,
-            flags,
-            usage,
-            tool_calls: tool_calls_obj.into(),
-        })
-    }
-
-    #[pyo3(signature = (model, messages, tools, tool_choice=None, max_tokens=None, temperature=None, top_p=None))]
-    fn complete_with_tools(
-        &self,
-        py: Python<'_>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        tools: &Bound<'_, PyAny>,
+        tools: Option<&Bound<'_, PyAny>>,
         tool_choice: Option<&Bound<'_, PyAny>>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<ResponseWithMetadata> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let tools = parse_tools(tools).map_err(py_err)?;
+        response_format: Option<String>,
+        schema: Option<&Bound<'_, PyAny>>,
+        schema_name: Option<String>,
+        strict: bool,
+        stream: bool,
+        heal: bool,
+    ) -> PyResult<PyObject> {
+        let messages = if let Ok(prompt) = input.extract::<&str>() {
+            if prompt.is_empty() {
+                return Err(PyRuntimeError::new_err("prompt cannot be empty".to_string()));
+            }
+            vec![Message::user(prompt)]
+        } else {
+            parse_messages(input).map_err(py_err)?
+        };
+
+        let tools = match tools {
+            Some(tools) => Some(parse_tools(tools).map_err(py_err)?),
+            None => None,
+        };
         let tool_choice = match tool_choice {
             Some(choice) => Some(parse_tool_choice(choice).map_err(py_err)?),
             None => None,
         };
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            None,
-            Some(tools),
-            tool_choice,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let start = Instant::now();
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-        let usage = usage_to_pydict(py, &response.usage)?;
-        let content = response.content().unwrap_or_default().to_string();
-        let finish_reason = response
-            .choices
-            .first()
-            .map(|c| format!("{:?}", c.finish_reason))
-            .unwrap_or_else(|| "unknown".to_string());
 
-        let (was_healed, healing_confidence, healing_error, flags) =
-            if let Some(meta) = &response.healing_metadata {
-                (
-                    true,
-                    Some(meta.confidence),
-                    Some(meta.original_error.clone()),
-                    meta.flags.iter().map(|f| f.description()).collect(),
-                )
-            } else {
-                (false, None, None, Vec::new())
-            };
+        let mut schema_value: Option<Value> = None;
+        let mut response_format_value = None;
+        let mut expects_json = false;
 
-        let tool_calls = response
-            .choices
-            .first()
-            .and_then(|c| c.message.tool_calls.clone())
-            .unwrap_or_default();
-        let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
-            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-        Ok(ResponseWithMetadata {
-            content,
-            provider: response.provider.clone(),
-            model: response.model.clone(),
-            finish_reason,
-            created: response.created,
-            latency_ms,
-            was_healed,
-            healing_confidence,
-            healing_error,
-            flags,
-            usage,
-            tool_calls: tool_calls_obj.into(),
-        })
-    }
-
-
-    #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn complete_json(
-        &self,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<String> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            Some(ResponseFormat::JsonObject),
-            None,
-            None,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-
-        Ok(response.content().unwrap_or_default().to_string())
-    }
-
-    #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn complete_json_healed(
-        &self,
-        py: Python<'_>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<HealedJsonResult> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            Some(ResponseFormat::JsonObject),
-            None,
-            None,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-
-        let start = Instant::now();
-        let healed_response: HealedJsonResponse = runtime
-            .block_on(self.client.complete_json(&request))
-            .map_err(py_err)?;
-        let latency_ms = start.elapsed().as_millis() as u64;
-
-        // Use the healed/parsed JSON value, not the raw response content
-        let content = serde_json::to_string(&healed_response.parsed.value)
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e)))?;
-        let raw_response = healed_response
-            .response
-            .content()
-            .unwrap_or_default()
-            .to_string();
-        let confidence = healed_response.parsed.confidence;
-        let was_healed = !healed_response.parsed.flags.is_empty();
-        let flags = healed_response
-            .parsed
-            .flags
-            .iter()
-            .map(|f| f.description())
-            .collect();
-        let usage = usage_to_pydict(py, &healed_response.response.usage)?;
-        let finish_reason = healed_response
-            .response
-            .choices
-            .first()
-            .map(|c| format!("{:?}", c.finish_reason))
-            .unwrap_or_else(|| "unknown".to_string());
-
-        Ok(HealedJsonResult {
-            content,
-            raw_response,
-            confidence,
-            was_healed,
-            provider: healed_response.response.provider.clone(),
-            model: healed_response.response.model.clone(),
-            finish_reason,
-            created: healed_response.response.created,
-            latency_ms,
-            usage,
-            flags,
-        })
-    }
-
-    #[pyo3(signature = (model, messages, schema, schema_name, max_tokens=None, temperature=None, top_p=None, strict=true))]
-    fn complete_json_schema(
-        &self,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        schema: &Bound<'_, PyAny>,
-        schema_name: &str,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-        strict: bool,
-    ) -> PyResult<String> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let schema_value = schema_to_json_value(schema)?;
-        let response_format = ResponseFormat::JsonSchema {
-            json_schema: JsonSchemaFormat {
-                name: schema_name.to_string(),
-                schema: schema_value,
-                strict: Some(strict),
-            },
-        };
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            Some(response_format),
-            None,
-            None,
-            None,
-        )
-        .map_err(py_err)?;
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let response = runtime
-            .block_on(self.client.complete(&request))
-            .map_err(py_err)?;
-
-        Ok(response.content().unwrap_or_default().to_string())
-    }
-
-    /// Stream a completion response.
-    ///
-    /// Returns an iterator that yields StreamChunk objects as they arrive.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Model identifier (e.g., "gpt-4o-mini")
-    /// * `messages` - List of message dicts with "role" and "content"
-    /// * `max_tokens` - Optional maximum tokens to generate
-    /// * `temperature` - Optional sampling temperature (0.0-2.0)
-    /// * `top_p` - Optional top-p sampling parameter
-    ///
-    /// # Returns
-    ///
-    /// PyStreamIterator that yields StreamChunk objects.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// client = Client("openai")
-    /// messages = [{"role": "user", "content": "Hello!"}]
-    /// for chunk in client.stream("gpt-4o-mini", messages):
-    ///     print(chunk.content, end="", flush=True)
-    /// ```
-    #[pyo3(signature = (model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn stream<'py>(
-        &self,
-        py: Python<'py>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        // Create the PyStreamIterator
-        let iterator =
-            PyStreamIterator::new(self, model, messages, max_tokens, temperature, top_p)?;
-
-        // Return it as a Python object (it implements __iter__/__next__)
-        Ok(Bound::new(py, iterator)?.into_any())
-    }
-
-    /// Stream a structured completion response.
-    ///
-    /// Returns an iterator that yields StructuredEvent objects with
-    /// progressive parsing and final complete value.
-    ///
-    /// # Arguments
-    ///
-    /// * `model` - Model identifier (e.g., "gpt-4o-mini")
-    /// * `messages` - List of message dicts with "role" and "content"
-    /// * `schema` - JSON schema dict for validation
-    /// * `max_tokens` - Optional maximum tokens to generate
-    /// * `temperature` - Optional sampling temperature (0.0-2.0)
-    /// * `top_p` - Optional top-p sampling parameter
-    ///
-    /// # Returns
-    ///
-    /// StructuredStreamIterator that yields StructuredEvent objects.
-    ///
-    /// # Example
-    ///
-    /// ```python
-    /// client = Client("openai")
-    /// schema = {
-    ///     "type": "object",
-    ///     "properties": {
-    ///         "name": {"type": "string"},
-    ///         "age": {"type": "number"}
-    ///     }
-    /// }
-    /// messages = [{"role": "user", "content": "Extract info from: John is 30 years old"}]
-    /// for event in client.stream_structured("gpt-4o-mini", messages, schema):
-    ///     if event.is_partial:
-    ///         print(f"Partial: {event.partial_value}")
-    ///     else:
-    ///         print(f"Complete: {event.value}")
-    /// ```
-    #[pyo3(signature = (model, messages, schema, max_tokens=None, temperature=None, top_p=None))]
-    fn stream_structured<'py>(
-        &self,
-        py: Python<'py>,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        schema: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        // Parse schema
-        let schema_value: Value = schema_to_json_value(schema)?;
-
-        // Validate schema is an object
-        if !schema_value.is_object() {
-            return Err(PyRuntimeError::new_err("schema must be a dict/object".to_string()));
+        if let Some(schema_obj) = schema {
+            let schema_json = schema_to_json_value(schema_obj)?;
+            let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
+            response_format_value = Some(ResponseFormat::JsonSchema {
+                json_schema: JsonSchemaFormat {
+                    name: schema_name,
+                    schema: schema_json.clone(),
+                    strict: Some(strict),
+                },
+            });
+            expects_json = true;
+            schema_value = Some(schema_json);
+        } else if let Some(format) = response_format {
+            match format.to_lowercase().as_str() {
+                "json" | "json_object" => {
+                    response_format_value = Some(ResponseFormat::JsonObject);
+                    expects_json = true;
+                }
+                "text" => {}
+                _ => {
+                    return Err(PyRuntimeError::new_err(
+                        "response_format must be 'json', 'json_object', or 'text'".to_string(),
+                    ))
+                }
+            }
         }
 
-        // Parse messages and build request
-        let messages = parse_messages(messages).map_err(py_err)?;
         let request = build_request_with_messages(
             model,
             messages,
             max_tokens,
             temperature,
             top_p,
-            Some(ResponseFormat::JsonObject),
-            None,
-            None,
-            Some(true),
+            response_format_value.clone(),
+            tools,
+            tool_choice,
+            if stream { Some(true) } else { None },
         )
         .map_err(py_err)?;
 
-        // Get runtime and create stream
+        if stream {
+            if heal {
+                return Err(PyRuntimeError::new_err(
+                    "heal is not supported with stream=True".to_string(),
+                ));
+            }
+
+            let runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+            let outcome = runtime
+                .block_on(self.client.complete(&request, CompletionOptions::default()))
+                .map_err(py_err)?;
+            let stream = match outcome {
+                CompletionOutcome::Stream(stream) => stream,
+                CompletionOutcome::Response(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected streaming response, got completion response".to_string(),
+                    ))
+                }
+                CompletionOutcome::HealedJson(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected streaming response, got healed json response".to_string(),
+                    ))
+                }
+                CompletionOutcome::CoercedSchema(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected streaming response, got schema response".to_string(),
+                    ))
+                }
+            };
+
+            if let Some(schema_value) = schema_value {
+                if !schema_value.is_object() {
+                    return Err(PyRuntimeError::new_err(
+                        "schema must be a dict/object".to_string(),
+                    ));
+                }
+
+                let healing = HealingIntegration::new(HealingConfig::lenient());
+                let structured_stream: StructuredStream<_, Value> =
+                    StructuredStream::new(stream, schema_value, Some(healing));
+                let iterator = StructuredStreamIterator {
+                    stream: Some(Box::pin(structured_stream)),
+                };
+                return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
+            }
+
+            let iterator = PyStreamIterator {
+                stream: Some(Box::pin(stream)),
+            };
+            return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
+        }
+
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let start = Instant::now();
 
-        // Get the raw stream from the client
-        let raw_stream = runtime
-            .block_on(self.client.stream(&request))
-            .map_err(py_err)?;
-
-        let healing = HealingIntegration::new(HealingConfig::lenient());
-
-        // Create structured stream
-        let structured_stream: StructuredStream<_, Value> =
-            StructuredStream::new(raw_stream, schema_value, Some(healing));
-
-        // Create Python iterator
-        let iterator = StructuredStreamIterator {
-            stream: Some(Box::pin(structured_stream)),
+        let outcome = if heal && expects_json {
+            runtime
+                .block_on(self.client.complete(
+                    &request,
+                    CompletionOptions {
+                        mode: CompletionMode::HealedJson,
+                    },
+                ))
+                .map_err(py_err)?
+        } else {
+            runtime
+                .block_on(self.client.complete(&request, CompletionOptions::default()))
+                .map_err(py_err)?
         };
 
-        Ok(Bound::new(py, iterator)?.into_any())
+        let latency_ms = start.elapsed().as_millis() as u64;
+
+        if heal && expects_json {
+            let healed = match outcome {
+                CompletionOutcome::HealedJson(healed) => healed,
+                CompletionOutcome::Response(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected healed json response, got completion response".to_string(),
+                    ))
+                }
+                CompletionOutcome::Stream(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected healed json response, got streaming response".to_string(),
+                    ))
+                }
+                CompletionOutcome::CoercedSchema(_) => {
+                    return Err(PyRuntimeError::new_err(
+                        "expected healed json response, got schema response".to_string(),
+                    ))
+                }
+            };
+
+            let content = serde_json::to_string(&healed.parsed.value).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e))
+            })?;
+            let raw_response = healed.response.content().unwrap_or_default().to_string();
+            let confidence = healed.parsed.confidence;
+            let was_healed = !healed.parsed.flags.is_empty();
+            let flags = healed.parsed.flags.iter().map(|f| f.description()).collect();
+            let usage = usage_to_pydict(py, &healed.response.usage)?;
+            let finish_reason = healed
+                .response
+                .choices
+                .first()
+                .map(|c| format!("{:?}", c.finish_reason))
+                .unwrap_or_else(|| "unknown".to_string());
+
+            let result = HealedJsonResult {
+                content,
+                raw_response,
+                confidence,
+                was_healed,
+                provider: healed.response.provider.clone(),
+                model: healed.response.model.clone(),
+                finish_reason,
+                created: healed.response.created,
+                latency_ms,
+                usage,
+                flags,
+            };
+
+            return Ok(Py::new(py, result)?.into_py(py));
+        }
+
+        let response = match outcome {
+            CompletionOutcome::Response(response) => response,
+            CompletionOutcome::Stream(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected completion response, got streaming response".to_string(),
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected completion response, got healed json response".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(PyRuntimeError::new_err(
+                    "expected completion response, got schema response".to_string(),
+                ))
+            }
+        };
+
+        if expects_json {
+            let content = response.content().unwrap_or_default().to_string();
+            return Ok(content.into_py(py));
+        }
+
+        let response_with_metadata =
+            response_with_metadata_from_response(py, response, latency_ms)?;
+        Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
+
 }
 
 #[pymodule]

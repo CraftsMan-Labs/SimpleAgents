@@ -54,7 +54,7 @@ def test_healed_json_result_repr():
     assert "flags=0" in repr_str
 
 
-def test_complete_json_healed_with_mock_provider():
+def test_complete_with_healing_signature():
     import simple_agents_py
 
     class MockProvider:
@@ -64,16 +64,18 @@ def test_complete_json_healed_with_mock_provider():
     client = simple_agents_py.Client("openai", api_key=API_KEY)
 
     # Test that the method exists and has the right signature
-    assert hasattr(client, "complete_json_healed")
+    assert hasattr(client, "complete")
 
     # We can't make actual API calls in tests, but we can verify the method signature
     # by checking that it accepts the expected parameters
     import inspect
 
-    sig = inspect.signature(client.complete_json_healed)
+    sig = inspect.signature(client.complete)
     params = list(sig.parameters.keys())
     assert "model" in params
-    assert "messages" in params
+    assert "input" in params
     assert "max_tokens" in params
     assert "temperature" in params
     assert "top_p" in params
+    assert "response_format" in params
+    assert "heal" in params
