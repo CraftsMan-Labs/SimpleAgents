@@ -1,6 +1,8 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
-use simple_agents_core::{RoutingMode, SimpleAgentsClient, SimpleAgentsClientBuilder};
+use simple_agents_core::{
+    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClient, SimpleAgentsClientBuilder,
+};
 use simple_agents_providers::{
     anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, Provider,
 };
@@ -689,8 +691,19 @@ async fn execute_completion(
 ) -> Result<simple_agent_type::response::CompletionResponse> {
     let messages = build_messages(prompt, system);
     let request = build_request(model, messages, overrides)?;
-    let response = client.complete(&request).await?;
-    Ok(response)
+    let outcome = client.complete(&request, CompletionOptions::default()).await?;
+    match outcome {
+        CompletionOutcome::Response(response) => Ok(response),
+        CompletionOutcome::Stream(_) => Err(CliError::Config(
+            "streaming response returned from non-streaming call".to_string(),
+        )),
+        CompletionOutcome::HealedJson(_) => Err(CliError::Config(
+            "healed json response returned from non-streaming call".to_string(),
+        )),
+        CompletionOutcome::CoercedSchema(_) => Err(CliError::Config(
+            "schema response returned from non-streaming call".to_string(),
+        )),
+    }
 }
 
 fn build_messages(prompt: &str, system: Option<&str>) -> Vec<Message> {
@@ -757,7 +770,25 @@ async fn run_chat(
 
         messages.push(Message::user(trimmed));
         let request = build_request(model, messages.clone(), overrides)?;
-        let response = client.complete(&request).await?;
+        let outcome = client.complete(&request, CompletionOptions::default()).await?;
+        let response = match outcome {
+            CompletionOutcome::Response(response) => response,
+            CompletionOutcome::Stream(_) => {
+                return Err(CliError::Config(
+                    "streaming response returned from chat loop".to_string(),
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(CliError::Config(
+                    "healed json response returned from chat loop".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(CliError::Config(
+                    "schema response returned from chat loop".to_string(),
+                ))
+            }
+        };
         if let Some(content) = response.content() {
             messages.push(Message::assistant(content));
         }
