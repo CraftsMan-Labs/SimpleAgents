@@ -22,7 +22,7 @@ def demo_basic_streaming():
 
     print("\nStreaming response:")
     full_content = []
-    for chunk in client.stream("gpt-4o-mini", messages):
+    for chunk in client.complete("gpt-4o-mini", messages, stream=True):
         print(chunk.content, end="", flush=True)
         full_content.append(chunk.content)
         if chunk.finish_reason:
@@ -46,7 +46,13 @@ def demo_streaming_with_params():
     ]
 
     print("\nStreaming with temperature=0.9:")
-    for chunk in client.stream("gpt-4o-mini", messages, temperature=0.9, max_tokens=50):
+    for chunk in client.complete(
+        "gpt-4o-mini",
+        messages,
+        temperature=0.9,
+        max_tokens=50,
+        stream=True,
+    ):
         print(chunk.content, end="", flush=True)
 
     print("\n")
@@ -63,7 +69,9 @@ def demo_streaming_chunks():
 
     print("\nIterating through chunks:")
     chunk_count = 0
-    for i, chunk in enumerate(client.stream("gpt-4o-mini", messages, max_tokens=10)):
+    for i, chunk in enumerate(
+        client.complete("gpt-4o-mini", messages, max_tokens=10, stream=True)
+    ):
         chunk_count += 1
         print(f"\nChunk {i}:")
         print(f"  Content: {repr(chunk.content[:50])}")  # First 50 chars
@@ -87,7 +95,7 @@ def demo_streaming_error_handling():
     # Try with empty messages (should fail)
     print("\nTrying to stream with empty messages:")
     try:
-        list(client.stream("gpt-4o-mini", []))
+        list(client.complete("gpt-4o-mini", [], stream=True))
     except Exception as e:
         print(f"  Caught expected error: {type(e).__name__}: {e}")
 

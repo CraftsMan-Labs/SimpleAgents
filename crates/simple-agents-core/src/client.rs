@@ -16,6 +16,42 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+/// Mode for completion post-processing.
+pub enum CompletionMode {
+    /// Return the raw completion response.
+    Standard,
+    /// Parse the response content as JSON using healing.
+    HealedJson,
+    /// Parse and coerce the response into the provided schema.
+    CoercedSchema(Schema),
+}
+
+/// Options that control completion behavior.
+pub struct CompletionOptions {
+    /// Completion post-processing mode.
+    pub mode: CompletionMode,
+}
+
+impl Default for CompletionOptions {
+    fn default() -> Self {
+        Self {
+            mode: CompletionMode::Standard,
+        }
+    }
+}
+
+/// Result of a unified completion call.
+pub enum CompletionOutcome {
+    /// A standard, non-streaming completion response.
+    Response(CompletionResponse),
+    /// A streaming response yielding completion chunks.
+    Stream(Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>),
+    /// A healed JSON response.
+    HealedJson(HealedJsonResponse),
+    /// A schema-coerced response.
+    CoercedSchema(HealedSchemaResponse),
+}
+
 struct ClientState {
     providers: Vec<Arc<dyn Provider>>,
     provider_map: HashMap<String, Arc<dyn Provider>>,
@@ -68,7 +104,33 @@ impl SimpleAgentsClient {
     }
 
     /// Execute a completion request with routing, caching, and middleware.
-    pub async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+    pub async fn complete(
+        &self,
+        request: &CompletionRequest,
+        options: CompletionOptions,
+    ) -> Result<CompletionOutcome> {
+        if request.stream.unwrap_or(false) {
+            let stream = self.stream(request).await?;
+            return Ok(CompletionOutcome::Stream(stream));
+        }
+
+        match options.mode {
+            CompletionMode::Standard => {
+                let response = self.complete_response(request).await?;
+                Ok(CompletionOutcome::Response(response))
+            }
+            CompletionMode::HealedJson => {
+                let healed = self.complete_json_internal(request).await?;
+                Ok(CompletionOutcome::HealedJson(healed))
+            }
+            CompletionMode::CoercedSchema(schema) => {
+                let healed = self.complete_with_schema_internal(request, &schema).await?;
+                Ok(CompletionOutcome::CoercedSchema(healed))
+            }
+        }
+    }
+
+    async fn complete_response(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         request.validate()?;
         self.before_request(request).await?;
 
@@ -117,9 +179,9 @@ impl SimpleAgentsClient {
     }
 
     /// Execute a completion request and parse the response content as JSON.
-    pub async fn complete_json(&self, request: &CompletionRequest) -> Result<HealedJsonResponse> {
+    async fn complete_json_internal(&self, request: &CompletionRequest) -> Result<HealedJsonResponse> {
         self.ensure_healing_enabled()?;
-        let response = self.complete(request).await?;
+        let response = self.complete_response(request).await?;
         let content = response.content().ok_or_else(|| {
             SimpleAgentsError::Healing(simple_agent_type::error::HealingError::ParseFailed {
                 error_message: "response contained no content".to_string(),
@@ -134,13 +196,13 @@ impl SimpleAgentsClient {
     }
 
     /// Execute a completion request and coerce the response into a schema.
-    pub async fn complete_with_schema(
+    async fn complete_with_schema_internal(
         &self,
         request: &CompletionRequest,
         schema: &Schema,
     ) -> Result<HealedSchemaResponse> {
         self.ensure_healing_enabled()?;
-        let healed = self.complete_json(request).await?;
+        let healed = self.complete_json_internal(request).await?;
         let engine = CoercionEngine::with_config(self.healing.coercion_config.clone());
         let coerced = engine
             .coerce(&healed.parsed.value, schema)
@@ -154,7 +216,7 @@ impl SimpleAgentsClient {
     }
 
     /// Execute a streaming completion request.
-    pub async fn stream(
+    async fn stream(
         &self,
         request: &CompletionRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
