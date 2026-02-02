@@ -1,6 +1,6 @@
 """Tests for StreamingParser."""
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 
 def test_streaming_parser_basic():

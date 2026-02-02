@@ -1,6 +1,6 @@
 """Tests for ClientBuilder."""
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 API_KEY = "sk-test-1234567890123456"
 ANTHROPIC_KEY = "sk-ant-test-1234567890123456"

@@ -1,4 +1,4 @@
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 API_KEY = "sk-test-1234567890123456"
 
