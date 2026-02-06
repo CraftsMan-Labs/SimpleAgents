@@ -266,14 +266,14 @@ def main() -> None:
     client = Client("openai", api_base=api_base, api_key=api_key)
 
     example_basic_completion(client, model)
-    # example_metadata(client, model)
-    # example_streaming(client, model)
-    # example_structured_json(client, model)
-    # example_structured_pydantic(client, model)
-    # example_structured_streaming(client, model)
-    # example_healing(client, model)
-    # example_tool_calling(client, model)
-    # example_client_builder(api_base, api_key, model)
+    example_metadata(client, model)
+    example_streaming(client, model)
+    example_structured_json(client, model)
+    example_structured_pydantic(client, model)
+    example_structured_streaming(client, model)
+    example_healing(client, model)
+    example_tool_calling(client, model)
+    example_client_builder(api_base, api_key, model)
 
 
 if __name__ == "__main__":

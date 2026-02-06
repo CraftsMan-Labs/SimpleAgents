@@ -1083,9 +1083,9 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            simple_agent_type::error::SimpleAgentsError::Healing(
-                HealingError::LowConfidence { .. },
-            ) => {}
+            simple_agent_type::error::SimpleAgentsError::Healing(HealingError::LowConfidence {
+                ..
+            }) => {}
             e => panic!("Expected LowConfidence error, got: {:?}", e),
         }
     }
