@@ -3,10 +3,10 @@
 //! Provides automatic fallback to healing when native structured outputs fail.
 
 use serde_json::Value;
-use simple_agents_healing::coercion::{CoercionConfig, CoercionEngine};
-use simple_agents_healing::parser::{JsonishParser, ParserConfig};
 use simple_agent_type::error::{HealingError, SimpleAgentsError, ValidationError};
 use simple_agent_type::response::HealingMetadata;
+use simple_agents_healing::coercion::{CoercionConfig, CoercionEngine};
+use simple_agents_healing::parser::{JsonishParser, ParserConfig};
 
 use crate::schema_converter;
 

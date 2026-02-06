@@ -72,7 +72,8 @@ mod middleware;
 mod routing;
 
 pub use client::{
-    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
+    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
+    SimpleAgentsClientBuilder,
 };
 pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 pub use middleware::Middleware;

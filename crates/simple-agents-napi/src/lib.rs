@@ -2,16 +2,16 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
+use simple_agent_type::message::Message;
+use simple_agent_type::prelude::{
+    CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
+};
 use simple_agents_core::{
     CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
 };
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agent_type::message::Message;
-use simple_agent_type::prelude::{
-    CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
-};
 use std::sync::{Arc, Mutex};
 
 type Runtime = tokio::runtime::Runtime;

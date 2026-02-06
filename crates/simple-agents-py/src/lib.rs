@@ -26,9 +26,9 @@ use simple_agents_healing::schema::{Field as HealingField, ObjectSchema, StreamA
 use simple_agents_healing::streaming::StreamingParser as RustStreamingParser;
 use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
 use simple_agents_providers::anthropic::AnthropicProvider;
+use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -166,10 +166,9 @@ impl SchemaBuilder {
     ) -> PyResult<()> {
         let schema = parse_schema_from_py(py, field_type, items)?;
         let aliases_vec = if let Some(alias_obj) = aliases {
-            let values: Vec<String> =
-                pythonize::depythonize(alias_obj).map_err(|_| {
-                    PyRuntimeError::new_err("aliases must be a list of strings".to_string())
-                })?;
+            let values: Vec<String> = pythonize::depythonize(alias_obj).map_err(|_| {
+                PyRuntimeError::new_err("aliases must be a list of strings".to_string())
+            })?;
             values
         } else {
             Vec::new()
@@ -359,7 +358,11 @@ impl StreamingParser {
     }
 
     fn __repr__(&self) -> String {
-        let finalized = if self.parser.is_none() { "True" } else { "False" };
+        let finalized = if self.parser.is_none() {
+            "True"
+        } else {
+            "False"
+        };
         format!(
             "StreamingParser(buffer_len={}, finalized={})",
             self.buffer_len(),
@@ -847,11 +850,13 @@ impl PyMiddlewareAdapter {
 #[async_trait::async_trait]
 impl Middleware for PyMiddlewareAdapter {
     async fn before_request(&self, request: &CompletionRequest) -> Result<()> {
-        let args = Python::with_gil(|py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-            let py_request = pythonize::pythonize(py, request)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            Ok(vec![py_request.into()])
-        })?;
+        let args = Python::with_gil(
+            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
+                let py_request = pythonize::pythonize(py, request)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                Ok(vec![py_request.into()])
+            },
+        )?;
         self.call_optional_method("before_request", &args)
     }
 
@@ -861,14 +866,20 @@ impl Middleware for PyMiddlewareAdapter {
         response: &simple_agent_type::response::CompletionResponse,
         latency: Duration,
     ) -> Result<()> {
-        let args = Python::with_gil(|py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-            let py_request = pythonize::pythonize(py, request)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            let py_response = pythonize::pythonize(py, response)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            let latency_ms: u64 = latency.as_millis() as u64;
-            Ok(vec![py_request.into(), py_response.into(), latency_ms.into_py(py)])
-        })?;
+        let args = Python::with_gil(
+            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
+                let py_request = pythonize::pythonize(py, request)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                let py_response = pythonize::pythonize(py, response)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                let latency_ms: u64 = latency.as_millis() as u64;
+                Ok(vec![
+                    py_request.into(),
+                    py_response.into(),
+                    latency_ms.into_py(py),
+                ])
+            },
+        )?;
         self.call_optional_method("after_response", &args)
     }
 
@@ -877,13 +888,15 @@ impl Middleware for PyMiddlewareAdapter {
         request: &CompletionRequest,
         response: &simple_agent_type::response::CompletionResponse,
     ) -> Result<()> {
-        let args = Python::with_gil(|py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-            let py_request = pythonize::pythonize(py, request)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            let py_response = pythonize::pythonize(py, response)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            Ok(vec![py_request.into(), py_response.into()])
-        })?;
+        let args = Python::with_gil(
+            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
+                let py_request = pythonize::pythonize(py, request)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                let py_response = pythonize::pythonize(py, response)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                Ok(vec![py_request.into(), py_response.into()])
+            },
+        )?;
         self.call_optional_method("on_cache_hit", &args)
     }
 
@@ -893,16 +906,18 @@ impl Middleware for PyMiddlewareAdapter {
         error: &SimpleAgentsError,
         latency: Duration,
     ) -> Result<()> {
-        let args = Python::with_gil(|py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-            let py_request = pythonize::pythonize(py, request)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            let latency_ms: u64 = latency.as_millis() as u64;
-            Ok(vec![
-                py_request.into(),
-                error.to_string().into_py(py),
-                latency_ms.into_py(py),
-            ])
-        })?;
+        let args = Python::with_gil(
+            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
+                let py_request = pythonize::pythonize(py, request)
+                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
+                let latency_ms: u64 = latency.as_millis() as u64;
+                Ok(vec![
+                    py_request.into(),
+                    error.to_string().into_py(py),
+                    latency_ms.into_py(py),
+                ])
+            },
+        )?;
         self.call_optional_method("on_error", &args)
     }
 
@@ -1159,8 +1174,9 @@ impl ClientBuilder {
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
         // Enable healing by default for providers added through ClientBuilder
-        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), true)
-            .map_err(py_err)?;
+        let provider =
+            provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), true)
+                .map_err(py_err)?;
 
         slf.providers.push(provider);
         Ok(slf)
@@ -1420,7 +1436,9 @@ impl ClientBuilder {
         cache: PyObject,
         ttl_seconds: Option<u64>,
     ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.custom_cache = Some(Arc::new(PyCacheAdapter { cache: cache.into() }));
+        slf.custom_cache = Some(Arc::new(PyCacheAdapter {
+            cache: cache.into(),
+        }));
         if let Some(ttl) = ttl_seconds {
             slf.cache_ttl = Some(ttl);
         }
@@ -1655,7 +1673,9 @@ fn expect_stream(outcome: CompletionOutcome) -> PyResult<CompletionStream> {
     }
 }
 
-fn expect_healed_json(outcome: CompletionOutcome) -> PyResult<simple_agents_core::HealedJsonResponse> {
+fn expect_healed_json(
+    outcome: CompletionOutcome,
+) -> PyResult<simple_agents_core::HealedJsonResponse> {
     match outcome {
         CompletionOutcome::HealedJson(healed) => Ok(healed),
         CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
@@ -1690,13 +1710,17 @@ fn healed_json_to_py(
     healed: simple_agents_core::HealedJsonResponse,
     latency_ms: u64,
 ) -> PyResult<PyObject> {
-    let content = serde_json::to_string(&healed.parsed.value).map_err(|e| {
-        PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e))
-    })?;
+    let content = serde_json::to_string(&healed.parsed.value)
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e)))?;
     let raw_response = healed.response.content().unwrap_or_default().to_string();
     let confidence = healed.parsed.confidence;
     let was_healed = !healed.parsed.flags.is_empty();
-    let flags = healed.parsed.flags.iter().map(|f| f.description()).collect();
+    let flags = healed
+        .parsed
+        .flags
+        .iter()
+        .map(|f| f.description())
+        .collect();
     let usage = usage_to_pydict(py, &healed.response.usage)?;
     let finish_reason = healed
         .response
@@ -1850,9 +1874,10 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
             SimpleAgentsError::Config(format!("message[{idx}].tool_calls must be a list"))
         })? {
             if !tool_calls_obj.is_none() {
-                let tool_calls: Vec<ToolCall> = pythonize::depythonize(&tool_calls_obj).map_err(
-                    |_| SimpleAgentsError::Config(format!("message[{idx}].tool_calls invalid")),
-                )?;
+                let tool_calls: Vec<ToolCall> =
+                    pythonize::depythonize(&tool_calls_obj).map_err(|_| {
+                        SimpleAgentsError::Config(format!("message[{idx}].tool_calls invalid"))
+                    })?;
                 if !tool_calls.is_empty() {
                     message = message.with_tool_calls(tool_calls);
                 }
@@ -2140,10 +2165,12 @@ impl SchemaExt for Schema {
                                     });
                                 }
                             }
-                            Ok(Schema::Object(simple_agents_healing::schema::ObjectSchema {
-                                fields,
-                                allow_additional_fields: true,
-                            }))
+                            Ok(Schema::Object(
+                                simple_agents_healing::schema::ObjectSchema {
+                                    fields,
+                                    allow_additional_fields: true,
+                                },
+                            ))
                         }
                         "array" => {
                             if let Some(items) = map.get("items") {
@@ -2175,9 +2202,15 @@ impl SchemaExt for Schema {
 impl Client {
     #[new]
     #[pyo3(signature = (provider, api_key=None, api_base=None, healing=true))]
-    fn new(provider: &str, api_key: Option<String>, api_base: Option<String>, healing: bool) -> PyResult<Self> {
-        let provider = provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), healing)
-            .map_err(py_err)?;
+    fn new(
+        provider: &str,
+        api_key: Option<String>,
+        api_base: Option<String>,
+        healing: bool,
+    ) -> PyResult<Self> {
+        let provider =
+            provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), healing)
+                .map_err(py_err)?;
         let client = SimpleAgentsClientBuilder::new()
             .with_provider(provider)
             .build()
@@ -2211,7 +2244,9 @@ impl Client {
     ) -> PyResult<PyObject> {
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
-                return Err(PyRuntimeError::new_err("prompt cannot be empty".to_string()));
+                return Err(PyRuntimeError::new_err(
+                    "prompt cannot be empty".to_string(),
+                ));
             }
             vec![Message::user(prompt)]
         } else {
@@ -2227,8 +2262,7 @@ impl Client {
             None => None,
         };
 
-        let response_plan =
-            resolve_response_plan(schema, schema_name, strict, response_format)?;
+        let response_plan = resolve_response_plan(schema, schema_name, strict, response_format)?;
 
         let request = build_request_with_messages(
             model,
@@ -2320,7 +2354,6 @@ impl Client {
             response_with_metadata_from_response(py, response, latency_ms)?;
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
-
 }
 
 #[pymodule]

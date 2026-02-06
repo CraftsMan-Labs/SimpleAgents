@@ -1,11 +1,11 @@
 use async_trait::async_trait;
+use simple_agent_type::prelude::*;
 use simple_agents_cache::InMemoryCache;
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware, RoutingMode,
     SimpleAgentsClientBuilder,
 };
 use simple_agents_healing::schema::Schema;
-use simple_agent_type::prelude::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

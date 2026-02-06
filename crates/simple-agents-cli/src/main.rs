@@ -1,7 +1,9 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
+use simple_agent_type::prelude::{ApiKey, CompletionRequest, Message, SimpleAgentsError};
 use simple_agents_core::{
-    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClient, SimpleAgentsClientBuilder,
+    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClient,
+    SimpleAgentsClientBuilder,
 };
 use simple_agents_providers::{
     anthropic::AnthropicProvider, openai::OpenAIProvider, openrouter::OpenRouterProvider, Provider,
@@ -9,7 +11,6 @@ use simple_agents_providers::{
 use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
-use simple_agent_type::prelude::{ApiKey, CompletionRequest, Message, SimpleAgentsError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -691,7 +692,9 @@ async fn execute_completion(
 ) -> Result<simple_agent_type::response::CompletionResponse> {
     let messages = build_messages(prompt, system);
     let request = build_request(model, messages, overrides)?;
-    let outcome = client.complete(&request, CompletionOptions::default()).await?;
+    let outcome = client
+        .complete(&request, CompletionOptions::default())
+        .await?;
     match outcome {
         CompletionOutcome::Response(response) => Ok(response),
         CompletionOutcome::Stream(_) => Err(CliError::Config(
@@ -770,7 +773,9 @@ async fn run_chat(
 
         messages.push(Message::user(trimmed));
         let request = build_request(model, messages.clone(), overrides)?;
-        let outcome = client.complete(&request, CompletionOptions::default()).await?;
+        let outcome = client
+            .complete(&request, CompletionOptions::default())
+            .await?;
         let response = match outcome {
             CompletionOutcome::Response(response) => response,
             CompletionOutcome::Stream(_) => {
