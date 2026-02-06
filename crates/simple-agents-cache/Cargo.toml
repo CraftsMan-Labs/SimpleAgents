@@ -11,7 +11,7 @@ documentation.workspace = true
 description = "Caching utilities for SimpleAgents"
 
 [dependencies]
-simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
+simple-agent-type = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time"] }
 async-trait.workspace = true
 
