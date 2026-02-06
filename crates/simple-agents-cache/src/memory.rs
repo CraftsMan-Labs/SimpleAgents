@@ -358,7 +358,9 @@ mod tests {
         let mut handles = Vec::new();
         for _ in 0..25 {
             let cache = cache.clone();
-            handles.push(tokio::spawn(async move { cache.get("shared").await.unwrap() }));
+            handles.push(tokio::spawn(
+                async move { cache.get("shared").await.unwrap() },
+            ));
         }
 
         for handle in handles {
