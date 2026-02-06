@@ -1,15 +1,15 @@
 [package]
 name = "simple-agents-examples"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 
 [dev-dependencies]
 dotenv = "0.15"
 futures-util = { workspace = true }
 serde_json = { workspace = true }
-simple-agents-healing = { path = "../crates/simple-agents-healing", version = "0.1.0" }
-simple-agents-providers = { path = "../crates/simple-agents-providers", version = "0.1.0" }
-simple-agent-type = { path = "../crates/simple-agent-type", version = "0.1.0" }
+simple-agents-healing = { workspace = true }
+simple-agents-providers = { workspace = true }
+simple-agent-type = { workspace = true }
 tokio = { workspace = true }
 
 [[example]]
