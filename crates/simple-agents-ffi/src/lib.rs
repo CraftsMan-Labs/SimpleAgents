@@ -1,14 +1,13 @@
 //! C-compatible FFI bindings for SimpleAgents.
 
-use simple_agents_core::SimpleAgentsClient;
-use simple_agents_core::SimpleAgentsClientBuilder;
+use simple_agent_type::message::Message;
+use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agents_core::{
+    CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
+};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agent_type::message::Message;
-use simple_agent_type::prelude::{
-    ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError,
-};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
@@ -237,7 +236,29 @@ pub unsafe extern "C" fn sa_complete(
             .runtime
             .lock()
             .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
-        let response = runtime.block_on(client.client.complete(&request))?;
+        let outcome = runtime.block_on(
+            client
+                .client
+                .complete(&request, CompletionOptions::default()),
+        )?;
+        let response = match outcome {
+            CompletionOutcome::Response(response) => response,
+            CompletionOutcome::Stream(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "streaming response returned from complete".to_string(),
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "healed json response returned from complete".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "schema response returned from complete".to_string(),
+                ))
+            }
+        };
 
         Ok(response.content().unwrap_or_default().to_string())
     })

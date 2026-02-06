@@ -1,10 +1,10 @@
 //! Healing helpers and response wrappers.
 
+use simple_agent_type::coercion::CoercionResult;
+use simple_agent_type::prelude::CompletionResponse;
 use simple_agents_healing::coercion::CoercionConfig;
 use simple_agents_healing::parser::ParserConfig;
 use simple_agents_healing::parser::ParserResult;
-use simple_agent_type::coercion::CoercionResult;
-use simple_agent_type::prelude::CompletionResponse;
 
 /// Healing settings for JSON parsing and coercion.
 #[derive(Debug, Clone)]

@@ -80,9 +80,9 @@ impl OpenAIProvider {
             .pool_idle_timeout(Duration::from_secs(90));
         if is_local {
             client_builder = client_builder.no_proxy();
-        } else {
-            client_builder = client_builder.http2_prior_knowledge();
         }
+        // Removed http2_prior_knowledge for non-local connections
+        // to allow ALPN negotiation which is more compatible
         let client = client_builder.build().map_err(|e| {
             SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
         })?;
@@ -133,7 +133,6 @@ impl OpenAIProvider {
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10) // Connection pooling configuration
             .pool_idle_timeout(Duration::from_secs(90)) // Keep connections alive
-            .http2_prior_knowledge() // Use HTTP/2 for multiplexing
             .build()
             .map_err(|e| {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -283,15 +282,11 @@ impl Provider for OpenAIProvider {
             url: format!("{}/chat/completions", self.base_url),
             headers: vec![
                 (
-                    std::borrow::Cow::Borrowed(
-                        simple_agent_type::provider::headers::AUTHORIZATION,
-                    ),
+                    std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::AUTHORIZATION),
                     std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
-                    std::borrow::Cow::Borrowed(
-                        simple_agent_type::provider::headers::CONTENT_TYPE,
-                    ),
+                    std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::CONTENT_TYPE),
                     std::borrow::Cow::Borrowed("application/json"),
                 ),
             ],

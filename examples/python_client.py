@@ -1,11 +1,65 @@
+from __future__ import annotations
+
 import json
 import os
-from typing import Optional, Tuple
+from typing import Iterator, Optional, Tuple, Union
 
-from dotenv import load_dotenv
-from simple_agents_py import Client, ClientBuilder
+try:
+    from dotenv import load_dotenv  # type: ignore[reportMissingImports]
+except ImportError:
+    def load_dotenv() -> None:
+        return None
+
+from simple_agents_py import (
+    Client,
+    ClientBuilder,
+    HealedJsonResult,
+    PyStreamIterator,
+    ResponseWithMetadata,
+    StreamChunk,
+    StructuredStreamIterator,
+    PyStructuredEvent,
+)
 
 load_dotenv()
+
+CompleteResult = Union[
+    ResponseWithMetadata,
+    HealedJsonResult,
+    str,
+    Iterator[StreamChunk],
+    Iterator[PyStructuredEvent],
+]
+
+
+def expect_response(result: CompleteResult) -> ResponseWithMetadata:
+    if isinstance(result, ResponseWithMetadata):
+        return result
+    raise TypeError(f"Expected ResponseWithMetadata, got {type(result).__name__}")
+
+
+def expect_json_text(result: CompleteResult) -> str:
+    if isinstance(result, str):
+        return result
+    raise TypeError(f"Expected JSON text, got {type(result).__name__}")
+
+
+def expect_healed(result: CompleteResult) -> HealedJsonResult:
+    if isinstance(result, HealedJsonResult):
+        return result
+    raise TypeError(f"Expected HealedJsonResult, got {type(result).__name__}")
+
+
+def expect_stream_chunks(result: CompleteResult) -> Iterator[StreamChunk]:
+    if isinstance(result, PyStreamIterator):
+        return result
+    raise TypeError(f"Expected streaming chunks, got {type(result).__name__}")
+
+
+def expect_stream_events(result: CompleteResult) -> Iterator[PyStructuredEvent]:
+    if isinstance(result, StructuredStreamIterator):
+        return result
+    raise TypeError(f"Expected structured stream, got {type(result).__name__}")
 
 
 def load_settings() -> Optional[Tuple[str, str, str]]:
@@ -25,7 +79,7 @@ def example_basic_completion(client: Client, model: str) -> None:
         {"role": "system", "content": "You are a concise assistant."},
         {"role": "user", "content": "Give me one project idea."},
     ]
-    response = client.complete_messages(model, messages)
+    response = expect_response(client.complete(model, messages))
     print("basic_completion:", response.content)
 
 
@@ -33,12 +87,10 @@ def example_metadata(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Summarize why tests matter."}
     ]
-    response = client.complete_messages(model, messages, max_tokens=80)
+    response = expect_response(client.complete(model, messages, max_tokens=80))
     print("metadata:", response.content)
-    if hasattr(response, "usage"):
-        print("metadata: usage", response.usage)
-    if hasattr(response, "latency_ms"):
-        print("metadata: latency_ms", response.latency_ms)
+    print("metadata: usage", response.usage)
+    print("metadata: latency_ms", response.latency_ms)
 
 
 def example_streaming(client: Client, model: str) -> None:
@@ -46,7 +98,10 @@ def example_streaming(client: Client, model: str) -> None:
         {"role": "user", "content": "Say hello in one sentence."}
     ]
     print("streaming:", end=" ")
-    for chunk in client.stream(model, messages, max_tokens=40):
+    stream = expect_stream_chunks(
+        client.complete(model, messages, max_tokens=40, stream=True)
+    )
+    for chunk in stream:
         if chunk.content:
             print(chunk.content, end="", flush=True)
     print()
@@ -76,13 +131,20 @@ def example_structured_json(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Give me two project ideas as JSON."}
     ]
-    json_text = client.complete_json_schema(model, messages, schema, "project_ideas")
+    json_text = expect_json_text(
+        client.complete(
+            model,
+            messages,
+            schema=schema,
+            schema_name="project_ideas",
+        )
+    )
     print("structured_json:", json.dumps(json.loads(json_text), indent=2))
 
 
 def example_structured_pydantic(client: Client, model: str) -> None:
     try:
-        from pydantic import BaseModel
+        from pydantic import BaseModel  # type: ignore[reportMissingImports]
     except ImportError:
         print("structured_pydantic: skipped (pydantic not installed)")
         return
@@ -94,7 +156,14 @@ def example_structured_pydantic(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Extract name and age: Alice is 28."}
     ]
-    json_text = client.complete_json_schema(model, messages, Person, "person")
+    json_text = expect_json_text(
+        client.complete(
+            model,
+            messages,
+            schema=Person,
+            schema_name="person",
+        )
+    )
     print("structured_pydantic:", json.loads(json_text))
 
 
@@ -110,7 +179,16 @@ def example_structured_streaming(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "Extract name and age: Alice is 28."}
     ]
-    for event in client.stream_structured(model, messages, schema, max_tokens=80):
+    stream = expect_stream_events(
+        client.complete(
+            model,
+            messages,
+            schema=schema,
+            max_tokens=80,
+            stream=True,
+        )
+    )
+    for event in stream:
         if event.is_partial:
             print("structured_partial:", event.partial_value)
         else:
@@ -124,7 +202,15 @@ def example_healing(client: Client, model: str) -> None:
             "content": 'Return JSON: {"firstName":"Sam","lastName":"Smith","age":30}',
         }
     ]
-    healed = client.complete_json_healed("gpt-4.1", messages, max_tokens=20)
+    healed = expect_healed(
+        client.complete(
+            model,
+            messages,
+            max_tokens=20,
+            response_format="json",
+            heal=True,
+        )
+    )
     print("healed JSON:", healed.content)
     print("raw response:", repr(healed.raw_response))
     print("was_healed:", healed.was_healed)
@@ -153,7 +239,7 @@ def example_tool_calling(client: Client, model: str) -> None:
     messages: list[dict[str, object]] = [
         {"role": "user", "content": "What's the weather in Tokyo?"}
     ]
-    response = client.complete_with_tools(model, messages, tools)
+    response = expect_response(client.complete(model, messages, tools=tools))
     print("tool_calls:", response.tool_calls)
 
 
@@ -166,7 +252,9 @@ def example_client_builder(api_base: str, api_key: str, model: str) -> None:
         .with_healing_config({"enabled": True, "min_confidence": 0.7})
     )
     client = builder.build()
-    response = client.complete(model, "Give me a quick checklist.", max_tokens=80)
+    response = expect_response(
+        client.complete(model, "Give me a quick checklist.", max_tokens=80)
+    )
     print("builder_completion:", response.content)
 
 
@@ -177,15 +265,15 @@ def main() -> None:
     api_base, api_key, model = settings
     client = Client("openai", api_base=api_base, api_key=api_key)
 
-    # example_basic_completion(client, model)
-    # example_metadata(client, model)
-    # example_streaming(client, model)
-    # example_structured_json(client, model)
-    # example_structured_pydantic(client, model)
-    # example_structured_streaming(client, model)
+    example_basic_completion(client, model)
+    example_metadata(client, model)
+    example_streaming(client, model)
+    example_structured_json(client, model)
+    example_structured_pydantic(client, model)
+    example_structured_streaming(client, model)
     example_healing(client, model)
-    # example_tool_calling(client, model)
-    # example_client_builder(api_base, api_key, model)
+    example_tool_calling(client, model)
+    example_client_builder(api_base, api_key, model)
 
 
 if __name__ == "__main__":
