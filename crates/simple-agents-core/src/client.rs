@@ -4,6 +4,9 @@ use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 use crate::middleware::Middleware;
 use crate::routing::{RouterEngine, RoutingMode};
 use async_trait::async_trait;
+use futures_util::future::BoxFuture;
+use futures_util::stream::{self, Stream};
+use futures_util::StreamExt;
 use simple_agent_type::cache::Cache;
 use simple_agent_type::cache::CacheKey;
 use simple_agent_type::prelude::{
@@ -13,8 +16,10 @@ use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+use tracing::debug;
 
 /// Mode for completion post-processing.
 pub enum CompletionMode {
@@ -75,29 +80,30 @@ impl SimpleAgentsClient {
     }
 
     /// List registered provider names.
-    pub fn provider_names(&self) -> Result<Vec<String>> {
-        let state = self.state.read().map_err(|_| {
-            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
-        })?;
+    pub async fn provider_names(&self) -> Result<Vec<String>> {
+        let state = self.state.read().await;
         Ok(state.provider_map.keys().cloned().collect())
     }
 
     /// Retrieve a provider by name.
-    pub fn provider(&self, name: &str) -> Result<Option<Arc<dyn Provider>>> {
-        let state = self.state.read().map_err(|_| {
-            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
-        })?;
+    pub async fn provider(&self, name: &str) -> Result<Option<Arc<dyn Provider>>> {
+        let state = self.state.read().await;
         Ok(state.provider_map.get(name).cloned())
     }
 
     /// Register an additional provider and rebuild the router.
-    pub fn register_provider(&self, provider: Arc<dyn Provider>) -> Result<()> {
-        let mut state = self.state.write().map_err(|_| {
-            SimpleAgentsError::Config("provider registry lock poisoned".to_string())
-        })?;
-        state
-            .provider_map
-            .insert(provider.name().to_string(), provider.clone());
+    pub async fn register_provider(&self, provider: Arc<dyn Provider>) -> Result<()> {
+        let mut state = self.state.write().await;
+        let name = provider.name().to_string();
+
+        if state.provider_map.contains_key(&name) {
+            return Err(SimpleAgentsError::Config(format!(
+                "provider already registered: {}",
+                name
+            )));
+        }
+
+        state.provider_map.insert(name, provider.clone());
         state.providers.push(provider);
         state.router = Arc::new(self.routing_mode.build_router(state.providers.clone())?);
         Ok(())
@@ -154,9 +160,7 @@ impl SimpleAgentsClient {
 
         let start = Instant::now();
         let router = {
-            let state = self.state.read().map_err(|_| {
-                SimpleAgentsError::Config("provider registry lock poisoned".to_string())
-            })?;
+            let state = self.state.read().await;
             state.router.clone()
         };
         let response = router.complete(request).await;
@@ -225,19 +229,24 @@ impl SimpleAgentsClient {
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         request.validate()?;
         self.before_request(request).await?;
-        eprintln!(
-            "SimpleAgentsClient.stream: model={}, stream={:?}",
-            request.model, request.stream
+        debug!(
+            model = %request.model,
+            stream = ?request.stream,
+            "SimpleAgentsClient.stream start"
         );
 
         let router = {
-            let state = self.state.read().map_err(|_| {
-                SimpleAgentsError::Config("provider registry lock poisoned".to_string())
-            })?;
+            let state = self.state.read().await;
             state.router.clone()
         };
 
-        router.stream(request).await
+        let start = Instant::now();
+        let middleware = self.middleware.clone();
+        let instrumented_request = request.clone();
+        let inner = router.stream(request).await?;
+
+        let wrapped = Self::instrument_stream(inner, instrumented_request, middleware, start);
+        Ok(Box::new(wrapped))
     }
 
     fn ensure_healing_enabled(&self) -> Result<()> {
@@ -297,6 +306,69 @@ impl SimpleAgentsClient {
             middleware.on_error(request, error, latency).await?;
         }
         Ok(())
+    }
+}
+
+impl SimpleAgentsClient {
+    fn instrument_stream(
+        inner: Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>,
+        request: CompletionRequest,
+        middleware: Vec<Arc<dyn Middleware>>,
+        start: Instant,
+    ) -> impl Stream<Item = Result<CompletionChunk>> + Send + Unpin {
+        struct StreamState {
+            inner: Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>,
+            middleware: Vec<Arc<dyn Middleware>>,
+            request: CompletionRequest,
+            start: Instant,
+            done: bool,
+        }
+
+        stream::unfold(
+            StreamState {
+                inner,
+                middleware,
+                request,
+                start,
+                done: false,
+            },
+            |mut state| -> BoxFuture<Option<(Result<CompletionChunk>, StreamState)>> {
+                Box::pin(async move {
+                    if state.done {
+                        return None;
+                    }
+
+                    match state.inner.next().await {
+                        Some(Ok(chunk)) => Some((Ok(chunk), state)),
+                        Some(Err(err)) => {
+                            let latency = state.start.elapsed();
+                            for middleware in &state.middleware {
+                                if let Err(mw_err) =
+                                    middleware.on_error(&state.request, &err, latency).await
+                                {
+                                    state.done = true;
+                                    return Some((Err(mw_err), state));
+                                }
+                            }
+                            state.done = true;
+                            Some((Err(err), state))
+                        }
+                        None => {
+                            let latency = state.start.elapsed();
+                            for middleware in &state.middleware {
+                                if let Err(mw_err) =
+                                    middleware.after_stream(&state.request, latency).await
+                                {
+                                    state.done = true;
+                                    return Some((Err(mw_err), state));
+                                }
+                            }
+                            None
+                        }
+                    }
+                })
+            },
+        )
     }
 }
 
@@ -413,8 +485,11 @@ impl Middleware for () {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures_util::{stream, StreamExt};
+    use simple_agent_type::error::ProviderError;
     use simple_agent_type::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     struct MockProvider {
         name: &'static str,
@@ -481,10 +556,225 @@ mod tests {
             .unwrap();
 
         let second = Arc::new(MockProvider::new("p2"));
-        client.register_provider(second).unwrap();
+        client.register_provider(second).await.unwrap();
 
-        let names = client.provider_names().unwrap();
+        let names = client.provider_names().await.unwrap();
         assert!(names.contains(&"p1".to_string()));
         assert!(names.contains(&"p2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn duplicate_provider_registration_fails() {
+        let provider = Arc::new(MockProvider::new("p1"));
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(provider.clone())
+            .build()
+            .unwrap();
+
+        let result = client.register_provider(provider).await;
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Config(msg)) if msg.contains("provider already registered")
+        ));
+    }
+
+    #[derive(Default)]
+    struct RecordingMiddleware {
+        before: AtomicUsize,
+        after_stream: AtomicUsize,
+        errors: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Middleware for RecordingMiddleware {
+        async fn before_request(&self, _request: &CompletionRequest) -> Result<()> {
+            self.before.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        async fn after_stream(&self, _request: &CompletionRequest, _latency: Duration) -> Result<()> {
+            self.after_stream.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        async fn on_error(
+            &self,
+            _request: &CompletionRequest,
+            _error: &SimpleAgentsError,
+            _latency: Duration,
+        ) -> Result<()> {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+
+        fn name(&self) -> &str {
+            "recording"
+        }
+    }
+
+    struct StreamingProvider {
+        name: &'static str,
+        fail_after_first: bool,
+    }
+
+    impl StreamingProvider {
+        fn new(name: &'static str, fail_after_first: bool) -> Self {
+            Self {
+                name,
+                fail_after_first,
+            }
+        }
+
+        fn build_chunk(id: &str, content: &str) -> CompletionChunk {
+            CompletionChunk {
+                id: id.to_string(),
+                model: "test-model".to_string(),
+                choices: vec![ChoiceDelta {
+                    index: 0,
+                    delta: MessageDelta {
+                        role: Some(Role::Assistant),
+                        content: Some(content.to_string()),
+                    },
+                    finish_reason: None,
+                }],
+                created: None,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl Provider for StreamingProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn transform_request(&self, _req: &CompletionRequest) -> Result<ProviderRequest> {
+            Ok(ProviderRequest::new("http://example.com"))
+        }
+
+        async fn execute(&self, _req: ProviderRequest) -> Result<ProviderResponse> {
+            Ok(ProviderResponse::new(
+                200,
+                serde_json::json!({"content": "ok"}),
+            ))
+        }
+
+        fn transform_response(&self, _resp: ProviderResponse) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                id: "resp_stream".to_string(),
+                model: "test-model".to_string(),
+                choices: vec![CompletionChoice {
+                    index: 0,
+                    message: Message::assistant("ok"),
+                    finish_reason: FinishReason::Stop,
+                    logprobs: None,
+                }],
+                usage: Usage::new(1, 1),
+                created: None,
+                provider: Some(self.name.to_string()),
+                healing_metadata: None,
+            })
+        }
+
+        async fn execute_stream(
+            &self,
+            _req: ProviderRequest,
+        ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+            let stream = if self.fail_after_first {
+                let items: Vec<Result<CompletionChunk>> = vec![
+                    Ok(Self::build_chunk("chunk-1", "hello")),
+                    Err(SimpleAgentsError::Provider(ProviderError::ServerError(
+                        "stream error".to_string(),
+                    ))),
+                ];
+                stream::iter(items)
+            } else {
+                let items: Vec<Result<CompletionChunk>> =
+                    vec![Ok(Self::build_chunk("chunk-1", "hello"))];
+                stream::iter(items)
+            };
+
+            Ok(Box::new(stream))
+        }
+    }
+
+    #[tokio::test]
+    async fn streaming_invokes_after_stream_on_success() {
+        let provider = Arc::new(StreamingProvider::new("p1", false));
+        let middleware = Arc::new(RecordingMiddleware::default());
+
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(provider)
+            .with_middleware(middleware.clone())
+            .build()
+            .unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user("Hi"))
+            .stream(true)
+            .build()
+            .unwrap();
+
+        let outcome = client
+            .complete(&request, CompletionOptions::default())
+            .await
+            .unwrap();
+
+        let mut collected = Vec::new();
+        match outcome {
+            CompletionOutcome::Stream(mut stream) => {
+                while let Some(chunk) = stream.next().await {
+                    collected.push(chunk.unwrap());
+                }
+            }
+            _ => panic!("expected stream outcome"),
+        }
+
+        assert_eq!(collected.len(), 1);
+        assert_eq!(middleware.before.load(Ordering::Relaxed), 1);
+        assert_eq!(middleware.after_stream.load(Ordering::Relaxed), 1);
+        assert_eq!(middleware.errors.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn streaming_invokes_on_error_on_failure() {
+        let provider = Arc::new(StreamingProvider::new("p1", true));
+        let middleware = Arc::new(RecordingMiddleware::default());
+
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(provider)
+            .with_middleware(middleware.clone())
+            .build()
+            .unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user("Hi"))
+            .stream(true)
+            .build()
+            .unwrap();
+
+        let outcome = client
+            .complete(&request, CompletionOptions::default())
+            .await
+            .unwrap();
+
+        let mut chunks = Vec::new();
+        match outcome {
+            CompletionOutcome::Stream(mut stream) => {
+                while let Some(chunk) = stream.next().await {
+                    chunks.push(chunk);
+                }
+            }
+            _ => panic!("expected stream outcome"),
+        }
+
+        assert_eq!(middleware.before.load(Ordering::Relaxed), 1);
+        assert_eq!(middleware.after_stream.load(Ordering::Relaxed), 0);
+        assert_eq!(middleware.errors.load(Ordering::Relaxed), 1);
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[0].as_ref().is_ok());
+        assert!(chunks[1].is_err());
     }
 }
