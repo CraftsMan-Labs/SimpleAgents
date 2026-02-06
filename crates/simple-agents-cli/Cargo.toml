@@ -14,7 +14,7 @@ tokio = { workspace = true }
 simple-agents-core = { path = "../simple-agents-core", version = "0.2.0" }
 simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.0" }
 simple-agents-router = { path = "../simple-agents-router", version = "0.2.0" }
-simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
+simple-agent-type = { workspace = true }
 
 toml = "0.8"
 serde_yaml = "0.9"
