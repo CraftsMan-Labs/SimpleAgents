@@ -8,7 +8,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "target", "debug")
 )
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 
 def _require_env():
@@ -42,7 +42,7 @@ class TestStreaming:
         messages = [{"role": "user", "content": "Say 'Hello'"}]
         chunks = []
 
-        for chunk in client.stream(model, messages, max_tokens=10):
+        for chunk in client.complete(model, messages, max_tokens=10, stream=True):
             assert chunk.content is not None
             assert isinstance(chunk.content, str)
             chunks.append(chunk)
@@ -55,7 +55,7 @@ class TestStreaming:
         """Test streaming with temperature parameter."""
         messages = [{"role": "user", "content": "Say 'Hi'"}]
 
-        for chunk in client.stream(model, messages, temperature=0.7):
+        for chunk in client.complete(model, messages, temperature=0.7, stream=True):
             assert chunk.model is not None
             break
 
@@ -63,7 +63,7 @@ class TestStreaming:
         """Test StreamChunk properties."""
         messages = [{"role": "user", "content": "Test"}]
 
-        chunks = list(client.stream(model, messages, max_tokens=5))
+        chunks = list(client.complete(model, messages, max_tokens=5, stream=True))
 
         # Check that all chunks have expected properties
         for chunk in chunks:
@@ -76,12 +76,12 @@ class TestStreaming:
     def test_stream_empty_messages(self, client, model):
         """Test streaming with empty messages raises error."""
         with pytest.raises(Exception):
-            list(client.stream(model, []))
+            list(client.complete(model, [], stream=True))
 
     def test_stream_finish_reason(self, client, model):
         """Test that finish_reason is set on final chunk."""
         messages = [{"role": "user", "content": "Say 'Done'"}]
-        chunks = list(client.stream(model, messages, max_tokens=10))
+        chunks = list(client.complete(model, messages, max_tokens=10, stream=True))
 
         # Last chunk should have finish_reason
         assert chunks[-1].finish_reason is not None
@@ -90,7 +90,7 @@ class TestStreaming:
         """Test streaming with top_p parameter."""
         messages = [{"role": "user", "content": "Test"}]
 
-        for chunk in client.stream(model, messages, top_p=0.9):
+        for chunk in client.complete(model, messages, top_p=0.9, stream=True):
             assert chunk.content is not None
             break
 

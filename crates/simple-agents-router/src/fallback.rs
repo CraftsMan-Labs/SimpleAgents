@@ -3,7 +3,8 @@
 //! Attempts providers in order, falling back on retryable errors.
 
 use simple_agent_type::prelude::{
-    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderError, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderError, Result,
+    SimpleAgentsError,
 };
 use std::sync::Arc;
 
@@ -98,7 +99,9 @@ impl FallbackRouter {
             }
         }
 
-        Err(SimpleAgentsError::Routing("no providers configured".to_string()))
+        Err(SimpleAgentsError::Routing(
+            "no providers configured".to_string(),
+        ))
     }
 
     async fn execute_provider(

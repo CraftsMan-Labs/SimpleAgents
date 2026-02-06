@@ -2,14 +2,16 @@
 
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
-use simple_agents_core::{SimpleAgentsClient, SimpleAgentsClientBuilder};
-use simple_agents_providers::anthropic::AnthropicProvider;
-use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{
     CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
 };
+use simple_agents_core::{
+    CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
+};
+use simple_agents_providers::anthropic::AnthropicProvider;
+use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::openrouter::OpenRouterProvider;
 use std::sync::{Arc, Mutex};
 
 type Runtime = tokio::runtime::Runtime;
@@ -96,9 +98,27 @@ impl Client {
             .runtime
             .lock()
             .map_err(|_| Error::from_reason("runtime lock poisoned"))?;
-        let response = runtime
-            .block_on(self.client.complete(&request))
+        let outcome = runtime
+            .block_on(self.client.complete(&request, CompletionOptions::default()))
             .map_err(napi_err)?;
+        let response = match outcome {
+            CompletionOutcome::Response(response) => response,
+            CompletionOutcome::Stream(_) => {
+                return Err(Error::from_reason(
+                    "streaming response returned from complete".to_string(),
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(Error::from_reason(
+                    "healed json response returned from complete".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(Error::from_reason(
+                    "schema response returned from complete".to_string(),
+                ))
+            }
+        };
 
         Ok(response.content().unwrap_or_default().to_string())
     }

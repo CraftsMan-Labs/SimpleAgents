@@ -139,78 +139,19 @@ class Client:
     def complete(
         self,
         model: str,
-        prompt: str,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-    ) -> ResponseWithMetadata: ...
-
-    def complete_messages(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
+        input: str | Sequence[Mapping[str, object]],
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
-    ) -> ResponseWithMetadata: ...
-    def complete_with_tools(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        tools: Sequence[Mapping[str, object]],
+        tools: Sequence[Mapping[str, object]] | None = None,
         tool_choice: object | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> ResponseWithMetadata: ...
-
-    def complete_json(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> str: ...
-
-    def complete_json_healed(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> HealedJsonResult: ...
-
-    def complete_json_schema(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        schema: Mapping[str, object] | type[Any],
-        schema_name: str,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
+        response_format: str | None = None,
+        schema: Mapping[str, object] | type[Any] | None = None,
+        schema_name: str | None = None,
         strict: bool = True,
-    ) -> str: ...
-
-    def stream(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> Iterator[StreamChunk]: ...
-
-    def stream_structured(
-        self,
-        model: str,
-        messages: Sequence[Mapping[str, object]],
-        schema: Mapping[str, object],
-        max_tokens: int | None = None,
-        temperature: float | None = None,
-        top_p: float | None = None,
-    ) -> Iterator[PyStructuredEvent]: ...
+        stream: bool = False,
+        heal: bool = False,
+    ) -> ResponseWithMetadata | HealedJsonResult | str | Iterator[StreamChunk] | Iterator[PyStructuredEvent]: ...
 
 
 class ClientBuilder:

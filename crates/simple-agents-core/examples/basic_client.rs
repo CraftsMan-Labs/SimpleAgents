@@ -1,6 +1,8 @@
 use async_trait::async_trait;
-use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
 use simple_agent_type::prelude::*;
+use simple_agents_core::{
+    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClientBuilder,
+};
 use std::sync::Arc;
 
 struct MockProvider;
@@ -49,7 +51,13 @@ async fn main() -> Result<()> {
         .message(Message::user("Say hi"))
         .build()?;
 
-    let response = client.complete(&request).await?;
+    let outcome = client
+        .complete(&request, CompletionOptions::default())
+        .await?;
+    let response = match outcome {
+        CompletionOutcome::Response(response) => response,
+        _ => return Ok(()),
+    };
     println!("{}", response.content().unwrap_or_default());
 
     Ok(())

@@ -132,11 +132,31 @@ impl InMemoryCache {
 #[async_trait]
 impl Cache for InMemoryCache {
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        // First evict expired entries
-        self.evict_expired().await;
+        {
+            let store = self.store.read().await;
+            match store.get(key) {
+                Some(entry) if !entry.is_expired() => {
+                    drop(store);
+
+                    let mut store = self.store.write().await;
+                    if let Some(entry) = store.get_mut(key) {
+                        if entry.is_expired() {
+                            store.remove(key);
+                            return Ok(None);
+                        }
+
+                        entry.touch();
+                        return Ok(Some(entry.data.clone()));
+                    }
+
+                    return Ok(None);
+                }
+                Some(_) => {} // expired; clean up below
+                None => return Ok(None),
+            }
+        }
 
         let mut store = self.store.write().await;
-
         if let Some(entry) = store.get_mut(key) {
             if entry.is_expired() {
                 store.remove(key);
@@ -161,6 +181,9 @@ impl Cache for InMemoryCache {
             let mut store = self.store.write().await;
             store.insert(key.to_string(), entry);
         }
+
+        // Periodically clear expired entries before enforcing limits
+        self.evict_expired().await;
 
         // Evict if needed
         self.evict_lru().await;
@@ -322,6 +345,27 @@ mod tests {
         assert!(cache.get("key1").await.unwrap().is_some());
         // key3 should exist
         assert!(cache.get("key3").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_gets_do_not_serialize_readers() {
+        let cache = Arc::new(InMemoryCache::new(1024, 10));
+        cache
+            .set("shared", b"value".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
+
+        let mut handles = Vec::new();
+        for _ in 0..25 {
+            let cache = cache.clone();
+            handles.push(tokio::spawn(
+                async move { cache.get("shared").await.unwrap() },
+            ));
+        }
+
+        for handle in handles {
+            assert_eq!(handle.await.unwrap(), Some(b"value".to_vec()));
+        }
     }
 
     #[tokio::test]

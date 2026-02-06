@@ -19,9 +19,9 @@
 //! - Beta feature usage
 
 use serde_json::json;
+use simple_agent_type::prelude::*;
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::Provider;
-use simple_agent_type::prelude::*;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 

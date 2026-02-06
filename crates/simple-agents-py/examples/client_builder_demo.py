@@ -269,7 +269,7 @@ def demo_comparison():
     print("  - Configurable healing")
     print("  - Custom API base URLs")
     print()
-    print("Both provide same basic functionality (complete, complete_json, etc.)")
+    print("Both provide the unified complete functionality")
     print(f"Client type: {type(new_client).__name__}\n")
 
 

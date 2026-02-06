@@ -15,11 +15,13 @@ async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
+futures-util.workspace = true
+tracing = "0.1"
 
-simple-agent-type = { path = "../simple-agent-type", version = "0.1.0" }
-simple-agents-router = { path = "../simple-agents-router", version = "0.1.15" }
-simple-agents-cache = { path = "../simple-agents-cache", version = "0.1.15" }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.1.15" }
+simple-agent-type = { workspace = true }
+simple-agents-router = { path = "../simple-agents-router", version = "0.2.2" }
+simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.2" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.2" }
 futures-core = "0.3"
 
 [dev-dependencies]

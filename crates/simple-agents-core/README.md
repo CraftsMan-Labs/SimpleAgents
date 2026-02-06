@@ -15,7 +15,9 @@ healing, and middleware into a single entry point.
 
 ```rust
 use async_trait::async_trait;
-use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
+use simple_agents_core::{
+    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClientBuilder,
+};
 use simple_agent_type::prelude::*;
 use std::sync::Arc;
 
@@ -59,7 +61,11 @@ let request = CompletionRequest::builder()
     .message(Message::user("Hello"))
     .build()?;
 
-let response = client.complete(&request).await?;
+let outcome = client.complete(&request, CompletionOptions::default()).await?;
+let response = match outcome {
+    CompletionOutcome::Response(response) => response,
+    _ => return Ok(()),
+};
 println!("{}", response.content().unwrap_or(""));
 # Ok(())
 # }
@@ -72,7 +78,7 @@ Use healing for JSON outputs:
 ```rust
 use simple_agents_healing::schema::Schema;
 # use simple_agent_type::prelude::*;
-# use simple_agents_core::SimpleAgentsClientBuilder;
+# use simple_agents_core::{CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClientBuilder};
 # use std::sync::Arc;
 # use async_trait::async_trait;
 # struct MockProvider;
@@ -113,7 +119,18 @@ let request = CompletionRequest::builder()
     .message(Message::user("Give JSON"))
     .build()?;
 
-let healed = client.complete_with_schema(&request, &schema).await?;
+let healed = client
+    .complete(
+        &request,
+        CompletionOptions {
+            mode: CompletionMode::CoercedSchema(schema),
+        },
+    )
+    .await?;
+let healed = match healed {
+    CompletionOutcome::CoercedSchema(healed) => healed,
+    _ => return Ok(()),
+};
 assert_eq!(healed.coerced.value["count"], 5);
 # Ok(())
 # }

@@ -24,12 +24,23 @@ rm -f crates/simple-agents-py/pyproject.toml.bak
 echo "✓ Python package version updated"
 echo ""
 
-# Update examples package version
+# Update examples package versions
 if [ -f examples/pyproject.toml ]; then
-    echo "Updating examples package version..."
+    echo "Updating examples pyproject version..."
     sed -i.bak "s/^version = \".*\"/version = \"$WORKSPACE_VERSION\"/" examples/pyproject.toml
     rm -f examples/pyproject.toml.bak
-    echo "✓ Examples package version updated"
+    echo "✓ examples/pyproject.toml updated"
+    echo ""
+fi
+
+if [ -f examples/Cargo.toml ]; then
+    echo "Updating examples Cargo version and internal deps..."
+    sed -i.bak "s/^version = \".*\"/version = \"$WORKSPACE_VERSION\"/" examples/Cargo.toml
+    # Update any path + version deps on our crates (simple-agents-* or simple-agent-type)
+    sed -i -E "s/(simple-agents-[a-z-]+ = \{[^}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" examples/Cargo.toml
+    sed -i -E "s/(simple-agent-type = \{[^}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" examples/Cargo.toml
+    rm -f examples/Cargo.toml.bak
+    echo "✓ examples/Cargo.toml updated"
     echo ""
 fi
 
@@ -38,14 +49,15 @@ echo "Checking internal dependencies..."
 
 # Find all Cargo.toml files in crates
 for toml in crates/*/Cargo.toml; do
-    crate_name=$(basename $(dirname "$toml"))
+    crate_name=$(basename "$(dirname "$toml")")
 
-    # Update simple-agents-* dependencies
-    if grep -q 'simple-agents-' "$toml"; then
+    # Update simple-agents-* and simple-agent-type dependencies
+    if grep -q -E 'simple-agents-|simple-agent-type' "$toml"; then
         echo "  Checking $crate_name..."
 
-        # Update each simple-agents dependency
-        sed -i.bak -E "s/(simple-agents-[a-z-]+ = \{ path = \"[^\"]+\", version = \")[^\"]+/\1$WORKSPACE_VERSION/" "$toml"
+        # Update each dependency that pins a version (keeps path intact)
+        sed -i.bak -E "s/(simple-agents-[a-z-]+ = \{[^}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" "$toml"
+        sed -i -E "s/(simple-agent-type = \{[^}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" "$toml"
         rm -f "${toml}.bak"
     fi
 done
