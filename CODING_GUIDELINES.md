@@ -10,21 +10,22 @@
 
 1. [Project Overview](#project-overview)
 2. [Core Principles](#core-principles)
-3. [AI Assistant Workflow Rules](#ai-assistant-workflow-rules)
-4. [Rust Best Practices](#rust-best-practices)
-5. [Error Handling](#error-handling)
-6. [Type Safety & Schema Design](#type-safety--schema-design)
-7. [Async Patterns](#async-patterns)
-8. [Performance Guidelines](#performance-guidelines)
-9. [Testing Standards](#testing-standards)
-10. [FFI & Memory Safety](#ffi--memory-safety)
-11. [Documentation Requirements](#documentation-requirements)
-12. [Security Practices](#security-practices)
-13. [Code Organization](#code-organization)
-14. [Response Healing System](#response-healing-system)
-15. [Streaming Implementation](#streaming-implementation)
-16. [Provider Integration](#provider-integration)
-17. [Review Checklist](#review-checklist)
+3. [General Engineering Practices (KISS/DRY/OOD)](#general-engineering-practices-kissdryood)
+4. [AI Assistant Workflow Rules](#ai-assistant-workflow-rules)
+5. [Rust Best Practices](#rust-best-practices)
+6. [Error Handling](#error-handling)
+7. [Type Safety & Schema Design](#type-safety--schema-design)
+8. [Async Patterns](#async-patterns)
+9. [Performance Guidelines](#performance-guidelines)
+10. [Testing Standards](#testing-standards)
+11. [FFI & Memory Safety](#ffi--memory-safety)
+12. [Documentation Requirements](#documentation-requirements)
+13. [Security Practices](#security-practices)
+14. [Code Organization](#code-organization)
+15. [Response Healing System](#response-healing-system)
+16. [Streaming Implementation](#streaming-implementation)
+17. [Provider Integration](#provider-integration)
+18. [Review Checklist](#review-checklist)
 
 ---
 
@@ -69,6 +70,20 @@
 - Clear ownership rules
 - No shared mutable state across boundaries
 - Comprehensive contract tests
+
+---
+
+## General Engineering Practices (KISS/DRY/OOD)
+
+- **KISS**: Keep public surfaces small, defaults sensible, and workflows linear; avoid premature abstractions and feature flags unless justified by real use cases.
+- **DRY**: Centralize shared logic in the Rust core and generate bindings/types where possible; never fork logic across languages—bindings should be thin wrappers over the same contracts.
+- **SOLID/OOD**: Give components one reason to change, program to traits/interfaces, and prefer composition over inheritance; inject dependencies (clients, clocks, randomness, config) rather than reaching for globals.
+- **Clear boundaries**: Separate pure/domain code from I/O glue; keep state localized, avoid global mutable state, and make side effects explicit (context objects in Go, dependency bags in JS/TS).
+- **API design**: Provide narrow, predictable methods with explicit inputs/outputs; validate early, return typed errors, and keep optional parameters minimal with well-defined defaults.
+- **Resilience**: Enforce timeouts and cancellation (Go `context.Context`, JS `AbortSignal`), bound concurrency/queues, and make retries/backoff configurable but safe by default.
+- **Observability & safety**: Use structured logs/metrics/traces with redaction of secrets; log at the edge, not inside hot paths; ensure idempotent cleanup on failures.
+- **Testing the bindings**: Add contract tests that compare binding behavior to the Rust reference (happy path, errors, streaming); use golden files/fixtures for cross-language parity and simple runnable examples (`examples/*`) as smoke tests.
+- **Dependencies**: Keep dependency graphs small, pin versions, avoid dynamic imports/reflection-heavy patterns, and document any platform-specific requirements.
 
 ---
 
