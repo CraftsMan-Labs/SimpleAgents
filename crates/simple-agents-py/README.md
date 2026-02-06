@@ -54,7 +54,7 @@ from simple_agents_py import Client
 
 client = Client("openai")
 messages = [{"role": "user", "content": "Say hello in one sentence."}]
-for chunk in client.stream("gpt-4o-mini", messages, max_tokens=64):
+for chunk in client.complete("gpt-4o-mini", messages, max_tokens=64, stream=True):
     if chunk.content:
         print(chunk.content, end="", flush=True)
 print()
@@ -76,7 +76,12 @@ schema = {
     "required": ["name", "age"],
 }
 messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
-json_text = client.complete_json_schema("gpt-4o-mini", messages, schema, "person")
+json_text = client.complete(
+    "gpt-4o-mini",
+    messages,
+    schema=schema,
+    schema_name="person",
+)
 print(json.loads(json_text))
 ```
 
@@ -92,7 +97,12 @@ class Person(BaseModel):
 
 client = Client("openai")
 messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
-json_text = client.complete_json_schema("gpt-4o-mini", messages, Person, "person")
+json_text = client.complete(
+    "gpt-4o-mini",
+    messages,
+    schema=Person,
+    schema_name="person",
+)
 print(json_text)
 ```
 
@@ -114,7 +124,13 @@ schema = {
     "required": ["name", "age"],
 }
 messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
-for event in client.stream_structured("gpt-4o-mini", messages, schema, max_tokens=64):
+for event in client.complete(
+    "gpt-4o-mini",
+    messages,
+    schema=schema,
+    max_tokens=64,
+    stream=True,
+):
     if event.is_partial:
         print("partial:", event.partial_value)
     else:
@@ -128,7 +144,13 @@ from simple_agents_py import Client
 
 client = Client("openai")
 messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":30}"}]
-healed = client.complete_json_healed("gpt-4o-mini", messages, max_tokens=64)
+healed = client.complete(
+    "gpt-4o-mini",
+    messages,
+    max_tokens=64,
+    response_format="json",
+    heal=True,
+)
 print(healed.content)
 print(healed.was_healed, healed.confidence)
 print(healed.usage.get("total_tokens"))
@@ -158,7 +180,7 @@ tools = [
     }
 ]
 messages = [{"role": "user", "content": "What's the weather in Tokyo?"}]
-response = client.complete_with_tools("gpt-4o-mini", messages, tools)
+response = client.complete("gpt-4o-mini", messages, tools=tools)
 print(response.tool_calls)
 ```
 

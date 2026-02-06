@@ -8,7 +8,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(__file__), "..", "..", "target", "debug")
 )
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
 
 
 def _require_env():
@@ -65,8 +65,8 @@ class TestStructuredStreaming:
         ]
         events = []
 
-        for event in client.stream_structured(
-            model, messages, simple_schema, max_tokens=50
+        for event in client.complete(
+            model, messages, schema=simple_schema, max_tokens=50, stream=True
         ):
             assert event.is_partial or event.is_complete
             assert hasattr(event, "value")
@@ -88,8 +88,8 @@ class TestStructuredStreaming:
         messages = [{"role": "user", "content": "Create a person named Alice, age 25"}]
 
         events = list(
-            client.stream_structured(
-                model, messages, simple_schema, max_tokens=50
+            client.complete(
+                model, messages, schema=simple_schema, max_tokens=50, stream=True
             )
         )
 
@@ -110,8 +110,8 @@ class TestStructuredStreaming:
         """Test structured streaming with temperature parameter."""
         messages = [{"role": "user", "content": "Create a person"}]
 
-        for event in client.stream_structured(
-            model, messages, simple_schema, temperature=0.7
+        for event in client.complete(
+            model, messages, schema=simple_schema, temperature=0.7, stream=True
         ):
             assert hasattr(event, "value")
             if event.is_complete:
@@ -122,8 +122,8 @@ class TestStructuredStreaming:
         messages = [{"role": "user", "content": "Test"}]
 
         events = list(
-            client.stream_structured(
-                model, messages, simple_schema, max_tokens=30
+            client.complete(
+                model, messages, schema=simple_schema, max_tokens=30, stream=True
             )
         )
 
@@ -141,20 +141,22 @@ class TestStructuredStreaming:
     def test_stream_structured_empty_messages(self, client, model, simple_schema):
         """Test structured streaming with empty messages raises error."""
         with pytest.raises(Exception):
-            list(client.stream_structured(model, [], simple_schema))
+            list(client.complete(model, [], schema=simple_schema, stream=True))
 
     def test_stream_structured_invalid_schema(self, client, model):
         """Test structured streaming with invalid schema."""
         messages = [{"role": "user", "content": "Test"}]
         # Non-dict schema should raise error
         with pytest.raises(Exception):
-            list(client.stream_structured(model, messages, "not a dict"))
+            list(client.complete(model, messages, schema="not a dict", stream=True))
 
     def test_stream_structured_array_output(self, client, model, array_schema):
         """Test structured streaming with array schema."""
         messages = [{"role": "user", "content": "List three fruits"}]
 
-        events = list(client.stream_structured(model, messages, array_schema, max_tokens=50))
+        events = list(
+            client.complete(model, messages, schema=array_schema, max_tokens=50, stream=True)
+        )
 
         # Should have at least one complete event
         complete_events = [e for e in events if e.is_complete]
@@ -164,7 +166,9 @@ class TestStructuredStreaming:
         """Test structured streaming with top_p parameter."""
         messages = [{"role": "user", "content": "Create a person"}]
 
-        for event in client.stream_structured(model, messages, simple_schema, top_p=0.9):
+        for event in client.complete(
+            model, messages, schema=simple_schema, top_p=0.9, stream=True
+        ):
             if event.is_complete:
                 break
 

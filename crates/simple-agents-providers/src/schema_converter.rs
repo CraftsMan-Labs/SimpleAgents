@@ -4,8 +4,8 @@
 //! used by the healing system for parsing and coercion.
 
 use serde_json::Value;
-use simple_agents_healing::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
 use simple_agent_type::error::{SimpleAgentsError, ValidationError};
+use simple_agents_healing::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
 
 /// Convert a JSON Schema to a healing Schema.
 ///

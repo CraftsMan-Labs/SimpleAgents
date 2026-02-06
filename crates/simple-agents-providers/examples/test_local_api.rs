@@ -1,5 +1,5 @@
-use simple_agents_providers::openai::OpenAIProvider;
 use simple_agent_type::prelude::*;
+use simple_agents_providers::openai::OpenAIProvider;
 
 #[tokio::main]
 async fn main() -> Result<()> {

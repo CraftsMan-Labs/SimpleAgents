@@ -3,7 +3,8 @@
 //! Routes requests to provider with lowest observed latency.
 
 use simple_agent_type::prelude::{
-    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, ProviderHealth, Result,
+    SimpleAgentsError,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

@@ -1,23 +1,39 @@
+from __future__ import annotations
+
 import os
+from typing import TYPE_CHECKING, Tuple
 
-import pytest
+import pytest  # type: ignore[reportMissingImports]
+from simple_agents_py import ResponseWithMetadata
+
+if TYPE_CHECKING:
+    import simple_agents_py
 
 
-def _require_env():
+def _require_env() -> Tuple[str, str, str]:
     api_base = os.getenv("CUSTOM_API_BASE")
     api_key = os.getenv("CUSTOM_API_KEY")
     model = os.getenv("CUSTOM_API_MODEL")
     if not api_base or not api_key or not model:
         pytest.skip("Missing CUSTOM_API_BASE/CUSTOM_API_KEY/CUSTOM_API_MODEL")
+    assert api_base is not None
+    assert api_key is not None
+    assert model is not None
     return api_base, api_key, model
 
 
-def _client():
+def _client() -> Tuple[simple_agents_py.Client, str]:
     import simple_agents_py
 
     api_base, api_key, model = _require_env()
     client = simple_agents_py.Client("openai", api_key=api_key, api_base=api_base)
     return client, model
+
+
+def _expect_response(result: object) -> ResponseWithMetadata:
+    if isinstance(result, ResponseWithMetadata):
+        return result
+    raise TypeError(f"Expected ResponseWithMetadata, got {type(result).__name__}")
 
 
 def test_local_proxy_connection():
@@ -28,6 +44,7 @@ def test_local_proxy_connection():
         max_tokens=50,
         temperature=0.7,
     )
+    response = _expect_response(response)
     assert response.content
     assert response.model
     assert response.usage["prompt_tokens"] > 0
@@ -47,7 +64,9 @@ def test_local_proxy_multiple_requests():
         "Say hello world."
     ]
     for prompt in prompts:
-        response = client.complete(model, prompt, max_tokens=50, temperature=0.7)
+        response = _expect_response(
+            client.complete(model, prompt, max_tokens=50, temperature=0.7)
+        )
         assert response.content
 
 
@@ -61,7 +80,9 @@ def test_local_proxy_invalid_model():
 def test_local_proxy_temperature_variations():
     client, model = _client()
     for temp in [0.0, 0.5, 1.0]:
-        response = client.complete(model, "Say hello.", max_tokens=20, temperature=temp)
+        response = _expect_response(
+            client.complete(model, "Say hello.", max_tokens=20, temperature=temp)
+        )
         assert response.content
 
 
@@ -73,5 +94,7 @@ def test_local_proxy_conversation():
         {"role": "assistant", "content": "The capital is Paris."},
         {"role": "user", "content": "And Germany?"},
     ]
-    response = client.complete_messages(model, messages, max_tokens=30, temperature=0.2)
+    response = _expect_response(
+        client.complete(model, messages, max_tokens=30, temperature=0.2)
+    )
     assert response.content
