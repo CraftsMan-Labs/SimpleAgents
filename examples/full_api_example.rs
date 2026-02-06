@@ -31,12 +31,12 @@
 
 use futures_util::StreamExt;
 use serde_json::json;
+use simple_agent_type::prelude::*;
 use simple_agents_healing::prelude::*;
 use simple_agents_healing::string_utils::jaro_winkler;
 use simple_agents_providers::metrics::RequestTimer;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agent_type::prelude::*;
 use std::io::Write;
 
 #[tokio::main]

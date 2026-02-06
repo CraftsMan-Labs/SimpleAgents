@@ -16,6 +16,16 @@ uv pip install -e crates/simple-agents-py
 uv run python examples/python_client.py
 ```
 
+#### Troubleshooting stale bindings
+
+If you see `TypeError: argument 'prompt': 'list' object cannot be converted to 'PyString'`, `uv` likely reused an old cached wheel. Rebuild the binding from this repo so the `complete` API accepts `input` (messages) instead of `prompt`:
+
+```bash
+cd examples
+rm -rf .venv .uv-cache
+UV_CACHE_DIR=$PWD/.uv-cache uv run --no-cache python python_client.py
+```
+
 ### Notes
 
 - Update `api_key` in the example with a real key before running.

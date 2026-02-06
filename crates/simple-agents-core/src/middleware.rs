@@ -24,6 +24,11 @@ pub trait Middleware: Send + Sync {
         Ok(())
     }
 
+    /// Called when a streaming request completes successfully.
+    async fn after_stream(&self, _request: &CompletionRequest, _latency: Duration) -> Result<()> {
+        Ok(())
+    }
+
     /// Called when a response is served from cache.
     async fn on_cache_hit(
         &self,

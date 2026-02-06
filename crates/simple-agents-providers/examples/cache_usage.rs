@@ -20,11 +20,11 @@
 //! cargo run --example cache_usage
 //! ```
 
+use simple_agent_type::cache::{Cache, CacheKey};
+use simple_agent_type::prelude::*;
 use simple_agents_cache::InMemoryCache;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::Provider;
-use simple_agent_type::cache::{Cache, CacheKey};
-use simple_agent_type::prelude::*;
 use std::time::{Duration, Instant};
 
 #[tokio::main]

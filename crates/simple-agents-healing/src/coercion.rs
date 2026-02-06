@@ -174,11 +174,12 @@ impl CoercionEngine {
                     unreachable!()
                 };
                 Ok(Value::Number(
-                    serde_json::Number::from_f64(float_val)
-                        .ok_or_else(|| HealingError::ParseError {
+                    serde_json::Number::from_f64(float_val).ok_or_else(|| {
+                        HealingError::ParseError {
                             input: format!("{}", n),
                             expected_type: "float".to_string(),
-                        })?,
+                        }
+                    })?,
                 ))
             }
 

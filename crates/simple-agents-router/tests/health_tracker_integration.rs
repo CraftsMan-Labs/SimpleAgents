@@ -1,5 +1,5 @@
-use simple_agents_router::{HealthTracker, HealthTrackerConfig};
 use simple_agent_type::prelude::ProviderHealth;
+use simple_agents_router::{HealthTracker, HealthTrackerConfig};
 use std::time::Duration;
 
 #[test]

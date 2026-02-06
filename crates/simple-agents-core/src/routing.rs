@@ -1,11 +1,11 @@
 //! Routing integration for SimpleAgents core.
 
+use simple_agent_type::prelude::{
+    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
+};
 use simple_agents_router::{
     CostRouter, CostRouterConfig, FallbackRouter, FallbackRouterConfig, LatencyRouter,
     LatencyRouterConfig, RoundRobinRouter,
-};
-use simple_agent_type::prelude::{
-    CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
 use std::sync::Arc;
 
