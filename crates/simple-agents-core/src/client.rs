@@ -592,7 +592,11 @@ mod tests {
             Ok(())
         }
 
-        async fn after_stream(&self, _request: &CompletionRequest, _latency: Duration) -> Result<()> {
+        async fn after_stream(
+            &self,
+            _request: &CompletionRequest,
+            _latency: Duration,
+        ) -> Result<()> {
             self.after_stream.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
@@ -679,7 +683,8 @@ mod tests {
         async fn execute_stream(
             &self,
             _req: ProviderRequest,
-        ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>>
+        {
             let stream = if self.fail_after_first {
                 let items: Vec<Result<CompletionChunk>> = vec![
                     Ok(Self::build_chunk("chunk-1", "hello")),
