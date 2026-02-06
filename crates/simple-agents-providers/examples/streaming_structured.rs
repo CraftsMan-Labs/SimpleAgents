@@ -14,8 +14,8 @@
 use futures_util::{stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use simple_agent_type::response::{ChoiceDelta, CompletionChunk, FinishReason, MessageDelta};
+use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AnalysisResult {

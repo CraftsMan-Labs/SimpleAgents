@@ -282,15 +282,11 @@ impl Provider for OpenAIProvider {
             url: format!("{}/chat/completions", self.base_url),
             headers: vec![
                 (
-                    std::borrow::Cow::Borrowed(
-                        simple_agent_type::provider::headers::AUTHORIZATION,
-                    ),
+                    std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::AUTHORIZATION),
                     std::borrow::Cow::Owned(format!("Bearer {}", self.api_key.expose())),
                 ),
                 (
-                    std::borrow::Cow::Borrowed(
-                        simple_agent_type::provider::headers::CONTENT_TYPE,
-                    ),
+                    std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::CONTENT_TYPE),
                     std::borrow::Cow::Borrowed("application/json"),
                 ),
             ],

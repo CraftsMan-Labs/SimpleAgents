@@ -3,8 +3,8 @@
 //! These tests require a running API server configured via the project `.env`.
 //! Run with: `cargo test -p simple-agents-providers`
 
-use simple_agents_providers::openai::OpenAIProvider;
 use simple_agent_type::prelude::*;
+use simple_agents_providers::openai::OpenAIProvider;
 fn success_response(model: &str, content: &str) -> serde_json::Value {
     serde_json::json!({
         "id": "chatcmpl-test",

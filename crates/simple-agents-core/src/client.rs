@@ -5,13 +5,13 @@ use crate::middleware::Middleware;
 use crate::routing::{RouterEngine, RoutingMode};
 use async_trait::async_trait;
 use simple_agent_type::cache::Cache;
-use simple_agents_healing::coercion::CoercionEngine;
-use simple_agents_healing::parser::JsonishParser;
-use simple_agents_healing::schema::Schema;
 use simple_agent_type::cache::CacheKey;
 use simple_agent_type::prelude::{
     CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
+use simple_agents_healing::coercion::CoercionEngine;
+use simple_agents_healing::parser::JsonishParser;
+use simple_agents_healing::schema::Schema;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -179,7 +179,10 @@ impl SimpleAgentsClient {
     }
 
     /// Execute a completion request and parse the response content as JSON.
-    async fn complete_json_internal(&self, request: &CompletionRequest) -> Result<HealedJsonResponse> {
+    async fn complete_json_internal(
+        &self,
+        request: &CompletionRequest,
+    ) -> Result<HealedJsonResponse> {
         self.ensure_healing_enabled()?;
         let response = self.complete_response(request).await?;
         let content = response.content().ok_or_else(|| {
