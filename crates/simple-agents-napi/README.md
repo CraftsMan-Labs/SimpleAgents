@@ -12,14 +12,55 @@ npm run build
 ## Usage
 
 ```javascript
-const { Client } = require('./index.node');
+const { Client } = require('./index.js');
 
 const client = new Client('openai');
-const response = client.complete('gpt-4', 'Hello from Node!', 128, 0.7);
-console.log(response);
+
+async function main() {
+  const response = await client.complete(
+    'gpt-4',
+    [
+      { role: 'system', content: 'You are concise.' },
+      { role: 'user', content: 'Say hi from Node.' },
+    ],
+    { max_tokens: 64, temperature: 0.7 },
+  );
+
+  console.log(response.content);
+  console.log(response.usage);
+  console.log(response.healed); // present when using healed_json/schema mode
+
+  // Streaming
+  const streamed = await client.stream(
+    'gpt-4',
+    'Say hello in two words.',
+    {},
+    (chunk) => {
+      if (chunk.content) process.stdout.write(chunk.content);
+      if (chunk.finish_reason) console.log('\nfinish:', chunk.finish_reason);
+    },
+  );
+  console.log('streamed content:', streamed.content);
+
+  // Healed JSON
+  const healed = await client.complete(
+    'gpt-4',
+    'Respond with JSON: {"message": "hello"}',
+    { mode: 'healed_json' },
+  );
+  console.log('parsed JSON value:', healed.healed?.value);
+}
+
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
 ```
 
 ## Notes
 
-- `Client` reads provider configuration from environment variables (e.g. `OPENAI_API_KEY`).
-- `max_tokens` and `temperature` are optional.
+- Canonical env contract for examples/tests is: `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `PROVIDER`.
+- For OpenAI provider compatibility, map `CUSTOM_API_*` to `OPENAI_API_*` when needed (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`).
+- `max_tokens`, `temperature`, and `top_p` are optional. Use `mode: "healed_json"` for parsed JSON or `mode: "schema"` with a schema object to coerce/validate.
+- `complete` resolves with the first choice, usage metadata, and optional `healed`/`coerced` metadata. `stream` invokes a chunk callback and resolves with aggregated content (healing/schema not yet supported for streams).
+- Set `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, and `PROVIDER` to run tests/examples consistently across bindings.
