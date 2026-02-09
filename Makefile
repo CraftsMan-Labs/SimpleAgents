@@ -1,5 +1,6 @@
-.PHONY: help test test-rust test-python clippy fmt example-providers example-full-api examples \
+.PHONY: help test test-rust test-python clippy fmt example-providers example-full-api example-node examples \
 	release-ffi release-python release-go release-node release-all \
+	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
 	version-get version-sync version-patch version-minor version-major version-set \
@@ -11,6 +12,9 @@ GO_BINDINGS_DIR ?= bindings/go
 PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
 PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
+NAPI_PROJECT_DIR ?= crates/simple-agents-napi
+NAPI_PACKAGE_JSON ?= $(NAPI_PROJECT_DIR)/package.json
+ENV_FILE ?= $(CURDIR)/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
@@ -28,21 +32,28 @@ help:
 	@echo "Examples:"
 	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
 	@echo "  make example-full-api      - Run examples/full_api_example.rs"
-	@echo "  make examples              - Run provider example + full_api_example"
+	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
+	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
 	@echo "  make release-ffi           - Build C FFI library (for Go/C/other langs)"
 	@echo "  make release-python        - Build Python wheels via uv"
 	@echo "  make release-go            - Build Go bindings against release FFI"
 	@echo "  make release-node          - Build Node napi module (Rust cdylib)"
+	@echo "  make build-node            - npm install + napi build (Node package)"
 	@echo "  make release-all           - Build all language artifacts"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test-node             - Build Node addon then run node --test"
+	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
 	@echo ""
 	@echo "Publishing:"
 	@echo "  make publish-crates-dry    - Dry-run publish Rust crates"
 	@echo "  make publish-python-dry    - Dry-run publish Python package"
 	@echo "  make publish-crates        - Publish Rust crates with Doppler env"
 	@echo "  make publish-python        - Publish Python package with Doppler env"
-	@echo "  make publish-all           - Publish Rust crates + Python package"
+	@echo "  make publish-node          - Publish Node package (expects NPM_TOKEN)"
+	@echo "  make publish-all           - Publish Rust crates + Python + Node package"
 	@echo ""
 	@echo "Versioning:"
 	@echo "  make version-get           - Show current version"
@@ -73,7 +84,13 @@ example-providers:
 example-full-api:
 	cargo run --manifest-path examples/Cargo.toml --example full_api_example
 
-examples: example-providers example-full-api
+example-node: build-node
+	@set -a; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	node examples/node_client.js
+
+examples: example-providers example-full-api example-node
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
@@ -89,7 +106,22 @@ release-go: release-ffi
 release-node:
 	cargo build -p $(NAPI_CRATE) --release
 
+build-node:
+	cd $(NAPI_PROJECT_DIR) && npm install && npm run build
+
 release-all: release-ffi release-python release-go release-node
+
+test-node: build-node
+	@set -a; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cd $(NAPI_PROJECT_DIR) && npm test
+
+test-go-bindings: release-ffi
+	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
+	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+		go test ./$(GO_BINDINGS_DIR)
 
 publish-crates:
 	@set -e; for crate in $(PUBLISH_CRATES); do \
@@ -123,7 +155,7 @@ publish-python:
 		echo \"[publish-python] token_source=\$$TOKEN_SOURCE token_len=\$${#TOKEN_VALUE}\"; \
 		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish $(CURDIR)/$(PYTHON_PROJECT_DIR)/dist/simple_agents_py-\$$VERSION.tar.gz"
 
-publish-all: publish-crates publish-python
+publish-all: publish-crates publish-python publish-node
 
 # ============================================================================
 # Pre-publish checks
@@ -171,6 +203,9 @@ publish-python-dry:
 	@echo ""
 	@echo "To publish for real, run: make publish-python"
 
+publish-node: version-sync build-node
+	cd $(NAPI_PROJECT_DIR) && npm publish
+
 # ============================================================================
 # Version management
 # ============================================================================
@@ -180,6 +215,11 @@ version-get:
 
 version-sync:
 	@./scripts/sync-versions.sh
+	@version=$$($(MAKE) --no-print-directory version-get); \
+	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
+		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
+		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
+	fi
 
 version-next-patch:
 	@current=$$($(MAKE) --no-print-directory version-get); \

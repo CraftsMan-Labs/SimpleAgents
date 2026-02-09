@@ -1288,6 +1288,8 @@ dependencies = [
  "napi-derive",
  "napi-sys",
  "once_cell",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2254,10 +2256,14 @@ dependencies = [
 name = "simple-agents-napi"
 version = "0.2.2"
 dependencies = [
+ "futures-util",
  "napi",
  "napi-derive",
+ "serde",
+ "serde_json",
  "simple-agent-type",
  "simple-agents-core",
+ "simple-agents-healing",
  "simple-agents-providers",
  "tokio",
 ]
