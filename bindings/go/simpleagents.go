@@ -144,10 +144,13 @@ func (c *Client) CompleteWithContext(
 	}()
 
 	select {
-	case <-ctx.Done():
-		return "", ctx.Err()
 	case res := <-resultCh:
 		return res.value, res.err
+	case <-ctx.Done():
+		// C calls are not cancellable here. Wait for the goroutine to finish so
+		// deferred C.free calls in this function do not race with in-flight cgo.
+		<-resultCh
+		return "", ctx.Err()
 	}
 }
 
@@ -262,10 +265,13 @@ func (c *Client) CompleteMessages(
 	}()
 
 	select {
-	case <-ctx.Done():
-		return CompletionResult{}, ctx.Err()
 	case res := <-resultCh:
 		return res.value, res.err
+	case <-ctx.Done():
+		// C calls are not cancellable here. Wait for the goroutine to finish so
+		// deferred C.free calls in this function do not race with in-flight cgo.
+		<-resultCh
+		return CompletionResult{}, ctx.Err()
 	}
 }
 
