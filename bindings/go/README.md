@@ -8,7 +8,18 @@ Go bindings for SimpleAgents using cgo and the C FFI.
 cargo build -p simple-agents-ffi --release
 ```
 
-Ensure the dynamic library is on your loader path (e.g. `LD_LIBRARY_PATH=target/release`).
+Ensure the dynamic library is on your loader path (for example `LD_LIBRARY_PATH=target/release`).
+
+## Environment contract
+
+Use the same canonical env contract as other bindings:
+
+- `PROVIDER` - `openai`, `anthropic`, or `openrouter`
+- `CUSTOM_API_KEY`
+- `CUSTOM_API_BASE` (optional for providers with a base URL)
+- `CUSTOM_API_MODEL`
+
+The Go example maps `CUSTOM_API_*` to provider-specific variables expected by the Rust providers.
 
 ## Usage
 
@@ -16,8 +27,10 @@ Ensure the dynamic library is on your loader path (e.g. `LD_LIBRARY_PATH=target/
 package main
 
 import (
+    "context"
     "fmt"
     "log"
+    "time"
 
     "simpleagents"
 )
@@ -29,11 +42,32 @@ func main() {
     }
     defer client.Close()
 
-    response, err := client.Complete("gpt-4", "Hello from Go!", 128, 0.7)
+    ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+    defer cancel()
+
+    maxTokens := int32(64)
+    temperature := float32(0.2)
+
+    result, err := client.CompleteMessages(
+        ctx,
+        "gpt-4",
+        []simpleagents.Message{{Role: "user", Content: "Say hello in one sentence."}},
+        simpleagents.CompleteOptions{MaxTokens: &maxTokens, Temperature: &temperature},
+    )
     if err != nil {
         log.Fatal(err)
     }
 
-    fmt.Println(response)
+    fmt.Println(result.Content)
 }
 ```
+
+See runnable example: `bindings/go/examples/client/main.go`.
+
+## API summary
+
+- `NewClientFromEnv(provider string) (*Client, error)`
+- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (prompt API)
+- `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
+- `(*Client).Complete(...)` (backward-compatible prompt helper)
+- `(*Client).Close()`
