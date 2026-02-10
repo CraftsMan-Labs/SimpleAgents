@@ -1019,6 +1019,7 @@ fn provider_from_params(
     api_key: Option<&str>,
     api_base: Option<&str>,
     enable_healing: bool,
+    timeout: Duration,
 ) -> Result<Arc<dyn Provider>> {
     let api_key = match api_key {
         Some(value) => Some(ApiKey::new(value)?),
@@ -1032,7 +1033,7 @@ fn provider_from_params(
                     Some(api_base) => {
                         if is_local_base(api_base) {
                             let client = HttpClient::builder()
-                                .timeout(Duration::from_secs(30))
+                                .timeout(timeout)
                                 .pool_max_idle_per_host(10)
                                 .pool_idle_timeout(Duration::from_secs(90))
                                 .no_proxy()
@@ -1174,9 +1175,14 @@ impl ClientBuilder {
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
         // Enable healing by default for providers added through ClientBuilder
-        let provider =
-            provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), true)
-                .map_err(py_err)?;
+        let provider = provider_from_params(
+            provider,
+            api_key.as_deref(),
+            api_base.as_deref(),
+            true,
+            Duration::from_secs(30),
+        )
+        .map_err(py_err)?;
 
         slf.providers.push(provider);
         Ok(slf)
@@ -2201,16 +2207,22 @@ impl SchemaExt for Schema {
 #[allow(clippy::useless_conversion)]
 impl Client {
     #[new]
-    #[pyo3(signature = (provider, api_key=None, api_base=None, healing=true))]
+    #[pyo3(signature = (provider, api_key=None, api_base=None, healing=true, timeout_seconds=30))]
     fn new(
         provider: &str,
         api_key: Option<String>,
         api_base: Option<String>,
         healing: bool,
+        timeout_seconds: u64,
     ) -> PyResult<Self> {
-        let provider =
-            provider_from_params(provider, api_key.as_deref(), api_base.as_deref(), healing)
-                .map_err(py_err)?;
+        let provider = provider_from_params(
+            provider,
+            api_key.as_deref(),
+            api_base.as_deref(),
+            healing,
+            Duration::from_secs(timeout_seconds),
+        )
+        .map_err(py_err)?;
         let client = SimpleAgentsClientBuilder::new()
             .with_provider(provider)
             .build()
