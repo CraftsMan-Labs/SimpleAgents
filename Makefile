@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python clippy fmt example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python clippy fmt loc-report example-providers example-full-api example-node examples \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -28,6 +28,7 @@ help:
 	@echo "  make test                  - Run all tests"
 	@echo "  make clippy                - Run clippy on all targets"
 	@echo "  make fmt                   - Check formatting"
+	@echo "  make loc-report            - Print LOC report and README snippet"
 	@echo "  make check-publish         - Run all pre-publish checks"
 	@echo ""
 	@echo "Examples:"
@@ -78,6 +79,9 @@ clippy:
 
 fmt:
 	cargo fmt --all -- --check
+
+loc-report:
+	./scripts/loc-report.sh
 
 example-providers:
 	cargo run -p simple-agents-providers --example $(EXAMPLE)
