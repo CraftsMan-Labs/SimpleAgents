@@ -31,7 +31,11 @@ function debugLog(label, value) {
   }
 }
 
-test('complete returns content', async () => {
+test('complete returns content', async (t) => {
+  if (!hasEnv) {
+    t.skip(REQUIRED_ENV_MESSAGE);
+    return;
+  }
   assertRequiredEnv();
   debugLog('complete.env', { provider: PROVIDER, model: MODEL });
   const client = new Client(PROVIDER);
@@ -50,7 +54,11 @@ test('complete returns content', async () => {
   assert.ok(res.usage.totalTokens >= 1, 'usage should be populated');
 });
 
-test('healed_json mode parses JSON', async () => {
+test('healed_json mode parses JSON', async (t) => {
+  if (!hasEnv) {
+    t.skip(REQUIRED_ENV_MESSAGE);
+    return;
+  }
   assertRequiredEnv();
   debugLog('healed_json.env', { provider: PROVIDER, model: MODEL });
   const client = new Client(PROVIDER);
