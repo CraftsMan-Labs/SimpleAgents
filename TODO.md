@@ -1,57 +1,162 @@
-Cross-language bindings (JS/TS and Go):
+# Cross-Language Parity TODO (Rust / Python / Node / Go)
 
-- [ ] API surface design: mirror Python Client/builder/healing API in JS/TS (N-API) and Go; pin schema for messages/tool-calls/structured output to avoid drift and reuse `simple-agent-type` structs.
-  - Status: Node `Client` exposes `complete`/`stream` via `CompletionRequest` builder and provider-from-env helpers (openai/anthropic/openrouter) with `mode` support (`standard`/`healed_json`/`schema` + inline schema value parsing); Go wrapper exposes `NewClientFromEnv` + prompt-only `Complete`.
-  - Gaps: JS/TS still lacks typed tool-call returns/partial streaming types and streaming healing; Go lacks context support, streaming, and message-based inputs.
-- [ ] JS/TS bindings: implement N-API module, emit `.d.ts` from Rust/TS types, provide async methods for completion/streaming/structured/healing; add npm packaging scripts and README with usage.
-  - Status: Node bindings now surface `mode` (`standard`/`healed_json`/`schema`) with inline schema parsing from JSON values, returning healed/coerced metadata; README updated; build/test/publish npm scripts in place.
-  - Gaps: streaming still standard-only; `.d.ts` remains handwritten (not generated from Rust/types) and publish metadata/prebuild matrix still missing.
-- [ ] JS/TS validation/tests: parity tests with Python (basic completion, streaming, structured JSON, healing) plus a runnable example akin to `examples/full_api_example.rs` and `examples/python_client.py`; mock transport for unit tests + live toggle via env (CUSTOM_API_*).
-  - Status: added `node --test` live smoke for `complete` + `healed_json` (env-gated) in `crates/simple-agents-napi/test/basic.test.js`; npm `pretest` builds addon.
-  - Next: add mock transport contract tests (no-network), streaming coverage, structured/schema fixtures, and a documented runnable example in the package.
-  - TODO: wire `make test-node` into CI matrix with env toggle.
-- [ ] Go bindings: choose FFI approach (cgo to Rust FFI crate vs Go shim); expose idiomatic Go Client with context support and streaming channels; add module metadata (go.mod) and docs.
-  - Status: `bindings/go` uses cgo against `simple-agents-ffi` with `Complete(model, prompt, maxTokens, temperature)`; go.mod + minimal README exist.
-  - Next: decide long-term FFI shape, add context-aware client, message-based requests, streaming/tool-calls/structured outputs, and richer docs.
-  - Draft C FFI additions (to expose messages + streaming):
-    ```c
-    typedef struct {
-        const char *role;
-        const char *content;
-        const char *name;
-        const char *tool_call_id;
-    } SAMessage;
+Goal: every capability implemented in Rust should be available consistently in Python, Node, and Go, with idiomatic APIs per language.
 
-    typedef void (*sa_stream_cb)(const char *chunk_json, void *user_data);
+## Done
 
-    SAClient *sa_client_new_from_env(const char *provider_name);
-    char *sa_complete_messages(SAClient *client, const char *model, const SAMessage *msgs, size_t len, int32_t max_tokens, float temperature);
-    int sa_stream_messages(SAClient *client, const char *model, const SAMessage *msgs, size_t len, int32_t max_tokens, float temperature, sa_stream_cb cb, void *user_data);
-    ```
-  - Draft Go wrapper shape:
+- [x] Node TypeScript declaration correctness fixed
+  - Scope: fixed missing `Schema` type reference and invalid optional/required parameter ordering.
+  - Why: broken `.d.ts` blocks adoption immediately for TS users.
+  - Evidence: `crates/simple-agents-napi/index.d.ts` now type-checks with `tsc --noEmit index.d.ts`.
+
+- [x] Go make/build/test baseline stabilized
+  - Scope: fixed `make release-go` and `make test-go-bindings` invocation, env propagation, and cache handling.
+  - Why: parity work is impossible if basic binding checks are flaky.
+  - Evidence: `make release-go` and `make test-go-bindings` pass.
+
+- [x] Go message-based completion + structured/healing output baseline added
+  - Scope: added `sa_complete_messages_json` FFI endpoint and Go `CompleteMessages(ctx, ...)` API.
+  - Why: Go needed to move beyond prompt-only API to align with Python-style message-first workflows.
+  - Sample shape:
     ```go
-    type Message struct {
-        Role string
-        Content string
-        Name string
-        ToolCallID string
-    }
+    res, err := client.CompleteMessages(ctx, model, []simpleagents.Message{
+      {Role: "user", Content: "Return JSON: {\"status\":\"ok\"}"},
+    }, simpleagents.CompleteOptions{Mode: "healed_json"})
+    ```
 
-    func (c *Client) Complete(ctx context.Context, model string, messages []Message, opts Options) (Result, error) {
-        // marshal messages -> C array, respect ctx.Done
-    }
+- [x] Binding CI workflow introduced
+  - Scope: added `.github/workflows/bindings-ci.yml` for Go and Node checks.
+  - Why: prevents silent parity regression.
 
-    func (c *Client) Stream(ctx context.Context, model string, messages []Message, opts Options) (<-chan Chunk, <-chan error) {
-        // bridge sa_stream_messages via callback -> goroutine sends on channel
+- [x] Shared env template introduced
+  - Scope: added `.env.example` with `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `CUSTOM_API_BASE`.
+  - Why: one contract across bindings reduces setup drift.
+
+## Partially Done
+
+- [~] API parity with Python
+  - Current state:
+    - Python: broad surface (`complete` variants, streaming, structured streaming, tools, healing).
+    - Node: `complete` + `stream`, but streaming remains standard-mode only.
+    - Go: `Complete`, `CompleteWithContext`, `CompleteMessages`; no streaming yet.
+  - Why incomplete: missing streaming and some advanced parity features.
+  - Next sample target:
+    ```go
+    chunks, errs := client.StreamMessages(ctx, model, messages, opts)
+    for c := range chunks { /* consume partials */ }
+    if err := <-errs; err != nil { /* handle */ }
+    ```
+
+- [~] Go validation coverage
+  - Current state: unit tests and env-gated live test exist.
+  - Why incomplete: no streaming tests yet, no schema-edge golden cases.
+  - Next sample target:
+    ```go
+    func TestStreamMessagesCancellation(t *testing.T) {
+      ctx, cancel := context.WithCancel(context.Background())
+      chunks, errs := client.StreamMessages(ctx, model, messages, opts)
+      cancel()
+      _ = chunks
+      if err := <-errs; err == nil { t.Fatal("expected cancel error") }
     }
     ```
-- [ ] Go validation/tests: parity tests for completion/streaming/structured/healing; runnable example mirroring Rust/Python; mockable transport plus optional live env (CUSTOM_API_*).
-  - Status: no automated tests or runnable example beyond README snippet.
-  - Next: add unit/integration coverage with mock transport + env-gated live runs, and a sample program mirroring Rust/Python demos.
-  - TODO: add `make test-go-bindings` (build FFI + run Go tests/examples) and include in CI.
-- [ ] CI/publish: extend release to build/test/publish npm package and Go module; add `make` targets and version sync hooks; ensure tagging bumps JS/TS/Go versions alongside Rust/Python.
-  - Status: Makefile now includes `build-node`, `test-node`, `publish-node`, and `test-go-bindings`; npm build/test/publish scripts present; no CI jobs yet.
-  - Next: wire CI for npm/go publish and version syncing across languages; add prebuild matrix for npm publish.
-- [ ] Credentials/fixtures: document required envs (CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL or provider-specific overrides), provide dummy/local mode for tests, and add sample .env templates for examples.
-  - Status: Node README/example expect `OPENAI_API_KEY`/`OPENAI_MODEL`; no shared .env template for bindings tests.
-  - Next: document env matrix (incl. CUSTOM_API_*), add sample .env and dummy/local fixtures for automated tests/examples.
+
+- [~] Credentials/fixtures parity
+  - Current state: `.env.example` and updated binding docs exist.
+  - Why incomplete: deterministic mock fixtures still missing for no-network contract testing.
+
+## Pending
+
+- [ ] Implement streaming in C FFI and Go bindings
+  - Scope:
+    - Add C callback-based streaming API.
+    - Bridge to Go channel-based API with cancellation support.
+  - Why: streaming is core product behavior and parity blocker.
+  - Sample target C API:
+    ```c
+    typedef void (*sa_stream_cb)(const char *chunk_json, void *user_data);
+    int sa_stream_messages(
+      SAClient *client,
+      const char *model,
+      const SAMessage *messages,
+      size_t messages_len,
+      int32_t max_tokens,
+      float temperature,
+      float top_p,
+      sa_stream_cb cb,
+      void *user_data
+    );
+    ```
+  - Sample target Go API:
+    ```go
+    func (c *Client) StreamMessages(
+      ctx context.Context,
+      model string,
+      messages []Message,
+      opts CompleteOptions,
+    ) (<-chan StreamChunk, <-chan error)
+    ```
+
+- [ ] Cross-language capability matrix and CI gating
+  - Scope: define capability table and assert minimum required features in CI.
+  - Why: prevents future divergence between Python/Node/Go.
+  - Sample matrix row:
+    ```text
+    capability           rust  python  node  go
+    message_complete     yes   yes     yes   yes
+    stream_standard      yes   yes     yes   no  <- blocker
+    stream_structured    yes   yes     no    no
+    ```
+
+- [ ] Contract fixtures for parity tests
+  - Scope: shared fixtures for request/response/healing/tool-call behaviors consumed by all bindings.
+  - Why: same input should yield same semantic output across languages.
+  - Sample fixture idea:
+    ```json
+    {
+      "name": "healed_json_basic",
+      "input": {"messages": [{"role": "user", "content": "Return malformed JSON"}]},
+      "expect": {"was_healed": true}
+    }
+    ```
+
+- [ ] Node parity improvements
+  - Scope: typed tool-call returns and richer streaming/partial type surface.
+  - Why: TS ergonomics and safety should match Python-level confidence.
+
+## Refactor Tasks
+
+- [ ] Refactor Go API toward explicit OOD shape
+  - Current concern: mixed legacy prompt method and newer message method can drift.
+  - Target design:
+    - `CompletePrompt(ctx, ...)` (thin wrapper)
+    - `CompleteMessages(ctx, ...)` (primary)
+    - `StreamMessages(ctx, ...)` (primary streaming)
+  - Why: explicit method-per-use-case is idiomatic Go and easier to test.
+  - Sample:
+    ```go
+    func (c *Client) CompletePrompt(ctx context.Context, model, prompt string, opts CompleteOptions) (CompletionResult, error)
+    func (c *Client) CompleteMessages(ctx context.Context, model string, messages []Message, opts CompleteOptions) (CompletionResult, error)
+    ```
+
+- [ ] Refactor FFI payload model to shared typed schema structs
+  - Current concern: ad-hoc JSON serialization in FFI can drift from N-API/Python mappings.
+  - Target: centralize response DTO mapping helpers in Rust and reuse across bindings.
+  - Why: DRY and consistency.
+
+- [ ] Refactor test layering
+  - Current concern: live tests are present but mock/contract coverage is still thin.
+  - Target layering:
+    - unit (no network)
+    - contract (shared fixtures)
+    - live (env-gated)
+  - Why: reliable CI + meaningful parity signal.
+
+## Execution Order (Recommended)
+
+- [ ] 1. Implement `sa_stream_messages` in Rust FFI.
+- [ ] 2. Implement `StreamMessages` in Go with context cancellation and no goroutine leaks.
+- [ ] 3. Add Go streaming unit + live tests.
+- [ ] 4. Add shared parity fixtures and contract runner.
+- [ ] 5. Enforce capability matrix in CI.
+- [ ] 6. Upgrade Node streaming/tool-call type parity.
