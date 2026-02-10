@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python Coding Patterns"
+  short_description: "Production Python implementation and review patterns."
+  default_prompt: "Apply robust Python coding patterns for implementation, debugging, refactoring, and code review."
