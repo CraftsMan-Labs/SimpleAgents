@@ -123,33 +123,36 @@ func (c *Client) CompleteWithContext(
 		ctx = context.Background()
 	}
 
-	cModel := C.CString(model)
-	defer C.free(unsafe.Pointer(cModel))
-	cPrompt := C.CString(prompt)
-	defer C.free(unsafe.Pointer(cPrompt))
-
 	type result struct {
 		value string
 		err   error
 	}
 	resultCh := make(chan result, 1)
 	go func() {
+		cModel := C.CString(model)
+		defer C.free(unsafe.Pointer(cModel))
+		cPrompt := C.CString(prompt)
+		defer C.free(unsafe.Pointer(cPrompt))
+
 		response := C.sa_complete(c.ptr, cModel, cPrompt, C.int32_t(maxTokens), C.float(temperature))
 		if response == nil {
-			resultCh <- result{"", lastError()}
+			select {
+			case resultCh <- result{"", lastError()}:
+			default:
+			}
 			return
 		}
 		defer C.sa_string_free(response)
-		resultCh <- result{C.GoString(response), nil}
+		select {
+		case resultCh <- result{C.GoString(response), nil}:
+		default:
+		}
 	}()
 
 	select {
 	case res := <-resultCh:
 		return res.value, res.err
 	case <-ctx.Done():
-		// C calls are not cancellable here. Wait for the goroutine to finish so
-		// deferred C.free calls in this function do not race with in-flight cgo.
-		<-resultCh
 		return "", ctx.Err()
 	}
 }
@@ -171,38 +174,6 @@ func (c *Client) CompleteMessages(
 		ctx = context.Background()
 	}
 
-	cModel := C.CString(model)
-	defer C.free(unsafe.Pointer(cModel))
-
-	cMessages := make([]C.SAMessage, len(messages))
-	allocated := make([]*C.char, 0, len(messages)*4)
-	freeAll := func() {
-		for _, p := range allocated {
-			if p != nil {
-				C.free(unsafe.Pointer(p))
-			}
-		}
-	}
-	for i, msg := range messages {
-		role := C.CString(msg.Role)
-		content := C.CString(msg.Content)
-		allocated = append(allocated, role, content)
-		cMessages[i].role = role
-		cMessages[i].content = content
-
-		if msg.Name != "" {
-			name := C.CString(msg.Name)
-			allocated = append(allocated, name)
-			cMessages[i].name = name
-		}
-		if msg.ToolCallID != "" {
-			toolCallID := C.CString(msg.ToolCallID)
-			allocated = append(allocated, toolCallID)
-			cMessages[i].tool_call_id = toolCallID
-		}
-	}
-	defer freeAll()
-
 	maxTokens := int32(0)
 	if opts.MaxTokens != nil {
 		maxTokens = *opts.MaxTokens
@@ -220,18 +191,17 @@ func (c *Client) CompleteMessages(
 	if modeValue == "" {
 		modeValue = "standard"
 	}
-	cMode := C.CString(modeValue)
-	defer C.free(unsafe.Pointer(cMode))
 
-	var cSchemaJSON *C.char
+	var schemaJSONString string
 	if opts.Schema != nil {
 		schemaJSON, err := json.Marshal(opts.Schema)
 		if err != nil {
 			return CompletionResult{}, fmt.Errorf("marshal schema: %w", err)
 		}
-		cSchemaJSON = C.CString(string(schemaJSON))
-		defer C.free(unsafe.Pointer(cSchemaJSON))
+		schemaJSONString = string(schemaJSON)
 	}
+
+	messagesCopy := append([]Message(nil), messages...)
 
 	type result struct {
 		value CompletionResult
@@ -239,6 +209,47 @@ func (c *Client) CompleteMessages(
 	}
 	resultCh := make(chan result, 1)
 	go func() {
+		cModel := C.CString(model)
+		defer C.free(unsafe.Pointer(cModel))
+		cMode := C.CString(modeValue)
+		defer C.free(unsafe.Pointer(cMode))
+
+		var cSchemaJSON *C.char
+		if schemaJSONString != "" {
+			cSchemaJSON = C.CString(schemaJSONString)
+			defer C.free(unsafe.Pointer(cSchemaJSON))
+		}
+
+		cMessages := make([]C.SAMessage, len(messagesCopy))
+		allocated := make([]*C.char, 0, len(messagesCopy)*4)
+		freeAll := func() {
+			for _, p := range allocated {
+				if p != nil {
+					C.free(unsafe.Pointer(p))
+				}
+			}
+		}
+		defer freeAll()
+
+		for i, msg := range messagesCopy {
+			role := C.CString(msg.Role)
+			content := C.CString(msg.Content)
+			allocated = append(allocated, role, content)
+			cMessages[i].role = role
+			cMessages[i].content = content
+
+			if msg.Name != "" {
+				name := C.CString(msg.Name)
+				allocated = append(allocated, name)
+				cMessages[i].name = name
+			}
+			if msg.ToolCallID != "" {
+				toolCallID := C.CString(msg.ToolCallID)
+				allocated = append(allocated, toolCallID)
+				cMessages[i].tool_call_id = toolCallID
+			}
+		}
+
 		response := C.sa_complete_messages_json(
 			c.ptr,
 			cModel,
@@ -251,26 +262,32 @@ func (c *Client) CompleteMessages(
 			cSchemaJSON,
 		)
 		if response == nil {
-			resultCh <- result{CompletionResult{}, lastError()}
+			select {
+			case resultCh <- result{CompletionResult{}, lastError()}:
+			default:
+			}
 			return
 		}
 		defer C.sa_string_free(response)
 
 		var parsed CompletionResult
 		if err := json.Unmarshal([]byte(C.GoString(response)), &parsed); err != nil {
-			resultCh <- result{CompletionResult{}, fmt.Errorf("unmarshal completion result: %w", err)}
+			select {
+			case resultCh <- result{CompletionResult{}, fmt.Errorf("unmarshal completion result: %w", err)}:
+			default:
+			}
 			return
 		}
-		resultCh <- result{parsed, nil}
+		select {
+		case resultCh <- result{parsed, nil}:
+		default:
+		}
 	}()
 
 	select {
 	case res := <-resultCh:
 		return res.value, res.err
 	case <-ctx.Done():
-		// C calls are not cancellable here. Wait for the goroutine to finish so
-		// deferred C.free calls in this function do not race with in-flight cgo.
-		<-resultCh
 		return CompletionResult{}, ctx.Err()
 	}
 }
