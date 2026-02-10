@@ -14,11 +14,32 @@ npm run build
 ```javascript
 const { Client } = require('./index.js');
 
-const client = new Client('openai');
+const provider = process.env.PROVIDER;
+const model = process.env.CUSTOM_API_MODEL;
+const key = process.env.CUSTOM_API_KEY;
+const base = process.env.CUSTOM_API_BASE;
+
+if (!provider || !model || !key) {
+  throw new Error('Set PROVIDER, CUSTOM_API_KEY, and CUSTOM_API_MODEL.');
+}
+
+if (provider === 'openai') {
+  process.env.OPENAI_API_KEY = key;
+  if (base) process.env.OPENAI_API_BASE = base;
+}
+if (provider === 'anthropic') {
+  process.env.ANTHROPIC_API_KEY = key;
+}
+if (provider === 'openrouter') {
+  process.env.OPENROUTER_API_KEY = key;
+  if (base) process.env.OPENROUTER_API_BASE = base;
+}
+
+const client = new Client(provider);
 
 async function main() {
   const response = await client.complete(
-    'gpt-4',
+    model,
     [
       { role: 'system', content: 'You are concise.' },
       { role: 'user', content: 'Say hi from Node.' },
@@ -32,7 +53,7 @@ async function main() {
 
   // Streaming
   const streamed = await client.stream(
-    'gpt-4',
+    model,
     'Say hello in two words.',
     (chunk) => {
       if (chunk.content) process.stdout.write(chunk.content);

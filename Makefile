@@ -9,6 +9,7 @@
 EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
 GO_BINDINGS_DIR ?= bindings/go
+GO_CACHE_DIR ?= $(CURDIR)/.go-cache
 PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
 PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
@@ -99,9 +100,12 @@ release-python:
 	cd $(PYTHON_PROJECT_DIR) && uv build
 
 release-go: release-ffi
+	cd $(GO_BINDINGS_DIR) && \
 	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
 	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	go build ./$(GO_BINDINGS_DIR)
+	GOCACHE="$(GO_CACHE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+	go build ./...
 
 release-node:
 	cargo build -p $(NAPI_CRATE) --release
@@ -118,10 +122,12 @@ test-node: build-node
 	cd $(NAPI_PROJECT_DIR) && npm test
 
 test-go-bindings: release-ffi
+	cd $(GO_BINDINGS_DIR) && \
 	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
 	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	GOCACHE="$(GO_CACHE_DIR)" \
 	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-		go test ./$(GO_BINDINGS_DIR)
+	go test ./...
 
 publish-crates:
 	@set -e; for crate in $(PUBLISH_CRATES); do \
