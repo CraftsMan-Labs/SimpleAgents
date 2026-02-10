@@ -1,7 +1,7 @@
 # SimpleAgents Coding Guidelines
 
-**Version**: 1.1
-**Last Updated**: 2026-01-23
+**Version**: 1.2
+**Last Updated**: 2026-02-09
 **Status**: Production-Grade System Standards
 
 ---
@@ -10,21 +10,23 @@
 
 1. [Project Overview](#project-overview)
 2. [Core Principles](#core-principles)
-3. [AI Assistant Workflow Rules](#ai-assistant-workflow-rules)
-4. [Rust Best Practices](#rust-best-practices)
-5. [Error Handling](#error-handling)
-6. [Type Safety & Schema Design](#type-safety--schema-design)
-7. [Async Patterns](#async-patterns)
-8. [Performance Guidelines](#performance-guidelines)
-9. [Testing Standards](#testing-standards)
-10. [FFI & Memory Safety](#ffi--memory-safety)
-11. [Documentation Requirements](#documentation-requirements)
-12. [Security Practices](#security-practices)
-13. [Code Organization](#code-organization)
-14. [Response Healing System](#response-healing-system)
-15. [Streaming Implementation](#streaming-implementation)
-16. [Provider Integration](#provider-integration)
-17. [Review Checklist](#review-checklist)
+3. [General Engineering Practices (KISS/DRY/OOD)](#general-engineering-practices-kissdryood)
+4. [AI Assistant Workflow Rules](#ai-assistant-workflow-rules)
+5. [Binding Standards (Go + JS/TS)](#binding-standards-go--jsts)
+6. [Rust Best Practices](#rust-best-practices)
+7. [Error Handling](#error-handling)
+8. [Type Safety & Schema Design](#type-safety--schema-design)
+9. [Async Patterns](#async-patterns)
+10. [Performance Guidelines](#performance-guidelines)
+11. [Testing Standards](#testing-standards)
+12. [FFI & Memory Safety](#ffi--memory-safety)
+13. [Documentation Requirements](#documentation-requirements)
+14. [Security Practices](#security-practices)
+15. [Code Organization](#code-organization)
+16. [Response Healing System](#response-healing-system)
+17. [Streaming Implementation](#streaming-implementation)
+18. [Provider Integration](#provider-integration)
+19. [Review Checklist](#review-checklist)
 
 ---
 
@@ -69,6 +71,20 @@
 - Clear ownership rules
 - No shared mutable state across boundaries
 - Comprehensive contract tests
+
+---
+
+## General Engineering Practices (KISS/DRY/OOD)
+
+- **KISS**: Keep public surfaces small, defaults sensible, and workflows linear; avoid premature abstractions and feature flags unless justified by real use cases.
+- **DRY**: Centralize shared logic in the Rust core and generate bindings/types where possible; never fork logic across languages—bindings should be thin wrappers over the same contracts.
+- **SOLID/OOD**: Give components one reason to change, program to traits/interfaces, and prefer composition over inheritance; inject dependencies (clients, clocks, randomness, config) rather than reaching for globals.
+- **Clear boundaries**: Separate pure/domain code from I/O glue; keep state localized, avoid global mutable state, and make side effects explicit (context objects in Go, dependency bags in JS/TS).
+- **API design**: Provide narrow, predictable methods with explicit inputs/outputs; validate early, return typed errors, and keep optional parameters minimal with well-defined defaults.
+- **Resilience**: Enforce timeouts and cancellation (Go `context.Context`, JS `AbortSignal`), bound concurrency/queues, and make retries/backoff configurable but safe by default.
+- **Observability & safety**: Use structured logs/metrics/traces with redaction of secrets; log at the edge, not inside hot paths; ensure idempotent cleanup on failures.
+- **Testing the bindings**: Add contract tests that compare binding behavior to the Rust reference (happy path, errors, streaming); use golden files/fixtures for cross-language parity and simple runnable examples (`examples/*`) as smoke tests.
+- **Dependencies**: Keep dependency graphs small, pin versions, avoid dynamic imports/reflection-heavy patterns, and document any platform-specific requirements.
 
 ---
 
@@ -158,6 +174,95 @@ If you're unsure whether to create a file:
 1. Ask yourself: "Is this source code, tests, or API docs?"
 2. If YES → Create it
 3. If NO → Ask the user first
+
+---
+
+## Binding Standards (Go + JS/TS)
+
+These are mandatory for all new Go and JavaScript/TypeScript binding work.
+
+### 1) Architecture: Thin Bindings, Thick Core
+
+- Keep business logic in Rust. Bindings only map language-native types to FFI contracts.
+- No provider-specific branching in bindings unless required by language runtime behavior.
+- Any logic duplicated between Go and JS/TS must be moved into Rust or generated artifacts.
+
+### 2) KISS Rules
+
+- Expose a small public API: `Client`, `Config`, `Request`, `Response`, and explicit error types.
+- Prefer one obvious way to do common flows (create client, call model, stream response).
+- Use safe defaults; advanced options stay opt-in and documented.
+
+### 3) DRY Rules
+
+- Reuse one shared schema/source of truth for request/response shape and enums.
+- Centralize serialization/deserialization adapters per language in one module.
+- Avoid copy-paste helpers. If reused 2+ times, extract a utility with tests.
+
+### 4) OOD Rules (SOLID-Oriented)
+
+- Single Responsibility: transport, config resolution, serialization, and retry logic stay separate.
+- Dependency Inversion: interfaces for HTTP transport/logging/clock where practical; avoid hard-coded globals.
+- Composition over inheritance/prototype mutation. Favor explicit wrappers and small structs/classes.
+- Open/Closed: support new providers/models via configuration and typed options, not `switch` sprawl.
+
+### 5) Go-Specific Standards
+
+- Every blocking/network API accepts `context.Context` as first parameter.
+- Wrap errors with `%w`, return typed sentinel errors for classification, and preserve root cause.
+- Avoid goroutine leaks: all background work must honor context cancellation.
+- Keep package boundaries clear (`bindings/go` public surface; internal helpers under `internal/` when needed).
+
+### 6) JS/TS-Specific Standards
+
+- Public API must be fully typed in TS and ergonomic in JS (JSDoc + `.d.ts` parity).
+- Async APIs return `Promise`; cancellable operations accept `AbortSignal`.
+- Normalize errors into stable classes/codes; never leak raw FFI pointers or opaque panics.
+- Use ESM-first exports with predictable entrypoints; avoid dynamic runtime shape changes.
+
+### 7) Reliability and Safety
+
+- Timeouts are explicit and documented; no unbounded wait by default.
+- Retries/backoff are disabled by default unless operation is idempotent and explicitly configured.
+- Redact secrets in logs and errors (`apiKey`, bearer tokens, PII fields).
+- Validate inputs at boundary entrypoints and fail fast with actionable messages.
+
+### 8) Testing Requirements for Bindings
+
+- Contract tests: same fixture input must produce equivalent output/error in Rust, Go, and JS/TS.
+- Streaming tests: partial chunks, cancellation, early consumer stop, and malformed payload recovery.
+- Concurrency tests: repeated parallel calls without data races or shared-state corruption.
+- CI minimum for binding changes: unit tests + at least one end-to-end smoke test per language.
+
+### 9) Documentation Requirements for New APIs
+
+- Every exported symbol includes short purpose + parameter + error behavior docs.
+- Include one copy-paste runnable example for Go and one for JS/TS.
+- If behavior differs from Rust core, document the difference explicitly in binding README.
+
+### 10) Environment Contract for Bindings (Required)
+
+To stay consistent with `examples/python_client.py`, all cross-language binding examples/tests should use:
+
+- `CUSTOM_API_BASE` - provider-compatible base URL (for OpenAI-compatible or proxy endpoints)
+- `CUSTOM_API_KEY` - API key/token
+- `CUSTOM_API_MODEL` - model identifier used in requests
+- `PROVIDER` - provider id for Node bindings (`openai`, `anthropic`, or `openrouter`)
+
+Rules:
+- Do not introduce new primary env names for binding examples/tests when `CUSTOM_API_*` can be used.
+- Do not hardcode fallback model/provider values in examples/tests; fail fast when required envs are missing.
+- Provider-specific env vars (such as `OPENAI_API_KEY`) may be supported for compatibility, but `CUSTOM_API_*` is the canonical documented path.
+- JS/TS and Go docs/examples must mirror the same env contract as Python unless there is a hard runtime limitation.
+
+### 11) Binding PR Checklist (Required)
+
+- [ ] Public API is minimal and backward-compatible.
+- [ ] No duplicated business logic across bindings.
+- [ ] Cancellation, timeout, and error mapping implemented and tested.
+- [ ] Cross-language contract tests updated and passing.
+- [ ] Examples and docs updated for any API behavior change.
+- [ ] Env usage follows canonical `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`.
 
 ---
 

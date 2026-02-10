@@ -1,0 +1,30 @@
+{
+  "name": "simple-agents-node",
+  "version": "0.2.3",
+  "description": "Node.js bindings for SimpleAgents using napi-rs",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "index.node"
+  ],
+  "scripts": {
+    "build": "napi build --release",
+    "build:debug": "napi build",
+    "pretest": "npm run build:debug",
+    "test": "node --test test/*.test.js",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "napi": {
+    "name": "index"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.16.0",
+    "typescript": "^5.4.0"
+  }
+}
