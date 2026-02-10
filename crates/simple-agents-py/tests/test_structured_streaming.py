@@ -29,7 +29,7 @@ class TestStructuredStreaming:
         from simple_agents_py import Client
 
         api_base, api_key, _model = _require_env()
-        return Client("openai", api_key=api_key, api_base=api_base)
+        return Client("openai", api_key=api_key, api_base=api_base, timeout_seconds=60)
 
     @pytest.fixture
     def model(self):

@@ -134,6 +134,8 @@ class Client:
         provider: str,
         api_key: str | None = None,
         api_base: str | None = None,
+        healing: bool = True,
+        timeout_seconds: int = 30,
     ) -> None: ...
 
     def complete(

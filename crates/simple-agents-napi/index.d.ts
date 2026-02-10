@@ -61,6 +61,6 @@ export interface StreamChunk {
 }
 export declare class Client {
   constructor(provider: string)
-  complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
-  stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
+  complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
+  stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
 }
