@@ -13,7 +13,7 @@
 [![CI Status](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square&logo=github-actions)](https://github.com/rishub/simple-agents)
 [![Clippy](https://img.shields.io/badge/clippy-0%20warnings-success?style=flat-square&logo=rust)](https://github.com/rishub/simple-agents)
 
-[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-24K%2B-blue?style=flat-square)]()
+[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-22K%2B-blue?style=flat-square)]()
 [![Tests](https://img.shields.io/badge/tests-passing-success?style=flat-square&logo=checkmarx)]()
 [![Code Coverage](https://img.shields.io/badge/coverage-100%25%20API-success?style=flat-square&logo=codecov)]()
 
@@ -31,6 +31,7 @@
 ## 📋 Table of Contents
 
 - [Overview](#-overview)
+- [Package Registry Stats](#package-registry-stats)
 - [Project Status](#-project-status)
 - [Why SimpleAgents?](#-why-simpleagents)
 - [Key Features](#-features)
@@ -52,7 +53,7 @@
 
 ### Quick Stats
 
-- 🚀 **24,000+ lines** of production-ready Rust code
+- 🚀 **22,000+ lines** of production Rust source code
 - ✅ **100% complete** - All 7 phases implemented
 - 📦 **11 modular crates** fully functional
 - 🔒 **Type-safe** by design with compile-time guarantees
@@ -60,6 +61,17 @@
 - 🌐 **3 major providers** (OpenAI, Anthropic, OpenRouter) + 100+ via OpenRouter
 - 🧪 **Zero clippy warnings** across all targets and features
 - 📚 **100% documented** public APIs with examples
+
+### Package Registry Stats
+
+| Package | Registry | Version | Downloads |
+|---------|----------|---------|-----------|
+| `simple-agents-py` | [PyPI](https://pypi.org/project/simple-agents-py/) | [![PyPI Version](https://img.shields.io/pypi/v/simple-agents-py?style=flat-square&logo=python)](https://pypi.org/project/simple-agents-py/) | [![PyPI Monthly Downloads](https://img.shields.io/pypi/dm/simple-agents-py?style=flat-square)](https://pypi.org/project/simple-agents-py/) |
+| `simple-agents-node` | [npm](https://www.npmjs.com/package/simple-agents-node) | [![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm)](https://www.npmjs.com/package/simple-agents-node) | [![npm Monthly Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square)](https://www.npmjs.com/package/simple-agents-node) |
+| `simple-agent-type` | [crates.io](https://crates.io/crates/simple-agent-type) | [![Crates.io Version](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust)](https://crates.io/crates/simple-agent-type) | [![Crates.io Downloads](https://img.shields.io/crates/d/simple-agent-type?style=flat-square)](https://crates.io/crates/simple-agent-type) |
+| `simple-agents-core` | [crates.io](https://crates.io/crates/simple-agents-core) | [![Crates.io Version](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-core) | [![Crates.io Downloads](https://img.shields.io/crates/d/simple-agents-core?style=flat-square)](https://crates.io/crates/simple-agents-core) |
+| `simple-agents-ffi` | [crates.io](https://crates.io/crates/simple-agents-ffi) | [![Crates.io Version](https://img.shields.io/crates/v/simple-agents-ffi?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-ffi) | [![Crates.io Downloads](https://img.shields.io/crates/d/simple-agents-ffi?style=flat-square)](https://crates.io/crates/simple-agents-ffi) |
+| `simple-agents-healing` | [crates.io](https://crates.io/crates/simple-agents-healing) | [![Crates.io Version](https://img.shields.io/crates/v/simple-agents-healing?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-healing) | [![Crates.io Downloads](https://img.shields.io/crates/d/simple-agents-healing?style=flat-square)](https://crates.io/crates/simple-agents-healing) |
 
 ---
 
@@ -70,14 +82,16 @@
 
 | Phase | Component | Status | LOC |
 |-------|-----------|--------|-----|
-| **Phase 1** | Foundation (types, traits) | ✅ Complete | 3,885 |
-| **Phase 2** | Provider Integration | ✅ Complete | 6,097 |
-| **Phase 3** | Response Healing | ✅ Complete | 3,418 |
-| **Phase 4** | Router & Strategies | ✅ Complete | 1,555 |
-| **Phase 5** | Unified Client API | ✅ Complete | 684 |
-| **Phase 6** | CLI & Tools | ✅ Complete | 1,034 |
-| **Phase 7** | Language Bindings | ✅ Complete | 490 |
-| | **TOTAL** | **✅ 100%** | **17,163** |
+| **Phase 1** | Foundation (types, traits) | ✅ Complete | 4,073 |
+| **Phase 2** | Provider Integration | ✅ Complete | 5,665 |
+| **Phase 3** | Response Healing | ✅ Complete | 3,187 |
+| **Phase 4** | Router & Strategies | ✅ Complete | 1,618 |
+| **Phase 5** | Unified Client API | ✅ Complete | 1,104 |
+| **Phase 6** | CLI & Tools | ✅ Complete | 1,070 |
+| **Phase 7** | Language Bindings | ✅ Complete | 3,793 |
+| | **TOTAL** | **✅ 100%** | **20,510** |
+
+_LOC generated from Rust `src/*.rs` via `scripts/loc-report.sh`._
 
 ### ✨ All Features Available Now
 
@@ -701,6 +715,7 @@ See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for dependencies.
 - 💬 **Discussions** - [GitHub Discussions](https://github.com/rishub/simple-agents/discussions)
 - 🐛 **Bug Reports** - [GitHub Issues](https://github.com/rishub/simple-agents/issues)
 - 💡 **Feature Requests** - [GitHub Issues](https://github.com/rishub/simple-agents/issues/new?template=feature_request.md)
+- 👤 **Creator** - [Rishub C R (LinkedIn)](https://www.linkedin.com/in/rishub-c-r/)
 
 ### Stay Updated
 

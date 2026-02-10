@@ -22,6 +22,7 @@ use tokio::sync::RwLock;
 use tracing::debug;
 
 /// Mode for completion post-processing.
+#[derive(Clone)]
 pub enum CompletionMode {
     /// Return the raw completion response.
     Standard,
@@ -32,6 +33,7 @@ pub enum CompletionMode {
 }
 
 /// Options that control completion behavior.
+#[derive(Clone)]
 pub struct CompletionOptions {
     /// Completion post-processing mode.
     pub mode: CompletionMode,
