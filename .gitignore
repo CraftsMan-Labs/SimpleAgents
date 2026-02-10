@@ -208,3 +208,34 @@ __marimo__/
 
 # Example environment files
 examples/.env
+
+# Rust
+target/
+**/*.rs.bk
+
+# Node / JavaScript / TypeScript
+node_modules/
+*.tsbuildinfo
+*.node
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+.npm/
+.yarn/
+.yarn-cache/
+.turbo/
+.next/
+.nuxt/
+.svelte-kit/
+.parcel-cache/
+coverage/
+
+# Go
+bin/
+pkg/
+*.test
+*.out
+.coverprofile
+.go-cache/
