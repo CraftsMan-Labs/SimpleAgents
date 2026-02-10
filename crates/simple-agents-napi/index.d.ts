@@ -10,7 +10,7 @@ export interface CompleteOptions {
   stream?: boolean
   /** "standard" | "healed_json" | "schema" */
   mode?: string
-  schema?: Schema
+  schema?: unknown
 }
 export interface MessageInput {
   role: string
@@ -62,5 +62,5 @@ export interface StreamChunk {
 export declare class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
-  stream(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions, onChunk: (chunk: StreamChunk) => void): Promise<unknown>
+  stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
 }

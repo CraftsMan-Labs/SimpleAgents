@@ -165,7 +165,7 @@ pub struct CompleteOptions {
     pub stream: Option<bool>,
     /// "standard" | "healed_json" | "schema"
     pub mode: Option<String>,
-    #[napi(ts_type = "Schema")]
+    #[napi(ts_type = "unknown")]
     pub schema: Option<JsonValue>,
 }
 
@@ -667,14 +667,14 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions, onChunk: (chunk: StreamChunk) => void"
+        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions"
     )]
     pub fn stream(
         &self,
         model: String,
         prompt_or_messages: Either<String, Vec<MessageInput>>,
-        options: Option<CompleteOptions>,
         on_chunk: JsFunction,
+        options: Option<CompleteOptions>,
     ) -> Result<AsyncTask<StreamTask>> {
         let messages = build_messages(prompt_or_messages).map_err(napi_err)?;
         let mut opts = options.unwrap_or_default();
