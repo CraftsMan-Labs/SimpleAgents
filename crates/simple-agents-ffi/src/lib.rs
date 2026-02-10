@@ -1,10 +1,17 @@
 //! C-compatible FFI bindings for SimpleAgents.
 
-use simple_agent_type::message::Message;
+use serde::Serialize;
+use serde_json::Value as JsonValue;
+use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
+use simple_agent_type::message::{Message, Role};
 use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
+use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
+use simple_agent_type::tool::{ToolCall, ToolType};
 use simple_agents_core::{
-    CompletionOptions, CompletionOutcome, SimpleAgentsClient, SimpleAgentsClientBuilder,
+    CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
+    SimpleAgentsClient, SimpleAgentsClientBuilder,
 };
+use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, StreamAnnotation};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
@@ -14,6 +21,7 @@ use std::os::raw::c_char;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
+// Keep runtime ownership in the FFI layer so each client is self-contained.
 type Runtime = tokio::runtime::Runtime;
 
 struct FfiClient {
@@ -24,6 +32,55 @@ struct FfiClient {
 #[repr(C)]
 pub struct SAClient {
     inner: FfiClient,
+}
+
+#[repr(C)]
+pub struct SAMessage {
+    pub role: *const c_char,
+    pub content: *const c_char,
+    pub name: *const c_char,
+    pub tool_call_id: *const c_char,
+}
+
+#[derive(Serialize)]
+struct FfiToolCallFunction {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Serialize)]
+struct FfiToolCall {
+    id: String,
+    tool_type: String,
+    function: FfiToolCallFunction,
+}
+
+#[derive(Serialize)]
+struct FfiUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+    total_tokens: u32,
+}
+
+#[derive(Serialize)]
+struct FfiHealingData {
+    value: JsonValue,
+    flags: Vec<CoercionFlag>,
+    confidence: f32,
+}
+
+#[derive(Serialize)]
+struct FfiCompletionResult {
+    id: String,
+    model: String,
+    role: String,
+    content: Option<String>,
+    tool_calls: Option<Vec<FfiToolCall>>,
+    finish_reason: Option<String>,
+    usage: FfiUsage,
+    raw: Option<String>,
+    healed: Option<FfiHealingData>,
+    coerced: Option<FfiHealingData>,
 }
 
 thread_local! {
@@ -89,21 +146,34 @@ unsafe fn cstr_to_string(ptr: *const c_char, field: &str) -> Result<String> {
     Ok(value.to_string())
 }
 
+unsafe fn cstr_to_optional_string(ptr: *const c_char, field: &str) -> Result<Option<String>> {
+    if ptr.is_null() {
+        return Ok(None);
+    }
+    let c_str = CStr::from_ptr(ptr);
+    let value = c_str
+        .to_str()
+        .map_err(|_| SimpleAgentsError::Config(format!("{field} must be valid UTF-8")))?;
+    if value.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(value.to_string()))
+}
+
 fn build_client(provider: Arc<dyn Provider>) -> Result<SimpleAgentsClient> {
     SimpleAgentsClientBuilder::new()
         .with_provider(provider)
         .build()
 }
 
-fn build_request(
+fn build_request_from_messages(
     model: &str,
-    prompt: &str,
+    messages: Vec<Message>,
     max_tokens: i32,
     temperature: f32,
+    top_p: f32,
 ) -> Result<CompletionRequest> {
-    let mut builder = CompletionRequest::builder()
-        .model(model)
-        .message(Message::user(prompt));
+    let mut builder = CompletionRequest::builder().model(model).messages(messages);
 
     if max_tokens > 0 {
         builder = builder.max_tokens(max_tokens as u32);
@@ -113,7 +183,280 @@ fn build_request(
         builder = builder.temperature(temperature);
     }
 
+    if top_p >= 0.0 {
+        builder = builder.top_p(top_p);
+    }
+
     builder.build()
+}
+
+fn build_request(
+    model: &str,
+    prompt: &str,
+    max_tokens: i32,
+    temperature: f32,
+) -> Result<CompletionRequest> {
+    build_request_from_messages(
+        model,
+        vec![Message::user(prompt)],
+        max_tokens,
+        temperature,
+        -1.0,
+    )
+}
+
+fn schema_aliases(value: Option<&JsonValue>) -> Vec<String> {
+    value
+        .and_then(JsonValue::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_schema_field(value: &JsonValue) -> Result<SchemaField> {
+    let name = value
+        .get("name")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| SimpleAgentsError::Config("schema field missing `name`".to_string()))?;
+    let schema_value = value.get("schema").ok_or_else(|| {
+        SimpleAgentsError::Config(format!("schema field `{name}` missing `schema`"))
+    })?;
+
+    Ok(SchemaField {
+        name: name.to_string(),
+        schema: parse_schema(schema_value)?,
+        required: value
+            .get("required")
+            .and_then(JsonValue::as_bool)
+            .unwrap_or(true),
+        aliases: schema_aliases(value.get("aliases")),
+        default: None,
+        description: None,
+        stream_annotation: StreamAnnotation::Normal,
+    })
+}
+
+fn parse_schema(value: &JsonValue) -> Result<Schema> {
+    let kind = value
+        .get("kind")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| SimpleAgentsError::Config("schema requires `kind`".to_string()))?
+        .to_lowercase();
+
+    match kind.as_str() {
+        "string" => Ok(Schema::String),
+        "int" => Ok(Schema::Int),
+        "uint" => Ok(Schema::UInt),
+        "float" => Ok(Schema::Float),
+        "bool" => Ok(Schema::Bool),
+        "null" => Ok(Schema::Null),
+        "any" => Ok(Schema::Any),
+        "array" => {
+            let elements = value.get("elements").ok_or_else(|| {
+                SimpleAgentsError::Config("array schema requires `elements`".to_string())
+            })?;
+            Ok(Schema::array(parse_schema(elements)?))
+        }
+        "union" => {
+            let variants = value
+                .get("variants")
+                .and_then(JsonValue::as_array)
+                .ok_or_else(|| {
+                    SimpleAgentsError::Config("union schema requires `variants` array".to_string())
+                })?;
+            let schemas = variants
+                .iter()
+                .map(parse_schema)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Schema::union(schemas))
+        }
+        "object" => {
+            let fields = value
+                .get("fields")
+                .and_then(JsonValue::as_array)
+                .ok_or_else(|| {
+                    SimpleAgentsError::Config("object schema requires `fields` array".to_string())
+                })?;
+            let converted = fields
+                .iter()
+                .map(parse_schema_field)
+                .collect::<Result<Vec<_>>>()?;
+            Ok(Schema::Object(ObjectSchema {
+                fields: converted,
+                allow_additional_fields: value
+                    .get("allow_additional_fields")
+                    .and_then(JsonValue::as_bool)
+                    .unwrap_or(false),
+            }))
+        }
+        other => Err(SimpleAgentsError::Config(format!(
+            "unsupported schema kind `{other}`"
+        ))),
+    }
+}
+
+fn completion_options(mode: Option<&str>, schema_json: Option<&str>) -> Result<CompletionOptions> {
+    let mode = match mode.map(|m| m.to_ascii_lowercase()) {
+        None => CompletionMode::Standard,
+        Some(m) if m.is_empty() || m == "standard" => CompletionMode::Standard,
+        Some(m) if m == "healed_json" => CompletionMode::HealedJson,
+        Some(m) if m == "schema" => {
+            let raw_schema = schema_json.ok_or_else(|| {
+                SimpleAgentsError::Config("mode `schema` requires `schema_json`".to_string())
+            })?;
+            let value: JsonValue = serde_json::from_str(raw_schema)
+                .map_err(|e| SimpleAgentsError::Config(format!("invalid `schema_json`: {e}")))?;
+            CompletionMode::CoercedSchema(parse_schema(&value)?)
+        }
+        Some(other) => {
+            return Err(SimpleAgentsError::Config(format!(
+                "unknown mode `{other}` (expected standard|healed_json|schema)"
+            )))
+        }
+    };
+
+    Ok(CompletionOptions { mode })
+}
+
+fn role_to_string(role: Role) -> String {
+    match role {
+        Role::User => "user".to_string(),
+        Role::Assistant => "assistant".to_string(),
+        Role::System => "system".to_string(),
+        Role::Tool => "tool".to_string(),
+    }
+}
+
+fn finish_reason_to_string(finish_reason: FinishReason) -> String {
+    match finish_reason {
+        FinishReason::Stop => "stop".to_string(),
+        FinishReason::Length => "length".to_string(),
+        FinishReason::ContentFilter => "content_filter".to_string(),
+        FinishReason::ToolCalls => "tool_calls".to_string(),
+    }
+}
+
+fn tool_type_to_string(tool_type: ToolType) -> String {
+    match tool_type {
+        ToolType::Function => "function".to_string(),
+    }
+}
+
+fn usage_to_ffi(usage: Usage) -> FfiUsage {
+    FfiUsage {
+        prompt_tokens: usage.prompt_tokens,
+        completion_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens,
+    }
+}
+
+fn map_tool_calls(tool_calls: Option<Vec<ToolCall>>) -> Option<Vec<FfiToolCall>> {
+    tool_calls.map(|calls| {
+        calls
+            .into_iter()
+            .map(|call| FfiToolCall {
+                id: call.id,
+                tool_type: tool_type_to_string(call.tool_type),
+                function: FfiToolCallFunction {
+                    name: call.function.name,
+                    arguments: call.function.arguments,
+                },
+            })
+            .collect()
+    })
+}
+
+fn healing_data_from(result: CoercionResult<JsonValue>) -> FfiHealingData {
+    FfiHealingData {
+        value: result.value,
+        flags: result.flags,
+        confidence: result.confidence,
+    }
+}
+
+fn completion_result_from_response(
+    response: CompletionResponse,
+    healed: Option<FfiHealingData>,
+    coerced: Option<FfiHealingData>,
+) -> FfiCompletionResult {
+    let content = response.content().map(str::to_string);
+    let choice = response.choices.first();
+    let role = choice
+        .map(|c| role_to_string(c.message.role))
+        .unwrap_or_else(|| "assistant".to_string());
+    let finish_reason = choice.map(|c| finish_reason_to_string(c.finish_reason));
+    let tool_calls = choice.and_then(|c| c.message.tool_calls.clone());
+    let usage = response.usage;
+
+    FfiCompletionResult {
+        id: response.id,
+        model: response.model,
+        role,
+        content: content.clone(),
+        tool_calls: map_tool_calls(tool_calls),
+        finish_reason,
+        usage: usage_to_ffi(usage),
+        raw: content,
+        healed,
+        coerced,
+    }
+}
+
+fn parse_messages(messages: *const SAMessage, messages_len: usize) -> Result<Vec<Message>> {
+    if messages.is_null() {
+        return Err(SimpleAgentsError::Config(
+            "messages cannot be null".to_string(),
+        ));
+    }
+    if messages_len == 0 {
+        return Err(SimpleAgentsError::Config(
+            "messages cannot be empty".to_string(),
+        ));
+    }
+
+    let input = unsafe { std::slice::from_raw_parts(messages, messages_len) };
+    input
+        .iter()
+        .enumerate()
+        .map(|(idx, msg)| {
+            let role = unsafe { cstr_to_string(msg.role, &format!("messages[{idx}].role"))? }
+                .to_ascii_lowercase();
+            let content =
+                unsafe { cstr_to_string(msg.content, &format!("messages[{idx}].content"))? };
+            let name =
+                unsafe { cstr_to_optional_string(msg.name, &format!("messages[{idx}].name"))? };
+            let tool_call_id = unsafe {
+                cstr_to_optional_string(msg.tool_call_id, &format!("messages[{idx}].tool_call_id"))?
+            };
+
+            let parsed = match role.as_str() {
+                "user" => Message::user(content),
+                "assistant" => Message::assistant(content),
+                "system" => Message::system(content),
+                "tool" => {
+                    let call_id = tool_call_id.ok_or_else(|| {
+                        SimpleAgentsError::Config(format!(
+                            "messages[{idx}].tool_call_id is required for tool role"
+                        ))
+                    })?;
+                    Message::tool(content, call_id)
+                }
+                _ => {
+                    return Err(SimpleAgentsError::Config(format!(
+                        "messages[{idx}].role must be one of user|assistant|system|tool"
+                    )))
+                }
+            };
+
+            Ok(match name {
+                Some(name) => parsed.with_name(name),
+                None => parsed,
+            })
+        })
+        .collect()
 }
 
 fn ffi_result_string(result: Result<String>) -> *mut c_char {
@@ -261,6 +604,80 @@ pub unsafe extern "C" fn sa_complete(
         };
 
         Ok(response.content().unwrap_or_default().to_string())
+    })
+}
+
+/// Execute a completion request with full message input and return a structured JSON payload.
+///
+/// Use `max_tokens <= 0`, `temperature < 0.0`, or `top_p < 0.0` to omit those options.
+/// `mode` supports `standard`, `healed_json`, and `schema`; when mode is `schema`, `schema_json`
+/// must be a JSON object with the internal schema shape.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env`.
+/// - `model` must be a valid null-terminated C string.
+/// - `messages` must point to `messages_len` valid `SAMessage` values.
+/// - Returned string must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_complete_messages_json(
+    client: *mut SAClient,
+    model: *const c_char,
+    messages: *const SAMessage,
+    messages_len: usize,
+    max_tokens: i32,
+    temperature: f32,
+    top_p: f32,
+    mode: *const c_char,
+    schema_json: *const c_char,
+) -> *mut c_char {
+    if client.is_null() {
+        set_last_error("client cannot be null".to_string());
+        return std::ptr::null_mut();
+    }
+
+    ffi_guard(|| {
+        let model = cstr_to_string(model, "model")?;
+        let messages = parse_messages(messages, messages_len)?;
+        let request =
+            build_request_from_messages(&model, messages, max_tokens, temperature, top_p)?;
+
+        let mode = cstr_to_optional_string(mode, "mode")?;
+        let schema_json = cstr_to_optional_string(schema_json, "schema_json")?;
+        let options = completion_options(mode.as_deref(), schema_json.as_deref())?;
+
+        let client = &(*client).inner;
+        let runtime = client
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+        let outcome = runtime.block_on(client.client.complete(&request, options))?;
+
+        let payload = match outcome {
+            CompletionOutcome::Response(response) => {
+                completion_result_from_response(response, None, None)
+            }
+            CompletionOutcome::HealedJson(HealedJsonResponse { response, parsed }) => {
+                completion_result_from_response(response, Some(healing_data_from(parsed)), None)
+            }
+            CompletionOutcome::CoercedSchema(HealedSchemaResponse {
+                response,
+                parsed,
+                coerced,
+            }) => completion_result_from_response(
+                response,
+                Some(healing_data_from(parsed)),
+                Some(healing_data_from(coerced)),
+            ),
+            CompletionOutcome::Stream(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "streaming mode is not supported via sa_complete_messages_json".to_string(),
+                ))
+            }
+        };
+
+        serde_json::to_string(&payload)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
     })
 }
 

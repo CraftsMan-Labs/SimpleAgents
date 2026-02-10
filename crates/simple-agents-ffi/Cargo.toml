@@ -16,7 +16,10 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 [dependencies]
 async-trait = { workspace = true }
 tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 simple-agents-core = { path = "../simple-agents-core", version = "0.2.2" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.2" }
 simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.2" }
 simple-agent-type = { workspace = true }
