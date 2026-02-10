@@ -8,19 +8,35 @@ const path = require('path');
 // eslint-disable-next-line import/no-dynamic-require, global-require
 const { Client } = require(path.join(__dirname, '../crates/simple-agents-napi'));
 
-if (!process.env.OPENAI_API_KEY && process.env.CUSTOM_API_KEY) {
-  process.env.OPENAI_API_KEY = process.env.CUSTOM_API_KEY;
-}
-if (!process.env.OPENAI_API_BASE && process.env.CUSTOM_API_BASE) {
-  process.env.OPENAI_API_BASE = process.env.CUSTOM_API_BASE;
-}
-
 const MODEL = process.env.CUSTOM_API_MODEL;
 const PROVIDER = process.env.PROVIDER;
-if (!process.env.OPENAI_API_KEY || !MODEL || !PROVIDER) {
+const CUSTOM_API_KEY = process.env.CUSTOM_API_KEY;
+const CUSTOM_API_BASE = process.env.CUSTOM_API_BASE;
+
+if (!CUSTOM_API_KEY || !MODEL || !PROVIDER) {
   console.error(
     'Set CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL, and PROVIDER (openai|anthropic|openrouter) before running this example.',
   );
+  process.exit(1);
+}
+
+if (PROVIDER === 'openai') {
+  process.env.OPENAI_API_KEY = process.env.OPENAI_API_KEY || CUSTOM_API_KEY;
+  if (CUSTOM_API_BASE) {
+    process.env.OPENAI_API_BASE = process.env.OPENAI_API_BASE || CUSTOM_API_BASE;
+  }
+} else if (PROVIDER === 'anthropic') {
+  process.env.ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || CUSTOM_API_KEY;
+  if (CUSTOM_API_BASE) {
+    process.env.ANTHROPIC_API_BASE = process.env.ANTHROPIC_API_BASE || CUSTOM_API_BASE;
+  }
+} else if (PROVIDER === 'openrouter') {
+  process.env.OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || CUSTOM_API_KEY;
+  if (CUSTOM_API_BASE) {
+    process.env.OPENROUTER_API_BASE = process.env.OPENROUTER_API_BASE || CUSTOM_API_BASE;
+  }
+} else {
+  console.error('Unsupported PROVIDER. Use openai, anthropic, or openrouter.');
   process.exit(1);
 }
 
