@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Development"
+  short_description: "Build high-quality Codex/Claude-style skills."
+  default_prompt: "Design, structure, validate, and iterate high-quality skills with strong triggers and progressive disclosure."

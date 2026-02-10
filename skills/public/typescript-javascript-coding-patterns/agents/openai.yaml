@@ -1,0 +1,4 @@
+interface:
+  display_name: "TS/JS Coding Patterns"
+  short_description: "Production TypeScript/JavaScript coding patterns."
+  default_prompt: "Apply robust TypeScript and JavaScript coding patterns for implementation, debugging, refactoring, and code review."
