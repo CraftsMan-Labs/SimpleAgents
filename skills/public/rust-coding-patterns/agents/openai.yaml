@@ -1,0 +1,4 @@
+interface:
+  display_name: "Rust Coding Patterns"
+  short_description: "Production Rust implementation and review patterns."
+  default_prompt: "Apply robust Rust coding patterns for implementation, refactoring, debugging, and code review."
