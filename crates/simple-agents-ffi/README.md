@@ -46,3 +46,4 @@ int main() {
 - `sa_client_new_from_env` expects provider env vars (e.g. `OPENAI_API_KEY`).
 - Pass `max_tokens <= 0` to omit max tokens.
 - Pass `temperature < 0.0` to omit temperature.
+- `sa_complete_messages_json` supports message arrays and returns structured JSON including tool calls, usage, and optional healing/coercion metadata (`mode`: `standard|healed_json|schema`).

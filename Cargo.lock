@@ -2218,8 +2218,11 @@ name = "simple-agents-ffi"
 version = "0.2.2"
 dependencies = [
  "async-trait",
+ "serde",
+ "serde_json",
  "simple-agent-type",
  "simple-agents-core",
+ "simple-agents-healing",
  "simple-agents-providers",
  "tokio",
 ]
