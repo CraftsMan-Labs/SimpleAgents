@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"unsafe"
 )
 
@@ -78,7 +79,10 @@ type CompletionResult struct {
 }
 
 type Client struct {
-	ptr *C.SAClient
+	mu       sync.Mutex
+	ptr      *C.SAClient
+	closed   bool
+	inFlight sync.WaitGroup
 }
 
 func NewClientFromEnv(provider string) (*Client, error) {
@@ -94,16 +98,85 @@ func NewClientFromEnv(provider string) (*Client, error) {
 }
 
 func (c *Client) Close() {
-	if c == nil || c.ptr == nil {
+	if c == nil {
 		return
 	}
-	C.sa_client_free(c.ptr)
-	c.ptr = nil
+
+	c.mu.Lock()
+	if c.ptr == nil || c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.closed = true
+	ptr := c.ptr
+	c.mu.Unlock()
+
+	c.inFlight.Wait()
+
+	c.mu.Lock()
+	if c.ptr == ptr {
+		C.sa_client_free(c.ptr)
+		c.ptr = nil
+	}
+	c.mu.Unlock()
+}
+
+func (c *Client) beginCall() (*C.SAClient, error) {
+	if c == nil {
+		return nil, errors.New("client is not initialized")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.ptr == nil || c.closed {
+		return nil, errors.New("client is not initialized")
+	}
+
+	c.inFlight.Add(1)
+	return c.ptr, nil
+}
+
+func (c *Client) endCall() {
+	c.inFlight.Done()
 }
 
 // Complete preserves the original prompt-based API.
 func (c *Client) Complete(model, prompt string, maxTokens int32, temperature float32) (string, error) {
 	return c.CompleteWithContext(context.Background(), model, prompt, maxTokens, temperature)
+}
+
+type completeResult struct {
+	value string
+	err   error
+}
+
+type completeMessagesResult struct {
+	value CompletionResult
+	err   error
+}
+
+func sendIfWaiting[T any](ch chan<- T, value T) {
+	select {
+	case ch <- value:
+	default:
+	}
+}
+
+func waitForCompletion[T any](ctx context.Context, resultCh <-chan T, done <-chan struct{}) (T, error) {
+	var zero T
+	select {
+	case res := <-resultCh:
+		return res, nil
+	case <-ctx.Done():
+		<-done
+		select {
+		case res := <-resultCh:
+			return res, nil
+		default:
+		}
+		return zero, ctx.Err()
+	}
 }
 
 // CompleteWithContext executes prompt-based completion with context cancellation support.
@@ -113,9 +186,11 @@ func (c *Client) CompleteWithContext(
 	maxTokens int32,
 	temperature float32,
 ) (string, error) {
-	if err := c.validateClient(); err != nil {
+	ptr, err := c.beginCall()
+	if err != nil {
 		return "", err
 	}
+	defer c.endCall()
 	if err := validatePromptInput(model, prompt); err != nil {
 		return "", err
 	}
@@ -123,38 +198,29 @@ func (c *Client) CompleteWithContext(
 		ctx = context.Background()
 	}
 
-	type result struct {
-		value string
-		err   error
-	}
-	resultCh := make(chan result, 1)
+	resultCh := make(chan completeResult, 1)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		cModel := C.CString(model)
 		defer C.free(unsafe.Pointer(cModel))
 		cPrompt := C.CString(prompt)
 		defer C.free(unsafe.Pointer(cPrompt))
 
-		response := C.sa_complete(c.ptr, cModel, cPrompt, C.int32_t(maxTokens), C.float(temperature))
+		response := C.sa_complete(ptr, cModel, cPrompt, C.int32_t(maxTokens), C.float(temperature))
 		if response == nil {
-			select {
-			case resultCh <- result{"", lastError()}:
-			default:
-			}
+			sendIfWaiting(resultCh, completeResult{"", lastError()})
 			return
 		}
 		defer C.sa_string_free(response)
-		select {
-		case resultCh <- result{C.GoString(response), nil}:
-		default:
-		}
+		sendIfWaiting(resultCh, completeResult{C.GoString(response), nil})
 	}()
 
-	select {
-	case res := <-resultCh:
-		return res.value, res.err
-	case <-ctx.Done():
-		return "", ctx.Err()
+	res, waitErr := waitForCompletion(ctx, resultCh, done)
+	if waitErr != nil {
+		return "", waitErr
 	}
+	return res.value, res.err
 }
 
 // CompleteMessages executes message-based completion and returns structured output.
@@ -164,9 +230,11 @@ func (c *Client) CompleteMessages(
 	messages []Message,
 	opts CompleteOptions,
 ) (CompletionResult, error) {
-	if err := c.validateClient(); err != nil {
+	ptr, err := c.beginCall()
+	if err != nil {
 		return CompletionResult{}, err
 	}
+	defer c.endCall()
 	if err := validateMessagesInput(model, messages); err != nil {
 		return CompletionResult{}, err
 	}
@@ -203,12 +271,10 @@ func (c *Client) CompleteMessages(
 
 	messagesCopy := append([]Message(nil), messages...)
 
-	type result struct {
-		value CompletionResult
-		err   error
-	}
-	resultCh := make(chan result, 1)
+	resultCh := make(chan completeMessagesResult, 1)
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		cModel := C.CString(model)
 		defer C.free(unsafe.Pointer(cModel))
 		cMode := C.CString(modeValue)
@@ -251,7 +317,7 @@ func (c *Client) CompleteMessages(
 		}
 
 		response := C.sa_complete_messages_json(
-			c.ptr,
+			ptr,
 			cModel,
 			(*C.SAMessage)(unsafe.Pointer(&cMessages[0])),
 			C.size_t(len(cMessages)),
@@ -262,41 +328,24 @@ func (c *Client) CompleteMessages(
 			cSchemaJSON,
 		)
 		if response == nil {
-			select {
-			case resultCh <- result{CompletionResult{}, lastError()}:
-			default:
-			}
+			sendIfWaiting(resultCh, completeMessagesResult{CompletionResult{}, lastError()})
 			return
 		}
 		defer C.sa_string_free(response)
 
 		var parsed CompletionResult
 		if err := json.Unmarshal([]byte(C.GoString(response)), &parsed); err != nil {
-			select {
-			case resultCh <- result{CompletionResult{}, fmt.Errorf("unmarshal completion result: %w", err)}:
-			default:
-			}
+			sendIfWaiting(resultCh, completeMessagesResult{CompletionResult{}, fmt.Errorf("unmarshal completion result: %w", err)})
 			return
 		}
-		select {
-		case resultCh <- result{parsed, nil}:
-		default:
-		}
+		sendIfWaiting(resultCh, completeMessagesResult{parsed, nil})
 	}()
 
-	select {
-	case res := <-resultCh:
-		return res.value, res.err
-	case <-ctx.Done():
-		return CompletionResult{}, ctx.Err()
+	res, waitErr := waitForCompletion(ctx, resultCh, done)
+	if waitErr != nil {
+		return CompletionResult{}, waitErr
 	}
-}
-
-func (c *Client) validateClient() error {
-	if c == nil || c.ptr == nil {
-		return errors.New("client is not initialized")
-	}
-	return nil
+	return res.value, res.err
 }
 
 func validatePromptInput(model, prompt string) error {
