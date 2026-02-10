@@ -13,7 +13,7 @@
 [![CI Status](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square&logo=github-actions)](https://github.com/rishub/simple-agents)
 [![Clippy](https://img.shields.io/badge/clippy-0%20warnings-success?style=flat-square&logo=rust)](https://github.com/rishub/simple-agents)
 
-[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-24K%2B-blue?style=flat-square)]()
+[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-22K%2B-blue?style=flat-square)]()
 [![Tests](https://img.shields.io/badge/tests-passing-success?style=flat-square&logo=checkmarx)]()
 [![Code Coverage](https://img.shields.io/badge/coverage-100%25%20API-success?style=flat-square&logo=codecov)]()
 
@@ -53,7 +53,7 @@
 
 ### Quick Stats
 
-- 🚀 **24,000+ lines** of production-ready Rust code
+- 🚀 **22,000+ lines** of production Rust source code
 - ✅ **100% complete** - All 7 phases implemented
 - 📦 **11 modular crates** fully functional
 - 🔒 **Type-safe** by design with compile-time guarantees
@@ -82,14 +82,16 @@
 
 | Phase | Component | Status | LOC |
 |-------|-----------|--------|-----|
-| **Phase 1** | Foundation (types, traits) | ✅ Complete | 3,885 |
-| **Phase 2** | Provider Integration | ✅ Complete | 6,097 |
-| **Phase 3** | Response Healing | ✅ Complete | 3,418 |
-| **Phase 4** | Router & Strategies | ✅ Complete | 1,555 |
-| **Phase 5** | Unified Client API | ✅ Complete | 684 |
-| **Phase 6** | CLI & Tools | ✅ Complete | 1,034 |
-| **Phase 7** | Language Bindings | ✅ Complete | 490 |
-| | **TOTAL** | **✅ 100%** | **17,163** |
+| **Phase 1** | Foundation (types, traits) | ✅ Complete | 4,073 |
+| **Phase 2** | Provider Integration | ✅ Complete | 5,665 |
+| **Phase 3** | Response Healing | ✅ Complete | 3,187 |
+| **Phase 4** | Router & Strategies | ✅ Complete | 1,618 |
+| **Phase 5** | Unified Client API | ✅ Complete | 1,104 |
+| **Phase 6** | CLI & Tools | ✅ Complete | 1,070 |
+| **Phase 7** | Language Bindings | ✅ Complete | 3,793 |
+| | **TOTAL** | **✅ 100%** | **20,510** |
+
+_LOC generated from Rust `src/*.rs` via `scripts/loc-report.sh`._
 
 ### ✨ All Features Available Now
 

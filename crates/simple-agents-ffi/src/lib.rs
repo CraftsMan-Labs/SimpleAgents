@@ -392,9 +392,9 @@ fn completion_result_from_response(
     let usage = response.usage;
 
     FfiCompletionResult {
-        id: response.id,
-        model: response.model,
-        role,
+        id: response.id.clone(),
+        model: response.model.clone(),
+        role: role.clone(),
         content: content.clone(),
         tool_calls: map_tool_calls(tool_calls),
         finish_reason,
