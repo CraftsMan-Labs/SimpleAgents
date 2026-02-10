@@ -34,11 +34,11 @@ async function main() {
   const streamed = await client.stream(
     'gpt-4',
     'Say hello in two words.',
-    {},
     (chunk) => {
       if (chunk.content) process.stdout.write(chunk.content);
       if (chunk.finish_reason) console.log('\nfinish:', chunk.finish_reason);
     },
+    {},
   );
   console.log('streamed content:', streamed.content);
 
