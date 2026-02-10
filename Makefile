@@ -214,7 +214,18 @@ publish-python-dry:
 	@echo "To publish for real, run: make publish-python"
 
 publish-node: version-sync build-node
-	cd $(NAPI_PROJECT_DIR) && npm publish
+	@set -e; \
+	$(DOPPLER_RUN) "set -e; \
+		cd $(NAPI_PROJECT_DIR); \
+		tmp_npmrc=\$$(mktemp); \
+		trap 'rm -f \"\$$tmp_npmrc\"' EXIT; \
+		if [ -z \"\$$NPM_TOKEN\" ]; then \
+			echo 'NPM_TOKEN is missing in Doppler context'; \
+			exit 1; \
+		fi; \
+		printf 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=%s\n' \"\$$NPM_TOKEN\" > \"\$$tmp_npmrc\"; \
+		NPM_CONFIG_USERCONFIG=\"\$$tmp_npmrc\" npm whoami; \
+		NPM_CONFIG_USERCONFIG=\"\$$tmp_npmrc\" npm publish --access public"
 
 # ============================================================================
 # Version management
