@@ -42,7 +42,6 @@ async function main() {
   await client.stream(
     MODEL,
     'Say hello in five words.',
-    {},
     (chunk) => {
       if (!chunk || typeof chunk !== 'object') {
         return;
@@ -51,6 +50,7 @@ async function main() {
       if (chunk.error) console.error('error:', chunk.error);
       if (chunk.finishReason) console.log('\nfinishReason:', chunk.finishReason);
     },
+    {},
   );
 }
 
