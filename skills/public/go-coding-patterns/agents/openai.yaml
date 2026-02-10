@@ -1,0 +1,4 @@
+interface:
+  display_name: "Go Coding Patterns"
+  short_description: "Production Go implementation and review patterns."
+  default_prompt: "Apply robust Go coding patterns for implementation, debugging, refactoring, and code review."
