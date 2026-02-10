@@ -163,22 +163,6 @@ func sendIfWaiting[T any](ch chan<- T, value T) {
 	}
 }
 
-func waitForCompletion[T any](ctx context.Context, resultCh <-chan T, done <-chan struct{}) (T, error) {
-	var zero T
-	select {
-	case res := <-resultCh:
-		return res, nil
-	case <-ctx.Done():
-		<-done
-		select {
-		case res := <-resultCh:
-			return res, nil
-		default:
-		}
-		return zero, ctx.Err()
-	}
-}
-
 // CompleteWithContext executes prompt-based completion with context cancellation support.
 func (c *Client) CompleteWithContext(
 	ctx context.Context,
@@ -186,11 +170,6 @@ func (c *Client) CompleteWithContext(
 	maxTokens int32,
 	temperature float32,
 ) (string, error) {
-	ptr, err := c.beginCall()
-	if err != nil {
-		return "", err
-	}
-	defer c.endCall()
 	if err := validatePromptInput(model, prompt); err != nil {
 		return "", err
 	}
@@ -198,10 +177,14 @@ func (c *Client) CompleteWithContext(
 		ctx = context.Background()
 	}
 
+	ptr, err := c.beginCall()
+	if err != nil {
+		return "", err
+	}
+
 	resultCh := make(chan completeResult, 1)
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer c.endCall()
 		cModel := C.CString(model)
 		defer C.free(unsafe.Pointer(cModel))
 		cPrompt := C.CString(prompt)
@@ -216,11 +199,12 @@ func (c *Client) CompleteWithContext(
 		sendIfWaiting(resultCh, completeResult{C.GoString(response), nil})
 	}()
 
-	res, waitErr := waitForCompletion(ctx, resultCh, done)
-	if waitErr != nil {
-		return "", waitErr
+	select {
+	case res := <-resultCh:
+		return res.value, res.err
+	case <-ctx.Done():
+		return "", ctx.Err()
 	}
-	return res.value, res.err
 }
 
 // CompleteMessages executes message-based completion and returns structured output.
@@ -230,16 +214,16 @@ func (c *Client) CompleteMessages(
 	messages []Message,
 	opts CompleteOptions,
 ) (CompletionResult, error) {
-	ptr, err := c.beginCall()
-	if err != nil {
-		return CompletionResult{}, err
-	}
-	defer c.endCall()
 	if err := validateMessagesInput(model, messages); err != nil {
 		return CompletionResult{}, err
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return CompletionResult{}, err
 	}
 
 	maxTokens := int32(0)
@@ -272,9 +256,8 @@ func (c *Client) CompleteMessages(
 	messagesCopy := append([]Message(nil), messages...)
 
 	resultCh := make(chan completeMessagesResult, 1)
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer c.endCall()
 		cModel := C.CString(model)
 		defer C.free(unsafe.Pointer(cModel))
 		cMode := C.CString(modeValue)
@@ -341,11 +324,12 @@ func (c *Client) CompleteMessages(
 		sendIfWaiting(resultCh, completeMessagesResult{parsed, nil})
 	}()
 
-	res, waitErr := waitForCompletion(ctx, resultCh, done)
-	if waitErr != nil {
-		return CompletionResult{}, waitErr
+	select {
+	case res := <-resultCh:
+		return res.value, res.err
+	case <-ctx.Done():
+		return CompletionResult{}, ctx.Err()
 	}
-	return res.value, res.err
 }
 
 func validatePromptInput(model, prompt string) error {
