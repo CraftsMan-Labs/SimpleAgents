@@ -187,7 +187,13 @@ print(response.tool_calls)
 ### ClientBuilder (Routing, Cache, Healing, Middleware)
 
 ```python
-from simple_agents_py import ClientBuilder
+from simple_agents_py import (
+    CacheConfig,
+    ClientBuilder,
+    HealingConfig,
+    ProviderConfig,
+    RoutingPolicy,
+)
 
 class TimingMiddleware:
     def before_request(self, request):
@@ -195,15 +201,17 @@ class TimingMiddleware:
 
 builder = (
     ClientBuilder()
-    .add_provider("openai", api_key="sk-...")
-    .with_routing("direct")
-    .with_cache(ttl_seconds=60)
-    .with_healing_config({"enabled": True, "min_confidence": 0.7})
+    .add_provider_config(ProviderConfig("openai", api_key="sk-..."))
+    .with_routing_policy(RoutingPolicy.direct())
+    .with_cache_config(CacheConfig(ttl_seconds=60))
+    .with_healing(HealingConfig(enabled=True, min_confidence=0.7))
     .add_middleware(TimingMiddleware())
 )
 client = builder.build()
 print(client.complete("gpt-4o-mini", "Give me one idea.").content)
 ```
+
+The existing dict/string APIs remain supported (`add_provider`, `with_routing`, `with_cache`, `with_healing_config`) for backward compatibility.
 
 ## Examples
 

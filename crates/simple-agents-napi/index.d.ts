@@ -46,6 +46,7 @@ export interface CompletionResult {
   toolCalls?: Array<JsToolCall>
   finishReason?: string
   usage: CompletionUsage
+  usageAvailable: boolean
   latencyMs: number
   raw?: string
   healed?: HealingData
