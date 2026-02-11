@@ -1260,6 +1260,11 @@ impl HealingConfig {
     #[new]
     #[pyo3(signature = (enabled=true, min_confidence=0.0, fuzzy_match_threshold=0.8))]
     fn new(enabled: bool, min_confidence: f32, fuzzy_match_threshold: f64) -> PyResult<Self> {
+        if !(0.0..=1.0).contains(&min_confidence) {
+            return Err(PyRuntimeError::new_err(
+                "min_confidence must be between 0.0 and 1.0".to_string(),
+            ));
+        }
         if !(0.0..=1.0).contains(&fuzzy_match_threshold) {
             return Err(PyRuntimeError::new_err(
                 "fuzzy_match_threshold must be between 0.0 and 1.0".to_string(),
