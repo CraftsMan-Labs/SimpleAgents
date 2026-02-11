@@ -3,25 +3,36 @@ layout: home
 
 hero:
   name: SimpleAgents
-  text: A modular, extensible agent framework
-  tagline: Build intelligent AI systems with ease
+  text: Modular LLM orchestration in Rust
+  tagline: Build robust LLM apps with providers, routing, caching, and healing
   actions:
     - theme: brand
       text: Get Started
       link: /QUICKSTART
     - theme: alt
+      text: Find the Right Doc
+      link: /DOCS_MAP
+    - theme: alt
       text: View on GitHub
       link: https://github.com/rishub/SimpleAgents
 
 features:
-  - title: 🚀 Modular Architecture
-    details: Build agents using interchangeable components and extend functionality through traits
-  - title: 🎯 Tool System
-    details: Powerful tool execution with async support and flexible parameter passing
-  - title: 🔄 Agent Orchestration
-    details: Multi-agent workflows with coordinated tool execution and state management
-  - title: 📝 Rust-Based
-    details: Leverage Rust's performance and safety for production-grade agent systems
+  - title: Start fast
+    details: Follow a minimal path from install to first request in under 10 minutes.
+  - title: Provider-agnostic core
+    details: Unify OpenAI, Anthropic, and OpenRouter behind a shared API
+  - title: Routing and resilience
+    details: Round-robin, latency, cost, and fallback routing with health tracking
+  - title: JSON healing and schema coercion
+    details: Parse JSON-ish output and coerce to schemas with confidence metadata
+  - title: Multi-language surfaces
+    details: CLI, C FFI, Node, and Python bindings built on the same core
 ---
 
-Welcome to the SimpleAgents documentation! This guide will help you understand, use, and contribute to SimpleAgents.
+## Start Here
+
+- New to SimpleAgents: [Quick Start](/QUICKSTART)
+- Building production flows: [Usage Guide](/USAGE)
+- Integrating another language: [Bindings](/BINDINGS_PYTHON)
+- Extending internals: [Architecture](/ARCHITECTURE)
+- Looking for a specific task: [Docs Map](/DOCS_MAP)

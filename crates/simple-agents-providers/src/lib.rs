@@ -75,8 +75,10 @@ pub trait ProviderStructuredExt: Provider {
     /// events (partial updates and final complete value).
     ///
     /// # Example
-    /// ```ignore
+    /// ```no_run
     /// use simple_agents_providers::ProviderStructuredExt;
+    /// use simple_agent_type::error::SimpleAgentsError;
+    /// use simple_agent_type::request::CompletionRequest;
     /// use serde::{Deserialize, Serialize};
     ///
     /// #[derive(Deserialize, Serialize)]
@@ -84,7 +86,13 @@ pub trait ProviderStructuredExt: Provider {
     ///     field: String,
     /// }
     ///
-    /// let stream = provider.execute_stream_structured::<MyData>(request).await?;
+    /// async fn example<P: ProviderStructuredExt>(
+    ///     provider: &P,
+    ///     request: CompletionRequest,
+    /// ) -> Result<(), SimpleAgentsError> {
+    ///     let _stream = provider.execute_stream_structured::<MyData>(request).await?;
+    ///     Ok(())
+    /// }
     /// ```
     async fn execute_stream_structured<T>(
         &self,
