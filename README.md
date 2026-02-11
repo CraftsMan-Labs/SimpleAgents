@@ -88,8 +88,8 @@
 | **Phase 4** | Router & Strategies | ✅ Complete | 1,618 |
 | **Phase 5** | Unified Client API | ✅ Complete | 1,104 |
 | **Phase 6** | CLI & Tools | ✅ Complete | 1,070 |
-| **Phase 7** | Language Bindings | ✅ Complete | 3,793 |
-| | **TOTAL** | **✅ 100%** | **20,510** |
+| **Phase 7** | Language Bindings | ✅ Complete | 3,808 |
+| | **TOTAL** | **✅ 100%** | **20,525** |
 
 _LOC generated from Rust `src/*.rs` via `scripts/loc-report.sh`._
 
