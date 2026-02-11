@@ -34,17 +34,35 @@ pin_project! {
     /// Stream wrapper that accumulates chunks and provides structured output.
     ///
     /// # Example
-    /// ```ignore
-    /// let stream = provider.execute_stream(request).await?;
-    /// let structured = StructuredStream::new(stream, schema, Some(healing));
+    /// ```no_run
+    /// use futures_util::stream;
+    /// use simple_agent_type::error::SimpleAgentsError;
+    /// use simple_agent_type::response::CompletionChunk;
+    /// use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
     ///
-    /// while let Some(event) = structured.next().await {
-    ///     match event? {
-    ///         StructuredEvent::Partial(val) => println!("Partial: {:?}", val),
-    ///         StructuredEvent::Complete { value, confidence, .. } => {
-    ///             println!("Final: {:?} (confidence: {})", value, confidence);
+    /// async fn example() -> Result<(), SimpleAgentsError> {
+    ///     let stream = stream::empty::<Result<CompletionChunk, SimpleAgentsError>>();
+    ///     let schema = serde_json::json!({
+    ///         "type": "object",
+    ///         "properties": {
+    ///             "message": { "type": "string" }
+    ///         }
+    ///     });
+    ///
+    ///     let mut structured: StructuredStream<_, serde_json::Value> =
+    ///         StructuredStream::new(stream, schema, None);
+    ///
+    ///     use futures_util::StreamExt;
+    ///     while let Some(event) = structured.next().await {
+    ///         match event? {
+    ///             StructuredEvent::Partial(val) => println!("Partial: {:?}", val),
+    ///             StructuredEvent::Complete { value, confidence, .. } => {
+    ///                 println!("Final: {:?} (confidence: {})", value, confidence);
+    ///             }
     ///         }
     ///     }
+    ///
+    ///     Ok(())
     /// }
     /// ```
     pub struct StructuredStream<S, T> {
