@@ -26,7 +26,9 @@ use simple_agents_healing::schema::{Field as HealingField, ObjectSchema, StreamA
 use simple_agents_healing::streaming::StreamingParser as RustStreamingParser;
 use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
 use simple_agents_providers::anthropic::AnthropicProvider;
-use simple_agents_providers::healing_integration::{HealingConfig, HealingIntegration};
+use simple_agents_providers::healing_integration::{
+    HealingConfig as ProviderHealingConfig, HealingIntegration,
+};
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
@@ -1054,7 +1056,7 @@ fn provider_from_params(
                 None => OpenAIProvider::from_env()?,
             };
             if enable_healing {
-                provider = provider.with_healing(HealingConfig::default());
+                provider = provider.with_healing(ProviderHealingConfig::default());
             }
             Ok(Arc::new(provider))
         }
@@ -1069,7 +1071,7 @@ fn provider_from_params(
                 None => AnthropicProvider::from_env()?,
             };
             if enable_healing {
-                provider = provider.with_healing(HealingConfig::default());
+                provider = provider.with_healing(ProviderHealingConfig::default());
             }
             Ok(Arc::new(provider))
         }
@@ -1093,6 +1095,204 @@ fn provider_from_params(
 
 fn is_local_base(api_base: &str) -> bool {
     api_base.contains("localhost") || api_base.contains("127.0.0.1")
+}
+
+/// Native provider configuration object for ClientBuilder.
+#[pyclass]
+pub struct ProviderConfig {
+    provider: String,
+    api_key: Option<String>,
+    api_base: Option<String>,
+}
+
+#[pymethods]
+impl ProviderConfig {
+    #[new]
+    #[pyo3(signature = (provider, api_key=None, api_base=None))]
+    fn new(provider: String, api_key: Option<String>, api_base: Option<String>) -> Self {
+        Self {
+            provider,
+            api_key,
+            api_base,
+        }
+    }
+
+    #[getter]
+    fn provider(&self) -> String {
+        self.provider.clone()
+    }
+
+    #[getter]
+    fn api_key(&self) -> Option<String> {
+        self.api_key.clone()
+    }
+
+    #[getter]
+    fn api_base(&self) -> Option<String> {
+        self.api_base.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ProviderConfig(provider='{}', api_key_set={}, api_base={:?})",
+            self.provider,
+            self.api_key.is_some(),
+            self.api_base
+        )
+    }
+}
+
+/// Native routing policy object for ClientBuilder.
+#[pyclass]
+pub struct RoutingPolicy {
+    mode: String,
+    config: RoutingConfig,
+}
+
+#[pymethods]
+impl RoutingPolicy {
+    #[staticmethod]
+    fn direct() -> Self {
+        Self {
+            mode: "direct".to_string(),
+            config: RoutingConfig::Direct,
+        }
+    }
+
+    #[staticmethod]
+    fn round_robin() -> Self {
+        Self {
+            mode: "round_robin".to_string(),
+            config: RoutingConfig::RoundRobin,
+        }
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (alpha=0.2, slow_threshold_ms=2000))]
+    fn latency(alpha: f64, slow_threshold_ms: u64) -> PyResult<Self> {
+        if !(0.0..=1.0).contains(&alpha) {
+            return Err(PyRuntimeError::new_err(
+                "alpha must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        Ok(Self {
+            mode: "latency".to_string(),
+            config: RoutingConfig::Latency {
+                alpha,
+                slow_threshold_ms,
+            },
+        })
+    }
+
+    #[staticmethod]
+    fn cost(provider_costs: &Bound<'_, PyDict>) -> PyResult<Self> {
+        let mut costs = Vec::new();
+        for (provider_name, cost_val) in provider_costs.iter() {
+            let name: String = provider_name.extract()?;
+            let cost: f64 = cost_val.extract()?;
+            if !cost.is_finite() || cost < 0.0 {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Invalid cost for provider {}: must be non-negative finite number",
+                    name
+                )));
+            }
+            costs.push((name, cost));
+        }
+        Ok(Self {
+            mode: "cost".to_string(),
+            config: RoutingConfig::Cost { costs },
+        })
+    }
+
+    #[staticmethod]
+    #[pyo3(signature = (retryable_only=true))]
+    fn fallback(retryable_only: bool) -> Self {
+        Self {
+            mode: "fallback".to_string(),
+            config: RoutingConfig::Fallback { retryable_only },
+        }
+    }
+
+    #[getter]
+    fn mode(&self) -> String {
+        self.mode.clone()
+    }
+
+    fn __repr__(&self) -> String {
+        format!("RoutingPolicy(mode='{}')", self.mode)
+    }
+}
+
+/// Native cache configuration object for ClientBuilder.
+#[pyclass]
+pub struct CacheConfig {
+    ttl_seconds: u64,
+}
+
+#[pymethods]
+impl CacheConfig {
+    #[new]
+    #[pyo3(signature = (ttl_seconds))]
+    fn new(ttl_seconds: u64) -> Self {
+        Self { ttl_seconds }
+    }
+
+    #[getter]
+    fn ttl_seconds(&self) -> u64 {
+        self.ttl_seconds
+    }
+
+    fn __repr__(&self) -> String {
+        format!("CacheConfig(ttl_seconds={})", self.ttl_seconds)
+    }
+}
+
+/// Native healing configuration object for ClientBuilder.
+#[pyclass]
+pub struct HealingConfig {
+    enabled: bool,
+    min_confidence: f32,
+    fuzzy_match_threshold: f64,
+}
+
+#[pymethods]
+impl HealingConfig {
+    #[new]
+    #[pyo3(signature = (enabled=true, min_confidence=0.0, fuzzy_match_threshold=0.8))]
+    fn new(enabled: bool, min_confidence: f32, fuzzy_match_threshold: f64) -> PyResult<Self> {
+        if !(0.0..=1.0).contains(&fuzzy_match_threshold) {
+            return Err(PyRuntimeError::new_err(
+                "fuzzy_match_threshold must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+        Ok(Self {
+            enabled,
+            min_confidence,
+            fuzzy_match_threshold,
+        })
+    }
+
+    #[getter]
+    fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    #[getter]
+    fn min_confidence(&self) -> f32 {
+        self.min_confidence
+    }
+
+    #[getter]
+    fn fuzzy_match_threshold(&self) -> f64 {
+        self.fuzzy_match_threshold
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HealingConfig(enabled={}, min_confidence={}, fuzzy_match_threshold={})",
+            self.enabled, self.min_confidence, self.fuzzy_match_threshold
+        )
+    }
 }
 
 /// Builder for creating SimpleAgents clients with advanced configuration.
@@ -1188,6 +1388,24 @@ impl ClientBuilder {
         Ok(slf)
     }
 
+    /// Add a provider using native ProviderConfig.
+    fn add_provider_config<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        config: &ProviderConfig,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        let provider = provider_from_params(
+            &config.provider,
+            config.api_key.as_deref(),
+            config.api_base.as_deref(),
+            true,
+            Duration::from_secs(30),
+        )
+        .map_err(py_err)?;
+
+        slf.providers.push(provider);
+        Ok(slf)
+    }
+
     /// Configure routing mode (simple version with defaults).
     ///
     /// # Arguments
@@ -1221,6 +1439,16 @@ impl ClientBuilder {
             },
             _ => unreachable!(),
         });
+        Ok(slf)
+    }
+
+    /// Configure routing using native RoutingPolicy.
+    fn with_routing_policy<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        policy: &RoutingPolicy,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        slf.routing_mode = Some(policy.mode.clone());
+        slf.routing_config = Some(policy.config.clone());
         Ok(slf)
     }
 
@@ -1357,6 +1585,15 @@ impl ClientBuilder {
         Ok(slf)
     }
 
+    /// Configure response cache using native CacheConfig.
+    fn with_cache_config<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        config: &CacheConfig,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        slf.cache_ttl = Some(config.ttl_seconds);
+        Ok(slf)
+    }
+
     /// Configure healing settings.
     ///
     /// # Arguments
@@ -1402,6 +1639,24 @@ impl ClientBuilder {
             }
         }
 
+        healing.parser_config = parser_config;
+        healing.coercion_config = coercion_config;
+        slf.healing_config = Some(healing);
+        Ok(slf)
+    }
+
+    /// Configure healing using native HealingConfig.
+    fn with_healing<'a>(
+        mut slf: PyRefMut<'a, Self>,
+        config: &HealingConfig,
+    ) -> PyResult<PyRefMut<'a, Self>> {
+        let mut healing = HealingSettings::default();
+        let parser_config = ParserConfig::default();
+        let mut coercion_config = CoercionConfig::default();
+
+        healing.enabled = config.enabled;
+        coercion_config.min_confidence = config.min_confidence;
+        coercion_config.fuzzy_match_threshold = config.fuzzy_match_threshold;
         healing.parser_config = parser_config;
         healing.coercion_config = coercion_config;
         slf.healing_config = Some(healing);
@@ -2312,7 +2567,7 @@ impl Client {
                     ));
                 }
 
-                let healing = HealingIntegration::new(HealingConfig::lenient());
+                let healing = HealingIntegration::new(ProviderHealingConfig::lenient());
                 let structured_stream: StructuredStream<_, Value> =
                     StructuredStream::new(stream, schema_value, Some(healing));
                 let iterator = StructuredStreamIterator {
@@ -2372,6 +2627,10 @@ impl Client {
 fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Client>()?;
     module.add_class::<ClientBuilder>()?;
+    module.add_class::<ProviderConfig>()?;
+    module.add_class::<RoutingPolicy>()?;
+    module.add_class::<CacheConfig>()?;
+    module.add_class::<HealingConfig>()?;
     module.add_class::<HealedJsonResult>()?;
     module.add_class::<ParseResult>()?;
     module.add_class::<CoercionResult>()?;
