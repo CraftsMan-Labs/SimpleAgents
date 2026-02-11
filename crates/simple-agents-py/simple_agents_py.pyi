@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Mapping, Sequence
+from typing import Any, Iterator, Literal, Mapping, Sequence, overload, Never
 
 
 class ParseResult:
@@ -137,6 +137,158 @@ class Client:
         healing: bool = True,
         timeout_seconds: int = 30,
     ) -> None: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: str | None = None,
+        schema: Mapping[str, object] | type[Any],
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[True],
+        heal: Literal[False] = False,
+    ) -> Iterator[PyStructuredEvent]: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: str | None = None,
+        schema: None = None,
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[True],
+        heal: Literal[False] = False,
+    ) -> Iterator[StreamChunk]: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: str | None = None,
+        schema: Mapping[str, object] | type[Any] | None = None,
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[True],
+        heal: Literal[True],
+    ) -> Never: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: str | None = None,
+        schema: Mapping[str, object] | type[Any],
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[False] = False,
+        heal: Literal[True],
+    ) -> HealedJsonResult: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: str | None = None,
+        schema: Mapping[str, object] | type[Any],
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[False] = False,
+        heal: Literal[False] = False,
+    ) -> str: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: Literal["json", "json_object"],
+        schema: None = None,
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[False] = False,
+        heal: Literal[True],
+    ) -> HealedJsonResult: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: Literal["json", "json_object"],
+        schema: None = None,
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[False] = False,
+        heal: Literal[False] = False,
+    ) -> str: ...
+
+    @overload
+    def complete(
+        self,
+        model: str,
+        input: str | Sequence[Mapping[str, object]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        tools: Sequence[Mapping[str, object]] | None = None,
+        tool_choice: object | None = None,
+        response_format: Literal["text"] | None = None,
+        schema: None = None,
+        schema_name: str | None = None,
+        strict: bool = True,
+        stream: Literal[False] = False,
+        heal: bool = False,
+    ) -> ResponseWithMetadata: ...
 
     def complete(
         self,
