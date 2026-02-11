@@ -1,0 +1,120 @@
+# Python Binding (simple-agents-py)
+
+Python bindings are provided by `simple-agents-py` (PyO3). They expose a high-level `Client` plus advanced helpers for healing and schema coercion.
+
+## Installation
+
+```bash
+pip install simple-agents-py
+```
+
+## Quick Start
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+response = client.complete("gpt-4", "Hello from Python!", max_tokens=128, temperature=0.7)
+print(response.content)
+```
+
+## Streaming
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+messages = [{"role": "user", "content": "Say hello in one sentence."}]
+for chunk in client.complete("gpt-4o-mini", messages, max_tokens=64, stream=True):
+    if chunk.content:
+        print(chunk.content, end="", flush=True)
+print()
+```
+
+## Structured Output (Schema)
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+schema = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "age": {"type": "number"}},
+    "required": ["name", "age"],
+}
+messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
+json_text = client.complete("gpt-4o-mini", messages, schema=schema, schema_name="person")
+print(json_text)
+```
+
+When `stream=True` with `schema=...`, the iterator yields structured events with partial and complete values.
+
+## Healing
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai")
+messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":30}"}]
+healed = client.complete(
+    "gpt-4o-mini",
+    messages,
+    response_format="json",
+    heal=True,
+)
+print(healed.content, healed.was_healed, healed.confidence)
+```
+
+Healing is enabled by default for structured outputs. You can disable it per client:
+
+```python
+client = Client("openai", healing=False)
+```
+
+## ClientBuilder (Routing, Cache, Middleware)
+
+```python
+from simple_agents_py import (
+    CacheConfig,
+    ClientBuilder,
+    HealingConfig,
+    ProviderConfig,
+    RoutingPolicy,
+)
+
+class TimingMiddleware:
+    def before_request(self, request):
+        print("sending", request.model)
+
+client = (
+    ClientBuilder()
+    .add_provider_config(ProviderConfig("openai", api_key="sk-..."))
+    .with_routing_policy(RoutingPolicy.direct())
+    .with_cache_config(CacheConfig(ttl_seconds=60))
+    .with_healing(HealingConfig(enabled=True, min_confidence=0.7))
+    .add_middleware(TimingMiddleware())
+    .build()
+)
+print(client.complete("gpt-4o-mini", "Give me one idea.").content)
+```
+
+## Schema Utilities
+
+```python
+from simple_agents_py import SchemaBuilder, heal_json, coerce_to_schema
+
+builder = SchemaBuilder()
+builder.field("name", "string", required=True)
+builder.field("age", "int", required=True)
+schema = builder.build()
+
+result = heal_json('{"name": "Sam", "age": 30}')
+coerced = coerce_to_schema(result.value, schema)
+print(coerced.value)
+```
+
+## Notes
+
+- `Client` reads provider API keys from environment variables when `api_key` is omitted.
+- `complete()` accepts a prompt string or a list of message dicts.
+- `response_format="json"` enables JSON parsing when paired with `heal=True`.

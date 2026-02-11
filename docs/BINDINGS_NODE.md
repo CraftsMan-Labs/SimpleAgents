@@ -1,0 +1,87 @@
+# Node.js / TypeScript Binding (simple-agents-node)
+
+Node bindings are provided by `simple-agents-node` (napi-rs). The API is Promise-based with optional streaming callbacks.
+
+## Install
+
+```bash
+npm install simple-agents-node
+```
+
+## Quick Start
+
+```javascript
+const { Client } = require("simple-agents-node");
+
+const client = new Client("openai");
+const response = await client.complete(
+  "gpt-4",
+  [{ role: "user", content: "Hello from Node." }],
+  { maxTokens: 128, temperature: 0.7 },
+);
+
+console.log(response.content);
+console.log(response.usage);
+```
+
+## Streaming
+
+```javascript
+await client.stream(
+  "gpt-4",
+  "Say hello in two words.",
+  (chunk) => {
+    if (chunk.content) process.stdout.write(chunk.content);
+    if (chunk.finishReason) console.log("\nfinish:", chunk.finishReason);
+  },
+  { maxTokens: 32 },
+);
+```
+
+Streaming currently aggregates content on completion; healing/schema modes are not supported for streams.
+
+## Healed JSON and Schema Coercion
+
+```javascript
+const healed = await client.complete(
+  "gpt-4",
+  "Respond with JSON: {\"message\":\"hello\"}",
+  { mode: "healed_json" },
+);
+console.log(healed.healed?.value);
+
+const coerced = await client.complete(
+  "gpt-4",
+  "Return JSON with name and age",
+  {
+    mode: "schema",
+    schema: {
+      type: "object",
+      properties: { name: { type: "string" }, age: { type: "number" } },
+      required: ["name", "age"],
+    },
+  },
+);
+console.log(coerced.coerced?.value);
+```
+
+## Environment Variables
+
+The bindings read provider configuration from environment variables:
+
+- OpenAI: `OPENAI_API_KEY`, optional `OPENAI_API_BASE`
+- Anthropic: `ANTHROPIC_API_KEY`
+- OpenRouter: `OPENROUTER_API_KEY`, optional `OPENROUTER_API_BASE`
+
+The test/examples convention also supports:
+`CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `PROVIDER`.
+
+## API Surface (Types)
+
+```ts
+new Client(provider: string)
+client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
+client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
+```
+
+`CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
