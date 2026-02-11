@@ -232,6 +232,10 @@ pnpm-debug.log*
 .parcel-cache/
 coverage/
 
+# VitePress
+docs/.vitepress/cache/
+docs/.vitepress/dist/
+
 # Go
 bin/
 pkg/
