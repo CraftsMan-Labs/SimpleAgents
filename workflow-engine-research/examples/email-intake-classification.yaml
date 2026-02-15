@@ -1,0 +1,202 @@
+# Email Intake Classification Workflow
+# Demonstrates hierarchical classification + mock RAG lookup routing.
+
+id: email-intake-classification
+version: 1.0.0
+
+metadata:
+  name: "Email Intake Classification"
+  description: "Classify incoming HR/supply-chain emails and route to mock RAG playbooks"
+  tags: ["example", "classification", "routing", "rag"]
+
+entry_node: classify_top_level
+
+nodes:
+  - id: classify_top_level
+    name: "Classify Top Level Category"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4o-mini
+        temperature: 0.0
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        - probation
+        - termination
+        - leave_request
+        - supply_chain_request
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "category": "...",
+          "reason": "short explanation"
+        }
+
+  - id: route_top_level
+    name: "Route Top Level"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_top_level.output.category == "probation"'
+            target: rag_probation
+          - condition: '$.nodes.classify_top_level.output.category == "termination"'
+            target: classify_termination_subtype
+          - condition: '$.nodes.classify_top_level.output.category == "leave_request"'
+            target: rag_leave_request
+          - condition: '$.nodes.classify_top_level.output.category == "supply_chain_request"'
+            target: classify_supply_chain_subtype
+        default: rag_clarification
+
+  - id: classify_supply_chain_subtype
+    name: "Classify Supply Chain Subtype"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4o-mini
+        temperature: 0.0
+    config:
+      prompt: |
+        Determine supply chain subtype:
+        - order_assessment
+        - order_replacement
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "subtype": "...",
+          "reason": "short explanation"
+        }
+
+  - id: route_supply_chain_subtype
+    name: "Route Supply Chain Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_supply_chain_subtype.output.subtype == "order_assessment"'
+            target: rag_supply_chain_order_assessment
+          - condition: '$.nodes.classify_supply_chain_subtype.output.subtype == "order_replacement"'
+            target: rag_supply_chain_order_replacement
+        default: rag_clarification
+
+  - id: classify_termination_subtype
+    name: "Classify Termination Subtype"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4o-mini
+        temperature: 0.0
+    config:
+      prompt: |
+        Determine termination subtype:
+        - first_time_offense
+        - repeated_offense
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "subtype": "...",
+          "reason": "short explanation"
+        }
+
+  - id: route_termination_subtype
+    name: "Route Termination Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_termination_subtype.output.subtype == "first_time_offense"'
+            target: rag_termination_first_time_offense
+          - condition: '$.nodes.classify_termination_subtype.output.subtype == "repeated_offense"'
+            target: rag_termination_repeated_offense
+        default: rag_clarification
+
+  # Mock RAG nodes (tool/custom worker placeholders)
+  - id: rag_probation
+    name: "Mock RAG: Probation"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: probation
+
+  - id: rag_leave_request
+    name: "Mock RAG: Leave Request"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: leave_request
+
+  - id: rag_supply_chain_order_assessment
+    name: "Mock RAG: Supply Chain Order Assessment"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: supply_chain_order_assessment
+
+  - id: rag_supply_chain_order_replacement
+    name: "Mock RAG: Supply Chain Order Replacement"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: supply_chain_order_replacement
+
+  - id: rag_termination_first_time_offense
+    name: "Mock RAG: Termination First Time Offense"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: termination_first_time_offense
+
+  - id: rag_termination_repeated_offense
+    name: "Mock RAG: Termination Repeated Offense"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: termination_repeated_offense
+
+  - id: rag_clarification
+    name: "Mock RAG: Clarification"
+    node_type:
+      custom_worker:
+        language: python
+        handler: GetRagData
+    config:
+      payload:
+        topic: clarification
+
+edges:
+  - from: classify_top_level
+    to: route_top_level
+
+  - from: classify_supply_chain_subtype
+    to: route_supply_chain_subtype
+
+  - from: classify_termination_subtype
+    to: route_termination_subtype
