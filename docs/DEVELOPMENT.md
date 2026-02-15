@@ -86,6 +86,12 @@ cargo test -p simple-agents-providers
 cargo test -p simple-agents-healing
 ```
 
+### Run Cross-Language Contract Gates
+
+```bash
+./scripts/run-binding-contracts.sh
+```
+
 ### Run Tests with Output
 
 ```bash
@@ -93,6 +99,8 @@ cargo test -- --nocapture
 ```
 
 ## Contributing
+
+See the repository-level [Contributing Guide](https://github.com/rishub/SimpleAgents/blob/main/CONTRIBUTING.md) for checklist discipline, required task-board updates, and skill-usage expectations.
 
 ### Getting Started
 

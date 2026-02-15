@@ -67,11 +67,15 @@ We will run **8 subagents** in parallel workstreams.
 
 ### Phase 3 - Cross-language parity and DX hardening
 
-- [ ] Align FFI/Go/Node/Python workflow-facing behavior with Rust reference.
-- [ ] Add golden contract fixtures shared by all bindings.
-- [ ] Enforce capability matrix gates in CI.
+- [x] Align FFI/Go/Node/Python workflow-facing behavior with Rust reference.
+  - Evidence: shared parity assertions now run in FFI (`crates/simple-agents-ffi/tests/ffi_contract.rs`), Go (`bindings/go/contract_fixture_test.go`), Node (`crates/simple-agents-napi/test/basic.test.js`), and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`).
+- [x] Add golden contract fixtures shared by all bindings.
+  - Evidence: expanded fixture contract in `parity-fixtures/binding_contract.json` now covers request/response/healing/streaming/tool-call and binding-specific symbol expectations.
+- [x] Enforce capability matrix gates in CI.
+  - Evidence: `capability-contract-gates` job added to `.github/workflows/bindings-ci.yml`, running `scripts/run-binding-contracts.sh`.
 - [ ] Ship debugging UX: node timeline, retry reasons, replay trace inspection.
-- [ ] Complete docs onboarding path (quickstart + advanced patterns + troubleshooting).
+- [x] Complete docs onboarding path (quickstart + advanced patterns + troubleshooting).
+  - Evidence: docs updates in `docs/QUICKSTART.md`, `docs/ARCHITECTURE.md`, `docs/CAPABILITY_MATRIX.md`, and new `docs/TROUBLESHOOTING.md`.
 
 ## Subagent task board
 
@@ -142,27 +146,42 @@ We will run **8 subagents** in parallel workstreams.
 
 ### SA-6 (Node parity)
 
-- [ ] Upgrade Node streaming typing surface (partials/events/errors).
-- [ ] Add typed tool-call return models with stable TS contracts.
-- [ ] Ensure `.d.ts` parity with runtime behavior and examples.
-- [ ] Add Node parity contract tests against shared fixtures.
-- [ ] Update Node docs with canonical env contract.
+- [x] Upgrade Node streaming typing surface (partials/events/errors).
+  - Evidence: added typed `StreamEvent` surface (`delta`/`error`/`done`) via `Client.stream_events` in `crates/simple-agents-napi/src/lib.rs`.
+- [x] Add typed tool-call return models with stable TS contracts.
+  - Evidence: added `ToolCallResult`/`ToolCallResultFunction` and wired `CompletionResult.tool_calls` in `crates/simple-agents-napi/src/lib.rs`.
+- [x] Ensure `.d.ts` parity with runtime behavior and examples.
+  - Evidence: regenerated declarations through `npm run build:debug` and verified symbol presence by fixture contract test in `crates/simple-agents-napi/test/basic.test.js`.
+- [x] Add Node parity contract tests against shared fixtures.
+  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node test `declaration and runtime exports follow shared contract fixture`.
+- [x] Update Node docs with canonical env contract.
+  - Evidence: updated `crates/simple-agents-napi/README.md` with canonical env contract and typed `streamEvents` example.
 
 ### SA-7 (Python parity)
 
-- [ ] Validate Python API parity for workflow-facing and streaming behaviors.
-- [ ] Add Python contract tests consuming shared fixtures.
-- [ ] Ensure structured streaming semantics align with Rust reference.
-- [ ] Add error mapping consistency tests.
-- [ ] Update Python usage docs where parity behavior changes.
+- [x] Validate Python API parity for workflow-facing and streaming behaviors.
+  - Evidence: parity-focused checks added in `crates/simple-agents-py/tests/test_error_mapping_consistency.py` and streaming assertions updated in `crates/simple-agents-py/tests/test_streaming.py`.
+- [x] Add Python contract tests consuming shared fixtures.
+  - Evidence: `crates/simple-agents-py/tests/test_contract_fixtures.py` reads `parity-fixtures/binding_contract.json`.
+- [x] Ensure structured streaming semantics align with Rust reference.
+  - Evidence: finish reason mapping normalized to Rust parity values (`stop|length|content_filter|tool_calls`) in `crates/simple-agents-py/src/lib.rs`.
+- [x] Add error mapping consistency tests.
+  - Evidence: `crates/simple-agents-py/tests/test_error_mapping_consistency.py` validates stable `RuntimeError` mapping/messages.
+- [x] Update Python usage docs where parity behavior changes.
+  - Evidence: `crates/simple-agents-py/README.md` now documents canonical env contract and streaming finish-reason semantics.
 
 ### SA-8 (CI + fixtures + DX)
 
-- [ ] Add cross-language capability matrix and required minimum gates in CI.
-- [ ] Add shared fixture repository for request/response/healing/streaming/tool-call.
-- [ ] Add contract runner used by Rust/Python/Node/Go pipelines.
-- [ ] Add docs updates in `docs/` for architecture, quickstart, and troubleshooting.
-- [ ] Add contribution checklist enforcing skill usage and task checkoff discipline.
+- [x] Add cross-language capability matrix and required minimum gates in CI.
+  - Evidence: `docs/CAPABILITY_MATRIX.md` and CI gate job `capability-contract-gates` in `.github/workflows/bindings-ci.yml`.
+- [x] Add shared fixture repository for request/response/healing/streaming/tool-call.
+  - Evidence: expanded `parity-fixtures/binding_contract.json` with `shared_cases` sections for request/response/healing/streaming/tool_call.
+- [x] Add contract runner used by Rust/Python/Node/Go pipelines.
+  - Evidence: added `scripts/run-binding-contracts.sh` and `make test-binding-contracts` target.
+- [x] Add docs updates in `docs/` for architecture, quickstart, and troubleshooting.
+  - Evidence: updated `docs/ARCHITECTURE.md`, `docs/QUICKSTART.md`, `docs/DOCS_MAP.md`, `docs/index.md`, and added `docs/TROUBLESHOOTING.md`.
+- [x] Add contribution checklist enforcing skill usage and task checkoff discipline.
+  - Evidence: added `CONTRIBUTING.md` and linked guidance from `docs/DEVELOPMENT.md`.
 
 ## Existing parity backlog (carried forward)
 
@@ -176,17 +195,22 @@ We will run **8 subagents** in parallel workstreams.
 
 ### In progress
 
-- [~] API parity with Python (missing streaming and advanced parity features).
+- [x] API parity with Python (missing streaming and advanced parity features).
+  - Evidence: SA-7 parity tasks completed with fixture + error/streaming coverage and docs updates.
 - [~] Go validation coverage (streaming tests + schema-edge golden cases pending).
-- [~] Credentials/fixtures parity (deterministic no-network fixtures pending).
+- [x] Credentials/fixtures parity (deterministic no-network fixtures established).
+  - Evidence: fixture-backed no-network parity checks now run in FFI/Go/Node/Python via `parity-fixtures/binding_contract.json`.
 
 ### Pending
 
 - [x] Implement streaming in C FFI and Go bindings.
   - Evidence: `sa_stream_messages` in `crates/simple-agents-ffi/src/lib.rs` and `StreamMessages` in `bindings/go/simpleagents.go`; verified with `cargo test -p simple-agents-ffi` and `go test ./...` in `bindings/go`.
-- [ ] Cross-language capability matrix and CI gating.
-- [ ] Contract fixtures for parity tests.
-- [ ] Node parity improvements.
+- [x] Cross-language capability matrix and CI gating.
+  - Evidence: capability matrix docs and CI contract gate in `.github/workflows/bindings-ci.yml`.
+- [x] Contract fixtures for parity tests.
+  - Evidence: shared fixture expanded and consumed by tests across `crates/simple-agents-ffi/tests/ffi_contract.rs`, `bindings/go/contract_fixture_test.go`, `crates/simple-agents-napi/test/basic.test.js`, and `crates/simple-agents-py/tests/test_contract_fixtures.py`.
+- [x] Node parity improvements.
+  - Evidence: SA-6 Node streaming/type/docs/tests updates in `crates/simple-agents-napi/` and shared fixture checks.
 - [ ] Refactor test layering (unit/contract/live).
 
 ## Ordered execution sequence
@@ -199,7 +223,9 @@ We will run **8 subagents** in parallel workstreams.
   - Evidence: trace/recorder/replay + runtime integration + golden fixtures in `crates/simple-agents-workflow/src/trace.rs`, `crates/simple-agents-workflow/src/recorder.rs`, `crates/simple-agents-workflow/src/replay.rs`, `crates/simple-agents-workflow/tests/trace_fixtures.rs`.
 - [x] 4. SA-5 lands FFI + Go streaming parity.
   - Evidence: streaming callback contract in `crates/simple-agents-ffi/include/simple_agents.h`, Rust implementation in `crates/simple-agents-ffi/src/lib.rs`, and Go channel API/tests in `bindings/go/simpleagents.go` and `bindings/go/simpleagents_test.go`.
-- [ ] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
+- [x] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
+  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node (`crates/simple-agents-napi/test/basic.test.js`) and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`) with updated parity APIs.
 - [x] 6. SA-4 lands worker pool/health model behind stable interfaces.
   - Evidence: new worker protocol/pool module exported from `crates/simple-agents-workflow/src/lib.rs` and validated by `cargo test -p simple-agents-workflow`.
-- [ ] 7. SA-8 enforces CI capability gates and docs completion.
+- [x] 7. SA-8 enforces CI capability gates and docs completion.
+  - Evidence: CI gate + contract runner landed (`.github/workflows/bindings-ci.yml`, `scripts/run-binding-contracts.sh`) with docs updates (`docs/CAPABILITY_MATRIX.md`, `docs/TROUBLESHOOTING.md`).

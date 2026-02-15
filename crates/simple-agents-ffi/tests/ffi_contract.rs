@@ -1,9 +1,23 @@
 use std::ffi::CString;
+use std::fs;
+use std::path::PathBuf;
 
+use serde::Deserialize;
 use simple_agents_ffi::{
     sa_client_free, sa_client_new_from_env, sa_complete, sa_complete_messages_json,
     sa_last_error_message, sa_stream_messages, sa_string_free, SAMessage,
 };
+
+#[derive(Debug, Deserialize)]
+struct FfiContractFixture {
+    ffi: FfiSymbols,
+    shared_cases: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct FfiSymbols {
+    required_c_symbols: Vec<String>,
+}
 
 #[test]
 fn rejects_unknown_provider() {
@@ -129,4 +143,41 @@ fn rejects_null_client_for_stream_messages() {
     let err = sa_last_error_message();
     assert!(!err.is_null());
     unsafe { sa_string_free(err) };
+}
+
+#[test]
+fn ffi_header_follows_shared_contract_fixture() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .canonicalize()
+        .expect("workspace root should resolve");
+
+    let fixture_path = root.join("parity-fixtures").join("binding_contract.json");
+    let fixture_raw = fs::read_to_string(&fixture_path).expect("fixture should be readable");
+    let fixture: FfiContractFixture =
+        serde_json::from_str(&fixture_raw).expect("fixture should parse");
+
+    let shared = fixture
+        .shared_cases
+        .as_object()
+        .expect("shared_cases should be an object");
+    assert!(shared.contains_key("request"));
+    assert!(shared.contains_key("response"));
+    assert!(shared.contains_key("healing"));
+    assert!(shared.contains_key("streaming"));
+    assert!(shared.contains_key("tool_call"));
+
+    let header_path = root
+        .join("crates")
+        .join("simple-agents-ffi")
+        .join("include")
+        .join("simple_agents.h");
+    let header = fs::read_to_string(header_path).expect("header should be readable");
+    for symbol in fixture.ffi.required_c_symbols {
+        assert!(
+            header.contains(&symbol),
+            "simple_agents.h should include symbol: {symbol}"
+        );
+    }
 }

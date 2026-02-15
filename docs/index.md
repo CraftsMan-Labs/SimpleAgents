@@ -35,4 +35,6 @@ features:
 - Building production flows: [Usage Guide](/USAGE)
 - Integrating another language: [Bindings](/BINDINGS_PYTHON)
 - Extending internals: [Architecture](/ARCHITECTURE)
+- Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
+- Need help debugging setup/tests: [Troubleshooting](/TROUBLESHOOTING)
 - Looking for a specific task: [Docs Map](/DOCS_MAP)
