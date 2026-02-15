@@ -105,6 +105,8 @@ pub enum WorkerErrorCode {
     CircuitOpen,
     /// Request cancelled before completion.
     Cancelled,
+    /// Request violated runtime security policy.
+    InvalidRequest,
 }
 
 /// Pool-level errors surfaced to runtime callers.
@@ -128,6 +130,12 @@ pub enum WorkerPoolError {
     /// Request rejected by circuit breaker hook.
     #[error("request rejected by circuit breaker")]
     CircuitOpen,
+    /// Request violated runtime security policy.
+    #[error("worker request rejected: {reason}")]
+    InvalidRequest {
+        /// Rejection reason.
+        reason: String,
+    },
 }
 
 /// Worker lifecycle and scheduling configuration.
@@ -141,6 +149,19 @@ pub struct WorkerPoolOptions {
     pub unavailable_after_failures: u32,
     /// Default timeout used when request timeout is not set.
     pub default_request_timeout: Option<Duration>,
+    /// Security guards for request payload and budgets.
+    pub security_policy: WorkerSecurityPolicy,
+}
+
+/// Request hardening limits for worker pool submit path.
+#[derive(Debug, Clone)]
+pub struct WorkerSecurityPolicy {
+    /// Maximum request timeout accepted by pool.
+    pub max_request_timeout_ms: u64,
+    /// Maximum serialized request payload size in bytes.
+    pub max_request_payload_bytes: usize,
+    /// Maximum length for request/workflow/node identifiers.
+    pub max_identifier_length: usize,
 }
 
 impl Default for WorkerPoolOptions {
@@ -150,6 +171,17 @@ impl Default for WorkerPoolOptions {
             health_probe_interval: Duration::from_secs(5),
             unavailable_after_failures: 3,
             default_request_timeout: Some(Duration::from_secs(30)),
+            security_policy: WorkerSecurityPolicy::default(),
+        }
+    }
+}
+
+impl Default for WorkerSecurityPolicy {
+    fn default() -> Self {
+        Self {
+            max_request_timeout_ms: 120_000,
+            max_request_payload_bytes: 256 * 1024,
+            max_identifier_length: 128,
         }
     }
 }
@@ -256,6 +288,27 @@ pub struct WorkerPool {
     hooks: Option<Arc<dyn CircuitBreakerHooks>>,
 }
 
+/// Adapter trait for worker pools used by runtime integrations.
+#[async_trait]
+pub trait WorkerPoolClient: Send + Sync {
+    /// Submits one request to the underlying worker pool.
+    async fn submit(&self, request: WorkerRequest) -> Result<WorkerResponse, WorkerPoolError>;
+
+    /// Returns a snapshot of worker health state.
+    async fn health_snapshot(&self) -> Vec<WorkerHealth>;
+}
+
+#[async_trait]
+impl WorkerPoolClient for WorkerPool {
+    async fn submit(&self, request: WorkerRequest) -> Result<WorkerResponse, WorkerPoolError> {
+        WorkerPool::submit(self, request).await
+    }
+
+    async fn health_snapshot(&self) -> Vec<WorkerHealth> {
+        WorkerPool::health_snapshot(self).await
+    }
+}
+
 impl WorkerPool {
     /// Creates and starts an in-process worker pool.
     pub fn new_inprocess(
@@ -289,6 +342,7 @@ impl WorkerPool {
 
     /// Submits one request to the pool and waits for completion.
     pub async fn submit(&self, request: WorkerRequest) -> Result<WorkerResponse, WorkerPoolError> {
+        validate_request_contract(&request, &self.options.security_policy)?;
         let (slot_index, worker_id, sender) = self.select_worker(&request).await?;
 
         if let Some(hooks) = &self.hooks {
@@ -582,6 +636,66 @@ fn now_unix_ms() -> u64 {
         .as_millis() as u64
 }
 
+fn validate_request_contract(
+    request: &WorkerRequest,
+    policy: &WorkerSecurityPolicy,
+) -> Result<(), WorkerPoolError> {
+    if request.request_id.len() > policy.max_identifier_length {
+        return Err(WorkerPoolError::InvalidRequest {
+            reason: format!(
+                "request_id length {} exceeds max {}",
+                request.request_id.len(),
+                policy.max_identifier_length
+            ),
+        });
+    }
+    if request.workflow_name.len() > policy.max_identifier_length {
+        return Err(WorkerPoolError::InvalidRequest {
+            reason: format!(
+                "workflow_name length {} exceeds max {}",
+                request.workflow_name.len(),
+                policy.max_identifier_length
+            ),
+        });
+    }
+    if request.node_id.len() > policy.max_identifier_length {
+        return Err(WorkerPoolError::InvalidRequest {
+            reason: format!(
+                "node_id length {} exceeds max {}",
+                request.node_id.len(),
+                policy.max_identifier_length
+            ),
+        });
+    }
+    if let Some(timeout_ms) = request.timeout_ms {
+        if timeout_ms > policy.max_request_timeout_ms {
+            return Err(WorkerPoolError::InvalidRequest {
+                reason: format!(
+                    "timeout_ms {} exceeds max {}",
+                    timeout_ms, policy.max_request_timeout_ms
+                ),
+            });
+        }
+    }
+
+    let payload_size = estimate_payload_size(request);
+    if payload_size > policy.max_request_payload_bytes {
+        return Err(WorkerPoolError::InvalidRequest {
+            reason: format!(
+                "request payload {} bytes exceeds max {}",
+                payload_size, policy.max_request_payload_bytes
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn estimate_payload_size(request: &WorkerRequest) -> usize {
+    serde_json::to_vec(request)
+        .map(|payload| payload.len())
+        .unwrap_or(usize::MAX)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -745,6 +859,7 @@ mod tests {
                 unavailable_after_failures: 1,
                 health_probe_interval: Duration::from_millis(15),
                 default_request_timeout: Some(Duration::from_secs(1)),
+                ..WorkerPoolOptions::default()
             },
             None,
         )
@@ -801,6 +916,39 @@ mod tests {
             .expect_err("request should time out");
         assert!(matches!(error, WorkerPoolError::Timeout));
 
+        pool.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn rejects_request_when_security_contract_is_violated() {
+        let pool = WorkerPool::new_inprocess(
+            vec![Arc::new(EchoWorker)],
+            WorkerPoolOptions {
+                security_policy: WorkerSecurityPolicy {
+                    max_request_timeout_ms: 10,
+                    max_request_payload_bytes: 256,
+                    max_identifier_length: 12,
+                },
+                ..WorkerPoolOptions::default()
+            },
+            None,
+        )
+        .expect("pool should initialize");
+
+        let mut request = sample_request("req-too-large");
+        request.timeout_ms = Some(99);
+        request.operation = WorkerOperation::Tool {
+            tool: "echo".to_string(),
+            input: json!({"payload": "x".repeat(1024)}),
+            scoped_input: json!({"input": {}}),
+        };
+
+        let error = pool
+            .submit(request)
+            .await
+            .expect_err("request should be rejected by security policy");
+
+        assert!(matches!(error, WorkerPoolError::InvalidRequest { .. }));
         pool.shutdown().await;
     }
 }

@@ -12,6 +12,48 @@ pub enum ExpressionError {
     Invalid { expression: String, reason: String },
     #[error("path '{path}' not found in scoped input")]
     MissingPath { path: String },
+    #[error("expression complexity limit exceeded: {metric}={value}, max={max}")]
+    ComplexityLimitExceeded {
+        metric: &'static str,
+        value: usize,
+        max: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExpressionLimits {
+    pub max_expression_chars: usize,
+    pub max_operator_count: usize,
+    pub max_depth: usize,
+    pub max_path_segments: usize,
+    pub max_cache_entries: usize,
+}
+
+/// Expression backend strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpressionBackend {
+    /// Native Rust parser/evaluator.
+    Native,
+    /// CEL-compatible backend routed through the same abstraction.
+    CelCompatible,
+}
+
+impl Default for ExpressionBackend {
+    fn default() -> Self {
+        Self::Native
+    }
+}
+
+impl Default for ExpressionLimits {
+    fn default() -> Self {
+        Self {
+            max_expression_chars: 2048,
+            max_operator_count: 64,
+            max_depth: 24,
+            max_path_segments: 16,
+            max_cache_entries: 512,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -36,11 +78,25 @@ enum Operand {
 #[derive(Debug, Default)]
 pub struct ExpressionEngine {
     cache: Mutex<HashMap<String, ExpressionNode>>,
+    backend: ExpressionBackend,
+    limits: ExpressionLimits,
 }
 
 impl ExpressionEngine {
     pub fn new() -> Self {
-        Self::default()
+        Self::with_limits(ExpressionLimits::default())
+    }
+
+    pub fn with_limits(limits: ExpressionLimits) -> Self {
+        Self::with_backend(ExpressionBackend::Native, limits)
+    }
+
+    pub fn with_backend(backend: ExpressionBackend, limits: ExpressionLimits) -> Self {
+        Self {
+            cache: Mutex::new(HashMap::new()),
+            backend,
+            limits,
+        }
     }
 
     pub fn validate(&self, expression: &str) -> Result<(), ExpressionError> {
@@ -63,6 +119,14 @@ impl ExpressionEngine {
             return Err(ExpressionError::Empty);
         }
 
+        if normalized.len() > self.limits.max_expression_chars {
+            return Err(ExpressionError::ComplexityLimitExceeded {
+                metric: "chars",
+                value: normalized.len(),
+                max: self.limits.max_expression_chars,
+            });
+        }
+
         if let Some(cached) = self
             .cache
             .lock()
@@ -73,11 +137,34 @@ impl ExpressionEngine {
             return Ok(cached);
         }
 
-        let parsed = parse_expr(normalized)?;
-        self.cache
-            .lock()
-            .expect("expression cache lock poisoned")
-            .insert(normalized.to_string(), parsed.clone());
+        let parsed = match self.backend {
+            ExpressionBackend::Native | ExpressionBackend::CelCompatible => parse_expr(normalized)?,
+        };
+        let op_count = count_operators(&parsed);
+        if op_count > self.limits.max_operator_count {
+            return Err(ExpressionError::ComplexityLimitExceeded {
+                metric: "operators",
+                value: op_count,
+                max: self.limits.max_operator_count,
+            });
+        }
+        let depth = tree_depth(&parsed);
+        if depth > self.limits.max_depth {
+            return Err(ExpressionError::ComplexityLimitExceeded {
+                metric: "depth",
+                value: depth,
+                max: self.limits.max_depth,
+            });
+        }
+        validate_path_segments(&parsed, self.limits.max_path_segments)?;
+
+        let mut cache = self.cache.lock().expect("expression cache lock poisoned");
+        if cache.len() >= self.limits.max_cache_entries {
+            if let Some(evicted) = cache.keys().next().cloned() {
+                cache.remove(&evicted);
+            }
+        }
+        cache.insert(normalized.to_string(), parsed.clone());
         Ok(parsed)
     }
 }
@@ -309,11 +396,68 @@ fn is_truthy(value: &Value) -> bool {
     }
 }
 
+fn count_operators(node: &ExpressionNode) -> usize {
+    match node {
+        ExpressionNode::Not(inner) => 1 + count_operators(inner),
+        ExpressionNode::Eq(..) | ExpressionNode::Ne(..) | ExpressionNode::Truthy(..) => 1,
+        ExpressionNode::Or(nodes) | ExpressionNode::And(nodes) => {
+            1 + nodes.iter().map(count_operators).sum::<usize>()
+        }
+    }
+}
+
+fn tree_depth(node: &ExpressionNode) -> usize {
+    match node {
+        ExpressionNode::Not(inner) => 1 + tree_depth(inner),
+        ExpressionNode::Eq(..) | ExpressionNode::Ne(..) | ExpressionNode::Truthy(..) => 1,
+        ExpressionNode::Or(nodes) | ExpressionNode::And(nodes) => {
+            1 + nodes.iter().map(tree_depth).max().unwrap_or(0)
+        }
+    }
+}
+
+fn validate_path_segments(
+    node: &ExpressionNode,
+    max_segments: usize,
+) -> Result<(), ExpressionError> {
+    match node {
+        ExpressionNode::Not(inner) => validate_path_segments(inner, max_segments),
+        ExpressionNode::Eq(left, right) | ExpressionNode::Ne(left, right) => {
+            validate_operand_path(left, max_segments)?;
+            validate_operand_path(right, max_segments)
+        }
+        ExpressionNode::Or(nodes) | ExpressionNode::And(nodes) => {
+            for item in nodes {
+                validate_path_segments(item, max_segments)?;
+            }
+            Ok(())
+        }
+        ExpressionNode::Truthy(operand) => validate_operand_path(operand, max_segments),
+    }
+}
+
+fn validate_operand_path(operand: &Operand, max_segments: usize) -> Result<(), ExpressionError> {
+    if let Operand::Path(path) = operand {
+        let segments = path
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .count();
+        if segments > max_segments {
+            return Err(ExpressionError::ComplexityLimitExceeded {
+                metric: "path_segments",
+                value: segments,
+                max: max_segments,
+            });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
 
-    use super::{ExpressionEngine, ExpressionError};
+    use super::{ExpressionBackend, ExpressionEngine, ExpressionError, ExpressionLimits};
 
     #[test]
     fn supports_truthy_path_and_equality() {
@@ -365,5 +509,58 @@ mod tests {
         engine
             .validate("input.ready == true")
             .expect("second parse should hit cache");
+    }
+
+    #[test]
+    fn rejects_expression_when_depth_limit_exceeded() {
+        let engine = ExpressionEngine::with_limits(ExpressionLimits {
+            max_depth: 1,
+            ..ExpressionLimits::default()
+        });
+
+        let error = engine
+            .evaluate_bool("a && b && c", &json!({"a": true, "b": true, "c": true}))
+            .expect_err("depth guard should reject expression");
+        assert!(matches!(
+            error,
+            ExpressionError::ComplexityLimitExceeded {
+                metric: "depth",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_expression_when_path_segments_limit_exceeded() {
+        let engine = ExpressionEngine::with_limits(ExpressionLimits {
+            max_path_segments: 2,
+            ..ExpressionLimits::default()
+        });
+
+        let error = engine
+            .evaluate_bool(
+                "input.deep.value == true",
+                &json!({"input": {"deep": {"value": true}}}),
+            )
+            .expect_err("path segment guard should reject expression");
+        assert!(matches!(
+            error,
+            ExpressionError::ComplexityLimitExceeded {
+                metric: "path_segments",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn supports_cel_compatible_backend_path() {
+        let engine = ExpressionEngine::with_backend(
+            ExpressionBackend::CelCompatible,
+            ExpressionLimits::default(),
+        );
+        let result = engine
+            .evaluate_bool("input.ready == true", &json!({"input": {"ready": true}}))
+            .expect("cel-compatible backend should evaluate expression");
+        assert!(result);
     }
 }
