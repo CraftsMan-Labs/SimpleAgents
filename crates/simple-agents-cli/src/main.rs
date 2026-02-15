@@ -11,6 +11,9 @@ use simple_agents_providers::{
 use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
+use simple_agents_workflow::{
+    inspect_replay_trace, replay_trace_with_options, ReplayCachePolicy, ReplayOptions, WorkflowTrace,
+};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use thiserror::Error;
@@ -39,6 +42,36 @@ enum Commands {
     Benchmark(BenchmarkArgs),
     /// Test provider health with a lightweight prompt
     TestProvider(TestProviderArgs),
+    /// Workflow trace and replay utilities
+    Workflow(WorkflowArgs),
+}
+
+#[derive(Args, Debug)]
+struct WorkflowArgs {
+    #[command(subcommand)]
+    command: WorkflowCommands,
+}
+
+#[derive(Subcommand, Debug)]
+enum WorkflowCommands {
+    /// Print events from a recorded workflow trace JSON file
+    Trace { trace_file: PathBuf },
+    /// Replay-validate a workflow trace JSON file
+    Replay {
+        trace_file: PathBuf,
+        #[arg(long, value_enum, default_value_t = WorkflowCachePolicyArg::Refresh)]
+        cache_policy: WorkflowCachePolicyArg,
+    },
+    /// Inspect replay violations scoped to one node id
+    Inspect { trace_file: PathBuf, node_id: String },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum WorkflowCachePolicyArg {
+    Always,
+    Refresh,
+    Mixed,
 }
 
 #[derive(Args, Debug)]
@@ -398,6 +431,9 @@ async fn run() -> Result<()> {
             )
             .await?;
             print_provider_report(output, &report)?;
+        }
+        Commands::Workflow(args) => {
+            run_workflow_tools(args, output)?;
         }
     }
 
@@ -1057,6 +1093,130 @@ fn print_provider_report(output: OutputFormat, report: &ProviderTestReport) -> R
     }
 
     Ok(())
+}
+
+fn run_workflow_tools(args: WorkflowArgs, output: OutputFormat) -> Result<()> {
+    match args.command {
+        WorkflowCommands::Trace { trace_file } => {
+            let trace = read_trace_file(&trace_file)?;
+            match output {
+                OutputFormat::Json => {
+                    let value = serde_json::to_string_pretty(&trace)
+                        .map_err(|err| CliError::Serialization(err.to_string()))?;
+                    println!("{}", value);
+                }
+                OutputFormat::Plain | OutputFormat::Markdown => {
+                    println!(
+                        "trace_id={} workflow={} version={}",
+                        trace.metadata.trace_id,
+                        trace.metadata.workflow_name,
+                        trace.metadata.workflow_version
+                    );
+                    for event in trace.events {
+                        println!("seq={} kind={:?}", event.seq, event.kind);
+                    }
+                }
+            }
+        }
+        WorkflowCommands::Replay {
+            trace_file,
+            cache_policy,
+        } => {
+            let trace = read_trace_file(&trace_file)?;
+            let policy = match cache_policy {
+                WorkflowCachePolicyArg::Always => ReplayCachePolicy::Always,
+                WorkflowCachePolicyArg::Refresh => ReplayCachePolicy::Refresh,
+                WorkflowCachePolicyArg::Mixed => ReplayCachePolicy::Mixed,
+            };
+
+            let report = replay_trace_with_options(
+                &trace,
+                &ReplayOptions {
+                    cache_policy: policy,
+                },
+            )
+            .map_err(|err| CliError::Config(err.to_string()))?;
+
+            match output {
+                OutputFormat::Json => {
+                    let value = serde_json::json!({
+                        "total_events": report.total_events,
+                        "terminal_status": format!("{:?}", report.terminal_status),
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&value)
+                            .map_err(|err| CliError::Serialization(err.to_string()))?
+                    );
+                }
+                OutputFormat::Plain | OutputFormat::Markdown => {
+                    println!(
+                        "replay ok: events={} terminal={:?}",
+                        report.total_events, report.terminal_status
+                    );
+                }
+            }
+        }
+        WorkflowCommands::Inspect {
+            trace_file,
+            node_id,
+        } => {
+            let trace = read_trace_file(&trace_file)?;
+            let inspection = inspect_replay_trace(&trace);
+            let node_events: Vec<_> = trace
+                .events
+                .iter()
+                .filter(|event| match &event.kind {
+                    simple_agents_workflow::TraceEventKind::NodeEnter { node_id: id }
+                    | simple_agents_workflow::TraceEventKind::NodeExit { node_id: id }
+                    | simple_agents_workflow::TraceEventKind::NodeError { node_id: id, .. } => {
+                        id == &node_id
+                    }
+                    simple_agents_workflow::TraceEventKind::Terminal { .. } => false,
+                })
+                .collect();
+
+            match output {
+                OutputFormat::Json => {
+                    let value = serde_json::json!({
+                        "valid": inspection.valid,
+                        "total_events": inspection.total_events,
+                        "terminal_status": inspection.terminal_status.map(|s| format!("{:?}", s)),
+                        "violations": inspection.violations,
+                        "node_event_count": node_events.len(),
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&value)
+                            .map_err(|err| CliError::Serialization(err.to_string()))?
+                    );
+                }
+                OutputFormat::Plain | OutputFormat::Markdown => {
+                    println!(
+                        "inspect node={} valid={} node_events={}",
+                        node_id,
+                        inspection.valid,
+                        node_events.len()
+                    );
+                    if !inspection.violations.is_empty() {
+                        println!("violations:");
+                        for violation in inspection.violations {
+                            println!("- {}", violation);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn read_trace_file(path: &Path) -> Result<WorkflowTrace> {
+    let bytes = std::fs::read(path)?;
+    let trace = serde_json::from_slice::<WorkflowTrace>(&bytes)
+        .map_err(|err| CliError::Config(format!("invalid trace json: {}", err)))?;
+    Ok(trace)
 }
 
 impl ProviderEntry {
