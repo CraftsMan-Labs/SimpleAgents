@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 import json
 import os
@@ -10,15 +11,11 @@ try:
     from dotenv import load_dotenv  # type: ignore[reportMissingImports]
 except ImportError:
 
-    def load_dotenv() -> None:
+    def load_dotenv(*_args: object, **_kwargs: object) -> None:
         return None
 
 
-try:
-    from simple_agents_py import Client, ResponseWithMetadata  # type: ignore[reportMissingImports]
-except ImportError:
-    Client = None  # type: ignore[assignment]
-    ResponseWithMetadata = None  # type: ignore[assignment]
+from simple_agents_py import Client, ResponseWithMetadata
 
 
 class TopLevelCategory(str, Enum):
@@ -48,24 +45,21 @@ class ClassificationResult:
     termination_subtype: Optional[TerminationSubtype] = None
     confidence: float = 0.0
     reason: str = ""
-    mode: str = "heuristic"
+    mode: str = "llm"
 
 
-def normalize(text: str) -> str:
-    return " ".join(text.lower().strip().split())
-
-
-def contains_any(text: str, keywords: list[str]) -> bool:
-    return any(keyword in text for keyword in keywords)
-
-
-def load_llm_settings() -> Optional[tuple[str, str, str]]:
+def load_llm_settings() -> tuple[str, str, str]:
+    env_path = Path(__file__).resolve().parents[1] / ".env"
+    load_dotenv(env_path)
     load_dotenv()
+
     api_base = os.getenv("CUSTOM_API_BASE")
     api_key = os.getenv("CUSTOM_API_KEY")
     model = os.getenv("CUSTOM_API_MODEL")
     if not api_base or not api_key or not model:
-        return None
+        raise RuntimeError(
+            "Missing LLM settings. Set CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL in examples/.env or environment."
+        )
     return api_base, api_key, model
 
 
@@ -94,12 +88,8 @@ def coerce_termination(value: Optional[str]) -> Optional[TerminationSubtype]:
         return TerminationSubtype.CLARIFICATION
 
 
-def classify_with_llm(email_text: str) -> Optional[ClassificationResult]:
-    settings = load_llm_settings()
-    if not settings or Client is None or ResponseWithMetadata is None:
-        return None
-
-    api_base, api_key, model = settings
+def classify_with_llm(email_text: str) -> ClassificationResult:
+    api_base, api_key, model = load_llm_settings()
     client = Client("openai", api_base=api_base, api_key=api_key)
 
     schema = {
@@ -155,12 +145,16 @@ def classify_with_llm(email_text: str) -> Optional[ClassificationResult]:
         model, messages, schema=schema, schema_name="email_classification"
     )
     if not isinstance(result, ResponseWithMetadata):
-        return None
+        raise RuntimeError(
+            "Unexpected response type from simple_agents_py client.complete"
+        )
 
     try:
         payload = json.loads(result.content)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            "LLM returned non-JSON output for structured classification"
+        ) from error
 
     return ClassificationResult(
         top_level=coerce_top_level(str(payload.get("top_level", "clarification"))),
@@ -170,102 +164,6 @@ def classify_with_llm(email_text: str) -> Optional[ClassificationResult]:
         reason=str(payload.get("reason", "LLM classification")),
         mode="llm",
     )
-
-
-def classify_top_level_heuristic(email_text: str) -> ClassificationResult:
-    text = normalize(email_text)
-
-    if contains_any(text, ["probation", "probation period", "extend probation"]):
-        return ClassificationResult(
-            top_level=TopLevelCategory.PROBATION,
-            confidence=0.93,
-            reason="Detected probation-related keywords.",
-            mode="heuristic",
-        )
-
-    if contains_any(text, ["termination", "terminate", "dismiss", "fired"]):
-        subtype = classify_termination_heuristic(text)
-        return ClassificationResult(
-            top_level=TopLevelCategory.TERMINATION,
-            termination_subtype=subtype,
-            confidence=0.95 if subtype != TerminationSubtype.CLARIFICATION else 0.72,
-            reason="Detected termination-related keywords.",
-            mode="heuristic",
-        )
-
-    if contains_any(
-        text, ["leave request", "vacation", "sick leave", "pto", "time off"]
-    ):
-        return ClassificationResult(
-            top_level=TopLevelCategory.LEAVE_REQUEST,
-            confidence=0.94,
-            reason="Detected leave-request keywords.",
-            mode="heuristic",
-        )
-
-    if contains_any(text, ["supply", "shipment", "vendor", "purchase order", "order"]):
-        subtype = classify_supply_chain_heuristic(text)
-        return ClassificationResult(
-            top_level=TopLevelCategory.SUPPLY_CHAIN_REQUEST,
-            supply_chain_subtype=subtype,
-            confidence=0.91 if subtype != SupplyChainSubtype.CLARIFICATION else 0.7,
-            reason="Detected supply-chain keywords.",
-            mode="heuristic",
-        )
-
-    return ClassificationResult(
-        top_level=TopLevelCategory.CLARIFICATION,
-        confidence=0.55,
-        reason="No strong category match. Needs more information.",
-        mode="heuristic",
-    )
-
-
-def classify_supply_chain_heuristic(text: str) -> SupplyChainSubtype:
-    replacement_signals = ["replacement", "damaged", "wrong item", "return", "replace"]
-    assessment_signals = ["assess", "assessment", "review order", "evaluate", "quote"]
-
-    has_replacement = contains_any(text, replacement_signals)
-    has_assessment = contains_any(text, assessment_signals)
-
-    if has_replacement and not has_assessment:
-        return SupplyChainSubtype.ORDER_REPLACEMENT
-    if has_assessment and not has_replacement:
-        return SupplyChainSubtype.ORDER_ASSESSMENT
-    return SupplyChainSubtype.CLARIFICATION
-
-
-def classify_termination_heuristic(text: str) -> TerminationSubtype:
-    repeated_signals = [
-        "repeated offense",
-        "second warning",
-        "third warning",
-        "again",
-        "pattern",
-        "multiple incidents",
-    ]
-    first_time_signals = [
-        "first offense",
-        "first incident",
-        "initial warning",
-        "first time",
-    ]
-
-    has_repeated = contains_any(text, repeated_signals)
-    has_first_time = contains_any(text, first_time_signals)
-
-    if has_repeated and not has_first_time:
-        return TerminationSubtype.REPEATED_OFFENSE
-    if has_first_time and not has_repeated:
-        return TerminationSubtype.FIRST_TIME_OFFENSE
-    return TerminationSubtype.CLARIFICATION
-
-
-def classify_email(email_text: str) -> ClassificationResult:
-    llm_result = classify_with_llm(email_text)
-    if llm_result is not None:
-        return llm_result
-    return classify_top_level_heuristic(email_text)
 
 
 def get_rag_data(classification: ClassificationResult) -> dict:
@@ -320,7 +218,7 @@ def get_rag_data(classification: ClassificationResult) -> dict:
 
 
 def process_incoming_email(email_text: str) -> dict:
-    classification = classify_email(email_text)
+    classification = classify_with_llm(email_text)
     rag = get_rag_data(classification)
 
     return {
@@ -339,8 +237,7 @@ if __name__ == "__main__":
         "Supply chain team asks to assess order feasibility and vendor timeline.",
     ]
 
-    llm_enabled = load_llm_settings() is not None and Client is not None
-    print(f"Mode: {'llm' if llm_enabled else 'heuristic_fallback'}")
+    print("Mode: llm")
 
     for idx, email in enumerate(samples, start=1):
         result = process_incoming_email(email)
