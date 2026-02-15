@@ -5,7 +5,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-
+from dotenv import load_dotenv
+load_dotenv()
 from simple_agents_py import Client, ResponseWithMetadata
 
 from python_email_workflow_demo import load_llm_settings
