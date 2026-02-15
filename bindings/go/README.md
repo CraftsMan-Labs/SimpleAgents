@@ -67,7 +67,23 @@ See runnable example: `bindings/go/examples/client/main.go`.
 ## API summary
 
 - `NewClientFromEnv(provider string) (*Client, error)`
-- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (prompt API)
+- `(*Client).CompletePrompt(ctx, model, prompt, maxTokens, temperature)` (canonical prompt API)
+- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (compatibility alias)
 - `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
+- `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
 - `(*Client).Complete(...)` (backward-compatible prompt helper)
 - `(*Client).Close()`
+
+## Option validation
+
+`CompleteOptions.Mode` supports `standard`, `healed_json`, and `schema`.
+
+- `schema` mode requires `CompleteOptions.Schema`.
+- `Schema` is rejected for non-`schema` modes.
+- Streaming currently supports only `standard` mode.
+
+## Test layers
+
+- Unit: `go test ./... -run 'TestValidate|TestCompleteMessagesUninitializedClient|TestCompleteWithContextUninitializedClient|TestStreamMessagesUninitializedClient'`
+- Contract: `go test ./... -run 'TestGoBindingsFollowSharedContractFixture|TestValidateCompleteOptionsGoldenCases'`
+- Live: `go test ./... -run 'TestLive'` (env-gated)

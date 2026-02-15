@@ -1,5 +1,6 @@
 //! C-compatible FFI bindings for SimpleAgents.
 
+use futures_util::StreamExt;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
@@ -17,7 +18,7 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::{Arc, Mutex};
 
@@ -81,6 +82,21 @@ struct FfiCompletionResult {
     raw: Option<String>,
     healed: Option<FfiHealingData>,
     coerced: Option<FfiHealingData>,
+}
+
+type SAStreamCallback =
+    Option<extern "C" fn(event_json: *const c_char, user_data: *mut c_void) -> i32>;
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum FfiStreamEvent {
+    Chunk {
+        chunk: simple_agent_type::response::CompletionChunk,
+    },
+    Error {
+        message: String,
+    },
+    Done,
 }
 
 thread_local! {
@@ -492,6 +508,45 @@ where
     }
 }
 
+fn ffi_guard_status(action: impl FnOnce() -> Result<()>) -> i32 {
+    let result = catch_unwind(AssertUnwindSafe(action));
+    match result {
+        Ok(Ok(())) => {
+            clear_last_error();
+            0
+        }
+        Ok(Err(error)) => {
+            set_last_error(error.to_string());
+            -1
+        }
+        Err(_) => {
+            set_last_error("Panic occurred in FFI call".to_string());
+            -1
+        }
+    }
+}
+
+fn emit_stream_event(
+    callback: extern "C" fn(*const c_char, *mut c_void) -> i32,
+    user_data: *mut c_void,
+    event: FfiStreamEvent,
+) -> Result<()> {
+    let payload = serde_json::to_string(&event)
+        .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize stream event: {e}")))?;
+    let payload = CString::new(payload).map_err(|_| {
+        SimpleAgentsError::Config("stream event contains interior null byte".to_string())
+    })?;
+
+    let callback_status = callback(payload.as_ptr(), user_data);
+    if callback_status == 0 {
+        Ok(())
+    } else {
+        Err(SimpleAgentsError::Config(
+            "stream cancelled by callback".to_string(),
+        ))
+    }
+}
+
 /// Create a client from environment variables for a provider.
 ///
 /// `provider_name` must be one of: "openai", "anthropic", "openrouter".
@@ -678,6 +733,112 @@ pub unsafe extern "C" fn sa_complete_messages_json(
 
         serde_json::to_string(&payload)
             .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
+    })
+}
+
+/// Execute a message-based completion request in streaming mode and emit JSON events to a callback.
+///
+/// Returns `0` on success and non-zero on failure. On failure call `sa_last_error_message`.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env`.
+/// - `model` must be a valid null-terminated C string.
+/// - `messages` must point to `messages_len` valid `SAMessage` values.
+/// - `callback` must point to a valid C function for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn sa_stream_messages(
+    client: *mut SAClient,
+    model: *const c_char,
+    messages: *const SAMessage,
+    messages_len: usize,
+    max_tokens: i32,
+    temperature: f32,
+    top_p: f32,
+    callback: SAStreamCallback,
+    user_data: *mut c_void,
+) -> i32 {
+    if client.is_null() {
+        set_last_error("client cannot be null".to_string());
+        return -1;
+    }
+
+    let Some(callback) = callback else {
+        set_last_error("callback cannot be null".to_string());
+        return -1;
+    };
+
+    ffi_guard_status(|| {
+        let model = cstr_to_string(model, "model")?;
+        let messages = parse_messages(messages, messages_len)?;
+
+        let mut builder = CompletionRequest::builder()
+            .model(&model)
+            .messages(messages);
+        if max_tokens > 0 {
+            builder = builder.max_tokens(max_tokens as u32);
+        }
+        if temperature >= 0.0 {
+            builder = builder.temperature(temperature);
+        }
+        if top_p >= 0.0 {
+            builder = builder.top_p(top_p);
+        }
+        builder = builder.stream(true);
+        let request = builder.build()?;
+
+        let client = &(*client).inner;
+        let runtime = client
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        let outcome = runtime.block_on(
+            client
+                .client
+                .complete(&request, CompletionOptions::default()),
+        )?;
+        let mut stream = match outcome {
+            CompletionOutcome::Stream(stream) => stream,
+            CompletionOutcome::Response(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "non-streaming response returned from sa_stream_messages".to_string(),
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "healed json response returned from sa_stream_messages".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(SimpleAgentsError::Config(
+                    "schema response returned from sa_stream_messages".to_string(),
+                ))
+            }
+        };
+
+        runtime.block_on(async {
+            while let Some(chunk_result) = stream.next().await {
+                match chunk_result {
+                    Ok(chunk) => {
+                        emit_stream_event(callback, user_data, FfiStreamEvent::Chunk { chunk })?;
+                    }
+                    Err(error) => {
+                        let message = error.to_string();
+                        let _ = emit_stream_event(
+                            callback,
+                            user_data,
+                            FfiStreamEvent::Error {
+                                message: message.clone(),
+                            },
+                        );
+                        return Err(error);
+                    }
+                }
+            }
+
+            emit_stream_event(callback, user_data, FfiStreamEvent::Done)
+        })
     })
 }
 

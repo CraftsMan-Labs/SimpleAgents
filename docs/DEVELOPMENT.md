@@ -86,6 +86,26 @@ cargo test -p simple-agents-providers
 cargo test -p simple-agents-healing
 ```
 
+### Run Cross-Language Contract Gates
+
+```bash
+./scripts/run-binding-contracts.sh
+```
+
+### Run Layered Binding Tests (unit/contract/live)
+
+```bash
+make test-binding-layers
+```
+
+This runs unit + contract checks for Go/Node/Python by default, and runs live suites only when credentials are provided.
+
+### Run Workflow Runtime Benchmarks
+
+```bash
+cargo bench -p simple-agents-workflow --bench runtime_benchmarks
+```
+
 ### Run Tests with Output
 
 ```bash
@@ -93,6 +113,8 @@ cargo test -- --nocapture
 ```
 
 ## Contributing
+
+See the repository-level [Contributing Guide](https://github.com/rishub/SimpleAgents/blob/main/CONTRIBUTING.md) for checklist discipline, required task-board updates, and skill-usage expectations.
 
 ### Getting Started
 

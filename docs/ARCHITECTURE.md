@@ -39,6 +39,27 @@ Language surfaces build on the core client:
 - Node (`simple-agents-napi`)
 - Python (`simple-agents-py`)
 
+## Cross-Language Parity Contract
+
+Cross-language parity is enforced with a shared fixture and CI contract runner:
+
+- Shared fixture source: `parity-fixtures/binding_contract.json`
+- Workflow DSL/IR golden fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
+- Contract runner: `scripts/run-binding-contracts.sh`
+- CI gate: `capability-contract-gates` in `.github/workflows/bindings-ci.yml`
+
+See [Cross-Language Capability Matrix](/CAPABILITY_MATRIX) for required minimum behavior and CI expectations.
+
+## Workflow Authoring Surfaces
+
+Workflow authoring now uses a parity-checked golden fixture that keeps DSL intent and canonical IR wiring aligned across Rust, Python, Node, and Go test suites.
+
+- Authoring fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
+- Rust verifier: `crates/simple-agents-workflow/tests/workflow_dsl_ir_fixtures.rs`
+- Binding verifiers: `crates/simple-agents-py/tests/test_contract_fixtures.py`, `crates/simple-agents-napi/test/contract.test.js`, `bindings/go/contract_fixture_test.go`
+
+Use this model when migrating workflows between YAML and code definitions so node ids, branching edges, and merge source wires stay deterministic.
+
 ## Request Flow
 
 1. Build a `CompletionRequest` in `simple-agent-type`.
@@ -96,4 +117,8 @@ Metrics live in `simple-agents-providers`. The optional `prometheus` Cargo featu
 ## Reference
 
 - Rust core systems: [Rust Core Systems](/RUST_CORE_SYSTEMS)
+- Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
+- Common integration issues: [Troubleshooting](/TROUBLESHOOTING)
+- Workflow timeline/replay tooling: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
+- YAML/code migration patterns: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
 - Feature inventory: [features.md (repo)](https://github.com/rishub/SimpleAgents/blob/main/features.md)

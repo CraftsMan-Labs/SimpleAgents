@@ -1,0 +1,277 @@
+{
+  "fixture_version": "phase8-v1",
+  "workflow_dsl": {
+    "name": "advanced_authoring_flow",
+    "version": "v0",
+    "entry": "start",
+    "nodes": {
+      "start": {
+        "type": "start",
+        "next": "classify"
+      },
+      "classify": {
+        "type": "llm",
+        "model": "gpt-4.1-mini",
+        "prompt": "Classify request",
+        "next": "route"
+      },
+      "route": {
+        "type": "condition",
+        "expression": "$.state.intent == 'deep_research'",
+        "on_true": "fanout",
+        "on_false": "loop_gate"
+      },
+      "fanout": {
+        "type": "parallel",
+        "branches": ["web_lookup", "summarize_map"],
+        "next": "merge_results",
+        "max_in_flight": 2
+      },
+      "web_lookup": {
+        "type": "tool",
+        "tool": "search",
+        "input": {
+          "query": "$.input.query"
+        },
+        "next": "merge_results"
+      },
+      "summarize_map": {
+        "type": "map",
+        "tool": "summarize_doc",
+        "items_path": "$.state.documents",
+        "next": "reduce_scores",
+        "max_in_flight": 4
+      },
+      "reduce_scores": {
+        "type": "reduce",
+        "source": "summarize_map",
+        "operation": "count",
+        "next": "merge_results"
+      },
+      "merge_results": {
+        "type": "merge",
+        "sources": ["web_lookup", "reduce_scores"],
+        "policy": "quorum",
+        "quorum": 1,
+        "next": "call_subgraph"
+      },
+      "loop_gate": {
+        "type": "loop",
+        "condition": "$.state.retry_count < 2",
+        "body": "enrich_tool",
+        "next": "iter_batch",
+        "max_iterations": 3
+      },
+      "enrich_tool": {
+        "type": "tool",
+        "tool": "enrich",
+        "input": {
+          "payload": "$.state.partial"
+        },
+        "next": "loop_gate"
+      },
+      "iter_batch": {
+        "type": "batch",
+        "items_path": "$.state.items",
+        "next": "filter_batch"
+      },
+      "filter_batch": {
+        "type": "filter",
+        "items_path": "$.state.items",
+        "expression": "$.item.keep == true",
+        "next": "call_subgraph"
+      },
+      "call_subgraph": {
+        "type": "subgraph",
+        "graph": "quality_checks",
+        "next": "end"
+      },
+      "end": {
+        "type": "end"
+      }
+    }
+  },
+  "canonical_ir": {
+    "version": "v0",
+    "name": "advanced_authoring_flow",
+    "nodes": [
+      {
+        "id": "start",
+        "type": "start",
+        "next": "classify"
+      },
+      {
+        "id": "classify",
+        "type": "llm",
+        "model": "gpt-4.1-mini",
+        "prompt": "Classify request",
+        "next": "route"
+      },
+      {
+        "id": "route",
+        "type": "condition",
+        "expression": "$.state.intent == 'deep_research'",
+        "on_true": "fanout",
+        "on_false": "loop_gate"
+      },
+      {
+        "id": "fanout",
+        "type": "parallel",
+        "branches": ["web_lookup", "summarize_map"],
+        "next": "merge_results",
+        "max_in_flight": 2
+      },
+      {
+        "id": "web_lookup",
+        "type": "tool",
+        "tool": "search",
+        "input": {
+          "query": "$.input.query"
+        },
+        "next": "merge_results"
+      },
+      {
+        "id": "summarize_map",
+        "type": "map",
+        "tool": "summarize_doc",
+        "items_path": "$.state.documents",
+        "next": "reduce_scores",
+        "max_in_flight": 4
+      },
+      {
+        "id": "reduce_scores",
+        "type": "reduce",
+        "source": "summarize_map",
+        "operation": "count",
+        "next": "merge_results"
+      },
+      {
+        "id": "merge_results",
+        "type": "merge",
+        "sources": ["web_lookup", "reduce_scores"],
+        "policy": "quorum",
+        "quorum": 1,
+        "next": "call_subgraph"
+      },
+      {
+        "id": "loop_gate",
+        "type": "loop",
+        "condition": "$.state.retry_count < 2",
+        "body": "enrich_tool",
+        "next": "iter_batch",
+        "max_iterations": 3
+      },
+      {
+        "id": "enrich_tool",
+        "type": "tool",
+        "tool": "enrich",
+        "input": {
+          "payload": "$.state.partial"
+        },
+        "next": "loop_gate"
+      },
+      {
+        "id": "iter_batch",
+        "type": "batch",
+        "items_path": "$.state.items",
+        "next": "filter_batch"
+      },
+      {
+        "id": "filter_batch",
+        "type": "filter",
+        "items_path": "$.state.items",
+        "expression": "$.item.keep == true",
+        "next": "call_subgraph"
+      },
+      {
+        "id": "call_subgraph",
+        "type": "subgraph",
+        "graph": "quality_checks",
+        "next": "end"
+      },
+      {
+        "id": "end",
+        "type": "end"
+      }
+    ]
+  },
+  "required_node_types": [
+    "start",
+    "llm",
+    "tool",
+    "condition",
+    "loop",
+    "parallel",
+    "merge",
+    "map",
+    "reduce",
+    "subgraph",
+    "batch",
+    "filter",
+    "end"
+  ],
+  "wire_expectations": [
+    {
+      "node_id": "start",
+      "outgoing": ["classify"]
+    },
+    {
+      "node_id": "classify",
+      "outgoing": ["route"]
+    },
+    {
+      "node_id": "route",
+      "outgoing": ["fanout", "loop_gate"]
+    },
+    {
+      "node_id": "fanout",
+      "outgoing": ["web_lookup", "summarize_map", "merge_results"]
+    },
+    {
+      "node_id": "web_lookup",
+      "outgoing": ["merge_results"]
+    },
+    {
+      "node_id": "summarize_map",
+      "outgoing": ["reduce_scores"]
+    },
+    {
+      "node_id": "reduce_scores",
+      "outgoing": ["merge_results"]
+    },
+    {
+      "node_id": "merge_results",
+      "outgoing": ["call_subgraph"]
+    },
+    {
+      "node_id": "loop_gate",
+      "outgoing": ["enrich_tool", "iter_batch"]
+    },
+    {
+      "node_id": "enrich_tool",
+      "outgoing": ["loop_gate"]
+    },
+    {
+      "node_id": "iter_batch",
+      "outgoing": ["filter_batch"]
+    },
+    {
+      "node_id": "filter_batch",
+      "outgoing": ["call_subgraph"]
+    },
+    {
+      "node_id": "call_subgraph",
+      "outgoing": ["end"]
+    },
+    {
+      "node_id": "end",
+      "outgoing": []
+    }
+  ],
+  "merge_source_expectations": [
+    {
+      "node_id": "merge_results",
+      "sources": ["web_lookup", "reduce_scores"]
+    }
+  ]
+}
