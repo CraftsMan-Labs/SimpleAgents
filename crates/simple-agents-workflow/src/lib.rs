@@ -1,7 +1,7 @@
 //! Workflow IR and validation primitives for SimpleAgents.
 //!
 //! This crate currently provides:
-//! - A minimal canonical workflow IR (`start`, `llm`, `tool`, `condition`, `end`)
+//! - A minimal canonical workflow IR (`start`, `llm`, `tool`, `condition`, `loop`, `end`)
 //! - Deterministic normalization helpers
 //! - Structural validation with actionable diagnostics
 //! - Runtime execution for the minimal node set
@@ -26,6 +26,7 @@
 //! ```
 
 pub mod debug;
+pub mod expressions;
 pub mod ir;
 pub mod recorder;
 pub mod replay;
@@ -37,6 +38,9 @@ pub mod worker;
 pub use debug::{
     inspect_replay_trace, node_timeline, retry_reason_summary, NodeTimelineEntry,
     ReplayTraceInspection, RetryReasonSummary,
+};
+pub use expressions::{
+    default_expression_engine, evaluate_bool, ExpressionEngine, ExpressionError,
 };
 pub use ir::{Node, NodeKind, WorkflowDefinition};
 pub use recorder::{TraceRecordError, TraceRecorder};

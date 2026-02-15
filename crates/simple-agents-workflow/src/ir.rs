@@ -87,6 +87,13 @@ pub enum NodeKind {
         on_true: String,
         on_false: String,
     },
+    /// Loop node with explicit body and exit transitions.
+    Loop {
+        condition: String,
+        body: String,
+        next: String,
+        max_iterations: Option<u32>,
+    },
     /// Terminal node.
     End,
 }
@@ -120,6 +127,17 @@ impl NodeKind {
                 on_true: on_true.trim().to_string(),
                 on_false: on_false.trim().to_string(),
             },
+            Self::Loop {
+                condition,
+                body,
+                next,
+                max_iterations,
+            } => Self::Loop {
+                condition: condition.trim().to_string(),
+                body: body.trim().to_string(),
+                next: next.trim().to_string(),
+                max_iterations,
+            },
             Self::End => Self::End,
         }
     }
@@ -133,6 +151,7 @@ impl NodeKind {
             Self::Condition {
                 on_true, on_false, ..
             } => vec![on_true.as_str(), on_false.as_str()],
+            Self::Loop { body, next, .. } => vec![body.as_str(), next.as_str()],
             Self::End => Vec::new(),
         }
     }
