@@ -30,18 +30,13 @@ pub struct ExpressionLimits {
 }
 
 /// Expression backend strategy.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExpressionBackend {
     /// Native Rust parser/evaluator.
+    #[default]
     Native,
     /// CEL-compatible backend routed through the same abstraction.
     CelCompatible,
-}
-
-impl Default for ExpressionBackend {
-    fn default() -> Self {
-        Self::Native
-    }
 }
 
 impl Default for ExpressionLimits {
