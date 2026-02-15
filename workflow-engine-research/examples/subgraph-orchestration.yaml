@@ -1,0 +1,40 @@
+# Subgraph Orchestration Workflow
+
+id: subgraph-orchestration
+version: 1.0.0
+
+metadata:
+  name: "Subgraph Orchestration"
+  description: "Delegates a section to a reusable subgraph"
+  tags: ["example", "subgraph", "composition"]
+
+entry_node: classify
+
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4o-mini
+    config:
+      prompt: "Classify task type for: {{ input.request }}"
+
+  - id: invoke_subgraph
+    node_type:
+      subgraph:
+        graph: document-processing-v1
+
+  - id: finalize
+    node_type:
+      transform:
+        expression: |
+          {
+            "status": "completed",
+            "subgraph": $.nodes.invoke_subgraph.output
+          }
+
+edges:
+  - from: classify
+    to: invoke_subgraph
+  - from: invoke_subgraph
+    to: finalize

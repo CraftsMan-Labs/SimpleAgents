@@ -2,6 +2,32 @@
 
 This guide covers workflow debugging surfaces added for timeline, retries, and replay inspection.
 
+## Inspect + Replay Controls
+
+`simple-agents-workflow` now includes foundational controls for failure recovery and replay tuning:
+
+- `WorkflowRuntime::execute_resume_from_failure` resumes from a `WorkflowCheckpoint`.
+- `ReplayOptions.cache_policy` configures replay cache behavior:
+  - `always` - prefer cached replay metadata when available.
+  - `refresh` - always recompute replay validation from trace events.
+  - `mixed` - use cache if complete, recompute when cache is partial/missing.
+
+Example:
+
+```rust
+use simple_agents_workflow::{
+    replay_trace_with_options, ReplayCachePolicy, ReplayOptions,
+};
+
+let report = replay_trace_with_options(
+    trace,
+    &ReplayOptions {
+        cache_policy: ReplayCachePolicy::Mixed,
+    },
+)?;
+println!("replayed {} events", report.total_events);
+```
+
 ## Node Timeline
 
 Use `node_timeline` to convert runtime events into a UI-friendly sequence:

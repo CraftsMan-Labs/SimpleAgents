@@ -1,0 +1,34 @@
+# Replay Checkpoint Recovery Workflow
+
+id: replay-checkpoint-recovery
+version: 1.0.0
+
+metadata:
+  name: "Replay and Checkpoint Recovery"
+  description: "Captures deterministic trace and supports resume from checkpoint"
+  tags: ["example", "replay", "checkpoint"]
+
+entry_node: prepare
+
+nodes:
+  - id: prepare
+    node_type:
+      transform:
+        expression: '{"run_mode":"record"}'
+
+  - id: process
+    node_type:
+      custom_worker:
+        language: typescript
+        handler: DeterministicProcessor
+
+  - id: finalize
+    node_type:
+      transform:
+        expression: '{"status":"ok"}'
+
+edges:
+  - from: prepare
+    to: process
+  - from: process
+    to: finalize
