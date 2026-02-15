@@ -1,162 +1,188 @@
-# Cross-Language Parity TODO (Rust / Python / Node / Go)
+# TODO - Workflow Engine + Cross-Language Parity
 
-Goal: every capability implemented in Rust should be available consistently in Python, Node, and Go, with idiomatic APIs per language.
+Goal: implement the new workflow system incrementally on top of current SimpleAgents runtime, while finishing parity gaps across Rust/Python/Node/Go with consistent behavior and strong DX.
 
-## Done
+## Subagent release plan
 
-- [x] Node TypeScript declaration correctness fixed
-  - Scope: fixed missing `Schema` type reference and invalid optional/required parameter ordering.
-  - Why: broken `.d.ts` blocks adoption immediately for TS users.
-  - Evidence: `crates/simple-agents-napi/index.d.ts` now type-checks with `tsc --noEmit index.d.ts`.
+We will run **8 subagents** in parallel workstreams.
 
-- [x] Go make/build/test baseline stabilized
-  - Scope: fixed `make release-go` and `make test-go-bindings` invocation, env propagation, and cache handling.
-  - Why: parity work is impossible if basic binding checks are flaky.
-  - Evidence: `make release-go` and `make test-go-bindings` pass.
+| Subagent | Scope | Primary language | Required skill |
+|---|---|---|---|
+| SA-1 | Workflow IR + validation | Rust | `rust-coding-patterns` |
+| SA-2 | Workflow scheduler/runtime core | Rust | `rust-coding-patterns` |
+| SA-3 | Workflow state + trace/replay | Rust | `rust-coding-patterns` |
+| SA-4 | Worker protocol + pools + health | Rust | `rust-coding-patterns` |
+| SA-5 | FFI + Go streaming parity | Rust + Go | `rust-coding-patterns`, `go-coding-patterns` |
+| SA-6 | Node parity + typed streaming/tool surfaces | TS/JS | `typescript-javascript-coding-patterns` |
+| SA-7 | Python parity + contract conformance | Python | `python-coding-patterns` |
+| SA-8 | CI matrix + fixtures + docs/DX guardrails | YAML/MD + multi-lang | language-specific as needed |
 
-- [x] Go message-based completion + structured/healing output baseline added
-  - Scope: added `sa_complete_messages_json` FFI endpoint and Go `CompleteMessages(ctx, ...)` API.
-  - Why: Go needed to move beyond prompt-only API to align with Python-style message-first workflows.
-  - Sample shape:
-    ```go
-    res, err := client.CompleteMessages(ctx, model, []simpleagents.Message{
-      {Role: "user", Content: "Return JSON: {\"status\":\"ok\"}"},
-    }, simpleagents.CompleteOptions{Mode: "healed_json"})
-    ```
+## Subagent completion protocol (mandatory)
 
-- [x] Binding CI workflow introduced
-  - Scope: added `.github/workflows/bindings-ci.yml` for Go and Node checks.
-  - Why: prevents silent parity regression.
+- [ ] Every subagent must update this `TODO.md` directly in its PR.
+- [ ] When a task is complete, change `[ ]` to `[x]` and add 1-line evidence (test command/output path).
+- [ ] If blocked, mark task as `[~]` with blocker reason and owner.
+- [ ] No task is "done" without tests (unit/contract/live as applicable).
+- [ ] Follow `CODING_GUIDELINES.md` (KISS, DRY, OOD, no phantom code, reusable APIs).
 
-- [x] Shared env template introduced
-  - Scope: added `.env.example` with `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `CUSTOM_API_BASE`.
-  - Why: one contract across bindings reduces setup drift.
+## Program plan (implementation phases)
 
-## Partially Done
+### Phase 0 - Foundations (no breaking changes)
 
-- [~] API parity with Python
-  - Current state:
-    - Python: broad surface (`complete` variants, streaming, structured streaming, tools, healing).
-    - Node: `complete` + `stream`, but streaming remains standard-mode only.
-    - Go: `Complete`, `CompleteWithContext`, `CompleteMessages`; no streaming yet.
-  - Why incomplete: missing streaming and some advanced parity features.
-  - Next sample target:
-    ```go
-    chunks, errs := client.StreamMessages(ctx, model, messages, opts)
-    for c := range chunks { /* consume partials */ }
-    if err := <-errs; err != nil { /* handle */ }
-    ```
+- [x] Define workspace crate boundaries for workflow subsystem (additive only).
+  - Evidence: additive crate `crates/simple-agents-workflow` with isolated modules and no breaking changes to existing crates.
+- [x] Lock minimal canonical IR for v0: `start`, `llm`, `tool`, `condition`, `end`.
+  - Evidence: `NodeKind` v0 taxonomy in `crates/simple-agents-workflow/src/ir.rs`.
+- [x] Add validation/lint pass with actionable diagnostics.
+  - Evidence: `validate_and_normalize` + typed `DiagnosticCode` in `crates/simple-agents-workflow/src/validation.rs`.
+- [x] Define deterministic execution invariants and trace schema.
+  - Evidence: runtime invariants/policies in `crates/simple-agents-workflow/src/runtime.rs` and trace schema in `crates/simple-agents-workflow/src/trace.rs`.
+- [x] Publish capability contract for existing and new APIs.
+  - Evidence: `docs/WORKFLOW_CAPABILITY_CONTRACT.md`.
 
-- [~] Go validation coverage
-  - Current state: unit tests and env-gated live test exist.
-  - Why incomplete: no streaming tests yet, no schema-edge golden cases.
-  - Next sample target:
-    ```go
-    func TestStreamMessagesCancellation(t *testing.T) {
-      ctx, cancel := context.WithCancel(context.Background())
-      chunks, errs := client.StreamMessages(ctx, model, messages, opts)
-      cancel()
-      _ = chunks
-      if err := <-errs; err == nil { t.Fatal("expected cancel error") }
-    }
-    ```
+### Phase 1 - Minimal executable vertical slice
 
-- [~] Credentials/fixtures parity
-  - Current state: `.env.example` and updated binding docs exist.
-  - Why incomplete: deterministic mock fixtures still missing for no-network contract testing.
+- [x] Execute linear + conditional workflows through current `simple-agents-core` path.
+  - Evidence: `WorkflowRuntime` + `impl LlmExecutor for SimpleAgentsClient` in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add scoped state v1 (workflow/global + node-local minimal model).
+  - Evidence: `RuntimeScope` (`input`, `last_llm_output`, `last_tool_output`, `node_outputs`) with capability-guarded access in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add trace recording for each node transition.
+  - Evidence: runtime records `node_enter`/`node_exit`/`node_error`/`terminal` via `TraceRecorder` in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add replay mode for deterministic test runs.
+  - Evidence: `WorkflowReplayMode::ValidateRecordedTrace` + `replay_trace` integration in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add reference examples and smoke tests.
+  - Evidence: `crates/simple-agents-workflow/examples/linear_runtime.rs`, `crates/simple-agents-workflow/tests/trace_fixtures.rs`, and `cargo test -p simple-agents-workflow`.
 
-## Pending
+### Phase 2 - Parallelism and worker model
 
-- [ ] Implement streaming in C FFI and Go bindings
-  - Scope:
-    - Add C callback-based streaming API.
-    - Bridge to Go channel-based API with cancellation support.
-  - Why: streaming is core product behavior and parity blocker.
-  - Sample target C API:
-    ```c
-    typedef void (*sa_stream_cb)(const char *chunk_json, void *user_data);
-    int sa_stream_messages(
-      SAClient *client,
-      const char *model,
-      const SAMessage *messages,
-      size_t messages_len,
-      int32_t max_tokens,
-      float temperature,
-      float top_p,
-      sa_stream_cb cb,
-      void *user_data
-    );
-    ```
-  - Sample target Go API:
-    ```go
-    func (c *Client) StreamMessages(
-      ctx context.Context,
-      model string,
-      messages []Message,
-      opts CompleteOptions,
-    ) (<-chan StreamChunk, <-chan error)
-    ```
+- [ ] Add bounded parallel execution primitives.
+- [ ] Add worker protocol surface (start with single-process default).
+- [ ] Add worker pool lifecycle + health tracking.
+- [ ] Define retry/timeout ownership boundaries (workflow layer vs router layer).
+- [ ] Load/perf benchmarks for scheduler and state hot paths.
 
-- [ ] Cross-language capability matrix and CI gating
-  - Scope: define capability table and assert minimum required features in CI.
-  - Why: prevents future divergence between Python/Node/Go.
-  - Sample matrix row:
-    ```text
-    capability           rust  python  node  go
-    message_complete     yes   yes     yes   yes
-    stream_standard      yes   yes     yes   no  <- blocker
-    stream_structured    yes   yes     no    no
-    ```
+### Phase 3 - Cross-language parity and DX hardening
 
-- [ ] Contract fixtures for parity tests
-  - Scope: shared fixtures for request/response/healing/tool-call behaviors consumed by all bindings.
-  - Why: same input should yield same semantic output across languages.
-  - Sample fixture idea:
-    ```json
-    {
-      "name": "healed_json_basic",
-      "input": {"messages": [{"role": "user", "content": "Return malformed JSON"}]},
-      "expect": {"was_healed": true}
-    }
-    ```
+- [ ] Align FFI/Go/Node/Python workflow-facing behavior with Rust reference.
+- [ ] Add golden contract fixtures shared by all bindings.
+- [ ] Enforce capability matrix gates in CI.
+- [ ] Ship debugging UX: node timeline, retry reasons, replay trace inspection.
+- [ ] Complete docs onboarding path (quickstart + advanced patterns + troubleshooting).
 
-- [ ] Node parity improvements
-  - Scope: typed tool-call returns and richer streaming/partial type surface.
-  - Why: TS ergonomics and safety should match Python-level confidence.
+## Subagent task board
 
-## Refactor Tasks
+### SA-1 (Workflow IR + validation)
 
-- [ ] Refactor Go API toward explicit OOD shape
-  - Current concern: mixed legacy prompt method and newer message method can drift.
-  - Target design:
-    - `CompletePrompt(ctx, ...)` (thin wrapper)
-    - `CompleteMessages(ctx, ...)` (primary)
-    - `StreamMessages(ctx, ...)` (primary streaming)
-  - Why: explicit method-per-use-case is idiomatic Go and easier to test.
-  - Sample:
-    ```go
-    func (c *Client) CompletePrompt(ctx context.Context, model, prompt string, opts CompleteOptions) (CompletionResult, error)
-    func (c *Client) CompleteMessages(ctx context.Context, model string, messages []Message, opts CompleteOptions) (CompletionResult, error)
-    ```
+- [x] Create workflow IR module/crate with versioned schema and serde contracts.
+  - Evidence: added `crates/simple-agents-workflow` with IR structs in `crates/simple-agents-workflow/src/ir.rs`.
+- [x] Implement IR parser/validator with deterministic normalization.
+  - Evidence: `validate_and_normalize` implemented in `crates/simple-agents-workflow/src/validation.rs`.
+- [x] Add lint diagnostics for missing edges, unreachable nodes, invalid refs.
+  - Evidence: `DiagnosticCode::{UnknownTarget,UnreachableNode,NoPathToEnd,...}` in `crates/simple-agents-workflow/src/validation.rs`.
+- [x] Add unit + property tests for parser/validator robustness.
+  - Evidence: `cargo test -p simple-agents-workflow` passed (6 unit/property tests + 1 doc test).
+- [x] Add docs comments and usage examples.
+  - Evidence: crate docs example added in `crates/simple-agents-workflow/src/lib.rs`.
 
-- [ ] Refactor FFI payload model to shared typed schema structs
-  - Current concern: ad-hoc JSON serialization in FFI can drift from N-API/Python mappings.
-  - Target: centralize response DTO mapping helpers in Rust and reuse across bindings.
-  - Why: DRY and consistency.
+### SA-2 (Workflow scheduler/runtime)
 
-- [ ] Refactor test layering
-  - Current concern: live tests are present but mock/contract coverage is still thin.
-  - Target layering:
-    - unit (no network)
-    - contract (shared fixtures)
-    - live (env-gated)
-  - Why: reliable CI + meaningful parity signal.
+- [x] Implement runtime execution engine for minimal node set.
+  - Evidence: `WorkflowRuntime` added in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Ensure cancellation-safe async execution and bounded concurrency.
+  - Evidence: cancellation checks before/between attempts, bounded execution via `max_steps`, and node retry/timeout policies in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Integrate with existing `simple-agents-core` request path (no duplicate provider logic).
+  - Evidence: `impl LlmExecutor for SimpleAgentsClient` uses `SimpleAgentsClient::complete`.
+- [x] Add retry/timeouts at node policy layer with explicit ownership rules.
+  - Evidence: `NodeExecutionPolicy` + runtime-owned retry/timeout wrappers (`execute_llm_with_policy`, `execute_tool_with_policy`) in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add integration tests for happy/failure/cancel paths.
+  - Evidence: runtime tests for happy path, conditional path, missing tool handler, tool failure, step limit in `crates/simple-agents-workflow/src/runtime.rs`.
 
-## Execution Order (Recommended)
+### SA-3 (State + trace/replay)
 
-- [ ] 1. Implement `sa_stream_messages` in Rust FFI.
-- [ ] 2. Implement `StreamMessages` in Go with context cancellation and no goroutine leaks.
-- [ ] 3. Add Go streaming unit + live tests.
-- [ ] 4. Add shared parity fixtures and contract runner.
-- [ ] 5. Enforce capability matrix in CI.
-- [ ] 6. Upgrade Node streaming/tool-call type parity.
+- [x] Implement scoped state model (workflow scope + local scope).
+  - Evidence: runtime scope model and per-node scoped input/output tracking in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Add capability checks for read/write access boundaries.
+  - Evidence: `ScopeCapability` + `ScopeAccessError` guards and enforcement tests in `crates/simple-agents-workflow/src/runtime.rs`.
+- [x] Implement trace event schema and recorder.
+  - Evidence: `crates/simple-agents-workflow/src/trace.rs` and `crates/simple-agents-workflow/src/recorder.rs`.
+- [x] Implement replay executor from recorded traces.
+  - Evidence: `replay_trace` and replay validations in `crates/simple-agents-workflow/src/replay.rs`.
+- [x] Add golden trace fixtures for deterministic verification.
+  - Evidence: fixtures in `crates/simple-agents-workflow/tests/fixtures/linear_trace.json` and `crates/simple-agents-workflow/tests/fixtures/invalid_missing_terminal_trace.json` with fixture tests in `crates/simple-agents-workflow/tests/trace_fixtures.rs`.
+
+### SA-4 (Worker protocol + pools + health)
+
+- [ ] Define worker protocol interfaces (request/response/error semantics).
+- [ ] Implement baseline worker pool manager with health probes.
+- [ ] Add backpressure and queue limits.
+- [ ] Add circuit-breaker integration points without duplicating router internals.
+- [ ] Add chaos tests (worker restart/unavailable/slow worker).
+
+### SA-5 (FFI + Go parity)
+
+- [ ] Implement `sa_stream_messages` in Rust FFI (callback-based stream API).
+- [ ] Implement Go `StreamMessages(ctx, ...)` channel API with cancellation and no leaks.
+- [ ] Add Go streaming tests (unit + env-gated live).
+- [ ] Refactor Go API shape (`CompletePrompt`, `CompleteMessages`, `StreamMessages`).
+- [ ] Refactor FFI payload mapping to shared typed DTO helpers.
+
+### SA-6 (Node parity)
+
+- [ ] Upgrade Node streaming typing surface (partials/events/errors).
+- [ ] Add typed tool-call return models with stable TS contracts.
+- [ ] Ensure `.d.ts` parity with runtime behavior and examples.
+- [ ] Add Node parity contract tests against shared fixtures.
+- [ ] Update Node docs with canonical env contract.
+
+### SA-7 (Python parity)
+
+- [ ] Validate Python API parity for workflow-facing and streaming behaviors.
+- [ ] Add Python contract tests consuming shared fixtures.
+- [ ] Ensure structured streaming semantics align with Rust reference.
+- [ ] Add error mapping consistency tests.
+- [ ] Update Python usage docs where parity behavior changes.
+
+### SA-8 (CI + fixtures + DX)
+
+- [ ] Add cross-language capability matrix and required minimum gates in CI.
+- [ ] Add shared fixture repository for request/response/healing/streaming/tool-call.
+- [ ] Add contract runner used by Rust/Python/Node/Go pipelines.
+- [ ] Add docs updates in `docs/` for architecture, quickstart, and troubleshooting.
+- [ ] Add contribution checklist enforcing skill usage and task checkoff discipline.
+
+## Existing parity backlog (carried forward)
+
+### Done
+
+- [x] Node TypeScript declaration correctness fixed.
+- [x] Go make/build/test baseline stabilized.
+- [x] Go message-based completion + structured/healing output baseline added.
+- [x] Binding CI workflow introduced.
+- [x] Shared env template introduced.
+
+### In progress
+
+- [~] API parity with Python (missing streaming and advanced parity features).
+- [~] Go validation coverage (streaming tests + schema-edge golden cases pending).
+- [~] Credentials/fixtures parity (deterministic no-network fixtures pending).
+
+### Pending
+
+- [ ] Implement streaming in C FFI and Go bindings.
+- [ ] Cross-language capability matrix and CI gating.
+- [ ] Contract fixtures for parity tests.
+- [ ] Node parity improvements.
+- [ ] Refactor test layering (unit/contract/live).
+
+## Ordered execution sequence
+
+- [x] 1. SA-1 completes minimal IR + validator.
+  - Evidence: `crates/simple-agents-workflow/src/ir.rs`, `crates/simple-agents-workflow/src/validation.rs`, `cargo test -p simple-agents-workflow`.
+- [x] 2. SA-2 completes minimal runtime path wired to core.
+  - Evidence: runtime + retry/timeout policies + cancellation tests in `crates/simple-agents-workflow/src/runtime.rs`; `cargo test -p simple-agents-workflow`.
+- [x] 3. SA-3 lands trace/replay and deterministic fixtures.
+  - Evidence: trace/recorder/replay + runtime integration + golden fixtures in `crates/simple-agents-workflow/src/trace.rs`, `crates/simple-agents-workflow/src/recorder.rs`, `crates/simple-agents-workflow/src/replay.rs`, `crates/simple-agents-workflow/tests/trace_fixtures.rs`.
+- [ ] 4. SA-5 lands FFI + Go streaming parity.
+- [ ] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
+- [ ] 6. SA-4 lands worker pool/health model behind stable interfaces.
+- [ ] 7. SA-8 enforces CI capability gates and docs completion.
