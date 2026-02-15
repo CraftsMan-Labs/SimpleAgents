@@ -1,0 +1,65 @@
+{
+  "metadata": {
+    "trace_id": "linear-v0-trace",
+    "workflow_name": "linear",
+    "workflow_version": "v0",
+    "started_at_unix_ms": 0,
+    "finished_at_unix_ms": 9
+  },
+  "events": [
+    {
+      "seq": 0,
+      "timestamp_unix_ms": 0,
+      "event": "node_enter",
+      "node_id": "start"
+    },
+    {
+      "seq": 1,
+      "timestamp_unix_ms": 1,
+      "event": "node_exit",
+      "node_id": "start"
+    },
+    {
+      "seq": 2,
+      "timestamp_unix_ms": 2,
+      "event": "node_enter",
+      "node_id": "llm"
+    },
+    {
+      "seq": 3,
+      "timestamp_unix_ms": 3,
+      "event": "node_exit",
+      "node_id": "llm"
+    },
+    {
+      "seq": 4,
+      "timestamp_unix_ms": 4,
+      "event": "node_enter",
+      "node_id": "tool"
+    },
+    {
+      "seq": 5,
+      "timestamp_unix_ms": 5,
+      "event": "node_exit",
+      "node_id": "tool"
+    },
+    {
+      "seq": 6,
+      "timestamp_unix_ms": 6,
+      "event": "node_enter",
+      "node_id": "end"
+    },
+    {
+      "seq": 7,
+      "timestamp_unix_ms": 7,
+      "event": "node_exit",
+      "node_id": "end"
+    },
+    {
+      "seq": 8,
+      "timestamp_unix_ms": 8,
+      "event": "terminal",
+      "status": "completed"
+    }
+  ]
+}
