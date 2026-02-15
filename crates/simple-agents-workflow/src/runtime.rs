@@ -737,12 +737,13 @@ impl<'a> WorkflowRuntime<'a> {
                 on_false,
             } => {
                 check_cancelled(cancellation)?;
-                let scoped_input = scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
                 let evaluated =
                     evaluate_condition(expression, &scoped_input).map_err(|reason| {
                         WorkflowRuntimeError::InvalidCondition {
@@ -758,11 +759,7 @@ impl<'a> WorkflowRuntime<'a> {
                 };
 
                 scope
-                    .record_condition_output(
-                        &node.id,
-                        evaluated,
-                        ScopeCapability::ConditionWrite,
-                    )
+                    .record_condition_output(&node.id, evaluated, ScopeCapability::ConditionWrite)
                     .map_err(|source| WorkflowRuntimeError::ScopeAccess {
                         node_id: node.id.clone(),
                         source,
@@ -1631,7 +1628,10 @@ mod tests {
             .expect("replay validation should pass");
 
         assert!(result.trace.is_some());
-        assert_eq!(result.replay_report.as_ref().map(|r| r.total_events), Some(9));
+        assert_eq!(
+            result.replay_report.as_ref().map(|r| r.total_events),
+            Some(9)
+        );
     }
 
     #[test]
