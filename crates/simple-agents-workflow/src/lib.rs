@@ -41,6 +41,7 @@ pub mod validation;
 pub mod visualize;
 pub mod worker;
 pub mod worker_adapter;
+pub mod yaml_runner;
 
 pub use checkpoint::{
     CheckpointError, CheckpointStore, FilesystemCheckpointStore, WorkflowCheckpoint,
@@ -82,3 +83,7 @@ pub use worker::{
     WorkerProtocolError, WorkerRequest, WorkerResponse, WorkerResult, WorkerSecurityPolicy,
 };
 pub use worker_adapter::WorkerPoolToolExecutor;
+pub use yaml_runner::{
+    run_email_workflow_yaml, run_email_workflow_yaml_file, YamlStepTiming, YamlWorkflow,
+    YamlWorkflowLlmExecutor, YamlWorkflowRunError, YamlWorkflowRunOutput,
+};
