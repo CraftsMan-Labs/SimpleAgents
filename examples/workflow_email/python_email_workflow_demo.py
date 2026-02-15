@@ -144,13 +144,18 @@ def classify_with_llm(email_text: str) -> ClassificationResult:
     result = client.complete(
         model, messages, schema=schema, schema_name="email_classification"
     )
-    if not isinstance(result, ResponseWithMetadata):
+    if isinstance(result, ResponseWithMetadata):
+        raw_content = result.content
+    elif isinstance(result, str):
+        raw_content = result
+    else:
         raise RuntimeError(
-            "Unexpected response type from simple_agents_py client.complete"
+            "Unexpected response type from simple_agents_py client.complete: "
+            f"{type(result).__name__}"
         )
 
     try:
-        payload = json.loads(result.content)
+        payload = json.loads(raw_content)
     except json.JSONDecodeError as error:
         raise RuntimeError(
             "LLM returned non-JSON output for structured classification"
