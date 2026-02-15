@@ -25,6 +25,7 @@
 //! assert_eq!(normalized.name, "hello");
 //! ```
 
+pub mod debug;
 pub mod ir;
 pub mod recorder;
 pub mod replay;
@@ -33,6 +34,10 @@ pub mod trace;
 pub mod validation;
 pub mod worker;
 
+pub use debug::{
+    inspect_replay_trace, node_timeline, retry_reason_summary, NodeTimelineEntry,
+    ReplayTraceInspection, RetryReasonSummary,
+};
 pub use ir::{Node, NodeKind, WorkflowDefinition};
 pub use recorder::{TraceRecordError, TraceRecorder};
 pub use replay::{replay_trace, ReplayError, ReplayReport, ReplayViolation, ReplayViolationCode};
@@ -40,7 +45,8 @@ pub use runtime::{
     CancellationSignal, LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor,
     NodeExecution, NodeExecutionData, NodeExecutionPolicy, ScopeAccessError, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowEvent, WorkflowEventKind, WorkflowReplayMode,
-    WorkflowRunResult, WorkflowRuntime, WorkflowRuntimeError, WorkflowRuntimeOptions,
+    WorkflowRetryEvent, WorkflowRunResult, WorkflowRuntime, WorkflowRuntimeError,
+    WorkflowRuntimeOptions,
 };
 pub use trace::{
     TraceEvent, TraceEventKind, TraceSequence, TraceTerminalStatus, WorkflowTrace,

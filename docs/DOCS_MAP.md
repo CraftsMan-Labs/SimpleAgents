@@ -16,6 +16,7 @@ Use this page to jump directly to the right guide.
 3. [API Surface](/API)
 4. [Workflow Capability Contract](/WORKFLOW_CAPABILITY_CONTRACT)
 5. [Cross-Language Capability Matrix](/CAPABILITY_MATRIX)
+6. [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
 
 ### Build with a specific language
 
@@ -56,3 +57,4 @@ Use this page to jump directly to the right guide.
 - Core API shapes: [API Surface](/API)
 - End-to-end snippets: [Examples](/EXAMPLES)
 - Parity gate failures: [Troubleshooting](/TROUBLESHOOTING)
+- Workflow timeline/replay inspection: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)

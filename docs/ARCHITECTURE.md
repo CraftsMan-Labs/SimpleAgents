@@ -108,4 +108,5 @@ Metrics live in `simple-agents-providers`. The optional `prometheus` Cargo featu
 - Rust core systems: [Rust Core Systems](/RUST_CORE_SYSTEMS)
 - Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
 - Common integration issues: [Troubleshooting](/TROUBLESHOOTING)
+- Workflow timeline/replay tooling: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
 - Feature inventory: [features.md (repo)](https://github.com/rishub/SimpleAgents/blob/main/features.md)
