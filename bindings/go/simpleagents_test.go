@@ -2,9 +2,10 @@ package simpleagents
 
 import (
 	"context"
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestValidateMessagesInput(t *testing.T) {
@@ -21,6 +22,53 @@ func TestValidateMessagesInput(t *testing.T) {
 	err = validateMessagesInput("gpt-4", []Message{{Role: "", Content: "hi"}})
 	if err == nil {
 		t.Fatal("expected role validation error")
+	}
+}
+
+func TestValidatePromptInput(t *testing.T) {
+	if err := validatePromptInput("", "hello"); err == nil {
+		t.Fatal("expected empty model error")
+	}
+	if err := validatePromptInput("gpt-4", ""); err == nil {
+		t.Fatal("expected empty prompt error")
+	}
+}
+
+type optionCase struct {
+	Name      string `json:"name"`
+	Mode      string `json:"mode"`
+	Schema    bool   `json:"schema"`
+	Streaming bool   `json:"streaming"`
+	Valid     bool   `json:"valid"`
+}
+
+func TestValidateCompleteOptionsGoldenCases(t *testing.T) {
+	fixturePath := filepath.Join("testdata", "schema_option_cases.json")
+	raw, err := os.ReadFile(fixturePath)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+
+	var cases []optionCase
+	if err := json.Unmarshal(raw, &cases); err != nil {
+		t.Fatalf("parse fixture: %v", err)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			opts := CompleteOptions{Mode: tc.Mode}
+			if tc.Schema {
+				opts.Schema = map[string]any{"type": "object"}
+			}
+
+			err := validateCompleteOptions(opts, tc.Streaming)
+			if tc.Valid && err != nil {
+				t.Fatalf("expected valid options, got error: %v", err)
+			}
+			if !tc.Valid && err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
 	}
 }
 
@@ -45,115 +93,5 @@ func TestStreamMessagesUninitializedClient(t *testing.T) {
 	_, err := c.StreamMessages(context.Background(), "gpt-4", []Message{{Role: "user", Content: "hi"}}, CompleteOptions{})
 	if err == nil {
 		t.Fatal("expected uninitialized client error")
-	}
-}
-
-func TestLiveCompleteMessages(t *testing.T) {
-	provider := os.Getenv("PROVIDER")
-	model := os.Getenv("CUSTOM_API_MODEL")
-	key := os.Getenv("CUSTOM_API_KEY")
-
-	if provider == "" || model == "" || key == "" {
-		t.Skip("set PROVIDER, CUSTOM_API_KEY, and CUSTOM_API_MODEL for live test")
-	}
-
-	switch provider {
-	case "openai":
-		os.Setenv("OPENAI_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENAI_API_BASE", base)
-		}
-	case "anthropic":
-		os.Setenv("ANTHROPIC_API_KEY", key)
-	case "openrouter":
-		os.Setenv("OPENROUTER_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENROUTER_API_BASE", base)
-		}
-	default:
-		t.Fatalf("unsupported PROVIDER %q", provider)
-	}
-
-	client, err := NewClientFromEnv(provider)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer client.Close()
-
-	maxTokens := int32(24)
-	temp := float32(0.2)
-	res, err := client.CompleteMessages(
-		context.Background(),
-		model,
-		[]Message{{Role: "user", Content: "Reply with one short sentence saying hello."}},
-		CompleteOptions{MaxTokens: &maxTokens, Temperature: &temp},
-	)
-	if err != nil {
-		t.Fatalf("complete messages: %v", err)
-	}
-	if res.Content == "" && len(res.ToolCalls) == 0 {
-		t.Fatal("expected content or tool calls")
-	}
-}
-
-func TestLiveStreamMessages(t *testing.T) {
-	provider := os.Getenv("PROVIDER")
-	model := os.Getenv("CUSTOM_API_MODEL")
-	key := os.Getenv("CUSTOM_API_KEY")
-
-	if provider == "" || model == "" || key == "" {
-		t.Skip("set PROVIDER, CUSTOM_API_KEY, and CUSTOM_API_MODEL for live test")
-	}
-
-	switch provider {
-	case "openai":
-		os.Setenv("OPENAI_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENAI_API_BASE", base)
-		}
-	case "anthropic":
-		os.Setenv("ANTHROPIC_API_KEY", key)
-	case "openrouter":
-		os.Setenv("OPENROUTER_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENROUTER_API_BASE", base)
-		}
-	default:
-		t.Fatalf("unsupported PROVIDER %q", provider)
-	}
-
-	client, err := NewClientFromEnv(provider)
-	if err != nil {
-		t.Fatalf("new client: %v", err)
-	}
-	defer client.Close()
-
-	maxTokens := int32(32)
-	temp := float32(0.2)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	stream, err := client.StreamMessages(
-		ctx,
-		model,
-		[]Message{{Role: "user", Content: "Reply with hello in a short sentence."}},
-		CompleteOptions{MaxTokens: &maxTokens, Temperature: &temp},
-	)
-	if err != nil {
-		t.Fatalf("stream messages: %v", err)
-	}
-
-	chunkCount := 0
-	for item := range stream {
-		if item.Err != nil {
-			t.Fatalf("stream item error: %v", item.Err)
-		}
-		if item.Event.Type == "chunk" {
-			chunkCount++
-		}
-	}
-
-	if chunkCount == 0 {
-		t.Fatal("expected at least one stream chunk")
 	}
 }

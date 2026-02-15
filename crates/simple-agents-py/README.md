@@ -320,6 +320,12 @@ uv pip install -e .[dev]
 uv run pytest
 ```
 
+Layered suites:
+
+- Unit: `uv run pytest tests/test_client_builder.py tests/test_client.py tests/test_direct_healing.py tests/test_healing.py tests/test_routing_config.py tests/test_streaming_parser.py`
+- Contract: `uv run pytest tests/test_contract_fixtures.py tests/test_error_mapping_consistency.py`
+- Live: `uv run pytest tests/test_integration_openai.py tests/test_streaming.py tests/test_structured_streaming.py` (env-gated)
+
 ## Package Metrics & Analytics
 
 ### Download Statistics

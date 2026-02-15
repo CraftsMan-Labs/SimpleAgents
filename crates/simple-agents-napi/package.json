@@ -14,7 +14,10 @@
     "build": "napi build --release",
     "build:debug": "napi build",
     "pretest": "npm run build:debug",
-    "test": "node --test test/*.test.js",
+    "test": "npm run test:unit && npm run test:contract",
+    "test:unit": "node --test test/unit.test.js",
+    "test:contract": "node --test test/contract.test.js",
+    "test:live": "node --test test/live.test.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {
