@@ -2506,6 +2506,7 @@ dependencies = [
  "simple-agents-core",
  "simple-agents-healing",
  "simple-agents-providers",
+ "simple-agents-workflow",
  "tokio",
 ]
 
@@ -2550,6 +2551,7 @@ dependencies = [
  "simple-agents-core",
  "simple-agents-healing",
  "simple-agents-providers",
+ "simple-agents-workflow",
  "tokio",
 ]
 
@@ -2597,6 +2599,7 @@ dependencies = [
  "simple-agents-healing",
  "simple-agents-providers",
  "simple-agents-router",
+ "simple-agents-workflow",
  "tokio",
 ]
 

@@ -7,6 +7,12 @@ package simpleagents
 #include <stdlib.h>
 #include "simple_agents.h"
 
+char *sa_run_email_workflow_yaml(
+    SAClient *client,
+    const char *workflow_path,
+    const char *email_text
+);
+
 extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
@@ -34,6 +40,14 @@ static int32_t sa_stream_messages_go(
         sa_go_stream_callback_bridge,
         user_data
     );
+}
+
+static char *sa_run_email_workflow_yaml_go(
+    SAClient *client,
+    const char *workflow_path,
+    const char *email_text
+) {
+    return sa_run_email_workflow_yaml(client, workflow_path, email_text);
 }
 */
 import "C"
@@ -142,6 +156,24 @@ type StreamResult struct {
 	Err   error
 }
 
+type WorkflowStepTiming struct {
+	NodeID    string `json:"node_id"`
+	NodeKind  string `json:"node_kind"`
+	ElapsedMS uint64 `json:"elapsed_ms"`
+}
+
+type WorkflowYAMLOutput struct {
+	WorkflowID     string                    `json:"workflow_id"`
+	EntryNode      string                    `json:"entry_node"`
+	EmailText      string                    `json:"email_text"`
+	Trace          []string                  `json:"trace"`
+	Outputs        map[string]map[string]any `json:"outputs"`
+	TerminalNode   string                    `json:"terminal_node"`
+	TerminalOutput any                       `json:"terminal_output"`
+	StepTimings    []WorkflowStepTiming      `json:"step_timings"`
+	TotalElapsedMS uint64                    `json:"total_elapsed_ms"`
+}
+
 type streamBridge struct {
 	ctx context.Context
 	out chan StreamResult
@@ -225,6 +257,62 @@ func (c *Client) CompletePrompt(
 	return c.CompleteWithContext(ctx, model, prompt, maxTokens, temperature)
 }
 
+// RunEmailWorkflowYAML executes the Rust workflow YAML runner and returns structured output.
+func (c *Client) RunEmailWorkflowYAML(
+	ctx context.Context,
+	workflowPath string,
+	emailText string,
+) (WorkflowYAMLOutput, error) {
+	if workflowPath == "" {
+		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
+	}
+	if emailText == "" {
+		return WorkflowYAMLOutput{}, errors.New("emailText cannot be empty")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	resultCh := make(chan workflowRunResult, 1)
+	go func() {
+		defer c.endCall()
+		cWorkflowPath := C.CString(workflowPath)
+		cEmailText := C.CString(emailText)
+		defer C.free(unsafe.Pointer(cWorkflowPath))
+		defer C.free(unsafe.Pointer(cEmailText))
+
+		response := C.sa_run_email_workflow_yaml_go(ptr, cWorkflowPath, cEmailText)
+		if response == nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
+			return
+		}
+		defer C.sa_string_free(response)
+
+		var output WorkflowYAMLOutput
+		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
+			return
+		}
+
+		sendIfWaiting(resultCh, workflowRunResult{output, nil})
+	}()
+
+	select {
+	case <-ctx.Done():
+		return WorkflowYAMLOutput{}, ctx.Err()
+	case result := <-resultCh:
+		if result.err != nil {
+			return WorkflowYAMLOutput{}, result.err
+		}
+		return result.value, nil
+	}
+}
+
 type completeResult struct {
 	value string
 	err   error
@@ -232,6 +320,11 @@ type completeResult struct {
 
 type completeMessagesResult struct {
 	value CompletionResult
+	err   error
+}
+
+type workflowRunResult struct {
+	value WorkflowYAMLOutput
 	err   error
 }
 
