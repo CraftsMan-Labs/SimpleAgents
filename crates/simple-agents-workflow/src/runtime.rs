@@ -3,17 +3,19 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use thiserror::Error;
 use tokio::time::timeout;
 
+use crate::checkpoint::WorkflowCheckpoint;
 use crate::expressions;
-use crate::ir::{Node, NodeKind, WorkflowDefinition};
+use crate::ir::{MergePolicy, Node, NodeKind, ReduceOperation, WorkflowDefinition};
 use crate::recorder::{TraceRecordError, TraceRecorder};
 use crate::replay::{replay_trace, ReplayError, ReplayReport};
+use crate::scheduler::DagScheduler;
 use crate::trace::{TraceTerminalStatus, WorkflowTrace, WorkflowTraceMetadata};
 use crate::validation::{validate_and_normalize, ValidationErrors};
 
@@ -32,6 +34,25 @@ pub struct WorkflowRuntimeOptions {
     pub enable_trace_recording: bool,
     /// Optional replay validation mode for recorded traces.
     pub replay_mode: WorkflowReplayMode,
+    /// Global scheduler bound for node-level concurrent fan-out.
+    pub scheduler_max_in_flight: usize,
+    /// Named subgraph registry used by `subgraph` nodes.
+    pub subgraph_registry: BTreeMap<String, WorkflowDefinition>,
+    /// Runtime guardrails for expression and fan-out resource usage.
+    pub security_limits: RuntimeSecurityLimits,
+}
+
+/// Runtime-enforced security and resource limits.
+#[derive(Debug, Clone)]
+pub struct RuntimeSecurityLimits {
+    /// Maximum serialized bytes allowed for one expression evaluation scope.
+    pub max_expression_scope_bytes: usize,
+    /// Maximum array size accepted by `map` nodes.
+    pub max_map_items: usize,
+    /// Maximum branch count accepted by `parallel` nodes.
+    pub max_parallel_branches: usize,
+    /// Maximum array size accepted by `filter` nodes.
+    pub max_filter_items: usize,
 }
 
 /// Runtime replay behavior for deterministic runs.
@@ -61,6 +82,20 @@ impl Default for WorkflowRuntimeOptions {
             tool_node_policy: NodeExecutionPolicy::default(),
             enable_trace_recording: true,
             replay_mode: WorkflowReplayMode::Disabled,
+            scheduler_max_in_flight: 8,
+            subgraph_registry: BTreeMap::new(),
+            security_limits: RuntimeSecurityLimits::default(),
+        }
+    }
+}
+
+impl Default for RuntimeSecurityLimits {
+    fn default() -> Self {
+        Self {
+            max_expression_scope_bytes: 128 * 1024,
+            max_map_items: 4096,
+            max_parallel_branches: 128,
+            max_filter_items: 8192,
         }
     }
 }
@@ -259,6 +294,91 @@ pub enum NodeExecutionData {
         /// Chosen next node id.
         next: String,
     },
+    /// Debounce gate decision.
+    Debounce {
+        /// Resolved debounce key.
+        key: String,
+        /// Whether the event was suppressed.
+        suppressed: bool,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Throttle gate decision.
+    Throttle {
+        /// Resolved throttle key.
+        key: String,
+        /// Whether the event was throttled.
+        throttled: bool,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Explicit retry/compensation execution result.
+    RetryCompensate {
+        /// Primary tool name.
+        tool: String,
+        /// Total primary attempts executed.
+        attempts: usize,
+        /// Whether compensation path was used.
+        compensated: bool,
+        /// Node output payload.
+        output: Value,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Human decision result.
+    HumanInTheLoop {
+        /// True when approved.
+        approved: bool,
+        /// Optional human payload routed through the node.
+        response: Value,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Cache read result.
+    CacheRead {
+        /// Cache key.
+        key: String,
+        /// True when key was found.
+        hit: bool,
+        /// Returned value (null on miss).
+        value: Value,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Cache write result.
+    CacheWrite {
+        /// Cache key.
+        key: String,
+        /// Stored value.
+        value: Value,
+        /// Next node id.
+        next: String,
+    },
+    /// Event trigger evaluation result.
+    EventTrigger {
+        /// Expected event name.
+        event: String,
+        /// True when input event matched.
+        matched: bool,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Router/selector decision.
+    Router {
+        /// Selected route node id.
+        selected: String,
+        /// Chosen next node id.
+        next: String,
+    },
+    /// Transform node output.
+    Transform {
+        /// Original transform expression.
+        expression: String,
+        /// Evaluated output payload.
+        output: Value,
+        /// Next node id.
+        next: String,
+    },
     /// Loop node decision.
     Loop {
         /// Original loop condition.
@@ -268,6 +388,75 @@ pub enum NodeExecutionData {
         /// Current iteration when entering body. Zero when exiting loop.
         iteration: u32,
         /// Chosen next node id.
+        next: String,
+    },
+    /// Subgraph execution result.
+    Subgraph {
+        /// Subgraph registry key.
+        graph: String,
+        /// Subgraph terminal node id.
+        terminal_node_id: String,
+        /// Aggregated subgraph node outputs.
+        output: Value,
+        /// Next node id.
+        next: String,
+    },
+    /// Batch extraction result.
+    Batch {
+        /// Source path used for extraction.
+        items_path: String,
+        /// Number of extracted items.
+        item_count: usize,
+        /// Next node id.
+        next: String,
+    },
+    /// Filter evaluation result.
+    Filter {
+        /// Source path used for extraction.
+        items_path: String,
+        /// Filter predicate expression.
+        expression: String,
+        /// Number of retained items.
+        kept: usize,
+        /// Next node id.
+        next: String,
+    },
+    /// Parallel node aggregate result.
+    Parallel {
+        /// Branch node ids executed by this node.
+        branches: Vec<String>,
+        /// Branch outputs keyed by branch node id.
+        outputs: BTreeMap<String, Value>,
+        /// Next node id.
+        next: String,
+    },
+    /// Merge node aggregate output.
+    Merge {
+        /// Merge policy used.
+        policy: MergePolicy,
+        /// Source node ids consumed.
+        sources: Vec<String>,
+        /// Merged value.
+        output: Value,
+        /// Next node id.
+        next: String,
+    },
+    /// Map node output.
+    Map {
+        /// Number of input items mapped.
+        item_count: usize,
+        /// Collected mapped values in source order.
+        output: Value,
+        /// Next node id.
+        next: String,
+    },
+    /// Reduce node output.
+    Reduce {
+        /// Reduce operation executed.
+        operation: ReduceOperation,
+        /// Reduced result.
+        output: Value,
+        /// Next node id.
         next: String,
     },
     /// End node reached.
@@ -347,6 +536,9 @@ enum ScopeCapability {
     LlmWrite,
     ToolWrite,
     ConditionWrite,
+    MapRead,
+    MapWrite,
+    ReduceWrite,
 }
 
 impl ScopeCapability {
@@ -358,6 +550,9 @@ impl ScopeCapability {
             Self::LlmWrite => "llm_write",
             Self::ToolWrite => "tool_write",
             Self::ConditionWrite => "condition_write",
+            Self::MapRead => "map_read",
+            Self::MapWrite => "map_write",
+            Self::ReduceWrite => "reduce_write",
         }
     }
 }
@@ -526,6 +721,139 @@ pub enum WorkflowRuntimeError {
     /// Replay mode requested without trace recording.
     #[error("replay validation requires trace recording to be enabled")]
     ReplayRequiresTraceRecording,
+    /// Parallel branch references unsupported node kind.
+    #[error("parallel node '{node_id}' cannot execute branch '{branch_id}': {reason}")]
+    ParallelBranchUnsupported {
+        /// Parallel node id.
+        node_id: String,
+        /// Branch node id.
+        branch_id: String,
+        /// Reason for rejection.
+        reason: String,
+    },
+    /// Merge node cannot resolve one or more sources.
+    #[error("merge node '{node_id}' missing source output from '{source_id}'")]
+    MissingMergeSource {
+        /// Merge node id.
+        node_id: String,
+        /// Missing source id.
+        source_id: String,
+    },
+    /// Merge quorum policy could not be satisfied.
+    #[error("merge node '{node_id}' quorum not met: required {required}, resolved {resolved}")]
+    MergeQuorumNotMet {
+        /// Merge node id.
+        node_id: String,
+        /// Required number of sources.
+        required: usize,
+        /// Number of resolved sources.
+        resolved: usize,
+    },
+    /// Map node items path did not resolve to an array.
+    #[error("map node '{node_id}' items_path '{items_path}' did not resolve to an array")]
+    MapItemsNotArray {
+        /// Map node id.
+        node_id: String,
+        /// Configured path.
+        items_path: String,
+    },
+    /// Reduce node source value is not reducible.
+    #[error("reduce node '{node_id}' source '{source_node}' is not reducible: {reason}")]
+    InvalidReduceInput {
+        /// Reduce node id.
+        node_id: String,
+        /// Source node id.
+        source_node: String,
+        /// Detailed reason.
+        reason: String,
+    },
+    /// Subgraph registry key not found.
+    #[error("subgraph node '{node_id}' references unknown graph '{graph}'")]
+    SubgraphNotFound { node_id: String, graph: String },
+    /// Batch source path did not resolve to an array.
+    #[error("batch node '{node_id}' items_path '{items_path}' did not resolve to an array")]
+    BatchItemsNotArray { node_id: String, items_path: String },
+    /// Filter source path did not resolve to an array.
+    #[error("filter node '{node_id}' items_path '{items_path}' did not resolve to an array")]
+    FilterItemsNotArray { node_id: String, items_path: String },
+    /// Filter expression failed while evaluating one item.
+    #[error("filter node '{node_id}' expression '{expression}' failed: {reason}")]
+    InvalidFilterExpression {
+        node_id: String,
+        expression: String,
+        reason: String,
+    },
+    /// Serialized expression scope exceeded configured runtime limit.
+    #[error(
+        "expression scope too large on node '{node_id}': {actual_bytes} bytes exceeds limit {limit_bytes}"
+    )]
+    ExpressionScopeLimitExceeded {
+        node_id: String,
+        actual_bytes: usize,
+        limit_bytes: usize,
+    },
+    /// Parallel branch fan-out exceeded configured runtime limit.
+    #[error(
+        "parallel node '{node_id}' has {actual_branches} branches, exceeding limit {max_branches}"
+    )]
+    ParallelBranchLimitExceeded {
+        node_id: String,
+        actual_branches: usize,
+        max_branches: usize,
+    },
+    /// Map item count exceeded configured runtime limit.
+    #[error("map node '{node_id}' has {actual_items} items, exceeding limit {max_items}")]
+    MapItemLimitExceeded {
+        node_id: String,
+        actual_items: usize,
+        max_items: usize,
+    },
+    /// Filter item count exceeded configured runtime limit.
+    #[error("filter node '{node_id}' has {actual_items} items, exceeding limit {max_items}")]
+    FilterItemLimitExceeded {
+        node_id: String,
+        actual_items: usize,
+        max_items: usize,
+    },
+    /// A node-required path could not be resolved.
+    #[error("node '{node_id}' could not resolve required path '{path}'")]
+    MissingPath { node_id: String, path: String },
+    /// A cache key path did not resolve to a string.
+    #[error("node '{node_id}' path '{path}' did not resolve to a string cache key")]
+    CacheKeyNotString { node_id: String, path: String },
+    /// Human decision value is unsupported.
+    #[error("human node '{node_id}' has unsupported decision value at '{path}': {value}")]
+    InvalidHumanDecision {
+        node_id: String,
+        path: String,
+        value: String,
+    },
+    /// Event value did not resolve to a string.
+    #[error("event trigger node '{node_id}' path '{path}' did not resolve to an event string")]
+    InvalidEventValue { node_id: String, path: String },
+    /// Router expression evaluation failed.
+    #[error("router node '{node_id}' route expression '{expression}' failed: {reason}")]
+    InvalidRouterExpression {
+        node_id: String,
+        expression: String,
+        reason: String,
+    },
+    /// Transform expression evaluation failed.
+    #[error("transform node '{node_id}' expression '{expression}' failed: {reason}")]
+    InvalidTransformExpression {
+        node_id: String,
+        expression: String,
+        reason: String,
+    },
+    /// Explicit retry/compensate node exhausted primary and compensation failed.
+    #[error(
+        "retry_compensate node '{node_id}' failed after {attempts} primary attempt(s) and compensation error: {compensation_error}"
+    )]
+    RetryCompensateFailed {
+        node_id: String,
+        attempts: usize,
+        compensation_error: ToolExecutionError,
+    },
 }
 
 /// Deterministic minimal runtime for workflow execution.
@@ -564,8 +892,54 @@ impl<'a> WorkflowRuntime<'a> {
             self.definition.normalized()
         };
 
-        let node_index = build_node_index(&workflow);
         let start_id = find_start_node_id(&workflow)?;
+        self.execute_from_node(
+            workflow,
+            RuntimeScope::new(input),
+            start_id,
+            0,
+            cancellation,
+        )
+        .await
+    }
+
+    /// Resumes execution from a checkpoint created after a node failure.
+    pub async fn execute_resume_from_failure(
+        &self,
+        checkpoint: &WorkflowCheckpoint,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<WorkflowRunResult, WorkflowRuntimeError> {
+        let workflow = if self.options.validate_before_run {
+            validate_and_normalize(&self.definition)?
+        } else {
+            self.definition.normalized()
+        };
+
+        let scope_input = checkpoint
+            .scope_snapshot
+            .get("input")
+            .cloned()
+            .unwrap_or_else(|| checkpoint.scope_snapshot.clone());
+
+        self.execute_from_node(
+            workflow,
+            RuntimeScope::new(scope_input),
+            checkpoint.next_node_id.clone(),
+            checkpoint.step,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn execute_from_node(
+        &self,
+        workflow: WorkflowDefinition,
+        mut scope: RuntimeScope,
+        start_node_id: String,
+        starting_step: usize,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<WorkflowRunResult, WorkflowRuntimeError> {
+        let node_index = build_node_index(&workflow);
 
         if matches!(
             self.options.replay_mode,
@@ -585,16 +959,13 @@ impl<'a> WorkflowRuntime<'a> {
             })
         });
         let mut trace_clock = 0u64;
-
-        let mut scope = RuntimeScope::new(input);
         let mut events = Vec::new();
         let mut retry_events = Vec::new();
         let mut node_executions = Vec::new();
-        let mut current_id = start_id;
+        let mut current_id = start_node_id;
 
-        for step in 0..self.options.max_steps {
+        for step in starting_step..self.options.max_steps {
             check_cancelled(cancellation)?;
-
             let node = node_index.get(current_id.as_str()).ok_or_else(|| {
                 WorkflowRuntimeError::NodeNotFound {
                     node_id: current_id.clone(),
@@ -612,7 +983,14 @@ impl<'a> WorkflowRuntime<'a> {
             }
 
             let execution_result = self
-                .execute_node(node, step, &mut scope, cancellation, &mut retry_events)
+                .execute_node(
+                    node,
+                    &node_index,
+                    step,
+                    &mut scope,
+                    cancellation,
+                    &mut retry_events,
+                )
                 .await;
             let execution = match execution_result {
                 Ok(execution) => execution,
@@ -629,7 +1007,6 @@ impl<'a> WorkflowRuntime<'a> {
                         )?;
                         let _ = recorder.finalize(next_trace_timestamp(&mut trace_clock))?;
                     }
-
                     events.push(WorkflowEvent {
                         step,
                         node_id: current_id,
@@ -657,7 +1034,6 @@ impl<'a> WorkflowRuntime<'a> {
             let is_terminal = matches!(execution.data, NodeExecutionData::End);
             let next_node = next_node_id(&execution.data);
             let executed_node_id = execution.node_id.clone();
-
             node_executions.push(execution);
 
             if is_terminal {
@@ -704,6 +1080,7 @@ impl<'a> WorkflowRuntime<'a> {
     async fn execute_node(
         &self,
         node: &Node,
+        node_index: &HashMap<&str, &Node>,
         step: usize,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
@@ -726,17 +1103,10 @@ impl<'a> WorkflowRuntime<'a> {
                             node_id: node.id.clone(),
                         })?;
 
-                let output = self
-                    .execute_llm_with_policy(
-                        step,
-                        node,
-                        model,
-                        prompt,
-                        scope,
-                        cancellation,
-                        retry_events,
-                    )
+                let (output, llm_retries) = self
+                    .execute_llm_with_policy(step, node, model, prompt, scope, cancellation)
                     .await?;
+                retry_events.extend(llm_retries);
 
                 scope
                     .record_llm_output(&node.id, output.content.clone(), ScopeCapability::LlmWrite)
@@ -768,7 +1138,7 @@ impl<'a> WorkflowRuntime<'a> {
                     }
                 })?;
 
-                let tool_output = self
+                let (tool_output, tool_retries) = self
                     .execute_tool_with_policy(
                         step,
                         node,
@@ -777,9 +1147,9 @@ impl<'a> WorkflowRuntime<'a> {
                         executor,
                         scope,
                         cancellation,
-                        retry_events,
                     )
                     .await?;
+                retry_events.extend(tool_retries);
 
                 scope
                     .record_tool_output(&node.id, tool_output.clone(), ScopeCapability::ToolWrite)
@@ -811,13 +1181,19 @@ impl<'a> WorkflowRuntime<'a> {
                             node_id: node.id.clone(),
                             source,
                         })?;
-                let evaluated = expressions::evaluate_bool(expression, &scoped_input).map_err(
-                    |reason| WorkflowRuntimeError::InvalidCondition {
-                        node_id: node.id.clone(),
-                        expression: expression.clone(),
-                        reason: reason.to_string(),
-                    },
+                enforce_expression_scope_budget(
+                    &node.id,
+                    &scoped_input,
+                    self.options.security_limits.max_expression_scope_bytes,
                 )?;
+                let evaluated =
+                    expressions::evaluate_bool(expression, &scoped_input).map_err(|reason| {
+                        WorkflowRuntimeError::InvalidCondition {
+                            node_id: node.id.clone(),
+                            expression: expression.clone(),
+                            reason: reason.to_string(),
+                        }
+                    })?;
                 let next = if evaluated {
                     on_true.clone()
                 } else {
@@ -841,6 +1217,494 @@ impl<'a> WorkflowRuntime<'a> {
                     },
                 })
             }
+            NodeKind::Debounce {
+                key_path,
+                window_steps,
+                next,
+                on_suppressed,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let suppressed = scope.debounce(&node.id, &key, step, *window_steps);
+                let chosen_next = if suppressed {
+                    on_suppressed.clone().unwrap_or_else(|| next.clone())
+                } else {
+                    next.clone()
+                };
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"key": key.clone(), "suppressed": suppressed}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Debounce {
+                        key,
+                        suppressed,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::Throttle {
+                key_path,
+                window_steps,
+                next,
+                on_throttled,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let throttled = scope.throttle(&node.id, &key, step, *window_steps);
+                let chosen_next = if throttled {
+                    on_throttled.clone().unwrap_or_else(|| next.clone())
+                } else {
+                    next.clone()
+                };
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"key": key.clone(), "throttled": throttled}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Throttle {
+                        key,
+                        throttled,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::RetryCompensate {
+                tool,
+                input,
+                max_retries,
+                compensate_tool,
+                compensate_input,
+                next,
+                on_compensated,
+            } => {
+                let executor = self.tool_executor.ok_or_else(|| {
+                    WorkflowRuntimeError::MissingToolExecutor {
+                        node_id: node.id.clone(),
+                    }
+                })?;
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ToolRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let total_attempts = max_retries.saturating_add(1);
+                let mut last_error = None;
+                let mut output = Value::Null;
+                let mut compensated = false;
+
+                for attempt in 1..=total_attempts {
+                    check_cancelled(cancellation)?;
+                    match executor
+                        .execute_tool(ToolExecutionInput {
+                            node_id: node.id.clone(),
+                            tool: tool.clone(),
+                            input: input.clone(),
+                            scoped_input: scoped_input.clone(),
+                        })
+                        .await
+                    {
+                        Ok(value) => {
+                            output = json!({"status": "ok", "attempt": attempt, "value": value});
+                            break;
+                        }
+                        Err(error) => {
+                            last_error = Some(error.clone());
+                            if attempt < total_attempts {
+                                retry_events.push(WorkflowRetryEvent {
+                                    step,
+                                    node_id: node.id.clone(),
+                                    operation: "retry_compensate".to_string(),
+                                    failed_attempt: attempt,
+                                    reason: error.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+
+                if output.is_null() {
+                    compensated = true;
+                    let compensation = executor
+                        .execute_tool(ToolExecutionInput {
+                            node_id: node.id.clone(),
+                            tool: compensate_tool.clone(),
+                            input: compensate_input.clone(),
+                            scoped_input,
+                        })
+                        .await
+                        .map_err(|compensation_error| {
+                            WorkflowRuntimeError::RetryCompensateFailed {
+                                node_id: node.id.clone(),
+                                attempts: total_attempts,
+                                compensation_error,
+                            }
+                        })?;
+                    output = json!({
+                        "status": "compensated",
+                        "attempts": total_attempts,
+                        "last_error": last_error.map(|error| error.to_string()).unwrap_or_default(),
+                        "compensation": compensation
+                    });
+                }
+
+                let chosen_next = if compensated {
+                    on_compensated.clone().unwrap_or_else(|| next.clone())
+                } else {
+                    next.clone()
+                };
+
+                scope
+                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::RetryCompensate {
+                        tool: tool.clone(),
+                        attempts: total_attempts,
+                        compensated,
+                        output,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::HumanInTheLoop {
+                decision_path,
+                response_path,
+                on_approve,
+                on_reject,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let decision_value =
+                    resolve_path(&scoped_input, decision_path).ok_or_else(|| {
+                        WorkflowRuntimeError::MissingPath {
+                            node_id: node.id.clone(),
+                            path: decision_path.clone(),
+                        }
+                    })?;
+                let approved = evaluate_human_decision(decision_value).ok_or_else(|| {
+                    WorkflowRuntimeError::InvalidHumanDecision {
+                        node_id: node.id.clone(),
+                        path: decision_path.clone(),
+                        value: decision_value.to_string(),
+                    }
+                })?;
+                let response = if let Some(path) = response_path {
+                    resolve_path(&scoped_input, path).cloned().ok_or_else(|| {
+                        WorkflowRuntimeError::MissingPath {
+                            node_id: node.id.clone(),
+                            path: path.clone(),
+                        }
+                    })?
+                } else {
+                    Value::Null
+                };
+                let chosen_next = if approved {
+                    on_approve.clone()
+                } else {
+                    on_reject.clone()
+                };
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"approved": approved, "response": response.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::HumanInTheLoop {
+                        approved,
+                        response,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::CacheWrite {
+                key_path,
+                value_path,
+                next,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let value = resolve_path(&scoped_input, value_path)
+                    .cloned()
+                    .ok_or_else(|| WorkflowRuntimeError::MissingPath {
+                        node_id: node.id.clone(),
+                        path: value_path.clone(),
+                    })?;
+
+                scope.put_cache(&key, value.clone());
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"key": key.clone(), "value": value.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::CacheWrite {
+                        key,
+                        value,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::CacheRead {
+                key_path,
+                next,
+                on_miss,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let value = scope.cache_value(&key).cloned().unwrap_or(Value::Null);
+                let hit = !value.is_null();
+                let chosen_next = if hit {
+                    next.clone()
+                } else {
+                    on_miss.clone().unwrap_or_else(|| next.clone())
+                };
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"key": key.clone(), "hit": hit, "value": value.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::CacheRead {
+                        key,
+                        hit,
+                        value,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::EventTrigger {
+                event,
+                event_path,
+                next,
+                on_mismatch,
+            } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let actual = resolve_path(&scoped_input, event_path)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WorkflowRuntimeError::InvalidEventValue {
+                        node_id: node.id.clone(),
+                        path: event_path.clone(),
+                    })?;
+                let matched = actual == event;
+                let chosen_next = if matched {
+                    next.clone()
+                } else {
+                    on_mismatch.clone().unwrap_or_else(|| next.clone())
+                };
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"event": event.clone(), "matched": matched, "actual": actual}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::EventTrigger {
+                        event: event.clone(),
+                        matched,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::Router { routes, default } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                enforce_expression_scope_budget(
+                    &node.id,
+                    &scoped_input,
+                    self.options.security_limits.max_expression_scope_bytes,
+                )?;
+                let mut selected = default.clone();
+                for route in routes {
+                    let matched = expressions::evaluate_bool(&route.when, &scoped_input).map_err(
+                        |reason| WorkflowRuntimeError::InvalidRouterExpression {
+                            node_id: node.id.clone(),
+                            expression: route.when.clone(),
+                            reason: reason.to_string(),
+                        },
+                    )?;
+                    if matched {
+                        selected = route.next.clone();
+                        break;
+                    }
+                }
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        json!({"selected": selected.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Router {
+                        selected: selected.clone(),
+                        next: selected,
+                    },
+                })
+            }
+            NodeKind::Transform { expression, next } => {
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let output =
+                    evaluate_transform_expression(expression, &scoped_input).map_err(|reason| {
+                        WorkflowRuntimeError::InvalidTransformExpression {
+                            node_id: node.id.clone(),
+                            expression: expression.clone(),
+                            reason,
+                        }
+                    })?;
+
+                scope
+                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Transform {
+                        expression: expression.clone(),
+                        output,
+                        next: next.clone(),
+                    },
+                })
+            }
             NodeKind::Loop {
                 condition,
                 body,
@@ -855,11 +1719,18 @@ impl<'a> WorkflowRuntime<'a> {
                             node_id: node.id.clone(),
                             source,
                         })?;
-                let evaluated = expressions::evaluate_bool(condition, &scoped_input)
-                    .map_err(|reason| WorkflowRuntimeError::InvalidLoopCondition {
-                        node_id: node.id.clone(),
-                        expression: condition.clone(),
-                        reason: reason.to_string(),
+                enforce_expression_scope_budget(
+                    &node.id,
+                    &scoped_input,
+                    self.options.security_limits.max_expression_scope_bytes,
+                )?;
+                let evaluated =
+                    expressions::evaluate_bool(condition, &scoped_input).map_err(|reason| {
+                        WorkflowRuntimeError::InvalidLoopCondition {
+                            node_id: node.id.clone(),
+                            expression: condition.clone(),
+                            reason: reason.to_string(),
+                        }
                     })?;
 
                 let (iteration, chosen_next) = if evaluated {
@@ -897,6 +1768,450 @@ impl<'a> WorkflowRuntime<'a> {
                     },
                 })
             }
+            NodeKind::Parallel {
+                branches,
+                next,
+                max_in_flight,
+            } => {
+                check_cancelled(cancellation)?;
+                if branches.len() > self.options.security_limits.max_parallel_branches {
+                    return Err(WorkflowRuntimeError::ParallelBranchLimitExceeded {
+                        node_id: node.id.clone(),
+                        actual_branches: branches.len(),
+                        max_branches: self.options.security_limits.max_parallel_branches,
+                    });
+                }
+                let base_scope =
+                    scope
+                        .scoped_input(ScopeCapability::MapRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let scheduler = DagScheduler::new(
+                    max_in_flight.unwrap_or(self.options.scheduler_max_in_flight),
+                );
+                let parallel_node_id = node.id.clone();
+
+                let branch_outputs: Vec<(String, Value, Vec<WorkflowRetryEvent>)> = scheduler
+                    .run_bounded(branches.iter().cloned(), |branch_id| {
+                        let parallel_node_id = parallel_node_id.clone();
+                        let base_scope = base_scope.clone();
+                        async move {
+                            let branch_node =
+                                node_index.get(branch_id.as_str()).ok_or_else(|| {
+                                    WorkflowRuntimeError::NodeNotFound {
+                                        node_id: branch_id.clone(),
+                                    }
+                                })?;
+                            self.execute_parallel_branch(
+                                step,
+                                &parallel_node_id,
+                                branch_node,
+                                base_scope,
+                                cancellation,
+                            )
+                            .await
+                        }
+                    })
+                    .await?;
+
+                let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
+                for (branch_id, output, branch_retry_events) in branch_outputs {
+                    retry_events.extend(branch_retry_events);
+                    scope
+                        .record_node_output(&branch_id, output.clone(), ScopeCapability::MapWrite)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                    outputs.insert(branch_id, output);
+                }
+
+                scope
+                    .record_node_output(
+                        &node.id,
+                        Value::Object(
+                            outputs
+                                .iter()
+                                .map(|(key, value)| (key.clone(), value.clone()))
+                                .collect(),
+                        ),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Parallel {
+                        branches: branches.clone(),
+                        outputs,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Merge {
+                sources,
+                policy,
+                quorum,
+                next,
+            } => {
+                let mut resolved = Vec::with_capacity(sources.len());
+                for source in sources {
+                    let Some(value) = scope.node_output(source).cloned() else {
+                        return Err(WorkflowRuntimeError::MissingMergeSource {
+                            node_id: node.id.clone(),
+                            source_id: source.clone(),
+                        });
+                    };
+                    resolved.push((source.clone(), value));
+                }
+
+                let output = match policy {
+                    MergePolicy::First => resolved
+                        .first()
+                        .map(|(_, value)| value.clone())
+                        .unwrap_or(Value::Null),
+                    MergePolicy::All => Value::Array(
+                        resolved
+                            .iter()
+                            .map(|(_, value)| value.clone())
+                            .collect::<Vec<_>>(),
+                    ),
+                    MergePolicy::Quorum => {
+                        let required = quorum.unwrap_or_default();
+                        let resolved_count = resolved.len();
+                        if resolved_count < required {
+                            return Err(WorkflowRuntimeError::MergeQuorumNotMet {
+                                node_id: node.id.clone(),
+                                required,
+                                resolved: resolved_count,
+                            });
+                        }
+                        Value::Array(
+                            resolved
+                                .iter()
+                                .take(required)
+                                .map(|(_, value)| value.clone())
+                                .collect::<Vec<_>>(),
+                        )
+                    }
+                };
+
+                scope
+                    .record_node_output(&node.id, output.clone(), ScopeCapability::ReduceWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Merge {
+                        policy: policy.clone(),
+                        sources: sources.clone(),
+                        output,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Map {
+                tool,
+                items_path,
+                next,
+                max_in_flight,
+            } => {
+                let executor = self.tool_executor.ok_or_else(|| {
+                    WorkflowRuntimeError::MissingToolExecutor {
+                        node_id: node.id.clone(),
+                    }
+                })?;
+
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::MapRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let items = resolve_path(&scoped_input, items_path)
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| WorkflowRuntimeError::MapItemsNotArray {
+                        node_id: node.id.clone(),
+                        items_path: items_path.clone(),
+                    })?
+                    .clone();
+                if items.len() > self.options.security_limits.max_map_items {
+                    return Err(WorkflowRuntimeError::MapItemLimitExceeded {
+                        node_id: node.id.clone(),
+                        actual_items: items.len(),
+                        max_items: self.options.security_limits.max_map_items,
+                    });
+                }
+
+                let scheduler = DagScheduler::new(
+                    max_in_flight.unwrap_or(self.options.scheduler_max_in_flight),
+                );
+                let map_node = node.clone();
+                let mapped: Vec<(Value, Vec<WorkflowRetryEvent>)> = scheduler
+                    .run_bounded(items.into_iter().enumerate(), |(index, item)| {
+                        let scoped_input = scoped_input.clone();
+                        let map_node = map_node.clone();
+                        async move {
+                            let item_scope = map_item_scoped_input(&scoped_input, &item, index);
+                            let (output, retries) = self
+                                .execute_tool_with_policy_for_scope(
+                                    step,
+                                    &map_node,
+                                    tool,
+                                    &item,
+                                    executor,
+                                    item_scope,
+                                    cancellation,
+                                )
+                                .await?;
+                            Ok::<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError>((
+                                output, retries,
+                            ))
+                        }
+                    })
+                    .await?;
+
+                let mut outputs = Vec::with_capacity(mapped.len());
+                for (output, local_retries) in mapped {
+                    outputs.push(output);
+                    retry_events.extend(local_retries);
+                }
+
+                let output = Value::Array(outputs);
+                scope
+                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Map {
+                        item_count: output.as_array().map_or(0, Vec::len),
+                        output,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Reduce {
+                source,
+                operation,
+                next,
+            } => {
+                let source_value = scope.node_output(source).cloned().ok_or_else(|| {
+                    WorkflowRuntimeError::MissingMergeSource {
+                        node_id: node.id.clone(),
+                        source_id: source.clone(),
+                    }
+                })?;
+
+                let reduced = reduce_value(&node.id, source, operation, source_value)?;
+                scope
+                    .record_node_output(&node.id, reduced.clone(), ScopeCapability::ReduceWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Reduce {
+                        operation: operation.clone(),
+                        output: reduced,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Subgraph { graph, next } => {
+                check_cancelled(cancellation)?;
+                let next_node =
+                    next.clone()
+                        .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
+                            node_id: node.id.clone(),
+                        })?;
+                let subgraph = self.options.subgraph_registry.get(graph).ok_or_else(|| {
+                    WorkflowRuntimeError::SubgraphNotFound {
+                        node_id: node.id.clone(),
+                        graph: graph.clone(),
+                    }
+                })?;
+
+                let subgraph_runtime = WorkflowRuntime::new(
+                    subgraph.clone(),
+                    self.llm_executor,
+                    self.tool_executor,
+                    WorkflowRuntimeOptions {
+                        replay_mode: WorkflowReplayMode::Disabled,
+                        enable_trace_recording: false,
+                        ..self.options.clone()
+                    },
+                );
+                let subgraph_result = Box::pin(
+                    subgraph_runtime.execute(
+                        scope
+                            .scoped_input(ScopeCapability::ConditionRead)
+                            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                                node_id: node.id.clone(),
+                                source,
+                            })?,
+                        cancellation,
+                    ),
+                )
+                .await?;
+
+                let subgraph_output = json!({
+                    "terminal_node_id": subgraph_result.terminal_node_id,
+                    "node_outputs": subgraph_result.node_outputs,
+                });
+                scope
+                    .record_node_output(
+                        &node.id,
+                        subgraph_output.clone(),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Subgraph {
+                        graph: graph.clone(),
+                        terminal_node_id: subgraph_result.terminal_node_id,
+                        output: subgraph_output,
+                        next: next_node,
+                    },
+                })
+            }
+            NodeKind::Batch { items_path, next } => {
+                let scoped = scope
+                    .scoped_input(ScopeCapability::MapRead)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+                let items = resolve_path(&scoped, items_path).ok_or_else(|| {
+                    WorkflowRuntimeError::BatchItemsNotArray {
+                        node_id: node.id.clone(),
+                        items_path: items_path.clone(),
+                    }
+                })?;
+                let array =
+                    items
+                        .as_array()
+                        .ok_or_else(|| WorkflowRuntimeError::BatchItemsNotArray {
+                            node_id: node.id.clone(),
+                            items_path: items_path.clone(),
+                        })?;
+
+                let output = Value::Array(array.clone());
+                scope
+                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Batch {
+                        items_path: items_path.clone(),
+                        item_count: array.len(),
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Filter {
+                items_path,
+                expression,
+                next,
+            } => {
+                let scoped = scope
+                    .scoped_input(ScopeCapability::MapRead)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+                let items_value = resolve_path(&scoped, items_path).ok_or_else(|| {
+                    WorkflowRuntimeError::FilterItemsNotArray {
+                        node_id: node.id.clone(),
+                        items_path: items_path.clone(),
+                    }
+                })?;
+                let array = items_value.as_array().ok_or_else(|| {
+                    WorkflowRuntimeError::FilterItemsNotArray {
+                        node_id: node.id.clone(),
+                        items_path: items_path.clone(),
+                    }
+                })?;
+                if array.len() > self.options.security_limits.max_filter_items {
+                    return Err(WorkflowRuntimeError::FilterItemLimitExceeded {
+                        node_id: node.id.clone(),
+                        actual_items: array.len(),
+                        max_items: self.options.security_limits.max_filter_items,
+                    });
+                }
+
+                let mut kept = Vec::new();
+                for (index, item) in array.iter().enumerate() {
+                    let mut eval_scope = scoped.clone();
+                    if let Some(object) = eval_scope.as_object_mut() {
+                        object.insert("item".to_string(), item.clone());
+                        object.insert("item_index".to_string(), Value::from(index as u64));
+                    }
+                    enforce_expression_scope_budget(
+                        &node.id,
+                        &eval_scope,
+                        self.options.security_limits.max_expression_scope_bytes,
+                    )?;
+                    let include =
+                        expressions::evaluate_bool(expression, &eval_scope).map_err(|reason| {
+                            WorkflowRuntimeError::InvalidFilterExpression {
+                                node_id: node.id.clone(),
+                                expression: expression.clone(),
+                                reason: reason.to_string(),
+                            }
+                        })?;
+                    if include {
+                        kept.push(item.clone());
+                    }
+                }
+                let output = Value::Array(kept.clone());
+                scope
+                    .record_node_output(&node.id, output, ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Filter {
+                        items_path: items_path.clone(),
+                        expression: expression.clone(),
+                        kept: kept.len(),
+                        next: next.clone(),
+                    },
+                })
+            }
             NodeKind::End => Ok(NodeExecution {
                 step,
                 node_id: node.id.clone(),
@@ -913,25 +2228,102 @@ impl<'a> WorkflowRuntime<'a> {
         prompt: &str,
         scope: &RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
-        retry_events: &mut Vec<WorkflowRetryEvent>,
-    ) -> Result<LlmExecutionOutput, WorkflowRuntimeError> {
+    ) -> Result<(LlmExecutionOutput, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
+        let scoped_input = scope
+            .scoped_input(ScopeCapability::LlmRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        self.execute_llm_with_policy_for_scope(
+            step,
+            node,
+            model,
+            prompt,
+            scoped_input,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn execute_parallel_branch(
+        &self,
+        step: usize,
+        parallel_node_id: &str,
+        branch_node: &Node,
+        scoped_input: Value,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<(String, Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
+        match &branch_node.kind {
+            NodeKind::Llm {
+                model,
+                prompt,
+                next: _,
+            } => {
+                let (output, retries) = self
+                    .execute_llm_with_policy_for_scope(
+                        step,
+                        branch_node,
+                        model,
+                        prompt,
+                        scoped_input,
+                        cancellation,
+                    )
+                    .await?;
+                Ok((
+                    branch_node.id.clone(),
+                    Value::String(output.content),
+                    retries,
+                ))
+            }
+            NodeKind::Tool { tool, input, .. } => {
+                let executor = self.tool_executor.ok_or_else(|| {
+                    WorkflowRuntimeError::MissingToolExecutor {
+                        node_id: branch_node.id.clone(),
+                    }
+                })?;
+                let (output, retries) = self
+                    .execute_tool_with_policy_for_scope(
+                        step,
+                        branch_node,
+                        tool,
+                        input,
+                        executor,
+                        scoped_input,
+                        cancellation,
+                    )
+                    .await?;
+                Ok((branch_node.id.clone(), output, retries))
+            }
+            _ => Err(WorkflowRuntimeError::ParallelBranchUnsupported {
+                node_id: parallel_node_id.to_string(),
+                branch_id: branch_node.id.clone(),
+                reason: "only llm/tool branches are supported".to_string(),
+            }),
+        }
+    }
+
+    async fn execute_llm_with_policy_for_scope(
+        &self,
+        step: usize,
+        node: &Node,
+        model: &str,
+        prompt: &str,
+        scoped_input: Value,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<(LlmExecutionOutput, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
         let max_attempts = self.options.llm_node_policy.max_retries.saturating_add(1);
+        let mut retry_events = Vec::new();
 
         for attempt in 1..=max_attempts {
             check_cancelled(cancellation)?;
-
-            let scoped_input = scope
-                .scoped_input(ScopeCapability::LlmRead)
-                .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                    node_id: node.id.clone(),
-                    source,
-                })?;
 
             let execution = self.llm_executor.execute(LlmExecutionInput {
                 node_id: node.id.clone(),
                 model: model.to_string(),
                 prompt: prompt.to_string(),
-                scoped_input,
+                scoped_input: scoped_input.clone(),
             });
 
             let outcome = if let Some(timeout_duration) = self.options.llm_node_policy.timeout {
@@ -965,7 +2357,7 @@ impl<'a> WorkflowRuntime<'a> {
             };
 
             match outcome {
-                Ok(output) => return Ok(output),
+                Ok(output) => return Ok((output, retry_events)),
                 Err(last_error) => {
                     if attempt == max_attempts {
                         return Err(WorkflowRuntimeError::LlmRetryExhausted {
@@ -998,25 +2390,47 @@ impl<'a> WorkflowRuntime<'a> {
         executor: &dyn ToolExecutor,
         scope: &RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
-        retry_events: &mut Vec<WorkflowRetryEvent>,
-    ) -> Result<Value, WorkflowRuntimeError> {
+    ) -> Result<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
+        let scoped_input = scope
+            .scoped_input(ScopeCapability::ToolRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        self.execute_tool_with_policy_for_scope(
+            step,
+            node,
+            tool,
+            input,
+            executor,
+            scoped_input,
+            cancellation,
+        )
+        .await
+    }
+
+    async fn execute_tool_with_policy_for_scope(
+        &self,
+        step: usize,
+        node: &Node,
+        tool: &str,
+        input: &Value,
+        executor: &dyn ToolExecutor,
+        scoped_input: Value,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
         let max_attempts = self.options.tool_node_policy.max_retries.saturating_add(1);
+        let mut retry_events = Vec::new();
 
         for attempt in 1..=max_attempts {
             check_cancelled(cancellation)?;
-
-            let scoped_input = scope
-                .scoped_input(ScopeCapability::ToolRead)
-                .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                    node_id: node.id.clone(),
-                    source,
-                })?;
 
             let execution = executor.execute_tool(ToolExecutionInput {
                 node_id: node.id.clone(),
                 tool: tool.to_string(),
                 input: input.clone(),
-                scoped_input,
+                scoped_input: scoped_input.clone(),
             });
 
             let outcome = if let Some(timeout_duration) = self.options.tool_node_policy.timeout {
@@ -1050,7 +2464,7 @@ impl<'a> WorkflowRuntime<'a> {
             };
 
             match outcome {
-                Ok(output) => return Ok(output),
+                Ok(output) => return Ok((output, retry_events)),
                 Err(last_error) => {
                     if attempt == max_attempts {
                         return Err(WorkflowRuntimeError::ToolRetryExhausted {
@@ -1080,6 +2494,9 @@ struct RuntimeScope {
     workflow_input: Value,
     node_outputs: BTreeMap<String, Value>,
     loop_iterations: HashMap<String, u32>,
+    debounce_last_seen: HashMap<String, usize>,
+    throttle_last_pass: HashMap<String, usize>,
+    cache_entries: BTreeMap<String, Value>,
     last_llm_output: Option<String>,
     last_tool_output: Option<Value>,
 }
@@ -1090,6 +2507,9 @@ impl RuntimeScope {
             workflow_input,
             node_outputs: BTreeMap::new(),
             loop_iterations: HashMap::new(),
+            debounce_last_seen: HashMap::new(),
+            throttle_last_pass: HashMap::new(),
+            cache_entries: BTreeMap::new(),
             last_llm_output: None,
             last_tool_output: None,
         }
@@ -1098,7 +2518,10 @@ impl RuntimeScope {
     fn scoped_input(&self, capability: ScopeCapability) -> Result<Value, ScopeAccessError> {
         if !matches!(
             capability,
-            ScopeCapability::LlmRead | ScopeCapability::ToolRead | ScopeCapability::ConditionRead
+            ScopeCapability::LlmRead
+                | ScopeCapability::ToolRead
+                | ScopeCapability::ConditionRead
+                | ScopeCapability::MapRead
         ) {
             return Err(ScopeAccessError::ReadDenied {
                 capability: capability.as_str(),
@@ -1181,6 +2604,29 @@ impl RuntimeScope {
         Ok(())
     }
 
+    fn record_node_output(
+        &mut self,
+        node_id: &str,
+        output: Value,
+        capability: ScopeCapability,
+    ) -> Result<(), ScopeAccessError> {
+        if !matches!(
+            capability,
+            ScopeCapability::MapWrite | ScopeCapability::ReduceWrite
+        ) {
+            return Err(ScopeAccessError::WriteDenied {
+                capability: capability.as_str(),
+            });
+        }
+
+        self.node_outputs.insert(node_id.to_string(), output);
+        Ok(())
+    }
+
+    fn node_output(&self, node_id: &str) -> Option<&Value> {
+        self.node_outputs.get(node_id)
+    }
+
     fn loop_iteration(&self, node_id: &str) -> u32 {
         self.loop_iterations.get(node_id).copied().unwrap_or(0)
     }
@@ -1191,6 +2637,38 @@ impl RuntimeScope {
 
     fn clear_loop_iteration(&mut self, node_id: &str) {
         self.loop_iterations.remove(node_id);
+    }
+
+    fn debounce(&mut self, node_id: &str, key: &str, step: usize, window_steps: u32) -> bool {
+        let namespaced = format!("{node_id}:{key}");
+        let window = window_steps as usize;
+        let suppressed = self
+            .debounce_last_seen
+            .get(&namespaced)
+            .is_some_and(|last| step.saturating_sub(*last) < window);
+        self.debounce_last_seen.insert(namespaced, step);
+        suppressed
+    }
+
+    fn throttle(&mut self, node_id: &str, key: &str, step: usize, window_steps: u32) -> bool {
+        let namespaced = format!("{node_id}:{key}");
+        let window = window_steps as usize;
+        let throttled = self
+            .throttle_last_pass
+            .get(&namespaced)
+            .is_some_and(|last| step.saturating_sub(*last) < window);
+        if !throttled {
+            self.throttle_last_pass.insert(namespaced, step);
+        }
+        throttled
+    }
+
+    fn put_cache(&mut self, key: &str, value: Value) {
+        self.cache_entries.insert(key.to_string(), value);
+    }
+
+    fn cache_value(&self, key: &str) -> Option<&Value> {
+        self.cache_entries.get(key)
     }
 }
 
@@ -1239,8 +2717,142 @@ fn next_node_id(data: &NodeExecutionData) -> Option<String> {
         | NodeExecutionData::Llm { next, .. }
         | NodeExecutionData::Tool { next, .. }
         | NodeExecutionData::Condition { next, .. }
-        | NodeExecutionData::Loop { next, .. } => Some(next.clone()),
+        | NodeExecutionData::Debounce { next, .. }
+        | NodeExecutionData::Throttle { next, .. }
+        | NodeExecutionData::RetryCompensate { next, .. }
+        | NodeExecutionData::HumanInTheLoop { next, .. }
+        | NodeExecutionData::CacheRead { next, .. }
+        | NodeExecutionData::CacheWrite { next, .. }
+        | NodeExecutionData::EventTrigger { next, .. }
+        | NodeExecutionData::Router { next, .. }
+        | NodeExecutionData::Transform { next, .. }
+        | NodeExecutionData::Loop { next, .. }
+        | NodeExecutionData::Subgraph { next, .. }
+        | NodeExecutionData::Batch { next, .. }
+        | NodeExecutionData::Filter { next, .. }
+        | NodeExecutionData::Parallel { next, .. }
+        | NodeExecutionData::Merge { next, .. }
+        | NodeExecutionData::Map { next, .. }
+        | NodeExecutionData::Reduce { next, .. } => Some(next.clone()),
         NodeExecutionData::End => None,
+    }
+}
+
+fn resolve_path<'a>(scope: &'a Value, path: &str) -> Option<&'a Value> {
+    let mut current = scope;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            continue;
+        }
+        current = current.get(segment)?;
+    }
+    Some(current)
+}
+
+fn resolve_string_path(scope: &Value, path: &str) -> Option<String> {
+    resolve_path(scope, path)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn evaluate_human_decision(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(flag) => Some(*flag),
+        Value::String(text) => {
+            let normalized = text.trim().to_ascii_lowercase();
+            match normalized.as_str() {
+                "approve" | "approved" | "yes" | "true" => Some(true),
+                "reject" | "rejected" | "no" | "false" => Some(false),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+fn evaluate_transform_expression(expression: &str, scope: &Value) -> Result<Value, String> {
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return Err("expression is empty".to_string());
+    }
+
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        return Ok(value);
+    }
+
+    let path = trimmed.strip_prefix("$.").unwrap_or(trimmed);
+    resolve_path(scope, path)
+        .cloned()
+        .ok_or_else(|| format!("path '{path}' not found in scoped input"))
+}
+
+fn map_item_scoped_input(base_scope: &Value, item: &Value, index: usize) -> Value {
+    let mut object = match base_scope {
+        Value::Object(map) => map.clone(),
+        _ => Map::new(),
+    };
+    object.insert("map_item".to_string(), item.clone());
+    object.insert("map_index".to_string(), Value::from(index as u64));
+    Value::Object(object)
+}
+
+fn enforce_expression_scope_budget(
+    node_id: &str,
+    scoped_input: &Value,
+    max_expression_scope_bytes: usize,
+) -> Result<(), WorkflowRuntimeError> {
+    let size = serde_json::to_vec(scoped_input)
+        .map(|bytes| bytes.len())
+        .unwrap_or(max_expression_scope_bytes.saturating_add(1));
+    if size > max_expression_scope_bytes {
+        return Err(WorkflowRuntimeError::ExpressionScopeLimitExceeded {
+            node_id: node_id.to_string(),
+            actual_bytes: size,
+            limit_bytes: max_expression_scope_bytes,
+        });
+    }
+    Ok(())
+}
+
+fn reduce_value(
+    node_id: &str,
+    source: &str,
+    operation: &ReduceOperation,
+    source_value: Value,
+) -> Result<Value, WorkflowRuntimeError> {
+    let items =
+        source_value
+            .as_array()
+            .ok_or_else(|| WorkflowRuntimeError::InvalidReduceInput {
+                node_id: node_id.to_string(),
+                source_node: source.to_string(),
+                reason: "expected source output to be an array".to_string(),
+            })?;
+
+    match operation {
+        ReduceOperation::Count => Ok(Value::from(items.len() as u64)),
+        ReduceOperation::Sum => {
+            let mut sum = 0.0f64;
+            for value in items {
+                let number =
+                    value
+                        .as_f64()
+                        .ok_or_else(|| WorkflowRuntimeError::InvalidReduceInput {
+                            node_id: node_id.to_string(),
+                            source_node: source.to_string(),
+                            reason: "sum operation requires numeric array values".to_string(),
+                        })?;
+                sum += number;
+            }
+            let number = serde_json::Number::from_f64(sum).ok_or_else(|| {
+                WorkflowRuntimeError::InvalidReduceInput {
+                    node_id: node_id.to_string(),
+                    source_node: source.to_string(),
+                    reason: "sum produced non-finite value".to_string(),
+                }
+            })?;
+            Ok(Value::Number(number))
+        }
     }
 }
 
@@ -1255,7 +2867,7 @@ mod tests {
     use tokio::time::sleep;
 
     use super::*;
-    use crate::ir::{Node, NodeKind, WorkflowDefinition};
+    use crate::ir::{MergePolicy, Node, NodeKind, ReduceOperation, WorkflowDefinition};
 
     struct MockLlmExecutor {
         output: String,
@@ -1340,6 +2952,46 @@ mod tests {
         ) -> Result<Value, ToolExecutionError> {
             let next = self.value.fetch_add(1, Ordering::Relaxed) + 1;
             Ok(json!(next))
+        }
+    }
+
+    struct EchoInputToolExecutor;
+
+    #[async_trait]
+    impl ToolExecutor for EchoInputToolExecutor {
+        async fn execute_tool(
+            &self,
+            input: ToolExecutionInput,
+        ) -> Result<Value, ToolExecutionError> {
+            Ok(input.input)
+        }
+    }
+
+    struct RetryCompensateToolExecutor {
+        attempts: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for RetryCompensateToolExecutor {
+        async fn execute_tool(
+            &self,
+            input: ToolExecutionInput,
+        ) -> Result<Value, ToolExecutionError> {
+            match input.tool.as_str() {
+                "unstable_primary" => {
+                    let current = self.attempts.fetch_add(1, Ordering::Relaxed) + 1;
+                    if current <= 1 {
+                        Err(ToolExecutionError::Failed("primary failed".to_string()))
+                    } else {
+                        Ok(json!({"primary_attempt": current}))
+                    }
+                }
+                "always_fail" => Err(ToolExecutionError::Failed("always fail".to_string())),
+                "compensate" => Ok(json!({"compensated": true})),
+                _ => Err(ToolExecutionError::NotFound {
+                    tool: input.tool.clone(),
+                }),
+            }
         }
     }
 
@@ -1458,6 +3110,248 @@ mod tests {
         }
     }
 
+    fn parallel_merge_workflow(policy: MergePolicy, quorum: Option<usize>) -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "parallel-merge".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "parallel".to_string(),
+                    },
+                },
+                Node {
+                    id: "parallel".to_string(),
+                    kind: NodeKind::Parallel {
+                        branches: vec!["tool_a".to_string(), "tool_b".to_string()],
+                        next: "merge".to_string(),
+                        max_in_flight: Some(2),
+                    },
+                },
+                Node {
+                    id: "tool_a".to_string(),
+                    kind: NodeKind::Tool {
+                        tool: "extract".to_string(),
+                        input: json!({"value": 1}),
+                        next: Some("end".to_string()),
+                    },
+                },
+                Node {
+                    id: "tool_b".to_string(),
+                    kind: NodeKind::Tool {
+                        tool: "extract".to_string(),
+                        input: json!({"value": 2}),
+                        next: Some("end".to_string()),
+                    },
+                },
+                Node {
+                    id: "merge".to_string(),
+                    kind: NodeKind::Merge {
+                        sources: vec!["tool_a".to_string(), "tool_b".to_string()],
+                        policy,
+                        quorum,
+                        next: "end".to_string(),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
+    fn map_reduce_workflow(operation: ReduceOperation) -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "map-reduce".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "map".to_string(),
+                    },
+                },
+                Node {
+                    id: "map".to_string(),
+                    kind: NodeKind::Map {
+                        tool: "counter".to_string(),
+                        items_path: "input.values".to_string(),
+                        next: "reduce".to_string(),
+                        max_in_flight: Some(3),
+                    },
+                },
+                Node {
+                    id: "reduce".to_string(),
+                    kind: NodeKind::Reduce {
+                        source: "map".to_string(),
+                        operation,
+                        next: "end".to_string(),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
+    fn debounce_and_throttle_workflow() -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "debounce-throttle".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "debounce_a".to_string(),
+                    },
+                },
+                Node {
+                    id: "debounce_a".to_string(),
+                    kind: NodeKind::Debounce {
+                        key_path: "input.key".to_string(),
+                        window_steps: 3,
+                        next: "debounce_a".to_string(),
+                        on_suppressed: Some("throttle_a".to_string()),
+                    },
+                },
+                Node {
+                    id: "throttle_a".to_string(),
+                    kind: NodeKind::Throttle {
+                        key_path: "input.key".to_string(),
+                        window_steps: 3,
+                        next: "throttle_a".to_string(),
+                        on_throttled: Some("end_throttled".to_string()),
+                    },
+                },
+                Node {
+                    id: "end_throttled".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
+    fn extended_nodes_workflow() -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "extended-nodes".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "event".to_string(),
+                    },
+                },
+                Node {
+                    id: "event".to_string(),
+                    kind: NodeKind::EventTrigger {
+                        event: "webhook".to_string(),
+                        event_path: "input.event_type".to_string(),
+                        next: "cache_write".to_string(),
+                        on_mismatch: Some("end_mismatch".to_string()),
+                    },
+                },
+                Node {
+                    id: "cache_write".to_string(),
+                    kind: NodeKind::CacheWrite {
+                        key_path: "input.cache_key".to_string(),
+                        value_path: "input.payload".to_string(),
+                        next: "cache_read".to_string(),
+                    },
+                },
+                Node {
+                    id: "cache_read".to_string(),
+                    kind: NodeKind::CacheRead {
+                        key_path: "input.cache_key".to_string(),
+                        next: "router".to_string(),
+                        on_miss: Some("end_miss".to_string()),
+                    },
+                },
+                Node {
+                    id: "router".to_string(),
+                    kind: NodeKind::Router {
+                        routes: vec![crate::ir::RouterRoute {
+                            when: "input.mode == 'manual'".to_string(),
+                            next: "human".to_string(),
+                        }],
+                        default: "transform".to_string(),
+                    },
+                },
+                Node {
+                    id: "human".to_string(),
+                    kind: NodeKind::HumanInTheLoop {
+                        decision_path: "input.approval".to_string(),
+                        response_path: Some("input.review_notes".to_string()),
+                        on_approve: "transform".to_string(),
+                        on_reject: "end_rejected".to_string(),
+                    },
+                },
+                Node {
+                    id: "transform".to_string(),
+                    kind: NodeKind::Transform {
+                        expression: "node_outputs.cache_read.value".to_string(),
+                        next: "end".to_string(),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_mismatch".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_miss".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_rejected".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
+    fn retry_compensate_workflow(primary_tool: &str) -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "retry-compensate".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "retry_comp".to_string(),
+                    },
+                },
+                Node {
+                    id: "retry_comp".to_string(),
+                    kind: NodeKind::RetryCompensate {
+                        tool: primary_tool.to_string(),
+                        input: json!({"job": "run"}),
+                        max_retries: 1,
+                        compensate_tool: "compensate".to_string(),
+                        compensate_input: json!({"job": "rollback"}),
+                        next: "end".to_string(),
+                        on_compensated: Some("end_compensated".to_string()),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_compensated".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
     #[tokio::test]
     async fn executes_happy_path_linear_flow() {
         let llm = MockLlmExecutor {
@@ -1538,6 +3432,49 @@ mod tests {
             .expect("conditional workflow should succeed");
 
         assert_eq!(result.terminal_node_id, "end_true");
+    }
+
+    #[tokio::test]
+    async fn executes_conditional_false_branch() {
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "conditional-false".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "condition".to_string(),
+                    },
+                },
+                Node {
+                    id: "condition".to_string(),
+                    kind: NodeKind::Condition {
+                        expression: "input.approved".to_string(),
+                        on_true: "end_true".to_string(),
+                        on_false: "end_false".to_string(),
+                    },
+                },
+                Node {
+                    id: "end_true".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_false".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let runtime = WorkflowRuntime::new(workflow, &llm, None, WorkflowRuntimeOptions::default());
+
+        let result = runtime
+            .execute(json!({"approved": false}), None)
+            .await
+            .expect("conditional workflow should take false branch");
+
+        assert_eq!(result.terminal_node_id, "end_false");
     }
 
     #[tokio::test]
@@ -1795,10 +3732,13 @@ mod tests {
             .expect("loop workflow should terminate at end");
 
         assert_eq!(result.terminal_node_id, "end");
-        assert!(result
-            .node_executions
-            .iter()
-            .any(|step| matches!(step.data, NodeExecutionData::Loop { evaluated: false, .. })));
+        assert!(result.node_executions.iter().any(|step| matches!(
+            step.data,
+            NodeExecutionData::Loop {
+                evaluated: false,
+                ..
+            }
+        )));
     }
 
     #[tokio::test]
@@ -1832,6 +3772,512 @@ mod tests {
                 max_iterations: 2
             } if node_id == "loop"
         ));
+    }
+
+    #[tokio::test]
+    async fn executes_parallel_then_merge_all() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tool = EchoInputToolExecutor;
+        let runtime = WorkflowRuntime::new(
+            parallel_merge_workflow(MergePolicy::All, None),
+            &llm,
+            Some(&tool),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({}), None)
+            .await
+            .expect("parallel merge workflow should succeed");
+
+        assert_eq!(result.terminal_node_id, "end");
+        assert_eq!(
+            result.node_outputs.get("tool_a"),
+            Some(&json!({"value": 1}))
+        );
+        assert_eq!(
+            result.node_outputs.get("tool_b"),
+            Some(&json!({"value": 2}))
+        );
+        assert_eq!(
+            result.node_outputs.get("merge"),
+            Some(&json!([{"value": 1}, {"value": 2}]))
+        );
+    }
+
+    #[tokio::test]
+    async fn executes_map_reduce_sum() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tool = EchoInputToolExecutor;
+        let runtime = WorkflowRuntime::new(
+            map_reduce_workflow(ReduceOperation::Sum),
+            &llm,
+            Some(&tool),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({"values": [1, 2, 3]}), None)
+            .await
+            .expect("map reduce workflow should succeed");
+
+        assert_eq!(result.node_outputs.get("map"), Some(&json!([1, 2, 3])));
+        assert_eq!(result.node_outputs.get("reduce"), Some(&json!(6.0)));
+    }
+
+    #[tokio::test]
+    async fn fails_map_when_items_path_is_not_array() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tool = EchoInputToolExecutor;
+        let runtime = WorkflowRuntime::new(
+            map_reduce_workflow(ReduceOperation::Count),
+            &llm,
+            Some(&tool),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let error = runtime
+            .execute(json!({"values": {"not": "array"}}), None)
+            .await
+            .expect_err("map node should fail on non-array path");
+
+        assert!(matches!(
+            error,
+            WorkflowRuntimeError::MapItemsNotArray {
+                node_id,
+                items_path
+            } if node_id == "map" && items_path == "input.values"
+        ));
+    }
+
+    #[tokio::test]
+    async fn executes_subgraph_via_registry() {
+        let llm = MockLlmExecutor {
+            output: "nested-ok".to_string(),
+        };
+        let subgraph = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "child".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "llm".to_string(),
+                    },
+                },
+                Node {
+                    id: "llm".to_string(),
+                    kind: NodeKind::Llm {
+                        model: "gpt-4".to_string(),
+                        prompt: "child".to_string(),
+                        next: Some("end".to_string()),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+        let parent = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "parent".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "sub".to_string(),
+                    },
+                },
+                Node {
+                    id: "sub".to_string(),
+                    kind: NodeKind::Subgraph {
+                        graph: "child_graph".to_string(),
+                        next: Some("end".to_string()),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+
+        let mut registry = BTreeMap::new();
+        registry.insert("child_graph".to_string(), subgraph);
+        let runtime = WorkflowRuntime::new(
+            parent,
+            &llm,
+            None,
+            WorkflowRuntimeOptions {
+                subgraph_registry: registry,
+                ..WorkflowRuntimeOptions::default()
+            },
+        );
+
+        let result = runtime
+            .execute(json!({"approved": true}), None)
+            .await
+            .expect("subgraph workflow should execute");
+
+        assert_eq!(result.terminal_node_id, "end");
+        assert!(matches!(
+            result.node_executions[1].data,
+            NodeExecutionData::Subgraph { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn executes_batch_and_filter_nodes() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "batch-filter".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "batch".to_string(),
+                    },
+                },
+                Node {
+                    id: "batch".to_string(),
+                    kind: NodeKind::Batch {
+                        items_path: "input.items".to_string(),
+                        next: "filter".to_string(),
+                    },
+                },
+                Node {
+                    id: "filter".to_string(),
+                    kind: NodeKind::Filter {
+                        items_path: "node_outputs.batch".to_string(),
+                        expression: "item.keep == true".to_string(),
+                        next: "end".to_string(),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+
+        let runtime = WorkflowRuntime::new(workflow, &llm, None, WorkflowRuntimeOptions::default());
+        let result = runtime
+            .execute(
+                json!({
+                    "items": [
+                        {"id": 1, "keep": true},
+                        {"id": 2, "keep": false},
+                        {"id": 3, "keep": true}
+                    ]
+                }),
+                None,
+            )
+            .await
+            .expect("batch/filter workflow should execute");
+
+        assert_eq!(
+            result
+                .node_outputs
+                .get("batch")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(3)
+        );
+        assert_eq!(
+            result
+                .node_outputs
+                .get("filter")
+                .and_then(Value::as_array)
+                .map(Vec::len),
+            Some(2)
+        );
+    }
+
+    #[tokio::test]
+    async fn executes_debounce_and_throttle_nodes() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let runtime = WorkflowRuntime::new(
+            debounce_and_throttle_workflow(),
+            &llm,
+            None,
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({"key": "k1"}), None)
+            .await
+            .expect("debounce/throttle workflow should execute");
+
+        assert_eq!(result.terminal_node_id, "end_throttled");
+        assert_eq!(
+            result.node_outputs.get("debounce_a"),
+            Some(&json!({"key": "k1", "suppressed": true}))
+        );
+        assert_eq!(
+            result.node_outputs.get("throttle_a"),
+            Some(&json!({"key": "k1", "throttled": true}))
+        );
+    }
+
+    #[tokio::test]
+    async fn executes_retry_compensate_successfully_without_compensation() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tools = RetryCompensateToolExecutor {
+            attempts: AtomicUsize::new(0),
+        };
+        let runtime = WorkflowRuntime::new(
+            retry_compensate_workflow("unstable_primary"),
+            &llm,
+            Some(&tools),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({}), None)
+            .await
+            .expect("retry_compensate should recover by retry");
+
+        assert_eq!(result.terminal_node_id, "end");
+        assert_eq!(tools.attempts.load(Ordering::Relaxed), 2);
+        assert_eq!(result.retry_events.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn executes_retry_compensate_with_compensation_route() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tools = RetryCompensateToolExecutor {
+            attempts: AtomicUsize::new(0),
+        };
+        let runtime = WorkflowRuntime::new(
+            retry_compensate_workflow("always_fail"),
+            &llm,
+            Some(&tools),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({}), None)
+            .await
+            .expect("retry_compensate should use compensation");
+
+        assert_eq!(result.terminal_node_id, "end_compensated");
+        assert_eq!(result.retry_events.len(), 1);
+        assert_eq!(
+            result
+                .node_outputs
+                .get("retry_comp")
+                .and_then(|value| value.get("status")),
+            Some(&json!("compensated"))
+        );
+    }
+
+    #[tokio::test]
+    async fn executes_event_cache_router_human_transform_nodes() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let runtime = WorkflowRuntime::new(
+            extended_nodes_workflow(),
+            &llm,
+            None,
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(
+                json!({
+                    "event_type": "webhook",
+                    "cache_key": "customer-1",
+                    "payload": {"value": 99},
+                    "mode": "manual",
+                    "approval": "approve",
+                    "review_notes": {"editor": "ops"}
+                }),
+                None,
+            )
+            .await
+            .expect("extended nodes workflow should execute");
+
+        assert_eq!(result.terminal_node_id, "end");
+        assert_eq!(
+            result.node_outputs.get("cache_read"),
+            Some(&json!({"key": "customer-1", "hit": true, "value": {"value": 99}}))
+        );
+        assert_eq!(
+            result.node_outputs.get("router"),
+            Some(&json!({"selected": "human"}))
+        );
+        assert_eq!(
+            result.node_outputs.get("transform"),
+            Some(&json!({"value": 99}))
+        );
+    }
+
+    #[tokio::test]
+    async fn routes_event_trigger_mismatch_to_fallback() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let runtime = WorkflowRuntime::new(
+            extended_nodes_workflow(),
+            &llm,
+            None,
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(
+                json!({
+                    "event_type": "cron",
+                    "cache_key": "customer-1",
+                    "payload": {"value": 99},
+                    "mode": "manual",
+                    "approval": "approve"
+                }),
+                None,
+            )
+            .await
+            .expect("event mismatch should route to fallback");
+
+        assert_eq!(result.terminal_node_id, "end_mismatch");
+    }
+
+    #[tokio::test]
+    async fn rejects_condition_when_expression_scope_exceeds_limit() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "scope-limit".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "condition".to_string(),
+                    },
+                },
+                Node {
+                    id: "condition".to_string(),
+                    kind: NodeKind::Condition {
+                        expression: "input.flag == true".to_string(),
+                        on_true: "end".to_string(),
+                        on_false: "end".to_string(),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+
+        let runtime = WorkflowRuntime::new(
+            workflow,
+            &llm,
+            None,
+            WorkflowRuntimeOptions {
+                security_limits: RuntimeSecurityLimits {
+                    max_expression_scope_bytes: 32,
+                    ..RuntimeSecurityLimits::default()
+                },
+                ..WorkflowRuntimeOptions::default()
+            },
+        );
+
+        let error = runtime
+            .execute(
+                json!({"flag": true, "payload": "this-is-too-large-for-limit"}),
+                None,
+            )
+            .await
+            .expect_err("condition should fail when scope budget is exceeded");
+        assert!(matches!(
+            error,
+            WorkflowRuntimeError::ExpressionScopeLimitExceeded { node_id, .. }
+                if node_id == "condition"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rejects_map_when_item_count_exceeds_limit() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tool = EchoInputToolExecutor;
+        let runtime = WorkflowRuntime::new(
+            map_reduce_workflow(ReduceOperation::Count),
+            &llm,
+            Some(&tool),
+            WorkflowRuntimeOptions {
+                security_limits: RuntimeSecurityLimits {
+                    max_map_items: 2,
+                    ..RuntimeSecurityLimits::default()
+                },
+                ..WorkflowRuntimeOptions::default()
+            },
+        );
+
+        let error = runtime
+            .execute(json!({"values": [1, 2, 3]}), None)
+            .await
+            .expect_err("map should fail when item guard is exceeded");
+        assert!(matches!(
+            error,
+            WorkflowRuntimeError::MapItemLimitExceeded {
+                node_id,
+                actual_items: 3,
+                max_items: 2,
+            } if node_id == "map"
+        ));
+    }
+
+    #[tokio::test]
+    async fn resumes_from_checkpoint() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let tool = MockToolExecutor {
+            output: json!({"ok": true}),
+            fail: false,
+        };
+        let runtime = WorkflowRuntime::new(
+            linear_workflow(),
+            &llm,
+            Some(&tool),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let checkpoint = WorkflowCheckpoint {
+            run_id: "run-1".to_string(),
+            workflow_name: "linear".to_string(),
+            step: 2,
+            next_node_id: "tool".to_string(),
+            scope_snapshot: json!({"input": {"request_id": "r-resume"}}),
+        };
+
+        let resumed = runtime
+            .execute_resume_from_failure(&checkpoint, None)
+            .await
+            .expect("resume should continue from checkpoint node");
+        assert_eq!(resumed.terminal_node_id, "end");
+        assert_eq!(resumed.node_executions[0].node_id, "tool");
     }
 
     #[test]

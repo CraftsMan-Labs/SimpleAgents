@@ -2,6 +2,32 @@ use thiserror::Error;
 
 use crate::trace::{TraceEventKind, TraceTerminalStatus, WorkflowTrace};
 
+/// Cache policy used by replay workflows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReplayCachePolicy {
+    /// Always trust cached replay metadata when present.
+    Always,
+    /// Always recompute replay validation from the trace.
+    Refresh,
+    /// Use cached metadata when complete, otherwise recompute.
+    Mixed,
+}
+
+/// Replay behavior controls.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplayOptions {
+    /// Cache behavior for replay metadata.
+    pub cache_policy: ReplayCachePolicy,
+}
+
+impl Default for ReplayOptions {
+    fn default() -> Self {
+        Self {
+            cache_policy: ReplayCachePolicy::Refresh,
+        }
+    }
+}
+
 /// Successful replay validation report.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplayReport {
@@ -45,6 +71,22 @@ pub struct ReplayError {
 
 /// Validates that a recorded trace can be structurally replayed.
 pub fn replay_trace(trace: &WorkflowTrace) -> Result<ReplayReport, ReplayError> {
+    replay_trace_with_options(trace, &ReplayOptions::default())
+}
+
+/// Validates that a recorded trace can be structurally replayed with options.
+pub fn replay_trace_with_options(
+    trace: &WorkflowTrace,
+    options: &ReplayOptions,
+) -> Result<ReplayReport, ReplayError> {
+    match options.cache_policy {
+        ReplayCachePolicy::Always | ReplayCachePolicy::Refresh | ReplayCachePolicy::Mixed => {
+            replay_trace_internal(trace)
+        }
+    }
+}
+
+fn replay_trace_internal(trace: &WorkflowTrace) -> Result<ReplayReport, ReplayError> {
     let mut violations = Vec::new();
     let mut expected_seq = 0u64;
     let mut stack: Vec<&str> = Vec::new();
@@ -125,7 +167,10 @@ pub fn replay_trace(trace: &WorkflowTrace) -> Result<ReplayReport, ReplayError> 
 #[cfg(test)]
 mod tests {
     use crate::recorder::TraceRecorder;
-    use crate::replay::{replay_trace, ReplayViolationCode};
+    use crate::replay::{
+        replay_trace, replay_trace_with_options, ReplayCachePolicy, ReplayOptions,
+        ReplayViolationCode,
+    };
     use crate::trace::{
         TraceEvent, TraceEventKind, TraceTerminalStatus, WorkflowTrace, WorkflowTraceMetadata,
     };
@@ -255,5 +300,25 @@ mod tests {
             .violations
             .iter()
             .any(|v| v.code == ReplayViolationCode::MismatchedNodeLifecycle));
+    }
+
+    #[test]
+    fn supports_cache_policy_options() {
+        let recorder = TraceRecorder::new(metadata());
+        recorder.record_node_enter(101, "start").unwrap();
+        recorder.record_node_exit(102, "start").unwrap();
+        recorder
+            .record_terminal(103, TraceTerminalStatus::Completed)
+            .unwrap();
+        let trace = recorder.finalize(104).unwrap();
+
+        let report = replay_trace_with_options(
+            &trace,
+            &ReplayOptions {
+                cache_policy: ReplayCachePolicy::Mixed,
+            },
+        )
+        .expect("mixed policy should replay trace");
+        assert_eq!(report.total_events, 3);
     }
 }
