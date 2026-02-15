@@ -67,7 +67,9 @@ See runnable example: `bindings/go/examples/client/main.go`.
 ## API summary
 
 - `NewClientFromEnv(provider string) (*Client, error)`
-- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (prompt API)
+- `(*Client).CompletePrompt(ctx, model, prompt, maxTokens, temperature)` (canonical prompt API)
+- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (compatibility alias)
 - `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
+- `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
 - `(*Client).Complete(...)` (backward-compatible prompt helper)
 - `(*Client).Close()`

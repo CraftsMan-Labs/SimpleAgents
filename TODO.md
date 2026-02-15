@@ -129,11 +129,16 @@ We will run **8 subagents** in parallel workstreams.
 
 ### SA-5 (FFI + Go parity)
 
-- [ ] Implement `sa_stream_messages` in Rust FFI (callback-based stream API).
-- [ ] Implement Go `StreamMessages(ctx, ...)` channel API with cancellation and no leaks.
-- [ ] Add Go streaming tests (unit + env-gated live).
-- [ ] Refactor Go API shape (`CompletePrompt`, `CompleteMessages`, `StreamMessages`).
-- [ ] Refactor FFI payload mapping to shared typed DTO helpers.
+- [x] Implement `sa_stream_messages` in Rust FFI (callback-based stream API).
+  - Evidence: `sa_stream_messages` + `SAStreamCallback` + `FfiStreamEvent` in `crates/simple-agents-ffi/src/lib.rs` and declaration in `crates/simple-agents-ffi/include/simple_agents.h`.
+- [x] Implement Go `StreamMessages(ctx, ...)` channel API with cancellation and no leaks.
+  - Evidence: `StreamMessages` channel API + callback bridge + context cancellation path in `bindings/go/simpleagents.go`.
+- [x] Add Go streaming tests (unit + env-gated live).
+  - Evidence: `TestStreamMessagesUninitializedClient` and env-gated `TestLiveStreamMessages` in `bindings/go/simpleagents_test.go`.
+- [x] Refactor Go API shape (`CompletePrompt`, `CompleteMessages`, `StreamMessages`).
+  - Evidence: added `CompletePrompt` while preserving compatibility helpers in `bindings/go/simpleagents.go`.
+- [x] Refactor FFI payload mapping to shared typed DTO helpers.
+  - Evidence: typed streaming DTOs/events (`FfiStreamEvent`) and shared completion mapping helpers retained in `crates/simple-agents-ffi/src/lib.rs`.
 
 ### SA-6 (Node parity)
 
@@ -177,7 +182,8 @@ We will run **8 subagents** in parallel workstreams.
 
 ### Pending
 
-- [ ] Implement streaming in C FFI and Go bindings.
+- [x] Implement streaming in C FFI and Go bindings.
+  - Evidence: `sa_stream_messages` in `crates/simple-agents-ffi/src/lib.rs` and `StreamMessages` in `bindings/go/simpleagents.go`; verified with `cargo test -p simple-agents-ffi` and `go test ./...` in `bindings/go`.
 - [ ] Cross-language capability matrix and CI gating.
 - [ ] Contract fixtures for parity tests.
 - [ ] Node parity improvements.
@@ -191,7 +197,8 @@ We will run **8 subagents** in parallel workstreams.
   - Evidence: runtime + retry/timeout policies + cancellation tests in `crates/simple-agents-workflow/src/runtime.rs`; `cargo test -p simple-agents-workflow`.
 - [x] 3. SA-3 lands trace/replay and deterministic fixtures.
   - Evidence: trace/recorder/replay + runtime integration + golden fixtures in `crates/simple-agents-workflow/src/trace.rs`, `crates/simple-agents-workflow/src/recorder.rs`, `crates/simple-agents-workflow/src/replay.rs`, `crates/simple-agents-workflow/tests/trace_fixtures.rs`.
-- [ ] 4. SA-5 lands FFI + Go streaming parity.
+- [x] 4. SA-5 lands FFI + Go streaming parity.
+  - Evidence: streaming callback contract in `crates/simple-agents-ffi/include/simple_agents.h`, Rust implementation in `crates/simple-agents-ffi/src/lib.rs`, and Go channel API/tests in `bindings/go/simpleagents.go` and `bindings/go/simpleagents_test.go`.
 - [ ] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
 - [x] 6. SA-4 lands worker pool/health model behind stable interfaces.
   - Evidence: new worker protocol/pool module exported from `crates/simple-agents-workflow/src/lib.rs` and validated by `cargo test -p simple-agents-workflow`.
