@@ -38,6 +38,7 @@ pub mod scheduler;
 pub mod state;
 pub mod trace;
 pub mod validation;
+pub mod visualize;
 pub mod worker;
 pub mod worker_adapter;
 
@@ -74,6 +75,7 @@ pub use trace::{
 pub use validation::{
     validate_and_normalize, Diagnostic, DiagnosticCode, Severity, ValidationError, ValidationErrors,
 };
+pub use visualize::workflow_to_mermaid;
 pub use worker::{
     CircuitBreakerHooks, WorkerErrorCode, WorkerHandler, WorkerHealth, WorkerHealthStatus,
     WorkerOperation, WorkerPool, WorkerPoolClient, WorkerPoolError, WorkerPoolOptions,
