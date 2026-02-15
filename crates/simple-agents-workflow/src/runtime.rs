@@ -65,7 +65,7 @@ pub enum WorkflowReplayMode {
 }
 
 /// Retry and timeout policy for runtime-owned node execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NodeExecutionPolicy {
     /// Per-attempt timeout. `None` disables timeout enforcement.
     pub timeout: Option<Duration>,
@@ -96,15 +96,6 @@ impl Default for RuntimeSecurityLimits {
             max_map_items: 4096,
             max_parallel_branches: 128,
             max_filter_items: 8192,
-        }
-    }
-}
-
-impl Default for NodeExecutionPolicy {
-    fn default() -> Self {
-        Self {
-            timeout: None,
-            max_retries: 0,
         }
     }
 }
@@ -1067,7 +1058,7 @@ impl<'a> WorkflowRuntime<'a> {
                 });
             }
 
-            current_id = next_node.ok_or_else(|| WorkflowRuntimeError::MissingNextTransition {
+            current_id = next_node.ok_or(WorkflowRuntimeError::MissingNextTransition {
                 node_id: executed_node_id,
             })?;
         }
@@ -1138,16 +1129,23 @@ impl<'a> WorkflowRuntime<'a> {
                     }
                 })?;
 
+                let scoped_input = scope
+                    .scoped_input(ScopeCapability::ToolRead)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
                 let (tool_output, tool_retries) = self
-                    .execute_tool_with_policy(
+                    .execute_tool_with_policy_for_scope(ToolPolicyRequest {
                         step,
                         node,
                         tool,
                         input,
                         executor,
-                        scope,
+                        scoped_input,
                         cancellation,
-                    )
+                    })
                     .await?;
                 retry_events.extend(tool_retries);
 
@@ -1965,15 +1963,15 @@ impl<'a> WorkflowRuntime<'a> {
                         async move {
                             let item_scope = map_item_scoped_input(&scoped_input, &item, index);
                             let (output, retries) = self
-                                .execute_tool_with_policy_for_scope(
+                                .execute_tool_with_policy_for_scope(ToolPolicyRequest {
                                     step,
-                                    &map_node,
+                                    node: &map_node,
                                     tool,
-                                    &item,
+                                    input: &item,
                                     executor,
-                                    item_scope,
+                                    scoped_input: item_scope,
                                     cancellation,
-                                )
+                                })
                                 .await?;
                             Ok::<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError>((
                                 output, retries,
@@ -2284,15 +2282,15 @@ impl<'a> WorkflowRuntime<'a> {
                     }
                 })?;
                 let (output, retries) = self
-                    .execute_tool_with_policy_for_scope(
+                    .execute_tool_with_policy_for_scope(ToolPolicyRequest {
                         step,
-                        branch_node,
+                        node: branch_node,
                         tool,
                         input,
                         executor,
                         scoped_input,
                         cancellation,
-                    )
+                    })
                     .await?;
                 Ok((branch_node.id.clone(), output, retries))
             }
@@ -2381,24 +2379,11 @@ impl<'a> WorkflowRuntime<'a> {
         unreachable!("llm attempts loop always returns")
     }
 
-    async fn execute_tool_with_policy(
+    async fn execute_tool_with_policy_for_scope(
         &self,
-        step: usize,
-        node: &Node,
-        tool: &str,
-        input: &Value,
-        executor: &dyn ToolExecutor,
-        scope: &RuntimeScope,
-        cancellation: Option<&dyn CancellationSignal>,
+        request: ToolPolicyRequest<'_>,
     ) -> Result<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
-        let scoped_input = scope
-            .scoped_input(ScopeCapability::ToolRead)
-            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                node_id: node.id.clone(),
-                source,
-            })?;
-
-        self.execute_tool_with_policy_for_scope(
+        let ToolPolicyRequest {
             step,
             node,
             tool,
@@ -2406,20 +2391,7 @@ impl<'a> WorkflowRuntime<'a> {
             executor,
             scoped_input,
             cancellation,
-        )
-        .await
-    }
-
-    async fn execute_tool_with_policy_for_scope(
-        &self,
-        step: usize,
-        node: &Node,
-        tool: &str,
-        input: &Value,
-        executor: &dyn ToolExecutor,
-        scoped_input: Value,
-        cancellation: Option<&dyn CancellationSignal>,
-    ) -> Result<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError> {
+        } = request;
         let max_attempts = self.options.tool_node_policy.max_retries.saturating_add(1);
         let mut retry_events = Vec::new();
 
@@ -2499,6 +2471,16 @@ struct RuntimeScope {
     cache_entries: BTreeMap<String, Value>,
     last_llm_output: Option<String>,
     last_tool_output: Option<Value>,
+}
+
+struct ToolPolicyRequest<'a> {
+    step: usize,
+    node: &'a Node,
+    tool: &'a str,
+    input: &'a Value,
+    executor: &'a dyn ToolExecutor,
+    scoped_input: Value,
+    cancellation: Option<&'a dyn CancellationSignal>,
 }
 
 impl RuntimeScope {
