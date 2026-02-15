@@ -5,6 +5,7 @@
 //! - Deterministic normalization helpers
 //! - Structural validation with actionable diagnostics
 //! - Runtime execution for the minimal node set
+//! - In-process worker protocol and bounded worker pool primitives
 //!
 //! # Example
 //!
@@ -30,6 +31,7 @@ pub mod replay;
 pub mod runtime;
 pub mod trace;
 pub mod validation;
+pub mod worker;
 
 pub use ir::{Node, NodeKind, WorkflowDefinition};
 pub use recorder::{TraceRecordError, TraceRecorder};
@@ -46,4 +48,9 @@ pub use trace::{
 };
 pub use validation::{
     validate_and_normalize, Diagnostic, DiagnosticCode, Severity, ValidationError, ValidationErrors,
+};
+pub use worker::{
+    CircuitBreakerHooks, WorkerErrorCode, WorkerHandler, WorkerHealth, WorkerHealthStatus,
+    WorkerOperation, WorkerPool, WorkerPoolError, WorkerPoolOptions, WorkerProtocolError,
+    WorkerRequest, WorkerResponse, WorkerResult,
 };
