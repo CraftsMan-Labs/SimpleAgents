@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python test-binding-contracts clippy fmt loc-report example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -49,6 +49,7 @@ help:
 	@echo "  make test-node             - Build Node addon then run node --test"
 	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
 	@echo "  make test-binding-contracts - Run cross-language contract gates"
+	@echo "  make test-binding-layers   - Run unit/contract/live test layers"
 	@echo ""
 	@echo "Publishing:"
 	@echo "  make publish-crates-dry    - Dry-run publish Rust crates"
@@ -77,6 +78,9 @@ test-python:
 
 test-binding-contracts:
 	./scripts/run-binding-contracts.sh
+
+test-binding-layers:
+	./scripts/run-binding-tests-layered.sh
 
 clippy:
 	cargo clippy --all-targets
