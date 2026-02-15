@@ -2,7 +2,7 @@ use std::ffi::CString;
 
 use simple_agents_ffi::{
     sa_client_free, sa_client_new_from_env, sa_complete, sa_complete_messages_json,
-    sa_last_error_message, sa_string_free, SAMessage,
+    sa_last_error_message, sa_stream_messages, sa_string_free, SAMessage,
 };
 
 #[test]
@@ -107,4 +107,26 @@ fn rejects_empty_messages() {
     };
     assert!(response.is_null());
     unsafe { sa_client_free(client) };
+}
+
+#[test]
+fn rejects_null_client_for_stream_messages() {
+    let response = unsafe {
+        sa_stream_messages(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            0,
+            0,
+            -1.0,
+            -1.0,
+            None,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(response, 0);
+
+    let err = sa_last_error_message();
+    assert!(!err.is_null());
+    unsafe { sa_string_free(err) };
 }

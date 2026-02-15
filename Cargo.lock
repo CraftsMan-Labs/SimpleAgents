@@ -2218,6 +2218,7 @@ name = "simple-agents-ffi"
 version = "0.2.6"
 dependencies = [
  "async-trait",
+ "futures-util",
  "serde",
  "serde_json",
  "simple-agent-type",
