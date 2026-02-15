@@ -37,4 +37,5 @@ features:
 - Extending internals: [Architecture](/ARCHITECTURE)
 - Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
 - Need help debugging setup/tests: [Troubleshooting](/TROUBLESHOOTING)
+- Workflow debugging views: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
 - Looking for a specific task: [Docs Map](/DOCS_MAP)

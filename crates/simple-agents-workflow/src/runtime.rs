@@ -301,12 +301,29 @@ pub struct WorkflowRunResult {
     pub node_executions: Vec<NodeExecution>,
     /// Ordered runtime events.
     pub events: Vec<WorkflowEvent>,
+    /// Retry diagnostics captured during node execution.
+    pub retry_events: Vec<WorkflowRetryEvent>,
     /// Node output map keyed by node id.
     pub node_outputs: BTreeMap<String, Value>,
     /// Optional deterministic trace captured during this run.
     pub trace: Option<WorkflowTrace>,
     /// Replay validation report when replay mode is enabled.
     pub replay_report: Option<ReplayReport>,
+}
+
+/// Captures one retry decision and the reason it occurred.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowRetryEvent {
+    /// Zero-based step index for the active node.
+    pub step: usize,
+    /// Node id that will be retried.
+    pub node_id: String,
+    /// Operation category (`llm` or `tool`).
+    pub operation: String,
+    /// Attempt that failed and triggered the retry.
+    pub failed_attempt: usize,
+    /// Human-readable retry reason.
+    pub reason: String,
 }
 
 /// Scope access capabilities used by runtime nodes.
@@ -541,6 +558,7 @@ impl<'a> WorkflowRuntime<'a> {
 
         let mut scope = RuntimeScope::new(input);
         let mut events = Vec::new();
+        let mut retry_events = Vec::new();
         let mut node_executions = Vec::new();
         let mut current_id = start_id;
 
@@ -564,7 +582,7 @@ impl<'a> WorkflowRuntime<'a> {
             }
 
             let execution_result = self
-                .execute_node(node, step, &mut scope, cancellation)
+                .execute_node(node, step, &mut scope, cancellation, &mut retry_events)
                 .await;
             let execution = match execution_result {
                 Ok(execution) => execution,
@@ -636,6 +654,7 @@ impl<'a> WorkflowRuntime<'a> {
                     terminal_node_id: executed_node_id,
                     node_executions,
                     events,
+                    retry_events,
                     node_outputs: scope.node_outputs,
                     trace,
                     replay_report,
@@ -658,6 +677,7 @@ impl<'a> WorkflowRuntime<'a> {
         step: usize,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
         match &node.kind {
             NodeKind::Start { next } => Ok(NodeExecution {
@@ -677,7 +697,15 @@ impl<'a> WorkflowRuntime<'a> {
                         })?;
 
                 let output = self
-                    .execute_llm_with_policy(node, model, prompt, scope, cancellation)
+                    .execute_llm_with_policy(
+                        step,
+                        node,
+                        model,
+                        prompt,
+                        scope,
+                        cancellation,
+                        retry_events,
+                    )
                     .await?;
 
                 scope
@@ -711,7 +739,16 @@ impl<'a> WorkflowRuntime<'a> {
                 })?;
 
                 let tool_output = self
-                    .execute_tool_with_policy(node, tool, input, executor, scope, cancellation)
+                    .execute_tool_with_policy(
+                        step,
+                        node,
+                        tool,
+                        input,
+                        executor,
+                        scope,
+                        cancellation,
+                        retry_events,
+                    )
                     .await?;
 
                 scope
@@ -785,11 +822,13 @@ impl<'a> WorkflowRuntime<'a> {
 
     async fn execute_llm_with_policy(
         &self,
+        step: usize,
         node: &Node,
         model: &str,
         prompt: &str,
         scope: &RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<LlmExecutionOutput, WorkflowRuntimeError> {
         let max_attempts = self.options.llm_node_policy.max_retries.saturating_add(1);
 
@@ -821,6 +860,17 @@ impl<'a> WorkflowRuntime<'a> {
                                 attempts: attempt,
                             });
                         }
+                        retry_events.push(WorkflowRetryEvent {
+                            step,
+                            node_id: node.id.clone(),
+                            operation: "llm".to_string(),
+                            failed_attempt: attempt,
+                            reason: format!(
+                                "attempt {} timed out after {} ms",
+                                attempt,
+                                timeout_duration.as_millis()
+                            ),
+                        });
                         check_cancelled(cancellation)?;
                         continue;
                     }
@@ -839,6 +889,13 @@ impl<'a> WorkflowRuntime<'a> {
                             last_error,
                         });
                     }
+                    retry_events.push(WorkflowRetryEvent {
+                        step,
+                        node_id: node.id.clone(),
+                        operation: "llm".to_string(),
+                        failed_attempt: attempt,
+                        reason: last_error.to_string(),
+                    });
                     check_cancelled(cancellation)?;
                 }
             }
@@ -849,12 +906,14 @@ impl<'a> WorkflowRuntime<'a> {
 
     async fn execute_tool_with_policy(
         &self,
+        step: usize,
         node: &Node,
         tool: &str,
         input: &Value,
         executor: &dyn ToolExecutor,
         scope: &RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<Value, WorkflowRuntimeError> {
         let max_attempts = self.options.tool_node_policy.max_retries.saturating_add(1);
 
@@ -886,6 +945,17 @@ impl<'a> WorkflowRuntime<'a> {
                                 attempts: attempt,
                             });
                         }
+                        retry_events.push(WorkflowRetryEvent {
+                            step,
+                            node_id: node.id.clone(),
+                            operation: "tool".to_string(),
+                            failed_attempt: attempt,
+                            reason: format!(
+                                "attempt {} timed out after {} ms",
+                                attempt,
+                                timeout_duration.as_millis()
+                            ),
+                        });
                         check_cancelled(cancellation)?;
                         continue;
                     }
@@ -904,6 +974,13 @@ impl<'a> WorkflowRuntime<'a> {
                             last_error,
                         });
                     }
+                    retry_events.push(WorkflowRetryEvent {
+                        step,
+                        node_id: node.id.clone(),
+                        operation: "tool".to_string(),
+                        failed_attempt: attempt,
+                        reason: last_error.to_string(),
+                    });
                     check_cancelled(cancellation)?;
                 }
             }
@@ -1354,6 +1431,7 @@ mod tests {
             Some(&json!({"status": "done"}))
         );
         assert_eq!(result.events.len(), 8);
+        assert!(result.retry_events.is_empty());
         assert!(result.trace.is_some());
         assert_eq!(result.replay_report, None);
     }
@@ -1484,6 +1562,8 @@ mod tests {
 
         assert_eq!(result.terminal_node_id, "end");
         assert_eq!(result.node_outputs.get("llm"), Some(&json!("recovered")));
+        assert_eq!(result.retry_events.len(), 1);
+        assert_eq!(result.retry_events[0].operation, "llm");
         assert_eq!(llm.calls.load(Ordering::Relaxed), 2);
     }
 
