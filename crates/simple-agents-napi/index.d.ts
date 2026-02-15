@@ -91,4 +91,5 @@ export declare class Client {
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
   stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
   streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
+  runEmailWorkflowYaml(workflowPath: string, emailText: string): any
 }

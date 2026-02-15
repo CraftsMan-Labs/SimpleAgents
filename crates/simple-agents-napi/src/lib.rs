@@ -23,6 +23,7 @@ use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, 
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
+use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -923,5 +924,33 @@ impl Client {
         };
 
         Ok(AsyncTask::new(task))
+    }
+
+    #[napi(ts_return_type = "any")]
+    pub fn run_email_workflow_yaml(
+        &self,
+        workflow_path: String,
+        email_text: String,
+    ) -> Result<JsonValue> {
+        if workflow_path.trim().is_empty() {
+            return Err(Error::from_reason(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+        if email_text.trim().is_empty() {
+            return Err(Error::from_reason("email_text cannot be empty".to_string()));
+        }
+
+        let output = self
+            .runtime
+            .block_on(run_email_workflow_yaml_file_with_client(
+                std::path::Path::new(workflow_path.as_str()),
+                email_text.as_str(),
+                &self.client,
+            ))
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+
+        serde_json::to_value(output)
+            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
     }
 }
