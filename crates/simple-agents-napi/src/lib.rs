@@ -185,6 +185,19 @@ pub struct JsToolCallFunction {
 }
 
 #[napi(object)]
+pub struct ToolCallResultFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+#[napi(object)]
+pub struct ToolCallResult {
+    pub id: String,
+    pub tool_type: String,
+    pub function: ToolCallResultFunction,
+}
+
+#[napi(object)]
 pub struct JsToolCall {
     pub id: String,
     pub tool_type: String,
@@ -213,7 +226,7 @@ pub struct CompletionResult {
     pub model: String,
     pub role: String,
     pub content: Option<String>,
-    pub tool_calls: Option<Vec<JsToolCall>>,
+    pub tool_calls: Option<Vec<ToolCallResult>>,
     pub finish_reason: Option<String>,
     pub usage: CompletionUsage,
     pub usage_available: bool,
@@ -232,6 +245,32 @@ pub struct StreamChunk {
     pub finish_reason: Option<String>,
     pub error: Option<String>,
     pub raw: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize)]
+pub struct StreamDelta {
+    pub id: String,
+    pub model: String,
+    pub index: u32,
+    pub role: Option<String>,
+    pub content: Option<String>,
+    pub finish_reason: Option<String>,
+    pub raw: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Serialize)]
+pub struct StreamErrorEvent {
+    pub message: String,
+}
+
+#[napi(object)]
+#[derive(Serialize)]
+pub struct StreamEvent {
+    pub event_type: String,
+    pub delta: Option<StreamDelta>,
+    pub error: Option<StreamErrorEvent>,
 }
 
 fn build_messages(input: Either<String, Vec<MessageInput>>) -> SaResult<Vec<Message>> {
@@ -351,12 +390,12 @@ fn role_to_str(role: Role) -> &'static str {
     }
 }
 
-impl From<ToolCall> for JsToolCall {
+impl From<ToolCall> for ToolCallResult {
     fn from(value: ToolCall) -> Self {
         Self {
             id: value.id,
             tool_type: tool_type_to_str(value.tool_type).to_string(),
-            function: JsToolCallFunction {
+            function: ToolCallResultFunction {
                 name: value.function.name,
                 arguments: value.function.arguments,
             },
@@ -396,7 +435,7 @@ impl CompletionResult {
         let content = choice.map(|c| c.message.content.clone());
         let tool_calls = choice
             .and_then(|c| c.message.tool_calls.clone())
-            .map(|calls| calls.into_iter().map(JsToolCall::from).collect());
+            .map(|calls| calls.into_iter().map(ToolCallResult::from).collect());
         let finish_reason = choice.map(|c| finish_reason_to_str(c.finish_reason).to_string());
         let usage = CompletionUsage::from(response.usage);
         let raw = serde_json::to_string(&response).ok();
@@ -457,6 +496,29 @@ fn chunk_to_stream_chunk(chunk: CompletionChunk, error: Option<String>) -> Strea
         content,
         finish_reason,
         error,
+        raw,
+    }
+}
+
+fn chunk_to_stream_delta(chunk: CompletionChunk) -> StreamDelta {
+    let raw = serde_json::to_string(&chunk).ok();
+    let choice = chunk.choices.first();
+    let content = choice.and_then(|c| c.delta.content.clone());
+    let finish_reason = choice
+        .and_then(|c| c.finish_reason)
+        .map(|fr| finish_reason_to_str(fr).to_string());
+    let role = choice
+        .and_then(|c| c.delta.role)
+        .map(|role| role_to_str(role).to_string());
+    let index = choice.map(|c| c.index).unwrap_or(0);
+
+    StreamDelta {
+        id: chunk.id,
+        model: chunk.model,
+        index,
+        role,
+        content,
+        finish_reason,
         raw,
     }
 }
@@ -526,6 +588,14 @@ pub struct StreamTask {
     on_chunk: ThreadsafeFunction<StreamChunk>,
 }
 
+pub struct StreamEventsTask {
+    runtime: Arc<Runtime>,
+    client: Arc<SimpleAgentsClient>,
+    request: CompletionRequest,
+    completion_options: CompletionOptions,
+    on_event: ThreadsafeFunction<StreamEvent>,
+}
+
 impl Task for StreamTask {
     type Output = CompletionResult;
     type JsValue = CompletionResult;
@@ -578,6 +648,117 @@ impl Task for StreamTask {
                         }
                     }
                 }
+            }
+            CompletionOutcome::Response(response) => {
+                return Ok(CompletionResult::from_response(
+                    response,
+                    started.elapsed().as_millis() as u64,
+                ))
+            }
+            CompletionOutcome::HealedJson(_) => {
+                return Err(Error::from_reason(
+                    "healed JSON responses are not yet supported in Node bindings".to_string(),
+                ))
+            }
+            CompletionOutcome::CoercedSchema(_) => {
+                return Err(Error::from_reason(
+                    "schema responses are not yet supported in Node bindings".to_string(),
+                ))
+            }
+        }
+
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let usage = CompletionUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        };
+
+        Ok(CompletionResult {
+            id: response_id,
+            model,
+            role: "assistant".to_string(),
+            content: Some(aggregated),
+            tool_calls: None,
+            finish_reason: None,
+            usage,
+            usage_available: false,
+            latency_ms: latency_ms as u32,
+            raw: None,
+            healed: None,
+            coerced: None,
+        })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+impl Task for StreamEventsTask {
+    type Output = CompletionResult;
+    type JsValue = CompletionResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let started = Instant::now();
+        let outcome = self
+            .runtime
+            .block_on(
+                self.client
+                    .complete(&self.request, self.completion_options.clone()),
+            )
+            .map_err(napi_err)?;
+
+        let mut aggregated = String::new();
+        let mut response_id = String::new();
+        let mut model = self.request.model.clone();
+        match outcome {
+            CompletionOutcome::Stream(mut stream) => {
+                while let Some(item) = self.runtime.block_on(stream.next()) {
+                    match item {
+                        Ok(chunk) => {
+                            if response_id.is_empty() {
+                                response_id = chunk.id.clone();
+                            }
+                            if !chunk.model.is_empty() {
+                                model = chunk.model.clone();
+                            }
+                            if let Some(ref content) =
+                                chunk.choices.first().and_then(|c| c.delta.content.clone())
+                            {
+                                aggregated.push_str(content);
+                            }
+                            let payload = StreamEvent {
+                                event_type: "delta".to_string(),
+                                delta: Some(chunk_to_stream_delta(chunk)),
+                                error: None,
+                            };
+                            self.on_event
+                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+                        }
+                        Err(e) => {
+                            let payload = StreamEvent {
+                                event_type: "error".to_string(),
+                                delta: None,
+                                error: Some(StreamErrorEvent {
+                                    message: e.to_string(),
+                                }),
+                            };
+                            self.on_event
+                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+                            return Err(napi_err(e));
+                        }
+                    }
+                }
+
+                self.on_event.call(
+                    Ok(StreamEvent {
+                        event_type: "done".to_string(),
+                        delta: None,
+                        error: None,
+                    }),
+                    ThreadsafeFunctionCallMode::NonBlocking,
+                );
             }
             CompletionOutcome::Response(response) => {
                 return Ok(CompletionResult::from_response(
@@ -701,6 +882,44 @@ impl Client {
             request,
             completion_options,
             on_chunk: tsfn,
+        };
+
+        Ok(AsyncTask::new(task))
+    }
+
+    #[napi(
+        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions"
+    )]
+    pub fn stream_events(
+        &self,
+        model: String,
+        prompt_or_messages: Either<String, Vec<MessageInput>>,
+        on_event: JsFunction,
+        options: Option<CompleteOptions>,
+    ) -> Result<AsyncTask<StreamEventsTask>> {
+        let messages = build_messages(prompt_or_messages).map_err(napi_err)?;
+        let mut opts = options.unwrap_or_default();
+        opts.stream = Some(true);
+        let completion_options = completion_options(&opts).map_err(napi_err)?;
+        if !matches!(completion_options.mode, CompletionMode::Standard) {
+            return Err(Error::from_reason(
+                "healed_json and schema modes are not supported with stream_events() yet"
+                    .to_string(),
+            ));
+        }
+        let request = build_request(&model, messages, &opts).map_err(napi_err)?;
+
+        let tsfn: ThreadsafeFunction<StreamEvent> =
+            on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<StreamEvent>| {
+                ctx.env.to_js_value(&ctx.value).map(|v| vec![v])
+            })?;
+
+        let task = StreamEventsTask {
+            runtime: self.runtime.clone(),
+            client: self.client.clone(),
+            request,
+            completion_options,
+            on_event: tsfn,
         };
 
         Ok(AsyncTask::new(task))

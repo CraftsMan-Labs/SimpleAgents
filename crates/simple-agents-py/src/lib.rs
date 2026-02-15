@@ -14,7 +14,7 @@ use simple_agent_type::prelude::{
     ApiKey, CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
 };
 use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
-use simple_agent_type::response::{CompletionResponse, Usage};
+use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolCall, ToolChoice, ToolDefinition};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
@@ -517,7 +517,7 @@ impl PyStreamIterator {
                     .choices
                     .first()
                     .and_then(|c| c.finish_reason)
-                    .map(|fr| format!("{:?}", fr));
+                    .map(|fr| finish_reason_to_str(fr).to_string());
 
                 Ok(Some(StreamChunk {
                     content,
@@ -1992,7 +1992,7 @@ fn healed_json_to_py(
         .response
         .choices
         .first()
-        .map(|c| format!("{:?}", c.finish_reason))
+        .map(|c| finish_reason_to_str(c.finish_reason).to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
     let result = HealedJsonResult {
@@ -2022,7 +2022,7 @@ fn response_with_metadata_from_response(
     let finish_reason = response
         .choices
         .first()
-        .map(|c| format!("{:?}", c.finish_reason))
+        .map(|c| finish_reason_to_str(c.finish_reason).to_string())
         .unwrap_or_else(|| "unknown".to_string());
 
     let (was_healed, healing_confidence, healing_error, flags) =
@@ -2062,6 +2062,15 @@ fn response_with_metadata_from_response(
         usage,
         tool_calls: tool_calls_obj.into(),
     })
+}
+
+fn finish_reason_to_str(reason: FinishReason) -> &'static str {
+    match reason {
+        FinishReason::Stop => "stop",
+        FinishReason::Length => "length",
+        FinishReason::ContentFilter => "content_filter",
+        FinishReason::ToolCalls => "tool_calls",
+    }
 }
 
 fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {

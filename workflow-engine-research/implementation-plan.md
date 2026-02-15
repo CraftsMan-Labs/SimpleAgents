@@ -25,6 +25,40 @@ This document outlines a 30-week plan to implement the workflow engine for Simpl
 | 8 | 23-26 | Language Bindings | Python/Node/Go DSL libraries |
 | 9 | 27-30 | Production Hardening | Docs, examples, performance tuning |
 
+## Current Repo Status Snapshot (Feb 2026)
+
+This section tracks what is already landed in the repository versus what remains from this 30-week plan.
+
+| Phase | Status | Notes |
+|---|---|---|
+| 1 Foundation | Implemented | Minimal IR/runtime path is live (start/llm/tool/condition/end) with validation and tests. |
+| 2 Control Flow | Partial | Condition node works with lightweight evaluator; full CEL engine and loop node are still pending. |
+| 3 Concurrency | Partial | Worker pool/backpressure primitives exist; full DAG parallel scheduler + map/reduce/merge are pending. |
+| 4 Multi-Language Workers | Partial | Worker protocol and in-process pool exist; gRPC protocol + external Python/Go/TS workers are pending. |
+| 5 State & Composition | Partial | Scoped state v1 exists; hierarchical scopes/capability tokens/subgraphs/batch/filter remain. |
+| 6 Replayability | Partial | Trace + replay validation foundations exist; checkpoint/resume-from-failure is pending. |
+| 7 Observability | Partial | Debug inspection APIs exist; full OTel tracing, Prometheus metrics, dashboards/CLI are pending. |
+| 8 Language Bindings | Implemented (for parity baseline) | Python/Node/Go parity fixtures and CI gates are in place for current contract scope. |
+| 9 Production Hardening | Pending | Security hardening, performance targets, expanded docs/examples, release playbook are pending. |
+
+### Implemented Reference Points
+
+- IR + validation: `crates/simple-agents-workflow/src/ir.rs`, `crates/simple-agents-workflow/src/validation.rs`
+- Runtime + retries/timeouts/cancellation: `crates/simple-agents-workflow/src/runtime.rs`
+- Worker protocol/pool/health: `crates/simple-agents-workflow/src/worker.rs`
+- Trace + recorder + replay: `crates/simple-agents-workflow/src/trace.rs`, `crates/simple-agents-workflow/src/recorder.rs`, `crates/simple-agents-workflow/src/replay.rs`
+- Debug UX + benchmarks: `crates/simple-agents-workflow/src/debug.rs`, `crates/simple-agents-workflow/benches/runtime_benchmarks.rs`
+- Cross-language parity fixtures/gates: `parity-fixtures/binding_contract.json`, `.github/workflows/bindings-ci.yml`
+
+### Canonical Gap Source
+
+Use these files as the canonical backlog source when planning next tasks:
+
+- `workflow-engine-research/features.md`
+- `workflow-engine-research/implementation-plan.md`
+- `workflow-engine-research/design/execution-model.md`
+- `workflow-engine-research/design/worker-protocol.md`
+
 ---
 
 ## Phase 1: Foundation (Weeks 1-3)

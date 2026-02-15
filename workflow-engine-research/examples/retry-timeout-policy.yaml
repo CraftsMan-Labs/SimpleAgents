@@ -1,0 +1,51 @@
+# Retry Timeout Policy Workflow
+
+id: retry-timeout-policy
+version: 1.0.0
+
+metadata:
+  name: "Retry and Timeout Policy"
+  description: "Shows per-node retry and timeout controls"
+  tags: ["example", "retry", "timeout"]
+
+entry_node: start
+
+defaults:
+  timeout: 15s
+  retry:
+    max_attempts: 2
+    backoff:
+      type: fixed
+      initial: 500ms
+
+nodes:
+  - id: start
+    node_type:
+      transform:
+        expression: '{"state":"init"}'
+
+  - id: flaky_tool
+    timeout: 3s
+    retry:
+      max_attempts: 4
+      backoff:
+        type: exponential
+        initial: 250ms
+    node_type:
+      custom_worker:
+        language: go
+        handler: FlakyServiceCall
+
+  - id: fallback_message
+    node_type:
+      llm_call:
+        provider: anthropic
+        model: claude-3-5-sonnet-latest
+    config:
+      prompt: "Generate fallback response for failed request {{ input.request_id }}"
+
+edges:
+  - from: start
+    to: flaky_tool
+  - from: flaky_tool
+    to: fallback_message

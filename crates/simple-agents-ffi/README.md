@@ -47,3 +47,4 @@ int main() {
 - Pass `max_tokens <= 0` to omit max tokens.
 - Pass `temperature < 0.0` to omit temperature.
 - `sa_complete_messages_json` supports message arrays and returns structured JSON including tool calls, usage, and optional healing/coercion metadata (`mode`: `standard|healed_json|schema`).
+- `sa_stream_messages` streams message-based responses through a callback, emitting JSON events (`chunk`, `error`, `done`).
