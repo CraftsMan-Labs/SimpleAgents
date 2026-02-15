@@ -838,7 +838,7 @@ mod tests {
             .count();
         let successes = [&first_result, &second_result, &third_result]
             .iter()
-            .filter(|result| matches!(result, Ok(_)))
+            .filter(|result| result.is_ok())
             .count();
         assert!(failures >= 1);
         assert!(successes >= 1);
