@@ -12,6 +12,7 @@ description = "Workflow IR and validation for SimpleAgents"
 
 [dependencies]
 async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 simple-agent-type.workspace = true
