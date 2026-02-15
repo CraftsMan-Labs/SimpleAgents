@@ -38,4 +38,7 @@ features:
 - Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
 - Need help debugging setup/tests: [Troubleshooting](/TROUBLESHOOTING)
 - Workflow debugging views: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
+- YAML/code workflow migration: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
+- Workflow profiling and benchmarks: [Workflow Performance](/WORKFLOW_PERFORMANCE)
+- Workflow hardening contracts: [Workflow Security](/WORKFLOW_SECURITY)
 - Looking for a specific task: [Docs Map](/DOCS_MAP)

@@ -1,0 +1,26 @@
+name: Workflow Benches
+
+on:
+  pull_request:
+    paths:
+      - "crates/simple-agents-workflow/**"
+      - ".github/workflows/workflow-benches.yml"
+      - "docs/WORKFLOW_PERFORMANCE.md"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "crates/simple-agents-workflow/**"
+
+jobs:
+  runtime-bench-regression:
+    runs-on: ubuntu-latest
+    env:
+      WORKFLOW_BENCH_GUARD_RUNS: "7"
+      WORKFLOW_BENCH_MIN_GAIN_PERCENT: "15"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run workflow benchmark regression harness
+        run: cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-size 10

@@ -17,6 +17,9 @@ Use this page to jump directly to the right guide.
 4. [Workflow Capability Contract](/WORKFLOW_CAPABILITY_CONTRACT)
 5. [Cross-Language Capability Matrix](/CAPABILITY_MATRIX)
 6. [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
+7. [Workflow Performance](/WORKFLOW_PERFORMANCE)
+8. [Workflow Security](/WORKFLOW_SECURITY)
+7. [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
 
 ### Build with a specific language
 
@@ -58,3 +61,6 @@ Use this page to jump directly to the right guide.
 - End-to-end snippets: [Examples](/EXAMPLES)
 - Parity gate failures: [Troubleshooting](/TROUBLESHOOTING)
 - Workflow timeline/replay inspection: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
+- Workflow benchmark and profiling flow: [Workflow Performance](/WORKFLOW_PERFORMANCE)
+- Workflow hardening limits: [Workflow Security](/WORKFLOW_SECURITY)
+- YAML/code workflow conversion: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
