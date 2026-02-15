@@ -8,6 +8,23 @@ on:
       - master
 
 jobs:
+  capability-contract-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: crates/simple-agents-napi/package-lock.json
+      - uses: astral-sh/setup-uv@v4
+      - name: Run cross-language capability contract gates
+        run: ./scripts/run-binding-contracts.sh
+
   go-bindings:
     runs-on: ubuntu-latest
     steps:
@@ -37,3 +54,13 @@ jobs:
       - name: Type-check declarations
         working-directory: crates/simple-agents-napi
         run: ./node_modules/.bin/tsc --noEmit index.d.ts
+
+  python-bindings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v4
+      - name: Run Python binding tests
+        working-directory: crates/simple-agents-py
+        run: UV_CACHE_DIR=${{ github.workspace }}/.uv-cache uv run --with "pytest>=8.0" pytest

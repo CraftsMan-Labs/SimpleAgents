@@ -18,6 +18,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+futures-util = { workspace = true }
 
 simple-agents-core = { path = "../simple-agents-core", version = "0.2.6" }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.6" }

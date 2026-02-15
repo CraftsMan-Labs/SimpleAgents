@@ -51,7 +51,7 @@ async function main() {
   console.log(response.usage);
   console.log(response.healed); // present when using healed_json/schema mode
 
-  // Streaming
+  // Streaming (legacy chunk callback)
   const streamed = await client.stream(
     model,
     'Say hello in two words.',
@@ -62,6 +62,24 @@ async function main() {
     {},
   );
   console.log('streamed content:', streamed.content);
+
+  // Streaming (typed event callback)
+  await client.streamEvents(
+    model,
+    'Say hello in two words.',
+    (event) => {
+      if (event.eventType === 'delta' && event.delta?.content) {
+        process.stdout.write(event.delta.content);
+      }
+      if (event.eventType === 'error') {
+        console.error('\nstream error:', event.error?.message);
+      }
+      if (event.eventType === 'done') {
+        console.log('\nstream done');
+      }
+    },
+    {},
+  );
 
   // Healed JSON
   const healed = await client.complete(
@@ -81,7 +99,16 @@ main().catch((err) => {
 ## Notes
 
 - Canonical env contract for examples/tests is: `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `PROVIDER`.
+- Canonical env contract for examples/tests is: `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_BASE` (optional), `CUSTOM_API_MODEL`.
 - For OpenAI provider compatibility, map `CUSTOM_API_*` to `OPENAI_API_*` when needed (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`).
 - `max_tokens`, `temperature`, and `top_p` are optional. Use `mode: "healed_json"` for parsed JSON or `mode: "schema"` with a schema object to coerce/validate.
-- `complete` resolves with the first choice, usage metadata, and optional `healed`/`coerced` metadata. `stream` invokes a chunk callback and resolves with aggregated content (healing/schema not yet supported for streams).
+- `complete` resolves with the first choice, usage metadata, and optional `healed`/`coerced` metadata.
+- `stream` invokes a chunk callback and resolves with aggregated content (healing/schema not yet supported for streams).
+- `streamEvents` is the canonical typed streaming callback API with `delta`, `error`, and `done` events.
 - Set `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, and `PROVIDER` to run tests/examples consistently across bindings.
+
+## Test Layers
+
+- `npm run test:unit` - runtime/export sanity checks
+- `npm run test:contract` - shared fixture parity contract checks
+- `npm run test:live` - provider-backed live checks (env-gated)
