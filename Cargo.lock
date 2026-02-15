@@ -2331,6 +2331,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "simple-agents-workflow"
+version = "0.2.6"
+dependencies = [
+ "async-trait",
+ "proptest",
+ "serde",
+ "serde_json",
+ "simple-agent-type",
+ "simple-agents-core",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "sketches-ddsketch"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

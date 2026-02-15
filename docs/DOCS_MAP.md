@@ -14,6 +14,7 @@ Use this page to jump directly to the right guide.
 1. [Architecture](/ARCHITECTURE)
 2. [Rust Core Systems](/RUST_CORE_SYSTEMS)
 3. [API Surface](/API)
+4. [Workflow Capability Contract](/WORKFLOW_CAPABILITY_CONTRACT)
 
 ### Build with a specific language
 
