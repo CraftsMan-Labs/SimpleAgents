@@ -120,7 +120,6 @@ nodes:
             target: rag_termination_repeated_offense
         default: rag_clarification
 
-  # Mock RAG nodes (tool/custom worker placeholders)
   - id: rag_probation
     name: "Mock RAG: Probation"
     node_type:
