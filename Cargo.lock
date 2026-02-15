@@ -437,6 +437,7 @@ dependencies = [
  "ciborium",
  "clap",
  "criterion-plot",
+ "futures",
  "is-terminal",
  "itertools",
  "num-traits",
@@ -449,6 +450,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "tinytemplate",
+ "tokio",
  "walkdir",
 ]
 
@@ -2336,6 +2338,7 @@ name = "simple-agents-workflow"
 version = "0.2.6"
 dependencies = [
  "async-trait",
+ "criterion",
  "proptest",
  "serde",
  "serde_json",
