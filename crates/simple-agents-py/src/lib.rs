@@ -32,6 +32,7 @@ use simple_agents_providers::healing_integration::{
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
+use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2634,6 +2635,43 @@ impl Client {
         let response_with_metadata =
             response_with_metadata_from_response(py, response, latency_ms)?;
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
+    }
+
+    #[pyo3(signature = (workflow_path, email_text))]
+    fn run_email_workflow_yaml(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        email_text: &str,
+    ) -> PyResult<PyObject> {
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+        if email_text.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "email_text cannot be empty".to_string(),
+            ));
+        }
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let output = runtime
+            .block_on(run_email_workflow_yaml_file_with_client(
+                std::path::Path::new(workflow_path),
+                email_text,
+                &self.client,
+            ))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
     }
 }
 

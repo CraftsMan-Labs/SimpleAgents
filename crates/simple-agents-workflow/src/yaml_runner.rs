@@ -3,18 +3,21 @@ use std::path::Path;
 use std::time::Instant;
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use simple_agent_type::message::Message;
+use simple_agent_type::request::CompletionRequest;
+use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlStepTiming {
     pub node_id: String,
     pub node_kind: String,
     pub elapsed_ms: u128,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
@@ -91,6 +94,78 @@ pub async fn run_email_workflow_yaml_file(
         })?;
 
     run_email_workflow_yaml(&workflow, email_text, executor).await
+}
+
+pub async fn run_email_workflow_yaml_file_with_client(
+    workflow_path: &Path,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let contents = std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+        path: workflow_path.display().to_string(),
+        source,
+    })?;
+
+    let workflow: YamlWorkflow =
+        serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    run_email_workflow_yaml_with_client(&workflow, email_text, client).await
+}
+
+pub async fn run_email_workflow_yaml_with_client(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    struct BorrowedClientExecutor<'a> {
+        client: &'a SimpleAgentsClient,
+    }
+
+    #[async_trait]
+    impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
+        async fn complete_structured(
+            &self,
+            model: &str,
+            prompt: &str,
+            _schema: &Value,
+        ) -> Result<Value, String> {
+            let request = CompletionRequest::builder()
+                .model(model)
+                .messages(vec![
+                    Message::system("You execute workflow classification steps."),
+                    Message::user(prompt),
+                ])
+                .build()
+                .map_err(|error| format!("failed to build completion request: {error}"))?;
+
+            let outcome = self
+                .client
+                .complete(&request, CompletionOptions::default())
+                .await
+                .map_err(|error| error.to_string())?;
+
+            let response = match outcome {
+                CompletionOutcome::Response(response) => response,
+                CompletionOutcome::Stream(_) => {
+                    return Err("streaming completion returned for structured run".to_string())
+                }
+                CompletionOutcome::HealedJson(healed) => healed.response,
+                CompletionOutcome::CoercedSchema(coerced) => coerced.response,
+            };
+
+            let content = response
+                .content()
+                .ok_or_else(|| "completion returned empty content".to_string())?;
+            serde_json::from_str(content)
+                .map_err(|error| format!("failed to parse structured completion JSON: {error}"))
+        }
+    }
+
+    let executor = BorrowedClientExecutor { client };
+    run_email_workflow_yaml(workflow, email_text, &executor).await
 }
 
 pub async fn run_email_workflow_yaml(
