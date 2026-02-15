@@ -23,6 +23,15 @@ export interface JsToolCallFunction {
   name: string
   arguments: string
 }
+export interface ToolCallResultFunction {
+  name: string
+  arguments: string
+}
+export interface ToolCallResult {
+  id: string
+  toolType: string
+  function: ToolCallResultFunction
+}
 export interface JsToolCall {
   id: string
   toolType: string
@@ -43,7 +52,7 @@ export interface CompletionResult {
   model: string
   role: string
   content?: string
-  toolCalls?: Array<JsToolCall>
+  toolCalls?: Array<ToolCallResult>
   finishReason?: string
   usage: CompletionUsage
   usageAvailable: boolean
@@ -60,8 +69,26 @@ export interface StreamChunk {
   error?: string
   raw?: string
 }
+export interface StreamDelta {
+  id: string
+  model: string
+  index: number
+  role?: string
+  content?: string
+  finishReason?: string
+  raw?: string
+}
+export interface StreamErrorEvent {
+  message: string
+}
+export interface StreamEvent {
+  eventType: string
+  delta?: StreamDelta
+  error?: StreamErrorEvent
+}
 export declare class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
   stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
+  streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
 }
