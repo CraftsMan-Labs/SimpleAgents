@@ -55,10 +55,14 @@ We will run **8 subagents** in parallel workstreams.
 
 ### Phase 2 - Parallelism and worker model
 
-- [ ] Add bounded parallel execution primitives.
-- [ ] Add worker protocol surface (start with single-process default).
-- [ ] Add worker pool lifecycle + health tracking.
-- [ ] Define retry/timeout ownership boundaries (workflow layer vs router layer).
+- [x] Add bounded parallel execution primitives.
+  - Evidence: health-aware bounded worker scheduling via per-worker bounded `mpsc` queues in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Add worker protocol surface (start with single-process default).
+  - Evidence: `WorkerRequest`/`WorkerResponse`/`WorkerProtocolError` protocol model and `WorkerPool::new_inprocess` in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Add worker pool lifecycle + health tracking.
+  - Evidence: `WorkerPool::{health_snapshot,restart_worker,shutdown}` + probe loop + status transitions in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Define retry/timeout ownership boundaries (workflow layer vs router layer).
+  - Evidence: workflow node retry/timeout remains in `crates/simple-agents-workflow/src/runtime.rs`; worker-level request timeout ownership added in `WorkerPoolOptions::default_request_timeout` (`crates/simple-agents-workflow/src/worker.rs`).
 - [ ] Load/perf benchmarks for scheduler and state hot paths.
 
 ### Phase 3 - Cross-language parity and DX hardening
@@ -112,11 +116,16 @@ We will run **8 subagents** in parallel workstreams.
 
 ### SA-4 (Worker protocol + pools + health)
 
-- [ ] Define worker protocol interfaces (request/response/error semantics).
-- [ ] Implement baseline worker pool manager with health probes.
-- [ ] Add backpressure and queue limits.
-- [ ] Add circuit-breaker integration points without duplicating router internals.
-- [ ] Add chaos tests (worker restart/unavailable/slow worker).
+- [x] Define worker protocol interfaces (request/response/error semantics).
+  - Evidence: `WorkerRequest`, `WorkerOperation`, `WorkerResponse`, `WorkerResult`, `WorkerProtocolError`, `WorkerErrorCode` in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Implement baseline worker pool manager with health probes.
+  - Evidence: in-process `WorkerPool` with per-worker run loop + probe loop in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Add backpressure and queue limits.
+  - Evidence: bounded `mpsc::channel(queue_capacity)` and `try_send` rejection path (`WorkerPoolError::QueueFull`) in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Add circuit-breaker integration points without duplicating router internals.
+  - Evidence: optional `CircuitBreakerHooks` integration in `WorkerPool::submit` in `crates/simple-agents-workflow/src/worker.rs`.
+- [x] Add chaos tests (worker restart/unavailable/slow worker).
+  - Evidence: `worker::tests::{marks_worker_unavailable_after_failures_and_recovers_on_restart,returns_timeout_for_slow_worker}` and `cargo test -p simple-agents-workflow`.
 
 ### SA-5 (FFI + Go parity)
 
@@ -184,5 +193,6 @@ We will run **8 subagents** in parallel workstreams.
   - Evidence: trace/recorder/replay + runtime integration + golden fixtures in `crates/simple-agents-workflow/src/trace.rs`, `crates/simple-agents-workflow/src/recorder.rs`, `crates/simple-agents-workflow/src/replay.rs`, `crates/simple-agents-workflow/tests/trace_fixtures.rs`.
 - [ ] 4. SA-5 lands FFI + Go streaming parity.
 - [ ] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
-- [ ] 6. SA-4 lands worker pool/health model behind stable interfaces.
+- [x] 6. SA-4 lands worker pool/health model behind stable interfaces.
+  - Evidence: new worker protocol/pool module exported from `crates/simple-agents-workflow/src/lib.rs` and validated by `cargo test -p simple-agents-workflow`.
 - [ ] 7. SA-8 enforces CI capability gates and docs completion.

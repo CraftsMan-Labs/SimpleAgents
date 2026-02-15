@@ -12,7 +12,10 @@ struct MockLlmExecutor;
 
 #[async_trait]
 impl LlmExecutor for MockLlmExecutor {
-    async fn execute(&self, _input: LlmExecutionInput) -> Result<LlmExecutionOutput, LlmExecutionError> {
+    async fn execute(
+        &self,
+        _input: LlmExecutionInput,
+    ) -> Result<LlmExecutionOutput, LlmExecutionError> {
         Ok(LlmExecutionOutput {
             content: "ok".to_string(),
         })
@@ -64,11 +67,7 @@ fn linear_workflow() -> WorkflowDefinition {
 }
 
 fn fixture(name: &str) -> String {
-    let path = format!(
-        "{}/tests/fixtures/{}",
-        env!("CARGO_MANIFEST_DIR"),
-        name
-    );
+    let path = format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), name);
     std::fs::read_to_string(path).expect("fixture file should be readable")
 }
 
@@ -94,13 +93,17 @@ async fn recorded_trace_matches_linear_golden_fixture() {
     let expected: WorkflowTrace =
         serde_json::from_str(&fixture("linear_trace.json")).expect("fixture should parse");
     assert_eq!(result.trace, Some(expected));
-    assert_eq!(result.replay_report.as_ref().map(|r| r.total_events), Some(9));
+    assert_eq!(
+        result.replay_report.as_ref().map(|r| r.total_events),
+        Some(9)
+    );
 }
 
 #[test]
 fn invalid_fixture_fails_replay_validation() {
-    let trace: WorkflowTrace = serde_json::from_str(&fixture("invalid_missing_terminal_trace.json"))
-        .expect("fixture should parse");
+    let trace: WorkflowTrace =
+        serde_json::from_str(&fixture("invalid_missing_terminal_trace.json"))
+            .expect("fixture should parse");
     let error = replay_trace(&trace).expect_err("fixture should fail replay");
 
     assert!(error
