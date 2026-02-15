@@ -47,6 +47,21 @@ print(response.content)
 
 ## Feature Guide
 
+### Canonical Environment Contract
+
+Use the same cross-binding env contract used by Go/Node examples:
+
+- `PROVIDER` - `openai`, `anthropic`, or `openrouter`
+- `CUSTOM_API_KEY`
+- `CUSTOM_API_BASE` (optional)
+- `CUSTOM_API_MODEL`
+
+Map these to provider-specific variables when needed:
+
+- OpenAI: `OPENAI_API_KEY`, optional `OPENAI_API_BASE`
+- Anthropic: `ANTHROPIC_API_KEY`
+- OpenRouter: `OPENROUTER_API_KEY`, optional `OPENROUTER_API_BASE`
+
 ### Streaming
 
 ```python
@@ -59,6 +74,8 @@ for chunk in client.complete("gpt-4o-mini", messages, max_tokens=64, stream=True
         print(chunk.content, end="", flush=True)
 print()
 ```
+
+`chunk.finish_reason` uses Rust parity values (`stop`, `length`, `content_filter`, `tool_calls`).
 
 ### Structured Output (JSON Mode)
 
@@ -302,6 +319,12 @@ except RuntimeError as exc:
 uv pip install -e .[dev]
 uv run pytest
 ```
+
+Layered suites:
+
+- Unit: `uv run pytest tests/test_client_builder.py tests/test_client.py tests/test_direct_healing.py tests/test_healing.py tests/test_routing_config.py tests/test_streaming_parser.py`
+- Contract: `uv run pytest tests/test_contract_fixtures.py tests/test_error_mapping_consistency.py`
+- Live: `uv run pytest tests/test_integration_openai.py tests/test_streaming.py tests/test_structured_streaming.py` (env-gated)
 
 ## Package Metrics & Analytics
 

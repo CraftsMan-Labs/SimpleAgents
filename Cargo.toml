@@ -19,6 +19,8 @@ thiserror = "1.0"
 async-trait = "0.1"
 tokio = { version = "1.35", features = ["full"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
+prost = "0.13"
+tonic = { version = "0.12", features = ["transport"] }
 subtle = "2.6"
 rand = "0.8"
 blake3 = "1.5"

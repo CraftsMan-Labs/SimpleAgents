@@ -40,7 +40,14 @@ workflow-engine-research/
     ├── simple-linear.yaml
     ├── conditional-routing.yaml
     ├── parallel-processing.yaml
-    └── multi-language.yaml
+    ├── multi-language.yaml
+    ├── loop-with-guard.yaml
+    ├── map-reduce-enrichment.yaml
+    ├── subgraph-orchestration.yaml
+    ├── batch-filter-pipeline.yaml
+    ├── retry-timeout-policy.yaml
+    ├── replay-checkpoint-recovery.yaml
+    └── quorum-merge-routing.yaml
 ```
 
 ## Quick Start
@@ -79,6 +86,13 @@ See workflows in action:
 2. **[examples/conditional-routing.yaml](./examples/conditional-routing.yaml)** - Switch node, branching
 3. **[examples/parallel-processing.yaml](./examples/parallel-processing.yaml)** - Parallel fan-out/fan-in
 4. **[examples/multi-language.yaml](./examples/multi-language.yaml)** - Python, Go, TypeScript nodes
+5. **[examples/loop-with-guard.yaml](./examples/loop-with-guard.yaml)** - Loop semantics with guardrails
+6. **[examples/map-reduce-enrichment.yaml](./examples/map-reduce-enrichment.yaml)** - Bounded fan-out map/reduce
+7. **[examples/subgraph-orchestration.yaml](./examples/subgraph-orchestration.yaml)** - Subgraph composition
+8. **[examples/batch-filter-pipeline.yaml](./examples/batch-filter-pipeline.yaml)** - Batch extraction and filtering
+9. **[examples/retry-timeout-policy.yaml](./examples/retry-timeout-policy.yaml)** - Retry/timeout policies
+10. **[examples/replay-checkpoint-recovery.yaml](./examples/replay-checkpoint-recovery.yaml)** - Replay and resume patterns
+11. **[examples/quorum-merge-routing.yaml](./examples/quorum-merge-routing.yaml)** - Quorum merge policy
 
 ## Key Concepts
 
