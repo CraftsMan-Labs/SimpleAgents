@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python clippy fmt loc-report example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python test-binding-contracts clippy fmt loc-report example-providers example-full-api example-node examples \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -48,6 +48,7 @@ help:
 	@echo "Testing:"
 	@echo "  make test-node             - Build Node addon then run node --test"
 	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
+	@echo "  make test-binding-contracts - Run cross-language contract gates"
 	@echo ""
 	@echo "Publishing:"
 	@echo "  make publish-crates-dry    - Dry-run publish Rust crates"
@@ -73,6 +74,9 @@ test-rust:
 
 test-python:
 	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" pytest
+
+test-binding-contracts:
+	./scripts/run-binding-contracts.sh
 
 clippy:
 	cargo clippy --all-targets

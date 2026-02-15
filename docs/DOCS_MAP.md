@@ -15,6 +15,7 @@ Use this page to jump directly to the right guide.
 2. [Rust Core Systems](/RUST_CORE_SYSTEMS)
 3. [API Surface](/API)
 4. [Workflow Capability Contract](/WORKFLOW_CAPABILITY_CONTRACT)
+5. [Cross-Language Capability Matrix](/CAPABILITY_MATRIX)
 
 ### Build with a specific language
 
@@ -28,6 +29,7 @@ Use this page to jump directly to the right guide.
 1. [Development Guide](/DEVELOPMENT)
 2. [Architecture](/ARCHITECTURE)
 3. [Documentation Standards](/DOCS_STANDARDS)
+4. [Contribution Checklist](https://github.com/rishub/SimpleAgents/blob/main/CONTRIBUTING.md)
 
 ## Recommended Reading Paths
 
@@ -53,3 +55,4 @@ Use this page to jump directly to the right guide.
 - Commands and setup: [Development Guide](/DEVELOPMENT)
 - Core API shapes: [API Surface](/API)
 - End-to-end snippets: [Examples](/EXAMPLES)
+- Parity gate failures: [Troubleshooting](/TROUBLESHOOTING)

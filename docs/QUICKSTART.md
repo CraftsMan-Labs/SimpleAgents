@@ -50,4 +50,6 @@ async fn main() -> Result<()> {
 - Read [Usage Guide](/USAGE) for routing, streaming, caching, and healing.
 - Explore [Examples](/EXAMPLES) for more workflows.
 - Review [Rust Core Systems](/RUST_CORE_SYSTEMS) for crate map and extension points.
+- Check [Capability Matrix](/CAPABILITY_MATRIX) for cross-language parity expectations.
+- Use [Troubleshooting](/TROUBLESHOOTING) when setup or contract checks fail.
 - Need a different path? Open the [Documentation Map](/DOCS_MAP).
