@@ -106,3 +106,9 @@ main().catch((err) => {
 - `stream` invokes a chunk callback and resolves with aggregated content (healing/schema not yet supported for streams).
 - `streamEvents` is the canonical typed streaming callback API with `delta`, `error`, and `done` events.
 - Set `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, and `PROVIDER` to run tests/examples consistently across bindings.
+
+## Test Layers
+
+- `npm run test:unit` - runtime/export sanity checks
+- `npm run test:contract` - shared fixture parity contract checks
+- `npm run test:live` - provider-backed live checks (env-gated)

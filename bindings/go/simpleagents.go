@@ -296,6 +296,9 @@ func (c *Client) CompleteMessages(
 	if err := validateMessagesInput(model, messages); err != nil {
 		return CompletionResult{}, err
 	}
+	if err := validateCompleteOptions(opts, false); err != nil {
+		return CompletionResult{}, err
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -422,6 +425,9 @@ func (c *Client) StreamMessages(
 	opts CompleteOptions,
 ) (<-chan StreamResult, error) {
 	if err := validateMessagesInput(model, messages); err != nil {
+		return nil, err
+	}
+	if err := validateCompleteOptions(opts, true); err != nil {
 		return nil, err
 	}
 	if ctx == nil {
@@ -570,6 +576,33 @@ func validateMessagesInput(model string, messages []Message) error {
 			return fmt.Errorf("messages[%d].content cannot be empty", i)
 		}
 	}
+	return nil
+}
+
+func validateCompleteOptions(opts CompleteOptions, streaming bool) error {
+	mode := opts.Mode
+	if mode == "" {
+		mode = "standard"
+	}
+
+	switch mode {
+	case "standard", "healed_json", "schema":
+	default:
+		return fmt.Errorf("unsupported mode %q", mode)
+	}
+
+	if mode == "schema" && opts.Schema == nil {
+		return errors.New("schema mode requires schema")
+	}
+
+	if mode != "schema" && opts.Schema != nil {
+		return errors.New("schema is only valid when mode is \"schema\"")
+	}
+
+	if streaming && mode != "standard" {
+		return errors.New("streaming only supports mode \"standard\"")
+	}
+
 	return nil
 }
 

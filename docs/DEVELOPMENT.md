@@ -92,6 +92,20 @@ cargo test -p simple-agents-healing
 ./scripts/run-binding-contracts.sh
 ```
 
+### Run Layered Binding Tests (unit/contract/live)
+
+```bash
+make test-binding-layers
+```
+
+This runs unit + contract checks for Go/Node/Python by default, and runs live suites only when credentials are provided.
+
+### Run Workflow Runtime Benchmarks
+
+```bash
+cargo bench -p simple-agents-workflow --bench runtime_benchmarks
+```
+
 ### Run Tests with Output
 
 ```bash
