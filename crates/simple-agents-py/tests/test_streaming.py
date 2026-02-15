@@ -85,6 +85,12 @@ class TestStreaming:
 
         # Last chunk should have finish_reason
         assert chunks[-1].finish_reason is not None
+        assert chunks[-1].finish_reason in {
+            "stop",
+            "length",
+            "content_filter",
+            "tool_calls",
+        }
 
     def test_stream_top_p(self, client, model):
         """Test streaming with top_p parameter."""

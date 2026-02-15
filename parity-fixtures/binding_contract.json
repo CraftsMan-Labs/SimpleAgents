@@ -1,0 +1,62 @@
+{
+  "shared_cases": {
+    "request": {
+      "required_message_roles": ["system", "user", "assistant", "tool"],
+      "completion_modes": ["standard", "healed_json", "schema"]
+    },
+    "response": {
+      "required_fields": ["content", "finish_reason", "usage.total_tokens"]
+    },
+    "healing": {
+      "required_fields": ["value", "confidence"],
+      "modes": ["healed_json", "schema"]
+    },
+    "streaming": {
+      "event_types": ["delta", "error", "done"],
+      "finish_reasons": ["stop", "length", "content_filter", "tool_calls"]
+    },
+    "tool_call": {
+      "required_fields": ["id", "tool_type", "function.name", "function.arguments"]
+    }
+  },
+  "ffi": {
+    "required_c_symbols": [
+      "sa_complete_messages_json(",
+      "sa_stream_messages(",
+      "sa_last_error_message(void)",
+      "typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);"
+    ]
+  },
+  "go": {
+    "required_api_symbols": [
+      "type CompletionResult struct",
+      "func (c *Client) CompleteMessages(",
+      "func (c *Client) StreamMessages(",
+      "type StreamEvent struct"
+    ]
+  },
+  "node": {
+    "required_type_symbols": [
+      "export interface ToolCallResult",
+      "export interface CompletionResult",
+      "export interface StreamEvent",
+      "eventType: string",
+      "streamEvents("
+    ],
+    "required_runtime_exports": [
+      "Client"
+    ]
+  },
+  "python": {
+    "required_type_symbols": [
+      "class ResponseWithMetadata",
+      "class StreamChunk",
+      "class PyStructuredEvent",
+      "stream: Literal[True]"
+    ],
+    "required_api_symbols": [
+      "class Client:",
+      "def complete("
+    ]
+  }
+}
