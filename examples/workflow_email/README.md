@@ -58,6 +58,12 @@ print(result["step_timings"])
 print(result["total_elapsed_ms"])
 ```
 
+Ready-to-run helper file:
+
+```bash
+uv run --directory examples python workflow_email/run_with_python_package.py
+```
+
 ## Python (script)
 
 ```bash
@@ -94,6 +100,13 @@ console.log(result.step_timings)
 console.log(result.total_elapsed_ms)
 ```
 
+Ready-to-run helper file:
+
+```bash
+npm --prefix crates/simple-agents-napi run build:debug
+node examples/workflow_email/run_with_node_package.js
+```
+
 ## Go (package API)
 
 Use the Go binding and call `RunEmailWorkflowYAML`:
@@ -118,6 +131,16 @@ if err != nil {
 fmt.Println(out.TerminalOutput)
 fmt.Println(out.StepTimings)
 fmt.Println(out.TotalElapsedMS)
+```
+
+Ready-to-run helper file:
+
+```bash
+cargo build -p simple-agents-ffi --release
+CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$PWD/target/release" \
+LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
+go run ./bindings/go/examples/workflow_yaml
 ```
 
 When running locally in this repo, ensure FFI library is built and linker flags are set:
