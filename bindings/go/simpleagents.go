@@ -6,6 +6,35 @@ package simpleagents
 
 #include <stdlib.h>
 #include "simple_agents.h"
+
+extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
+
+static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
+    return sa_go_stream_callback_export((char *)event_json, user_data);
+}
+
+static int32_t sa_stream_messages_go(
+    SAClient *client,
+    const char *model,
+    const SAMessage *messages,
+    size_t messages_len,
+    int32_t max_tokens,
+    float temperature,
+    float top_p,
+    void *user_data
+) {
+    return sa_stream_messages(
+        client,
+        model,
+        messages,
+        messages_len,
+        max_tokens,
+        temperature,
+        top_p,
+        sa_go_stream_callback_bridge,
+        user_data
+    );
+}
 */
 import "C"
 
@@ -14,6 +43,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime/cgo"
 	"sync"
 	"unsafe"
 )
@@ -76,6 +106,45 @@ type CompletionResult struct {
 	Raw          string          `json:"raw"`
 	Healed       *HealingData    `json:"healed"`
 	Coerced      *HealingData    `json:"coerced"`
+}
+
+// StreamMessageDelta is the message delta payload for one streamed choice.
+type StreamMessageDelta struct {
+	Role    string `json:"role,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+// StreamChoiceDelta is one streamed choice delta.
+type StreamChoiceDelta struct {
+	Index        uint32             `json:"index"`
+	Delta        StreamMessageDelta `json:"delta"`
+	FinishReason string             `json:"finish_reason,omitempty"`
+}
+
+// StreamChunk mirrors the Rust CompletionChunk payload for streaming.
+type StreamChunk struct {
+	ID      string              `json:"id"`
+	Model   string              `json:"model"`
+	Choices []StreamChoiceDelta `json:"choices"`
+	Created *int64              `json:"created,omitempty"`
+}
+
+// StreamEvent is emitted by StreamMessages.
+type StreamEvent struct {
+	Type    string       `json:"type"`
+	Chunk   *StreamChunk `json:"chunk,omitempty"`
+	Message string       `json:"message,omitempty"`
+}
+
+// StreamResult represents one streamed item or terminal error.
+type StreamResult struct {
+	Event StreamEvent
+	Err   error
+}
+
+type streamBridge struct {
+	ctx context.Context
+	out chan StreamResult
 }
 
 type Client struct {
@@ -144,6 +213,16 @@ func (c *Client) endCall() {
 // Complete preserves the original prompt-based API.
 func (c *Client) Complete(model, prompt string, maxTokens int32, temperature float32) (string, error) {
 	return c.CompleteWithContext(context.Background(), model, prompt, maxTokens, temperature)
+}
+
+// CompletePrompt is the canonical prompt-based API with explicit context.
+func (c *Client) CompletePrompt(
+	ctx context.Context,
+	model, prompt string,
+	maxTokens int32,
+	temperature float32,
+) (string, error) {
+	return c.CompleteWithContext(ctx, model, prompt, maxTokens, temperature)
 }
 
 type completeResult struct {
@@ -329,6 +408,140 @@ func (c *Client) CompleteMessages(
 		return res.value, res.err
 	case <-ctx.Done():
 		return CompletionResult{}, ctx.Err()
+	}
+}
+
+// StreamMessages executes message-based completion in streaming mode.
+//
+// The returned channel is closed on completion, cancellation, or error.
+// Callers should range over the channel until closed.
+func (c *Client) StreamMessages(
+	ctx context.Context,
+	model string,
+	messages []Message,
+	opts CompleteOptions,
+) (<-chan StreamResult, error) {
+	if err := validateMessagesInput(model, messages); err != nil {
+		return nil, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return nil, err
+	}
+
+	maxTokens := int32(0)
+	if opts.MaxTokens != nil {
+		maxTokens = *opts.MaxTokens
+	}
+	temperature := float32(-1)
+	if opts.Temperature != nil {
+		temperature = *opts.Temperature
+	}
+	topP := float32(-1)
+	if opts.TopP != nil {
+		topP = *opts.TopP
+	}
+
+	messagesCopy := append([]Message(nil), messages...)
+	out := make(chan StreamResult, 16)
+	bridge := &streamBridge{ctx: ctx, out: out}
+	handle := cgo.NewHandle(bridge)
+
+	go func() {
+		defer c.endCall()
+		defer close(out)
+		defer handle.Delete()
+
+		cModel := C.CString(model)
+		defer C.free(unsafe.Pointer(cModel))
+
+		cMessages := make([]C.SAMessage, len(messagesCopy))
+		allocated := make([]*C.char, 0, len(messagesCopy)*4)
+		freeAll := func() {
+			for _, p := range allocated {
+				if p != nil {
+					C.free(unsafe.Pointer(p))
+				}
+			}
+		}
+		defer freeAll()
+
+		for i, msg := range messagesCopy {
+			role := C.CString(msg.Role)
+			content := C.CString(msg.Content)
+			allocated = append(allocated, role, content)
+			cMessages[i].role = role
+			cMessages[i].content = content
+
+			if msg.Name != "" {
+				name := C.CString(msg.Name)
+				allocated = append(allocated, name)
+				cMessages[i].name = name
+			}
+			if msg.ToolCallID != "" {
+				toolCallID := C.CString(msg.ToolCallID)
+				allocated = append(allocated, toolCallID)
+				cMessages[i].tool_call_id = toolCallID
+			}
+		}
+
+		status := C.sa_stream_messages_go(
+			ptr,
+			cModel,
+			(*C.SAMessage)(unsafe.Pointer(&cMessages[0])),
+			C.size_t(len(cMessages)),
+			C.int32_t(maxTokens),
+			C.float(temperature),
+			C.float(topP),
+			unsafe.Pointer(uintptr(handle)),
+		)
+
+		if status != 0 {
+			err := lastError()
+			if ctx.Err() != nil {
+				err = ctx.Err()
+			}
+			sendIfWaiting(out, StreamResult{Err: err})
+		}
+	}()
+
+	return out, nil
+}
+
+//export sa_go_stream_callback_export
+func sa_go_stream_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.int32_t {
+	handle := cgo.Handle(uintptr(userData))
+	bridge, ok := handle.Value().(*streamBridge)
+	if !ok || bridge == nil {
+		return 1
+	}
+
+	select {
+	case <-bridge.ctx.Done():
+		return 1
+	default:
+	}
+
+	var event StreamEvent
+	if err := json.Unmarshal([]byte(C.GoString(eventJSON)), &event); err != nil {
+		sendIfWaiting(bridge.out, StreamResult{Err: fmt.Errorf("unmarshal stream event: %w", err)})
+		return 1
+	}
+
+	if event.Type == "error" {
+		sendIfWaiting(bridge.out, StreamResult{Err: errors.New(event.Message)})
+		return 1
+	}
+
+	select {
+	case bridge.out <- StreamResult{Event: event}:
+		return 0
+	case <-bridge.ctx.Done():
+		return 1
 	}
 }
 
