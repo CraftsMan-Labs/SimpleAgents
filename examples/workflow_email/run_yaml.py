@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
+
 load_dotenv()
 from simple_agents_py import Client, ResponseWithMetadata
 
@@ -191,8 +192,8 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
     if not isinstance(current, str) or current not in nodes:
         raise RuntimeError("Invalid or missing entry_node")
 
-    api_base, api_key, default_model = load_llm_settings()
-    client = Client("openai", api_base=api_base, api_key=api_key)
+    provider, api_base, api_key, default_model = load_llm_settings()
+    client = Client(provider, api_base=api_base, api_key=api_key)
 
     outputs: dict[str, dict[str, Any]] = {}
     trace: list[str] = []
