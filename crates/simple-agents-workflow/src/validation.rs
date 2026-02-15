@@ -206,6 +206,41 @@ fn validate(workflow: &WorkflowDefinition) -> Vec<Diagnostic> {
                     ));
                 }
             }
+            NodeKind::Loop {
+                condition,
+                body,
+                next,
+                max_iterations,
+            } => {
+                if condition.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::EmptyField,
+                        "loop.condition must not be empty",
+                        Some(node.id.clone()),
+                    ));
+                }
+                if body.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::EmptyField,
+                        "loop.body must not be empty",
+                        Some(node.id.clone()),
+                    ));
+                }
+                if next.is_empty() {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::EmptyField,
+                        "loop.next must not be empty",
+                        Some(node.id.clone()),
+                    ));
+                }
+                if max_iterations.is_some_and(|limit| limit == 0) {
+                    diagnostics.push(Diagnostic::error(
+                        DiagnosticCode::EmptyField,
+                        "loop.max_iterations must be greater than zero when provided",
+                        Some(node.id.clone()),
+                    ));
+                }
+            }
             NodeKind::End => {
                 end_count += 1;
             }
@@ -445,6 +480,41 @@ mod tests {
             .diagnostics
             .iter()
             .any(|d| d.code == DiagnosticCode::NoPathToEnd));
+    }
+
+    #[test]
+    fn reports_invalid_loop_configuration() {
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "bad-loop".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "loop".to_string(),
+                    },
+                },
+                Node {
+                    id: "loop".to_string(),
+                    kind: NodeKind::Loop {
+                        condition: "".to_string(),
+                        body: "".to_string(),
+                        next: "end".to_string(),
+                        max_iterations: Some(0),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+
+        let err = validate_and_normalize(&workflow).expect_err("loop validation should fail");
+        assert!(err
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DiagnosticCode::EmptyField));
     }
 
     proptest! {

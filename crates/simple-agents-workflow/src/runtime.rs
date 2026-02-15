@@ -3,13 +3,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{Map, Number, Value};
+use serde_json::{Map, Value};
 use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use thiserror::Error;
 use tokio::time::timeout;
 
+use crate::expressions;
 use crate::ir::{Node, NodeKind, WorkflowDefinition};
 use crate::recorder::{TraceRecordError, TraceRecorder};
 use crate::replay::{replay_trace, ReplayError, ReplayReport};
@@ -258,6 +259,17 @@ pub enum NodeExecutionData {
         /// Chosen next node id.
         next: String,
     },
+    /// Loop node decision.
+    Loop {
+        /// Original loop condition.
+        condition: String,
+        /// Evaluated bool.
+        evaluated: bool,
+        /// Current iteration when entering body. Zero when exiting loop.
+        iteration: u32,
+        /// Chosen next node id.
+        next: String,
+    },
     /// End node reached.
     End,
 }
@@ -472,6 +484,24 @@ pub enum WorkflowRuntimeError {
         expression: String,
         /// Detailed reason.
         reason: String,
+    },
+    /// Loop condition expression could not be evaluated.
+    #[error("loop node '{node_id}' has invalid condition '{expression}': {reason}")]
+    InvalidLoopCondition {
+        /// Failing node id.
+        node_id: String,
+        /// Loop condition expression.
+        expression: String,
+        /// Detailed reason.
+        reason: String,
+    },
+    /// Loop exceeded configured max iterations.
+    #[error("loop node '{node_id}' exceeded max iterations ({max_iterations})")]
+    LoopIterationLimitExceeded {
+        /// Failing node id.
+        node_id: String,
+        /// Configured max iterations.
+        max_iterations: u32,
     },
     /// Non-terminal node did not return a next transition.
     #[error("node '{node_id}' did not provide a next transition")]
@@ -781,14 +811,13 @@ impl<'a> WorkflowRuntime<'a> {
                             node_id: node.id.clone(),
                             source,
                         })?;
-                let evaluated =
-                    evaluate_condition(expression, &scoped_input).map_err(|reason| {
-                        WorkflowRuntimeError::InvalidCondition {
-                            node_id: node.id.clone(),
-                            expression: expression.clone(),
-                            reason,
-                        }
-                    })?;
+                let evaluated = expressions::evaluate_bool(expression, &scoped_input).map_err(
+                    |reason| WorkflowRuntimeError::InvalidCondition {
+                        node_id: node.id.clone(),
+                        expression: expression.clone(),
+                        reason: reason.to_string(),
+                    },
+                )?;
                 let next = if evaluated {
                     on_true.clone()
                 } else {
@@ -809,6 +838,62 @@ impl<'a> WorkflowRuntime<'a> {
                         expression: expression.clone(),
                         evaluated,
                         next,
+                    },
+                })
+            }
+            NodeKind::Loop {
+                condition,
+                body,
+                next,
+                max_iterations,
+            } => {
+                check_cancelled(cancellation)?;
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ConditionRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
+                let evaluated = expressions::evaluate_bool(condition, &scoped_input)
+                    .map_err(|reason| WorkflowRuntimeError::InvalidLoopCondition {
+                        node_id: node.id.clone(),
+                        expression: condition.clone(),
+                        reason: reason.to_string(),
+                    })?;
+
+                let (iteration, chosen_next) = if evaluated {
+                    let iteration = scope.loop_iteration(&node.id).saturating_add(1);
+                    if let Some(limit) = max_iterations {
+                        if iteration > *limit {
+                            return Err(WorkflowRuntimeError::LoopIterationLimitExceeded {
+                                node_id: node.id.clone(),
+                                max_iterations: *limit,
+                            });
+                        }
+                    }
+                    scope.set_loop_iteration(&node.id, iteration);
+                    (iteration, body.clone())
+                } else {
+                    scope.clear_loop_iteration(&node.id);
+                    (0, next.clone())
+                };
+
+                scope
+                    .record_condition_output(&node.id, evaluated, ScopeCapability::ConditionWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step,
+                    node_id: node.id.clone(),
+                    data: NodeExecutionData::Loop {
+                        condition: condition.clone(),
+                        evaluated,
+                        iteration,
+                        next: chosen_next,
                     },
                 })
             }
@@ -994,6 +1079,7 @@ impl<'a> WorkflowRuntime<'a> {
 struct RuntimeScope {
     workflow_input: Value,
     node_outputs: BTreeMap<String, Value>,
+    loop_iterations: HashMap<String, u32>,
     last_llm_output: Option<String>,
     last_tool_output: Option<Value>,
 }
@@ -1003,6 +1089,7 @@ impl RuntimeScope {
         Self {
             workflow_input,
             node_outputs: BTreeMap::new(),
+            loop_iterations: HashMap::new(),
             last_llm_output: None,
             last_tool_output: None,
         }
@@ -1093,6 +1180,18 @@ impl RuntimeScope {
             .insert(node_id.to_string(), Value::Bool(evaluated));
         Ok(())
     }
+
+    fn loop_iteration(&self, node_id: &str) -> u32 {
+        self.loop_iterations.get(node_id).copied().unwrap_or(0)
+    }
+
+    fn set_loop_iteration(&mut self, node_id: &str, iteration: u32) {
+        self.loop_iterations.insert(node_id.to_string(), iteration);
+    }
+
+    fn clear_loop_iteration(&mut self, node_id: &str) {
+        self.loop_iterations.remove(node_id);
+    }
 }
 
 fn check_cancelled(
@@ -1139,99 +1238,9 @@ fn next_node_id(data: &NodeExecutionData) -> Option<String> {
         NodeExecutionData::Start { next }
         | NodeExecutionData::Llm { next, .. }
         | NodeExecutionData::Tool { next, .. }
-        | NodeExecutionData::Condition { next, .. } => Some(next.clone()),
+        | NodeExecutionData::Condition { next, .. }
+        | NodeExecutionData::Loop { next, .. } => Some(next.clone()),
         NodeExecutionData::End => None,
-    }
-}
-
-fn evaluate_condition(expression: &str, scoped_input: &Value) -> Result<bool, String> {
-    let expr = expression.trim();
-    if expr.is_empty() {
-        return Err("empty expression".to_string());
-    }
-
-    if let Some(inner) = expr.strip_prefix('!') {
-        return Ok(!evaluate_condition(inner, scoped_input)?);
-    }
-
-    if let Some((left, right)) = expr.split_once("==") {
-        let left_value = resolve_operand(left.trim(), scoped_input)?;
-        let right_value = resolve_operand(right.trim(), scoped_input)?;
-        return Ok(left_value == right_value);
-    }
-
-    if let Some((left, right)) = expr.split_once("!=") {
-        let left_value = resolve_operand(left.trim(), scoped_input)?;
-        let right_value = resolve_operand(right.trim(), scoped_input)?;
-        return Ok(left_value != right_value);
-    }
-
-    let value = resolve_operand(expr, scoped_input)?;
-    Ok(is_truthy(&value))
-}
-
-fn resolve_operand(token: &str, scoped_input: &Value) -> Result<Value, String> {
-    let trimmed = token.trim();
-
-    if trimmed.eq_ignore_ascii_case("true") {
-        return Ok(Value::Bool(true));
-    }
-    if trimmed.eq_ignore_ascii_case("false") {
-        return Ok(Value::Bool(false));
-    }
-    if trimmed.eq_ignore_ascii_case("null") {
-        return Ok(Value::Null);
-    }
-
-    if let Some(stripped) = trimmed
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-    {
-        return Ok(Value::String(stripped.to_string()));
-    }
-    if let Some(stripped) = trimmed
-        .strip_prefix('\'')
-        .and_then(|value| value.strip_suffix('\''))
-    {
-        return Ok(Value::String(stripped.to_string()));
-    }
-
-    if let Ok(number) = trimmed.parse::<i64>() {
-        return Ok(Value::Number(Number::from(number)));
-    }
-    if let Ok(number) = trimmed.parse::<f64>() {
-        if let Some(num) = Number::from_f64(number) {
-            return Ok(Value::Number(num));
-        }
-    }
-
-    let path = trimmed.strip_prefix("$.").unwrap_or(trimmed);
-    resolve_path(scoped_input, path).cloned().ok_or_else(|| {
-        format!(
-            "path '{}' not found in scoped input",
-            if path.is_empty() { "$" } else { path }
-        )
-    })
-}
-
-fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    if path.is_empty() {
-        return Some(root);
-    }
-
-    path.split('.')
-        .filter(|segment| !segment.is_empty())
-        .try_fold(root, |current, segment| current.get(segment))
-}
-
-fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Bool(value) => *value,
-        Value::Null => false,
-        Value::Number(number) => number.as_f64().is_some_and(|n| n != 0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(values) => !values.is_empty(),
-        Value::Object(values) => !values.is_empty(),
     }
 }
 
@@ -1319,6 +1328,21 @@ mod tests {
         }
     }
 
+    struct IncrementingToolExecutor {
+        value: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for IncrementingToolExecutor {
+        async fn execute_tool(
+            &self,
+            _input: ToolExecutionInput,
+        ) -> Result<Value, ToolExecutionError> {
+            let next = self.value.fetch_add(1, Ordering::Relaxed) + 1;
+            Ok(json!(next))
+        }
+    }
+
     struct CancellingLlmExecutor {
         cancel_flag: Arc<AtomicBool>,
         calls: AtomicUsize,
@@ -1388,6 +1412,42 @@ mod tests {
                         model: "gpt-4".to_string(),
                         prompt: "Summarize".to_string(),
                         next: Some("end".to_string()),
+                    },
+                },
+                Node {
+                    id: "end".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        }
+    }
+
+    fn loop_workflow(max_iterations: Option<u32>) -> WorkflowDefinition {
+        WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "loop-workflow".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "loop".to_string(),
+                    },
+                },
+                Node {
+                    id: "loop".to_string(),
+                    kind: NodeKind::Loop {
+                        condition: "last_tool_output != 3".to_string(),
+                        body: "counter".to_string(),
+                        next: "end".to_string(),
+                        max_iterations,
+                    },
+                },
+                Node {
+                    id: "counter".to_string(),
+                    kind: NodeKind::Tool {
+                        tool: "counter".to_string(),
+                        input: json!({}),
+                        next: Some("loop".to_string()),
                     },
                 },
                 Node {
@@ -1712,6 +1772,66 @@ mod tests {
             result.replay_report.as_ref().map(|r| r.total_events),
             Some(9)
         );
+    }
+
+    #[tokio::test]
+    async fn executes_loop_until_condition_fails() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let counter = IncrementingToolExecutor {
+            value: AtomicUsize::new(0),
+        };
+        let runtime = WorkflowRuntime::new(
+            loop_workflow(Some(8)),
+            &llm,
+            Some(&counter),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({}), None)
+            .await
+            .expect("loop workflow should terminate at end");
+
+        assert_eq!(result.terminal_node_id, "end");
+        assert!(result
+            .node_executions
+            .iter()
+            .any(|step| matches!(step.data, NodeExecutionData::Loop { evaluated: false, .. })));
+    }
+
+    #[tokio::test]
+    async fn fails_when_loop_exceeds_max_iterations() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let counter = MockToolExecutor {
+            output: json!(0),
+            fail: false,
+        };
+        let runtime = WorkflowRuntime::new(
+            loop_workflow(Some(2)),
+            &llm,
+            Some(&counter),
+            WorkflowRuntimeOptions {
+                max_steps: 20,
+                ..WorkflowRuntimeOptions::default()
+            },
+        );
+
+        let error = runtime
+            .execute(json!({}), None)
+            .await
+            .expect_err("loop should fail once max iterations are exceeded");
+
+        assert!(matches!(
+            error,
+            WorkflowRuntimeError::LoopIterationLimitExceeded {
+                node_id,
+                max_iterations: 2
+            } if node_id == "loop"
+        ));
     }
 
     #[test]
