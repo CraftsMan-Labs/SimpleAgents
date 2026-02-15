@@ -12,6 +12,13 @@ This folder contains an LLM-driven email intake classification demo in both Pyth
 
 Create `examples/.env` (or export env vars) with:
 
+- `WORKFLOW_PROVIDER` (optional, default: `openai`)
+- `WORKFLOW_API_BASE`
+- `WORKFLOW_API_KEY`
+- `WORKFLOW_MODEL`
+
+Backward-compatible fallback env names are also supported:
+
 - `CUSTOM_API_BASE`
 - `CUSTOM_API_KEY`
 - `CUSTOM_API_MODEL`
