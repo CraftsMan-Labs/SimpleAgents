@@ -1,0 +1,45 @@
+# Map Reduce Enrichment Workflow
+
+id: map-reduce-enrichment
+version: 1.0.0
+
+metadata:
+  name: "Map Reduce Enrichment"
+  description: "Maps over records, enriches each item, then aggregates"
+  tags: ["example", "map", "reduce"]
+
+entry_node: map_records
+
+defaults:
+  max_concurrency: 8
+
+nodes:
+  - id: map_records
+    node_type:
+      map:
+        source: "$.input.records"
+        worker:
+          language: go
+          handler: EnrichRecord
+
+  - id: reduce_records
+    node_type:
+      reduce:
+        operation: count
+        source: "$.nodes.map_records.output"
+
+  - id: summarize
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4o-mini
+    config:
+      prompt: |
+        Summarize enrichment results:
+        total={{ $.nodes.reduce_records.output }}
+
+edges:
+  - from: map_records
+    to: reduce_records
+  - from: reduce_records
+    to: summarize
