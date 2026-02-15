@@ -19,11 +19,16 @@ We will run **8 subagents** in parallel workstreams.
 
 ## Subagent completion protocol (mandatory)
 
-- [ ] Every subagent must update this `TODO.md` directly in its PR.
-- [ ] When a task is complete, change `[ ]` to `[x]` and add 1-line evidence (test command/output path).
-- [ ] If blocked, mark task as `[~]` with blocker reason and owner.
-- [ ] No task is "done" without tests (unit/contract/live as applicable).
-- [ ] Follow `CODING_GUIDELINES.md` (KISS, DRY, OOD, no phantom code, reusable APIs).
+- [x] Every subagent must update this `TODO.md` directly in its PR.
+  - Evidence: SA-6/SA-7/SA-8 and follow-up parity hardening updates all recorded in this file.
+- [x] When a task is complete, change `[ ]` to `[x]` and add 1-line evidence (test command/output path).
+  - Evidence: completed items below include command/file evidence (bench/test/doc paths).
+- [x] If blocked, mark task as `[~]` with blocker reason and owner.
+  - Evidence: historical blocked entries use `[~]` and owner/reason context.
+- [x] No task is "done" without tests (unit/contract/live as applicable).
+  - Evidence: `cargo test -p simple-agents-workflow`, `./scripts/run-binding-contracts.sh`, `./scripts/run-binding-tests-layered.sh`.
+- [x] Follow `CODING_GUIDELINES.md` (KISS, DRY, OOD, no phantom code, reusable APIs).
+  - Evidence: additive, typed APIs and reusable test/contract runners landed without breaking existing bindings.
 
 ## Program plan (implementation phases)
 
@@ -63,17 +68,19 @@ We will run **8 subagents** in parallel workstreams.
   - Evidence: `WorkerPool::{health_snapshot,restart_worker,shutdown}` + probe loop + status transitions in `crates/simple-agents-workflow/src/worker.rs`.
 - [x] Define retry/timeout ownership boundaries (workflow layer vs router layer).
   - Evidence: workflow node retry/timeout remains in `crates/simple-agents-workflow/src/runtime.rs`; worker-level request timeout ownership added in `WorkerPoolOptions::default_request_timeout` (`crates/simple-agents-workflow/src/worker.rs`).
-- [ ] Load/perf benchmarks for scheduler and state hot paths.
+- [x] Load/perf benchmarks for scheduler and state hot paths.
+  - Evidence: `crates/simple-agents-workflow/benches/runtime_benchmarks.rs` with criterion bench run via `cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-size 10`.
 
 ### Phase 3 - Cross-language parity and DX hardening
 
 - [x] Align FFI/Go/Node/Python workflow-facing behavior with Rust reference.
-  - Evidence: shared parity assertions now run in FFI (`crates/simple-agents-ffi/tests/ffi_contract.rs`), Go (`bindings/go/contract_fixture_test.go`), Node (`crates/simple-agents-napi/test/basic.test.js`), and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`).
+  - Evidence: shared parity assertions now run in FFI (`crates/simple-agents-ffi/tests/ffi_contract.rs`), Go (`bindings/go/contract_fixture_test.go`), Node (`crates/simple-agents-napi/test/contract.test.js`), and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`).
 - [x] Add golden contract fixtures shared by all bindings.
   - Evidence: expanded fixture contract in `parity-fixtures/binding_contract.json` now covers request/response/healing/streaming/tool-call and binding-specific symbol expectations.
 - [x] Enforce capability matrix gates in CI.
   - Evidence: `capability-contract-gates` job added to `.github/workflows/bindings-ci.yml`, running `scripts/run-binding-contracts.sh`.
-- [ ] Ship debugging UX: node timeline, retry reasons, replay trace inspection.
+- [x] Ship debugging UX: node timeline, retry reasons, replay trace inspection.
+  - Evidence: debug surfaces added in `crates/simple-agents-workflow/src/debug.rs`, retry diagnostics in `crates/simple-agents-workflow/src/runtime.rs`, and example `crates/simple-agents-workflow/examples/debug_inspection.rs`.
 - [x] Complete docs onboarding path (quickstart + advanced patterns + troubleshooting).
   - Evidence: docs updates in `docs/QUICKSTART.md`, `docs/ARCHITECTURE.md`, `docs/CAPABILITY_MATRIX.md`, and new `docs/TROUBLESHOOTING.md`.
 
@@ -138,7 +145,7 @@ We will run **8 subagents** in parallel workstreams.
 - [x] Implement Go `StreamMessages(ctx, ...)` channel API with cancellation and no leaks.
   - Evidence: `StreamMessages` channel API + callback bridge + context cancellation path in `bindings/go/simpleagents.go`.
 - [x] Add Go streaming tests (unit + env-gated live).
-  - Evidence: `TestStreamMessagesUninitializedClient` and env-gated `TestLiveStreamMessages` in `bindings/go/simpleagents_test.go`.
+  - Evidence: `TestStreamMessagesUninitializedClient` in `bindings/go/simpleagents_test.go` and env-gated `TestLiveStreamMessages` in `bindings/go/simpleagents_live_test.go`.
 - [x] Refactor Go API shape (`CompletePrompt`, `CompleteMessages`, `StreamMessages`).
   - Evidence: added `CompletePrompt` while preserving compatibility helpers in `bindings/go/simpleagents.go`.
 - [x] Refactor FFI payload mapping to shared typed DTO helpers.
@@ -151,9 +158,9 @@ We will run **8 subagents** in parallel workstreams.
 - [x] Add typed tool-call return models with stable TS contracts.
   - Evidence: added `ToolCallResult`/`ToolCallResultFunction` and wired `CompletionResult.tool_calls` in `crates/simple-agents-napi/src/lib.rs`.
 - [x] Ensure `.d.ts` parity with runtime behavior and examples.
-  - Evidence: regenerated declarations through `npm run build:debug` and verified symbol presence by fixture contract test in `crates/simple-agents-napi/test/basic.test.js`.
+  - Evidence: regenerated declarations through `npm run build:debug` and verified symbol presence by fixture contract test in `crates/simple-agents-napi/test/contract.test.js`.
 - [x] Add Node parity contract tests against shared fixtures.
-  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node test `declaration and runtime exports follow shared contract fixture`.
+  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node test `declaration and runtime exports follow shared contract fixture` in `crates/simple-agents-napi/test/contract.test.js`.
 - [x] Update Node docs with canonical env contract.
   - Evidence: updated `crates/simple-agents-napi/README.md` with canonical env contract and typed `streamEvents` example.
 
@@ -197,7 +204,8 @@ We will run **8 subagents** in parallel workstreams.
 
 - [x] API parity with Python (missing streaming and advanced parity features).
   - Evidence: SA-7 parity tasks completed with fixture + error/streaming coverage and docs updates.
-- [~] Go validation coverage (streaming tests + schema-edge golden cases pending).
+- [x] Go validation coverage (streaming tests + schema-edge golden cases pending).
+  - Evidence: option validation + schema-edge golden fixtures in `bindings/go/testdata/schema_option_cases.json` and tests in `bindings/go/simpleagents_test.go`; live streaming tests isolated in `bindings/go/simpleagents_live_test.go`.
 - [x] Credentials/fixtures parity (deterministic no-network fixtures established).
   - Evidence: fixture-backed no-network parity checks now run in FFI/Go/Node/Python via `parity-fixtures/binding_contract.json`.
 
@@ -208,10 +216,11 @@ We will run **8 subagents** in parallel workstreams.
 - [x] Cross-language capability matrix and CI gating.
   - Evidence: capability matrix docs and CI contract gate in `.github/workflows/bindings-ci.yml`.
 - [x] Contract fixtures for parity tests.
-  - Evidence: shared fixture expanded and consumed by tests across `crates/simple-agents-ffi/tests/ffi_contract.rs`, `bindings/go/contract_fixture_test.go`, `crates/simple-agents-napi/test/basic.test.js`, and `crates/simple-agents-py/tests/test_contract_fixtures.py`.
+  - Evidence: shared fixture expanded and consumed by tests across `crates/simple-agents-ffi/tests/ffi_contract.rs`, `bindings/go/contract_fixture_test.go`, `crates/simple-agents-napi/test/contract.test.js`, and `crates/simple-agents-py/tests/test_contract_fixtures.py`.
 - [x] Node parity improvements.
   - Evidence: SA-6 Node streaming/type/docs/tests updates in `crates/simple-agents-napi/` and shared fixture checks.
-- [ ] Refactor test layering (unit/contract/live).
+- [x] Refactor test layering (unit/contract/live).
+  - Evidence: layered runners/scripts and suites added (`scripts/run-binding-tests-layered.sh`, `Makefile` target `test-binding-layers`, Node `test:unit|test:contract|test:live`, Go unit/contract/live split, Python layered commands in README).
 
 ## Ordered execution sequence
 
@@ -224,7 +233,7 @@ We will run **8 subagents** in parallel workstreams.
 - [x] 4. SA-5 lands FFI + Go streaming parity.
   - Evidence: streaming callback contract in `crates/simple-agents-ffi/include/simple_agents.h`, Rust implementation in `crates/simple-agents-ffi/src/lib.rs`, and Go channel API/tests in `bindings/go/simpleagents.go` and `bindings/go/simpleagents_test.go`.
 - [x] 5. SA-6 and SA-7 converge Node/Python parity on shared fixtures.
-  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node (`crates/simple-agents-napi/test/basic.test.js`) and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`) with updated parity APIs.
+  - Evidence: shared fixture `parity-fixtures/binding_contract.json` consumed by Node (`crates/simple-agents-napi/test/contract.test.js`) and Python (`crates/simple-agents-py/tests/test_contract_fixtures.py`) with updated parity APIs.
 - [x] 6. SA-4 lands worker pool/health model behind stable interfaces.
   - Evidence: new worker protocol/pool module exported from `crates/simple-agents-workflow/src/lib.rs` and validated by `cargo test -p simple-agents-workflow`.
 - [x] 7. SA-8 enforces CI capability gates and docs completion.
