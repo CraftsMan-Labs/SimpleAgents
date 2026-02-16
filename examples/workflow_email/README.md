@@ -68,6 +68,21 @@ Ready-to-run helper file:
 uv run --directory examples python workflow_email/run_with_python_package.py
 ```
 
+Live workflow event streaming (step events + LLM deltas when streamable):
+
+```bash
+uv run --directory examples python workflow_email/run_with_python_streaming.py \
+  --workflow examples/workflow_email/email-intake-classification.yaml \
+  --email "Termination request, second warning already issued"
+```
+
+YAML `llm_call` supports:
+
+- `stream: true` to enable token delta events for that node
+- `heal: true` to enable healing mode (non-streamable for that node)
+
+When `stream=true` and `heal=true` together, runtime emits a `node_streaming_unavailable` event with explanatory text and runs non-streaming with healing.
+
 `run_with_python_package.py` now executes `custom_worker.handler` through `workflow_email/handlers.py` (for `GetRagData`) via the Rust-backed package API.
 
 ## Python (script)
