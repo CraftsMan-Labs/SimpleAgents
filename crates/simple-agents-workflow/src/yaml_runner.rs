@@ -42,6 +42,17 @@ pub struct YamlWorkflowEvent {
     pub message: Option<String>,
     pub delta: Option<String>,
     pub elapsed_ms: Option<u128>,
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlTemplateBinding {
+    pub index: usize,
+    pub expression: String,
+    pub source_path: String,
+    pub resolved: Value,
+    pub resolved_type: String,
+    pub missing: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -114,6 +125,8 @@ pub struct YamlLlmExecutionRequest {
     pub node_id: String,
     pub model: String,
     pub prompt: String,
+    pub prompt_template: String,
+    pub prompt_bindings: Vec<YamlTemplateBinding>,
     pub schema: Value,
     pub stream: bool,
     pub heal: bool,
@@ -292,6 +305,7 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
                         ),
                         delta: None,
                         elapsed_ms: None,
+                        metadata: None,
                     });
                 }
             }
@@ -342,6 +356,7 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
                                         message: None,
                                         delta: Some(delta),
                                         elapsed_ms: None,
+                                        metadata: None,
                                     });
                                 }
                             }
@@ -375,6 +390,7 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
                             )),
                             delta: None,
                             elapsed_ms: None,
+                            metadata: None,
                         });
                     }
                     Ok(healed.parsed.value)
@@ -481,6 +497,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             message: Some(format!("workflow_id={}", workflow.id)),
             delta: None,
             elapsed_ms: Some(0),
+            metadata: None,
         });
     }
 
@@ -514,6 +531,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 },
                 delta: None,
                 elapsed_ms: Some(started.elapsed().as_millis()),
+                metadata: None,
             });
         }
 
@@ -528,6 +546,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 "nodes": outputs,
                 "globals": Value::Object(globals.clone())
             });
+            let prompt_bindings = collect_template_bindings(prompt_template, &context);
             let prompt = interpolate_template(prompt_template, &context);
             let schema = schema_for_node(node.id.as_str()).ok_or_else(|| {
                 YamlWorkflowRunError::MissingLlmSchema {
@@ -539,10 +558,34 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 node_id: node.id.clone(),
                 model: llm.model.clone(),
                 prompt,
+                prompt_template: prompt_template.to_string(),
+                prompt_bindings,
                 schema,
                 stream: llm.stream.unwrap_or(false),
                 heal: llm.heal.unwrap_or(false),
             };
+
+            if let Some(sink) = event_sink {
+                sink.emit(&YamlWorkflowEvent {
+                    event_type: "node_llm_input_resolved".to_string(),
+                    node_id: Some(node.id.clone()),
+                    node_kind: Some("llm_call".to_string()),
+                    streamable: Some(request.stream && !request.heal),
+                    message: Some("resolved llm input for telemetry".to_string()),
+                    delta: None,
+                    elapsed_ms: Some(started.elapsed().as_millis()),
+                    metadata: Some(json!({
+                        "model": request.model.clone(),
+                        "stream_requested": request.stream,
+                        "heal_requested": request.heal,
+                        "effective_stream": request.stream && !request.heal,
+                        "prompt_template": request.prompt_template.clone(),
+                        "prompt": request.prompt.clone(),
+                        "schema": request.schema.clone(),
+                        "bindings": request.prompt_bindings.clone(),
+                    })),
+                });
+            }
 
             let payload = executor
                 .complete_structured(request, event_sink)
@@ -619,7 +662,9 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
             apply_set_globals(node, &outputs, email_text, &mut globals);
             apply_update_globals(node, &outputs, email_text, &mut globals);
-            edge_map.get(node.id.as_str()).map(|value| value.to_string())
+            edge_map
+                .get(node.id.as_str())
+                .map(|value| value.to_string())
         } else {
             return Err(YamlWorkflowRunError::UnsupportedNodeType {
                 node_id: node.id.clone(),
@@ -643,6 +688,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 message: None,
                 delta: None,
                 elapsed_ms: Some(elapsed_ms),
+                metadata: None,
             });
         }
 
@@ -686,6 +732,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             message: Some(format!("terminal_node={}", output.terminal_node)),
             delta: None,
             elapsed_ms: Some(output.total_elapsed_ms),
+            metadata: None,
         });
     }
 
@@ -794,10 +841,8 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
         if let Some(config) = node.config.as_ref() {
             if let Some(update_globals) = config.update_globals.as_ref() {
                 for (key, update) in update_globals {
-                    let is_valid_op = matches!(
-                        update.op.as_str(),
-                        "set" | "append" | "increment" | "merge"
-                    );
+                    let is_valid_op =
+                        matches!(update.op.as_str(), "set" | "append" | "increment" | "merge");
                     if !is_valid_op {
                         diagnostics.push(YamlWorkflowDiagnostic {
                             node_id: Some(node.id.clone()),
@@ -853,7 +898,8 @@ fn interpolate_template(template: &str, context: &Value) -> String {
         };
 
         let expr = after_start[..end].trim();
-        let replacement = resolve_path(context, expr)
+        let source_path = expr.trim_start_matches("$.");
+        let replacement = resolve_path(context, source_path)
             .map(value_to_template_string)
             .unwrap_or_default();
         out.push_str(replacement.as_str());
@@ -862,6 +908,51 @@ fn interpolate_template(template: &str, context: &Value) -> String {
     }
 
     out
+}
+
+fn collect_template_bindings(template: &str, context: &Value) -> Vec<YamlTemplateBinding> {
+    let mut bindings = Vec::new();
+    let mut rest = template;
+
+    loop {
+        let Some(start) = rest.find("{{") else {
+            break;
+        };
+
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            break;
+        };
+
+        let expr = after_start[..end].trim();
+        let source_path = expr.trim_start_matches("$.").to_string();
+        let resolved = resolve_path(context, source_path.as_str()).cloned();
+        let missing = resolved.is_none();
+        let resolved_value = resolved.unwrap_or(Value::Null);
+        bindings.push(YamlTemplateBinding {
+            index: bindings.len(),
+            expression: expr.to_string(),
+            source_path,
+            resolved_type: json_type_name(&resolved_value).to_string(),
+            missing,
+            resolved: resolved_value,
+        });
+
+        rest = &after_start[end + 2..];
+    }
+
+    bindings
+}
+
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
 }
 
 fn value_to_template_string(value: &Value) -> String {
@@ -1171,8 +1262,22 @@ pub struct YamlEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     struct MockExecutor;
+
+    struct RecordingSink {
+        events: Mutex<Vec<YamlWorkflowEvent>>,
+    }
+
+    impl YamlWorkflowEventSink for RecordingSink {
+        fn emit(&self, event: &YamlWorkflowEvent) {
+            self.events
+                .lock()
+                .expect("recording sink lock should not be poisoned")
+                .push(event.clone());
+        }
+    }
 
     #[async_trait]
     impl YamlWorkflowLlmExecutor for MockExecutor {
@@ -1264,5 +1369,90 @@ edges:
         assert!(output
             .outputs
             .contains_key("rag_termination_repeated_offense"));
+    }
+
+    #[tokio::test]
+    async fn emits_resolved_llm_input_event_with_bindings() {
+        let yaml = r#"
+id: email-intake-classification
+entry_node: classify_top_level
+nodes:
+  - id: classify_top_level
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let sink = RecordingSink {
+            events: Mutex::new(Vec::new()),
+        };
+
+        let output = run_email_workflow_yaml_with_custom_worker_and_events(
+            &workflow,
+            "Need help with termination",
+            &MockExecutor,
+            None,
+            Some(&sink),
+        )
+        .await
+        .expect("yaml workflow should execute");
+
+        assert_eq!(output.terminal_node, "classify_top_level");
+
+        let events = sink
+            .events
+            .lock()
+            .expect("recording sink lock should not be poisoned");
+        let llm_event = events
+            .iter()
+            .find(|event| event.event_type == "node_llm_input_resolved")
+            .expect("expected llm input telemetry event");
+
+        let metadata = llm_event
+            .metadata
+            .as_ref()
+            .expect("llm input event must include metadata");
+        assert_eq!(metadata["model"], Value::String("gpt-4.1".to_string()));
+        assert_eq!(metadata["stream_requested"], Value::Bool(false));
+        assert_eq!(metadata["heal_requested"], Value::Bool(false));
+        assert!(metadata["prompt"]
+            .as_str()
+            .expect("prompt should be a string")
+            .contains("Need help with termination"));
+
+        let bindings = metadata["bindings"]
+            .as_array()
+            .expect("bindings should be an array");
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(
+            bindings[0]["source_path"],
+            Value::String("input.email_text".to_string())
+        );
+        assert_eq!(
+            bindings[0]["resolved"],
+            Value::String("Need help with termination".to_string())
+        );
+        assert_eq!(bindings[0]["missing"], Value::Bool(false));
+        assert_eq!(
+            bindings[0]["resolved_type"],
+            Value::String("string".to_string())
+        );
+    }
+
+    #[test]
+    fn interpolate_template_supports_dollar_prefixed_paths() {
+        let context = json!({
+            "input": {
+                "email_text": "hello"
+            }
+        });
+
+        let rendered = interpolate_template("value={{ $.input.email_text }}", &context);
+        assert_eq!(rendered, "value=hello");
     }
 }

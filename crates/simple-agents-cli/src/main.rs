@@ -12,7 +12,8 @@ use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
 use simple_agents_workflow::{
-    inspect_replay_trace, replay_trace_with_options, ReplayCachePolicy, ReplayOptions, WorkflowTrace,
+    inspect_replay_trace, replay_trace_with_options, ReplayCachePolicy, ReplayOptions,
+    WorkflowTrace,
 };
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -63,7 +64,10 @@ enum WorkflowCommands {
         cache_policy: WorkflowCachePolicyArg,
     },
     /// Inspect replay violations scoped to one node id
-    Inspect { trace_file: PathBuf, node_id: String },
+    Inspect {
+        trace_file: PathBuf,
+        node_id: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
