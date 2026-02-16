@@ -106,6 +106,11 @@ Streaming-related validation includes streamability diagnostics:
 - `llm_call.stream=true` with `heal=true` is flagged as non-streamable for that node
 - runtime emits explanatory event text when streaming is disabled
 
+Workflow event telemetry includes per-node resolved LLM input details:
+
+- `node_llm_input_resolved` includes `metadata.prompt` and `metadata.prompt_template`
+- `metadata.bindings[]` lists template provenance (`expression`, `source_path`, `resolved`, `missing`)
+
 ## Workflow Visualization
 
 Use `workflow_to_mermaid(&WorkflowDefinition)` to render canonical IR workflows as Mermaid diagrams for debugging/review.

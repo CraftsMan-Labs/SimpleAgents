@@ -26,7 +26,7 @@ Scope: Defines additive workflow subsystem boundaries, canonical IR/runtime capa
   - `debug` - timeline/retry/replay inspection helpers
   - `observability` - tracing + metrics adapters
   - `visualize` - Mermaid workflow rendering
-  - `yaml_runner` - YAML workflow execution with step timing metrics
+- `yaml_runner` - YAML workflow execution with step timing metrics
 - Integration boundary:
   - LLM execution is delegated through `LlmExecutor`; production adapter is `impl LlmExecutor for SimpleAgentsClient`.
   - Tool execution is host-injected via `ToolExecutor`.
@@ -136,6 +136,24 @@ Workflow YAML streaming/healing surface:
 - `llm_call.stream` enables node-level LLM delta streaming
 - `llm_call.heal` enables healing mode for structured node output
 - when `stream=true` and `heal=true`, streaming is disabled for that node with explanatory event text
+- `node_llm_input_resolved` emits per-node resolved LLM input telemetry, including:
+  - resolved prompt text and original template
+  - model/schema and effective stream/heal flags
+  - template binding provenance (`expression`, `source_path`, `resolved`, `missing`)
+
+Workflow YAML memory interpolation surface:
+
+- Prompt interpolation supports:
+  - `{{ input.email_text }}`
+  - `{{ nodes.<node_id>.output.<field> }}`
+  - `{{ globals.<key> }}`
+- Node config supports global memory writes:
+  - `set_globals` for direct key assignment from context paths
+  - `update_globals` with mutable ops:
+    - `set`
+    - `append`
+    - `increment`
+    - `merge`
 
 References:
 
@@ -155,6 +173,8 @@ References:
 | Scope boundaries | request-level | runtime scoped state with capability checks |
 | YAML workflow execution | not available | `run_email_workflow_yaml_file_with_client` / `run_email_workflow_yaml_with_client` |
 | Workflow live events | not available | `run_email_workflow_yaml_with_client_and_custom_worker_and_events` + `YamlWorkflowEventSink` |
+| YAML workflow verifier | not available | `verify_yaml_workflow` diagnostics before execution |
+| YAML prompt memory | not available | `set_globals` + `update_globals` + `{{ globals.* }}` interpolation |
 | Visualization | not available | `workflow_to_mermaid` |
 
 ## 8) Cross-Language Exposure Contract
@@ -165,6 +185,7 @@ Rust remains source of truth. Language bindings should wrap Rust behavior, not r
 - Go: `Client.RunEmailWorkflowYAML(...)` delegates through FFI.
 - Node: `Client.runEmailWorkflowYaml(...)` delegates through Rust binding.
 - Python: `Client.run_email_workflow_yaml(...)` delegates through Rust binding.
+- Python streaming: `Client.run_email_workflow_yaml_stream(...)` delegates through Rust event stream + callback sink.
 
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 
