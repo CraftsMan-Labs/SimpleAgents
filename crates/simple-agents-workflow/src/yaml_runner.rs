@@ -560,6 +560,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
             apply_set_globals(node, &outputs, email_text, &mut globals);
+            apply_update_globals(node, &outputs, email_text, &mut globals);
             edge_map
                 .get(node.id.as_str())
                 .map(|value| value.to_string())
@@ -617,6 +618,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
 
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
             apply_set_globals(node, &outputs, email_text, &mut globals);
+            apply_update_globals(node, &outputs, email_text, &mut globals);
             edge_map.get(node.id.as_str()).map(|value| value.to_string())
         } else {
             return Err(YamlWorkflowRunError::UnsupportedNodeType {
@@ -788,6 +790,40 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
                 });
             }
         }
+
+        if let Some(config) = node.config.as_ref() {
+            if let Some(update_globals) = config.update_globals.as_ref() {
+                for (key, update) in update_globals {
+                    let is_valid_op = matches!(
+                        update.op.as_str(),
+                        "set" | "append" | "increment" | "merge"
+                    );
+                    if !is_valid_op {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "unknown_update_op".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message: format!(
+                                "update_globals key '{}' has unknown op '{}'; expected set|append|increment|merge",
+                                key, update.op
+                            ),
+                        });
+                    }
+
+                    if update.op != "increment" && update.from.is_none() {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "missing_update_from".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message: format!(
+                                "update_globals key '{}' with op '{}' requires 'from'",
+                                key, update.op
+                            ),
+                        });
+                    }
+                }
+            }
+        }
     }
 
     diagnostics
@@ -862,6 +898,84 @@ fn apply_set_globals(
             .cloned()
             .unwrap_or(Value::Null);
         globals.insert(key.clone(), value);
+    }
+}
+
+fn apply_update_globals(
+    node: &YamlNode,
+    outputs: &BTreeMap<String, Value>,
+    email_text: &str,
+    globals: &mut serde_json::Map<String, Value>,
+) {
+    let Some(config) = node.config.as_ref() else {
+        return;
+    };
+    let Some(update_globals) = config.update_globals.as_ref() else {
+        return;
+    };
+
+    let context = json!({
+        "input": { "email_text": email_text },
+        "nodes": outputs,
+        "globals": Value::Object(globals.clone())
+    });
+
+    for (key, update) in update_globals {
+        match update.op.as_str() {
+            "set" => {
+                if let Some(path) = update.from.as_ref() {
+                    let value = resolve_path(&context, path.as_str())
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    globals.insert(key.clone(), value);
+                }
+            }
+            "append" => {
+                if let Some(path) = update.from.as_ref() {
+                    let value = resolve_path(&context, path.as_str())
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    let entry = globals
+                        .entry(key.clone())
+                        .or_insert_with(|| Value::Array(Vec::new()));
+                    match entry {
+                        Value::Array(items) => items.push(value),
+                        other => {
+                            let existing = other.clone();
+                            *other = Value::Array(vec![existing, value]);
+                        }
+                    }
+                }
+            }
+            "increment" => {
+                let by = update.by.unwrap_or(1.0);
+                let current = globals
+                    .get(key.as_str())
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0);
+                if let Some(next) = serde_json::Number::from_f64(current + by) {
+                    globals.insert(key.clone(), Value::Number(next));
+                }
+            }
+            "merge" => {
+                if let Some(path) = update.from.as_ref() {
+                    let source = resolve_path(&context, path.as_str())
+                        .cloned()
+                        .unwrap_or(Value::Null);
+                    if let Value::Object(source_map) = source {
+                        let target = globals
+                            .entry(key.clone())
+                            .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                        if let Value::Object(target_map) = target {
+                            target_map.extend(source_map);
+                        } else {
+                            *target = Value::Object(source_map);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1038,6 +1152,14 @@ pub struct YamlNodeConfig {
     pub prompt: Option<String>,
     pub payload: Option<Value>,
     pub set_globals: Option<HashMap<String, String>>,
+    pub update_globals: Option<HashMap<String, YamlGlobalUpdate>>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct YamlGlobalUpdate {
+    pub op: String,
+    pub from: Option<String>,
+    pub by: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
