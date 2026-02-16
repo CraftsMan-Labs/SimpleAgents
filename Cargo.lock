@@ -2566,6 +2566,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "governor",
+ "httpdate",
  "metrics",
  "metrics-exporter-prometheus",
  "pin-project-lite",

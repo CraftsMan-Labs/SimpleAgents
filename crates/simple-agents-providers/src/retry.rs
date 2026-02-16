@@ -48,6 +48,12 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T>>,
 {
+    if config.max_attempts == 0 {
+        return Err(SimpleAgentsError::Config(
+            "retry max_attempts must be >= 1".to_string(),
+        ));
+    }
+
     let mut last_error = None;
 
     for attempt in 0..config.max_attempts {
@@ -65,8 +71,13 @@ where
                     break;
                 }
 
-                // Calculate backoff and sleep
-                let backoff = config.calculate_backoff(attempt);
+                // Calculate backoff and sleep (prefer provider retry-after hint when present)
+                let backoff = match &e {
+                    SimpleAgentsError::Provider(simple_agent_type::error::ProviderError::RateLimit {
+                        retry_after: Some(retry_after),
+                    }) => *retry_after,
+                    _ => config.calculate_backoff(attempt),
+                };
                 tracing::debug!(
                     "Attempt {} failed, retrying after {:?}: {}",
                     attempt + 1,
@@ -86,7 +97,9 @@ where
         }
     }
 
-    Err(last_error.unwrap())
+    Err(last_error.unwrap_or_else(|| {
+        SimpleAgentsError::Config("retry loop exhausted without attempts".to_string())
+    }))
 }
 
 #[cfg(test)]
@@ -216,5 +229,51 @@ mod tests {
         assert!(result.is_err());
         // Should only attempt once for non-retryable errors
         assert_eq!(*attempt_count.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_zero_attempts_returns_config_error() {
+        let config = RetryConfig {
+            max_attempts: 0,
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let result = execute_with_retry(&config, None, |_| true, || async {
+            Ok::<_, SimpleAgentsError>("never")
+        })
+        .await;
+
+        assert!(matches!(result, Err(SimpleAgentsError::Config(_))));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_retry_after_is_honored() {
+        let config = RetryConfig {
+            max_attempts: 2,
+            initial_backoff: Duration::from_millis(500),
+            max_backoff: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let started = std::time::Instant::now();
+        let result = execute_with_retry(
+            &config,
+            None,
+            |_| true,
+            || async {
+                Err::<String, _>(SimpleAgentsError::Provider(ProviderError::RateLimit {
+                    retry_after: Some(Duration::from_millis(20)),
+                }))
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert!(started.elapsed() >= Duration::from_millis(20));
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 }

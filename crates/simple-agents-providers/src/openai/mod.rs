@@ -335,6 +335,11 @@ impl Provider for OpenAIProvider {
         };
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses with structured logging
         if !status.is_success() {
@@ -369,7 +374,7 @@ impl Provider for OpenAIProvider {
                 }
             };
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
 
             // Log additional context for debugging
             tracing::debug!(
@@ -567,6 +572,11 @@ impl OpenAIProvider {
             })?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -580,7 +590,7 @@ impl OpenAIProvider {
                 "Streaming API request failed"
             );
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 

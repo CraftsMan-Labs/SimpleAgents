@@ -124,7 +124,6 @@ impl OpenRouterProvider {
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
-            .http2_prior_knowledge()
             .build()
             .map_err(|e| {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -232,6 +231,11 @@ impl Provider for OpenRouterProvider {
         };
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -246,8 +250,11 @@ impl Provider for OpenRouterProvider {
             );
 
             // Use OpenAI error parsing (compatible format)
-            let openai_error =
-                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = crate::openai::OpenAIError::from_response(
+                status.as_u16(),
+                &error_body,
+                retry_after,
+            );
             timer.complete_error(format!("http_{}", status.as_u16()));
 
             return Err(SimpleAgentsError::Provider(openai_error.into()));
@@ -355,6 +362,11 @@ impl Provider for OpenRouterProvider {
             })?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -368,8 +380,11 @@ impl Provider for OpenRouterProvider {
                 "OpenRouter streaming request failed"
             );
 
-            let openai_error =
-                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = crate::openai::OpenAIError::from_response(
+                status.as_u16(),
+                &error_body,
+                retry_after,
+            );
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 

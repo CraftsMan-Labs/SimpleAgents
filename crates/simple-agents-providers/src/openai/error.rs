@@ -46,18 +46,22 @@ impl OpenAIError {
     ///
     /// * `status` - HTTP status code
     /// * `body` - Response body text
-    pub fn from_response(status: u16, body: &str) -> Self {
+    pub fn from_response(status: u16, body: &str, retry_after_hint: Option<Duration>) -> Self {
         // Try to parse as OpenAI error response
         if let Ok(error_response) = serde_json::from_str::<super::OpenAIErrorResponse>(body) {
-            return Self::from_error_details(status, &error_response.error.message);
+            return Self::from_error_details(
+                status,
+                &error_response.error.message,
+                retry_after_hint,
+            );
         }
 
         // If not JSON, still check for specific patterns in plain text
-        Self::from_error_details(status, body)
+        Self::from_error_details(status, body, retry_after_hint)
     }
 
     /// Parse error from error details
-    fn from_error_details(status: u16, message: &str) -> Self {
+    fn from_error_details(status: u16, message: &str, retry_after_hint: Option<Duration>) -> Self {
         let message_lower = message.to_lowercase();
 
         // Check for specific error patterns
@@ -70,7 +74,9 @@ impl OpenAIError {
         }
 
         if message_lower.contains("rate limit") {
-            return Self::RateLimit { retry_after: None };
+            return Self::RateLimit {
+                retry_after: retry_after_hint,
+            };
         }
 
         if message_lower.contains("context length") {
@@ -81,7 +87,9 @@ impl OpenAIError {
         match status {
             401 => Self::InvalidApiKey,
             404 => Self::ModelNotFound(message.to_string()),
-            429 => Self::RateLimit { retry_after: None },
+            429 => Self::RateLimit {
+                retry_after: retry_after_hint,
+            },
             400..=499 => Self::BadRequest(message.to_string()),
             500..=599 => Self::ServerError(message.to_string()),
             _ => Self::Unknown(message.to_string()),
@@ -110,25 +118,32 @@ mod tests {
 
     #[test]
     fn test_invalid_api_key_error() {
-        let error = OpenAIError::from_response(401, "Incorrect API key provided");
+        let error = OpenAIError::from_response(401, "Incorrect API key provided", None);
         assert!(matches!(error, OpenAIError::InvalidApiKey));
     }
 
     #[test]
     fn test_model_not_found_error() {
-        let error = OpenAIError::from_response(404, "Model gpt-5 not found");
+        let error = OpenAIError::from_response(404, "Model gpt-5 not found", None);
         assert!(matches!(error, OpenAIError::ModelNotFound(_)));
     }
 
     #[test]
     fn test_rate_limit_error() {
-        let error = OpenAIError::from_response(429, "Rate limit exceeded");
+        let error =
+            OpenAIError::from_response(429, "Rate limit exceeded", Some(Duration::from_secs(7)));
         assert!(matches!(error, OpenAIError::RateLimit { .. }));
+        assert!(matches!(
+            error,
+            OpenAIError::RateLimit {
+                retry_after: Some(d)
+            } if d == Duration::from_secs(7)
+        ));
     }
 
     #[test]
     fn test_server_error() {
-        let error = OpenAIError::from_response(500, "Internal server error");
+        let error = OpenAIError::from_response(500, "Internal server error", None);
         assert!(matches!(error, OpenAIError::ServerError(_)));
     }
 
@@ -142,14 +157,17 @@ mod tests {
             }
         }"#;
 
-        let error = OpenAIError::from_response(401, json);
+        let error = OpenAIError::from_response(401, json, None);
         assert!(matches!(error, OpenAIError::InvalidApiKey));
     }
 
     #[test]
     fn test_context_length_exceeded() {
-        let error =
-            OpenAIError::from_response(400, "This model's maximum context length is 4096 tokens");
+        let error = OpenAIError::from_response(
+            400,
+            "This model's maximum context length is 4096 tokens",
+            None,
+        );
         assert!(matches!(error, OpenAIError::ContextLengthExceeded(_)));
     }
 }

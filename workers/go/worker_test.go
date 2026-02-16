@@ -48,6 +48,7 @@ func TestWorkerSmoke(t *testing.T) {
 	}
 
 	executeReq := dynamicpb.NewMessage(svc.Methods().ByName("Execute").Input())
+	_ = fieldByName(t, executeReq.Descriptor(), "metadata")
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "request_id"), protoreflect.ValueOfString("smoke-1"))
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "workflow_name"), protoreflect.ValueOfString("wf"))
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "node_id"), protoreflect.ValueOfString("node-1"))
