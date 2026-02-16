@@ -12,8 +12,8 @@ use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
 use simple_agents_workflow::{
-    inspect_replay_trace, replay_trace_with_options, ReplayCachePolicy, ReplayOptions,
-    WorkflowTrace,
+    inspect_replay_trace, replay_trace_with_options, workflow_to_mermaid, yaml_workflow_file_to_mermaid,
+    ReplayCachePolicy, ReplayOptions, WorkflowDefinition, WorkflowTrace,
 };
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -68,6 +68,8 @@ enum WorkflowCommands {
         trace_file: PathBuf,
         node_id: String,
     },
+    /// Render a workflow file as Mermaid flowchart (YAML or IR JSON)
+    Mermaid { workflow_file: PathBuf },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize)]
@@ -1208,6 +1210,46 @@ fn run_workflow_tools(args: WorkflowArgs, output: OutputFormat) -> Result<()> {
                             println!("- {}", violation);
                         }
                     }
+                }
+            }
+        }
+        WorkflowCommands::Mermaid { workflow_file } => {
+            let ext = workflow_file
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+
+            let diagram = match ext.as_str() {
+                "yaml" | "yml" => yaml_workflow_file_to_mermaid(&workflow_file)
+                    .map_err(|err| CliError::Config(err.to_string()))?,
+                "json" => {
+                    let bytes = std::fs::read(&workflow_file)?;
+                    let definition = serde_json::from_slice::<WorkflowDefinition>(&bytes)
+                        .map_err(|err| CliError::Config(format!("invalid workflow IR json: {}", err)))?;
+                    workflow_to_mermaid(&definition)
+                }
+                _ => {
+                    return Err(CliError::Config(
+                        "unsupported workflow format (use .yaml/.yml or .json)".to_string(),
+                    ))
+                }
+            };
+
+            match output {
+                OutputFormat::Json => {
+                    let value = serde_json::json!({
+                        "workflow_file": workflow_file,
+                        "mermaid": diagram,
+                    });
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&value)
+                            .map_err(|err| CliError::Serialization(err.to_string()))?
+                    );
+                }
+                OutputFormat::Plain | OutputFormat::Markdown => {
+                    println!("{}", diagram);
                 }
             }
         }
