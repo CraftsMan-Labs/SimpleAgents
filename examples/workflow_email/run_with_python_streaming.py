@@ -64,10 +64,28 @@ def on_event(event: dict[str, object]) -> None:
     node_id = event.get("node_id")
     message = event.get("message")
     delta = event.get("delta")
+    metadata = event.get("metadata")
 
     if event_type == "node_stream_delta" and delta:
         print(f"[stream:{node_id}] {delta}", end="", flush=True)
         return
+
+    if event_type == "node_llm_input_resolved" and isinstance(metadata, dict):
+        model = metadata.get("model")
+        prompt = metadata.get("prompt")
+        bindings = metadata.get("bindings")
+        if isinstance(bindings, list):
+            sources = [
+                str(item.get("source_path"))
+                for item in bindings
+                if isinstance(item, dict) and item.get("source_path") is not None
+            ]
+            print(
+                f"[llm-input] node={node_id} model={model} sources={','.join(sources)}"
+            )
+            if isinstance(prompt, str):
+                print(f"[llm-prompt:{node_id}]\n{prompt}")
+            return
 
     print(f"[event] type={event_type} node={node_id} msg={message}")
 

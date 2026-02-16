@@ -295,7 +295,10 @@ class Client:
         | Iterator[PyStructuredEvent]
     ): ...
     def run_email_workflow_yaml(
-        self, workflow_path: str, email_text: str
+        self,
+        workflow_path: str,
+        email_text: str,
+        include_events: bool = False,
     ) -> dict[str, Any]: ...
     def run_email_workflow_yaml_stream(
         self,

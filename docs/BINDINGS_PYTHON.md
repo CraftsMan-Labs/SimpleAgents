@@ -137,6 +137,18 @@ print(result["step_timings"])      # per-node elapsed ms
 print(result["total_elapsed_ms"])  # end-to-end runtime
 ```
 
+To collect workflow events without live callbacks, set `include_events=True`:
+
+```python
+result = client.run_email_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+    include_events=True,
+)
+
+print(result["events"][0]["event_type"])
+```
+
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
 ### Live Workflow Events + LLM Deltas
@@ -161,3 +173,7 @@ Notes:
 
 - Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
 - If `llm_call` uses `heal=true`, streaming deltas are disabled for that node and a non-streamable event is emitted.
+- `node_llm_input_resolved` is emitted before each `llm_call` with `metadata` containing:
+  - resolved `prompt` and `prompt_template`
+  - selected `model`, `schema`, and effective stream/heal flags
+  - `bindings[]` entries that map each template expression to its source path and resolved value

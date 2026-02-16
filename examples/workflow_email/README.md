@@ -68,6 +68,12 @@ Ready-to-run helper file:
 uv run --directory examples python workflow_email/run_with_python_package.py
 ```
 
+Non-streaming with collected events (including `node_llm_input_resolved` metadata):
+
+```bash
+uv run --directory examples python workflow_email/run_with_python_package.py --include-events
+```
+
 Live workflow event streaming (step events + LLM deltas when streamable):
 
 ```bash
@@ -95,6 +101,8 @@ YAML nodes also support memory interpolation via globals:
   - `{{ input.email_text }}`
 
 When `stream=true` and `heal=true` together, runtime emits a `node_streaming_unavailable` event with explanatory text and runs non-streaming with healing.
+
+For telemetry/analytics, runtime also emits `node_llm_input_resolved` before each `llm_call`, including resolved prompt inputs and template binding source paths in `event.metadata`.
 
 `run_with_python_package.py` now executes `custom_worker.handler` through `workflow_email/handlers.py` (for `GetRagData`) via the Rust-backed package API.
 
