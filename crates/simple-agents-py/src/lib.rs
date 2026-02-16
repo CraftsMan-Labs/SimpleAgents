@@ -2641,12 +2641,13 @@ impl Client {
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, email_text))]
+    #[pyo3(signature = (workflow_path, email_text, include_events=false))]
     fn run_email_workflow_yaml(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         email_text: &str,
+        include_events: bool,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
             return Err(PyRuntimeError::new_err(
@@ -2746,22 +2747,65 @@ impl Client {
             }
         }
 
+        struct RecordingWorkflowEventSink {
+            events: Mutex<Vec<YamlWorkflowEvent>>,
+        }
+
+        impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
+            fn emit(&self, event: &YamlWorkflowEvent) {
+                if let Ok(mut events) = self.events.lock() {
+                    events.push(event.clone());
+                }
+            }
+        }
+
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
-        let output = runtime
-            .block_on(run_email_workflow_yaml_file_with_client_and_custom_worker(
-                workflow_path_buf.as_path(),
-                email_text,
-                &self.client,
-                Some(&custom_executor),
-            ))
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let event_sink = RecordingWorkflowEventSink {
+            events: Mutex::new(Vec::new()),
+        };
+        let output = if include_events {
+            runtime
+                .block_on(
+                    run_email_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                        workflow_path_buf.as_path(),
+                        email_text,
+                        &self.client,
+                        Some(&custom_executor),
+                        Some(&event_sink),
+                    ),
+                )
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        } else {
+            runtime
+                .block_on(run_email_workflow_yaml_file_with_client_and_custom_worker(
+                    workflow_path_buf.as_path(),
+                    email_text,
+                    &self.client,
+                    Some(&custom_executor),
+                ))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        };
 
-        let value = serde_json::to_value(output)
+        let mut value = serde_json::to_value(output)
             .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        if include_events {
+            let events = event_sink
+                .events
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
+                .clone();
+            let events_value = serde_json::to_value(events).map_err(|error| {
+                PyRuntimeError::new_err(format!("event serialization failed: {error}"))
+            })?;
+            if let Value::Object(object) = &mut value {
+                object.insert("events".to_string(), events_value);
+            }
+        }
+
         let py_value = pythonize::pythonize(py, &value)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         Ok(py_value.into_py(py))

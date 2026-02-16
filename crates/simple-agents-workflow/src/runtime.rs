@@ -1129,12 +1129,13 @@ impl<'a> WorkflowRuntime<'a> {
                     }
                 })?;
 
-                let scoped_input = scope
-                    .scoped_input(ScopeCapability::ToolRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
+                let scoped_input =
+                    scope
+                        .scoped_input(ScopeCapability::ToolRead)
+                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                            node_id: node.id.clone(),
+                            source,
+                        })?;
 
                 let (tool_output, tool_retries) = self
                     .execute_tool_with_policy_for_scope(ToolPolicyRequest {
