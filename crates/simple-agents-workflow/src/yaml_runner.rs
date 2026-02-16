@@ -3,11 +3,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
-use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
+use simple_agents_core::{
+    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
+};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -28,6 +31,31 @@ pub struct YamlWorkflowRunOutput {
     pub terminal_output: Option<Value>,
     pub step_timings: Vec<YamlStepTiming>,
     pub total_elapsed_ms: u128,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlWorkflowEvent {
+    pub event_type: String,
+    pub node_id: Option<String>,
+    pub node_kind: Option<String>,
+    pub streamable: Option<bool>,
+    pub message: Option<String>,
+    pub delta: Option<String>,
+    pub elapsed_ms: Option<u128>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub enum YamlWorkflowDiagnosticSeverity {
+    Error,
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct YamlWorkflowDiagnostic {
+    pub node_id: Option<String>,
+    pub code: String,
+    pub severity: YamlWorkflowDiagnosticSeverity,
+    pub message: String,
 }
 
 #[derive(Debug, Error)]
@@ -61,24 +89,42 @@ pub enum YamlWorkflowRunError {
     #[error("custom worker handler '{handler}' is not supported")]
     UnsupportedCustomHandler { handler: String },
     #[error("llm execution failed for node '{node_id}': {message}")]
-    Llm {
-        node_id: String,
-        message: String,
-    },
+    Llm { node_id: String, message: String },
     #[error("custom worker execution failed for node '{node_id}': {message}")]
-    CustomWorker {
-        node_id: String,
-        message: String,
+    CustomWorker { node_id: String, message: String },
+    #[error("workflow validation failed with {diagnostics_count} error(s)")]
+    Validation {
+        diagnostics_count: usize,
+        diagnostics: Vec<YamlWorkflowDiagnostic>,
     },
+}
+
+pub trait YamlWorkflowEventSink: Send + Sync {
+    fn emit(&self, event: &YamlWorkflowEvent);
+}
+
+pub struct NoopYamlWorkflowEventSink;
+
+impl YamlWorkflowEventSink for NoopYamlWorkflowEventSink {
+    fn emit(&self, _event: &YamlWorkflowEvent) {}
+}
+
+#[derive(Debug, Clone)]
+pub struct YamlLlmExecutionRequest {
+    pub node_id: String,
+    pub model: String,
+    pub prompt: String,
+    pub schema: Value,
+    pub stream: bool,
+    pub heal: bool,
 }
 
 #[async_trait]
 pub trait YamlWorkflowLlmExecutor: Send + Sync {
     async fn complete_structured(
         &self,
-        model: &str,
-        prompt: &str,
-        schema: &Value,
+        request: YamlLlmExecutionRequest,
+        event_sink: Option<&dyn YamlWorkflowEventSink>,
     ) -> Result<Value, String>;
 }
 
@@ -98,10 +144,11 @@ pub async fn run_email_workflow_yaml_file(
     email_text: &str,
     executor: &dyn YamlWorkflowLlmExecutor,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    let contents = std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
-        path: workflow_path.display().to_string(),
-        source,
-    })?;
+    let contents =
+        std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
 
     let workflow: YamlWorkflow =
         serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
@@ -117,10 +164,11 @@ pub async fn run_email_workflow_yaml_file_with_client(
     email_text: &str,
     client: &SimpleAgentsClient,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    let contents = std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
-        path: workflow_path.display().to_string(),
-        source,
-    })?;
+    let contents =
+        std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
 
     let workflow: YamlWorkflow =
         serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
@@ -136,8 +184,7 @@ pub async fn run_email_workflow_yaml_with_client(
     email_text: &str,
     client: &SimpleAgentsClient,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_client_and_custom_worker(workflow, email_text, client, None)
-        .await
+    run_email_workflow_yaml_with_client_and_custom_worker(workflow, email_text, client, None).await
 }
 
 pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
@@ -146,10 +193,11 @@ pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    let contents = std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
-        path: workflow_path.display().to_string(),
-        source,
-    })?;
+    let contents =
+        std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
 
     let workflow: YamlWorkflow =
         serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
@@ -157,8 +205,42 @@ pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
             source,
         })?;
 
-    run_email_workflow_yaml_with_client_and_custom_worker(&workflow, email_text, client, custom_worker)
-        .await
+    run_email_workflow_yaml_with_client_and_custom_worker(
+        &workflow,
+        email_text,
+        client,
+        custom_worker,
+    )
+    .await
+}
+
+pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker_and_events(
+    workflow_path: &Path,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let contents =
+        std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    let workflow: YamlWorkflow =
+        serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+        &workflow,
+        email_text,
+        client,
+        custom_worker,
+        event_sink,
+    )
+    .await
 }
 
 pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
@@ -166,6 +248,23 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
     email_text: &str,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+        workflow,
+        email_text,
+        client,
+        custom_worker,
+        None,
+    )
+    .await
+}
+
+pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
@@ -175,44 +274,125 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
     impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
         async fn complete_structured(
             &self,
-            model: &str,
-            prompt: &str,
-            _schema: &Value,
+            request: YamlLlmExecutionRequest,
+            event_sink: Option<&dyn YamlWorkflowEventSink>,
         ) -> Result<Value, String> {
-            let request = CompletionRequest::builder()
-                .model(model)
+            let mut effective_stream = request.stream;
+            if request.heal && request.stream {
+                effective_stream = false;
+                if let Some(sink) = event_sink {
+                    sink.emit(&YamlWorkflowEvent {
+                        event_type: "node_streaming_unavailable".to_string(),
+                        node_id: Some(request.node_id.clone()),
+                        node_kind: Some("llm_call".to_string()),
+                        streamable: Some(false),
+                        message: Some(
+                            "stream disabled because heal=true requires non-stream completion"
+                                .to_string(),
+                        ),
+                        delta: None,
+                        elapsed_ms: None,
+                    });
+                }
+            }
+
+            let mut builder = CompletionRequest::builder()
+                .model(&request.model)
                 .messages(vec![
                     Message::system("You execute workflow classification steps."),
-                    Message::user(prompt),
-                ])
+                    Message::user(&request.prompt),
+                ]);
+
+            if effective_stream {
+                builder = builder.stream(true);
+            }
+
+            let completion_request = builder
                 .build()
                 .map_err(|error| format!("failed to build completion request: {error}"))?;
 
+            let completion_options = if request.heal {
+                CompletionOptions {
+                    mode: CompletionMode::HealedJson,
+                }
+            } else {
+                CompletionOptions::default()
+            };
+
             let outcome = self
                 .client
-                .complete(&request, CompletionOptions::default())
+                .complete(&completion_request, completion_options)
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let response = match outcome {
-                CompletionOutcome::Response(response) => response,
-                CompletionOutcome::Stream(_) => {
-                    return Err("streaming completion returned for structured run".to_string())
-                }
-                CompletionOutcome::HealedJson(healed) => healed.response,
-                CompletionOutcome::CoercedSchema(coerced) => coerced.response,
-            };
+            match outcome {
+                CompletionOutcome::Stream(mut stream) => {
+                    let mut aggregated = String::new();
+                    while let Some(chunk_result) = stream.next().await {
+                        let chunk = chunk_result.map_err(|error| error.to_string())?;
+                        if let Some(choice) = chunk.choices.first() {
+                            if let Some(delta) = choice.delta.content.clone() {
+                                aggregated.push_str(delta.as_str());
+                                if let Some(sink) = event_sink {
+                                    sink.emit(&YamlWorkflowEvent {
+                                        event_type: "node_stream_delta".to_string(),
+                                        node_id: Some(request.node_id.clone()),
+                                        node_kind: Some("llm_call".to_string()),
+                                        streamable: Some(true),
+                                        message: None,
+                                        delta: Some(delta),
+                                        elapsed_ms: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
 
-            let content = response
-                .content()
-                .ok_or_else(|| "completion returned empty content".to_string())?;
-            serde_json::from_str(content)
-                .map_err(|error| format!("failed to parse structured completion JSON: {error}"))
+                    serde_json::from_str(aggregated.as_str()).map_err(|error| {
+                        format!(
+                            "failed to parse streamed structured completion JSON: {error}; body={aggregated}"
+                        )
+                    })
+                }
+                CompletionOutcome::Response(response) => {
+                    let content = response
+                        .content()
+                        .ok_or_else(|| "completion returned empty content".to_string())?;
+                    serde_json::from_str(content).map_err(|error| {
+                        format!("failed to parse structured completion JSON: {error}")
+                    })
+                }
+                CompletionOutcome::HealedJson(healed) => {
+                    if let Some(sink) = event_sink {
+                        sink.emit(&YamlWorkflowEvent {
+                            event_type: "node_healed".to_string(),
+                            node_id: Some(request.node_id.clone()),
+                            node_kind: Some("llm_call".to_string()),
+                            streamable: Some(false),
+                            message: Some(format!(
+                                "healed structured response confidence={}",
+                                healed.parsed.confidence
+                            )),
+                            delta: None,
+                            elapsed_ms: None,
+                        });
+                    }
+                    Ok(healed.parsed.value)
+                }
+                CompletionOutcome::CoercedSchema(coerced) => Ok(coerced.coerced.value),
+            }
         }
     }
 
     let executor = BorrowedClientExecutor { client };
-    run_email_workflow_yaml_with_custom_worker(workflow, email_text, &executor, custom_worker).await
+    run_email_workflow_yaml_with_custom_worker_and_events(
+        workflow,
+        email_text,
+        &executor,
+        custom_worker,
+        event_sink,
+    )
+    .await
 }
 
 pub async fn run_email_workflow_yaml(
@@ -220,7 +400,10 @@ pub async fn run_email_workflow_yaml(
     email_text: &str,
     executor: &dyn YamlWorkflowLlmExecutor,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_custom_worker(workflow, email_text, executor, None).await
+    run_email_workflow_yaml_with_custom_worker_and_events(
+        workflow, email_text, executor, None, None,
+    )
+    .await
 }
 
 pub async fn run_email_workflow_yaml_with_custom_worker(
@@ -229,14 +412,47 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_email_workflow_yaml_with_custom_worker_and_events(
+        workflow,
+        email_text,
+        executor,
+        custom_worker,
+        None,
+    )
+    .await
+}
+
+pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let diagnostics = verify_yaml_workflow(workflow);
+    let errors: Vec<YamlWorkflowDiagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.severity == YamlWorkflowDiagnosticSeverity::Error)
+        .cloned()
+        .collect();
+    if !errors.is_empty() {
+        return Err(YamlWorkflowRunError::Validation {
+            diagnostics_count: errors.len(),
+            diagnostics: errors,
+        });
+    }
+
     if workflow.nodes.is_empty() {
         return Err(YamlWorkflowRunError::EmptyNodes {
             workflow_id: workflow.id.clone(),
         });
     }
 
-    let node_map: HashMap<&str, &YamlNode> =
-        workflow.nodes.iter().map(|node| (node.id.as_str(), node)).collect();
+    let node_map: HashMap<&str, &YamlNode> = workflow
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
     if !node_map.contains_key(workflow.entry_node.as_str()) {
         return Err(YamlWorkflowRunError::MissingEntry {
             entry_node: workflow.entry_node.clone(),
@@ -255,15 +471,50 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
     let mut step_timings = Vec::new();
     let started = Instant::now();
 
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "workflow_started".to_string(),
+            node_id: None,
+            node_kind: None,
+            streamable: None,
+            message: Some(format!("workflow_id={}", workflow.id)),
+            delta: None,
+            elapsed_ms: Some(0),
+        });
+    }
+
     loop {
-        let node = *node_map
-            .get(current.as_str())
-            .ok_or_else(|| YamlWorkflowRunError::MissingNode {
-                node_id: current.clone(),
-            })?;
+        let node =
+            *node_map
+                .get(current.as_str())
+                .ok_or_else(|| YamlWorkflowRunError::MissingNode {
+                    node_id: current.clone(),
+                })?;
 
         trace.push(node.id.clone());
         let step_started = Instant::now();
+
+        let node_streamable = node
+            .node_type
+            .llm_call
+            .as_ref()
+            .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
+
+        if let Some(sink) = event_sink {
+            sink.emit(&YamlWorkflowEvent {
+                event_type: "node_started".to_string(),
+                node_id: Some(node.id.clone()),
+                node_kind: Some(node.kind_name().to_string()),
+                streamable: node_streamable,
+                message: if node_streamable == Some(false) {
+                    Some("Node is not streamable; status events only".to_string())
+                } else {
+                    None
+                },
+                delta: None,
+                elapsed_ms: Some(started.elapsed().as_millis()),
+            });
+        }
 
         let next = if let Some(llm) = &node.node_type.llm_call {
             let prompt_template = node
@@ -272,13 +523,23 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
                 .and_then(|cfg| cfg.prompt.as_deref())
                 .unwrap_or_default();
             let prompt = prompt_template.replace("{{ input.email_text }}", email_text);
-            let schema = schema_for_node(node.id.as_str())
-                .ok_or_else(|| YamlWorkflowRunError::MissingLlmSchema {
+            let schema = schema_for_node(node.id.as_str()).ok_or_else(|| {
+                YamlWorkflowRunError::MissingLlmSchema {
                     node_id: node.id.clone(),
-                })?;
+                }
+            })?;
+
+            let request = YamlLlmExecutionRequest {
+                node_id: node.id.clone(),
+                model: llm.model.clone(),
+                prompt,
+                schema,
+                stream: llm.stream.unwrap_or(false),
+                heal: llm.heal.unwrap_or(false),
+            };
 
             let payload = executor
-                .complete_structured(llm.model.as_str(), prompt.as_str(), &schema)
+                .complete_structured(request, event_sink)
                 .await
                 .map_err(|message| YamlWorkflowRunError::Llm {
                     node_id: node.id.clone(),
@@ -292,7 +553,9 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
             }
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
-            edge_map.get(node.id.as_str()).map(|value| value.to_string())
+            edge_map
+                .get(node.id.as_str())
+                .map(|value| value.to_string())
         } else if let Some(switch) = &node.node_type.switch {
             let context = json!({ "input": { "email_text": email_text }, "nodes": outputs });
             let mut chosen = Some(switch.default.clone());
@@ -317,12 +580,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
 
             let worker_output = if let Some(custom_worker_executor) = custom_worker {
                 custom_worker_executor
-                    .execute(
-                        custom.handler.as_str(),
-                        &payload,
-                        email_text,
-                        &context,
-                    )
+                    .execute(custom.handler.as_str(), &payload, email_text, &context)
                     .await
                     .map_err(|message| YamlWorkflowRunError::CustomWorker {
                         node_id: node.id.clone(),
@@ -351,11 +609,24 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
         };
 
         let node_kind = node.kind_name().to_string();
+        let elapsed_ms = step_started.elapsed().as_millis();
         step_timings.push(YamlStepTiming {
             node_id: node.id.clone(),
             node_kind,
-            elapsed_ms: step_started.elapsed().as_millis(),
+            elapsed_ms,
         });
+
+        if let Some(sink) = event_sink {
+            sink.emit(&YamlWorkflowEvent {
+                event_type: "node_completed".to_string(),
+                node_id: Some(node.id.clone()),
+                node_kind: Some(node.kind_name().to_string()),
+                streamable: node_streamable,
+                message: None,
+                delta: None,
+                elapsed_ms: Some(elapsed_ms),
+            });
+        }
 
         if let Some(next) = next {
             current = next;
@@ -376,7 +647,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
         .and_then(|value| value.get("output"))
         .cloned();
 
-    Ok(YamlWorkflowRunOutput {
+    let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
         email_text: email_text.to_string(),
@@ -386,26 +657,124 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
         terminal_output,
         step_timings,
         total_elapsed_ms: started.elapsed().as_millis(),
-    })
+    };
+
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "workflow_completed".to_string(),
+            node_id: None,
+            node_kind: None,
+            streamable: None,
+            message: Some(format!("terminal_node={}", output.terminal_node)),
+            delta: None,
+            elapsed_ms: Some(output.total_elapsed_ms),
+        });
+    }
+
+    Ok(output)
 }
 
-fn evaluate_switch_condition(condition: &str, context: &Value) -> Result<bool, YamlWorkflowRunError> {
-    let (left, right) = condition
-        .split_once("==")
-        .ok_or_else(|| YamlWorkflowRunError::UnsupportedCondition {
-            condition: condition.to_string(),
-        })?;
+fn evaluate_switch_condition(
+    condition: &str,
+    context: &Value,
+) -> Result<bool, YamlWorkflowRunError> {
+    let (left, right) =
+        condition
+            .split_once("==")
+            .ok_or_else(|| YamlWorkflowRunError::UnsupportedCondition {
+                condition: condition.to_string(),
+            })?;
 
     let left_path = left.trim().trim_start_matches("$.");
-    let right_literal = right
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'');
+    let right_literal = right.trim().trim_matches('"').trim_matches('\'');
     let left_value = resolve_path(context, left_path);
     Ok(left_value
         .and_then(Value::as_str)
         .map(|value| value == right_literal)
         .unwrap_or(false))
+}
+
+pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnostic> {
+    let mut diagnostics = Vec::new();
+    let known_ids: HashMap<&str, &YamlNode> = workflow
+        .nodes
+        .iter()
+        .map(|node| (node.id.as_str(), node))
+        .collect();
+
+    if !known_ids.contains_key(workflow.entry_node.as_str()) {
+        diagnostics.push(YamlWorkflowDiagnostic {
+            node_id: None,
+            code: "missing_entry".to_string(),
+            severity: YamlWorkflowDiagnosticSeverity::Error,
+            message: format!("entry node '{}' does not exist", workflow.entry_node),
+        });
+    }
+
+    for edge in &workflow.edges {
+        if !known_ids.contains_key(edge.from.as_str()) {
+            diagnostics.push(YamlWorkflowDiagnostic {
+                node_id: Some(edge.from.clone()),
+                code: "unknown_edge_from".to_string(),
+                severity: YamlWorkflowDiagnosticSeverity::Error,
+                message: format!("edge.from '{}' does not exist", edge.from),
+            });
+        }
+        if !known_ids.contains_key(edge.to.as_str()) {
+            diagnostics.push(YamlWorkflowDiagnostic {
+                node_id: Some(edge.to.clone()),
+                code: "unknown_edge_to".to_string(),
+                severity: YamlWorkflowDiagnosticSeverity::Error,
+                message: format!("edge.to '{}' does not exist", edge.to),
+            });
+        }
+    }
+
+    for node in &workflow.nodes {
+        if let Some(llm) = &node.node_type.llm_call {
+            if llm.model.trim().is_empty() {
+                diagnostics.push(YamlWorkflowDiagnostic {
+                    node_id: Some(node.id.clone()),
+                    code: "empty_model".to_string(),
+                    severity: YamlWorkflowDiagnosticSeverity::Error,
+                    message: "llm_call.model must not be empty".to_string(),
+                });
+            }
+            if llm.stream.unwrap_or(false) && llm.heal.unwrap_or(false) {
+                diagnostics.push(YamlWorkflowDiagnostic {
+                    node_id: Some(node.id.clone()),
+                    code: "stream_heal_conflict".to_string(),
+                    severity: YamlWorkflowDiagnosticSeverity::Warning,
+                    message:
+                        "llm_call.stream=true with heal=true is not streamable; runtime will disable streaming"
+                            .to_string(),
+                });
+            }
+        }
+
+        if let Some(switch) = &node.node_type.switch {
+            for branch in &switch.branches {
+                if !known_ids.contains_key(branch.target.as_str()) {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "unknown_switch_target".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: format!("switch branch target '{}' does not exist", branch.target),
+                    });
+                }
+            }
+            if !known_ids.contains_key(switch.default.as_str()) {
+                diagnostics.push(YamlWorkflowDiagnostic {
+                    node_id: Some(node.id.clone()),
+                    code: "unknown_switch_default".to_string(),
+                    severity: YamlWorkflowDiagnosticSeverity::Error,
+                    message: format!("switch default target '{}' does not exist", switch.default),
+                });
+            }
+        }
+    }
+
+    diagnostics
 }
 
 fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
@@ -548,6 +917,8 @@ pub struct YamlNodeType {
 #[derive(Debug, Clone, Deserialize)]
 pub struct YamlLlmCall {
     pub model: String,
+    pub stream: Option<bool>,
+    pub heal: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -590,10 +961,10 @@ mod tests {
     impl YamlWorkflowLlmExecutor for MockExecutor {
         async fn complete_structured(
             &self,
-            _model: &str,
-            prompt: &str,
-            _schema: &Value,
+            request: YamlLlmExecutionRequest,
+            _event_sink: Option<&dyn YamlWorkflowEventSink>,
         ) -> Result<Value, String> {
+            let prompt = request.prompt;
             if prompt.contains("exactly one category") {
                 return Ok(json!({"category":"termination","reason":"mock"}));
             }
@@ -650,6 +1021,13 @@ nodes:
     config:
       payload:
         topic: termination_repeated_offense
+  - id: rag_clarification
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: clarification
 edges:
   - from: classify_top_level
     to: route_top_level
@@ -666,6 +1044,8 @@ edges:
         assert_eq!(output.terminal_node, "rag_termination_repeated_offense");
         assert!(!output.step_timings.is_empty());
         assert_eq!(output.step_timings.len(), output.trace.len());
-        assert!(output.outputs.contains_key("rag_termination_repeated_offense"));
+        assert!(output
+            .outputs
+            .contains_key("rag_termination_repeated_offense"));
     }
 }

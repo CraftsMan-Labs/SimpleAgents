@@ -84,10 +84,16 @@ pub use worker::{
 };
 pub use worker_adapter::WorkerPoolToolExecutor;
 pub use yaml_runner::{
-    run_email_workflow_yaml, run_email_workflow_yaml_file, run_email_workflow_yaml_file_with_client,
+    run_email_workflow_yaml, run_email_workflow_yaml_file,
+    run_email_workflow_yaml_file_with_client,
     run_email_workflow_yaml_file_with_client_and_custom_worker,
+    run_email_workflow_yaml_file_with_client_and_custom_worker_and_events,
     run_email_workflow_yaml_with_client, run_email_workflow_yaml_with_client_and_custom_worker,
-    run_email_workflow_yaml_with_custom_worker, YamlStepTiming, YamlWorkflow,
-    YamlWorkflowCustomWorkerExecutor, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
+    run_email_workflow_yaml_with_client_and_custom_worker_and_events,
+    run_email_workflow_yaml_with_custom_worker,
+    run_email_workflow_yaml_with_custom_worker_and_events, verify_yaml_workflow,
+    NoopYamlWorkflowEventSink, YamlLlmExecutionRequest, YamlStepTiming, YamlWorkflow,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic, YamlWorkflowDiagnosticSeverity,
+    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
     YamlWorkflowRunOutput,
 };

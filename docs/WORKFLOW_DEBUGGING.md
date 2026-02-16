@@ -90,6 +90,22 @@ Rust API entrypoints:
 
 These are also exposed in Python/Node/Go bindings and return the same timing fields.
 
+## Workflow Verifier
+
+Before execution, workflow YAML validation checks run through `verify_yaml_workflow(...)` and reject invalid graphs.
+
+Validation covers:
+
+- missing entry node
+- unknown edge `from`/`to` references
+- unknown `switch` branch/default targets
+- empty `llm_call.model`
+
+Streaming-related validation includes streamability diagnostics:
+
+- `llm_call.stream=true` with `heal=true` is flagged as non-streamable for that node
+- runtime emits explanatory event text when streaming is disabled
+
 ## Workflow Visualization
 
 Use `workflow_to_mermaid(&WorkflowDefinition)` to render canonical IR workflows as Mermaid diagrams for debugging/review.
