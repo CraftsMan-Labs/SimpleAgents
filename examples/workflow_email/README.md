@@ -65,6 +65,8 @@ Ready-to-run helper file:
 uv run --directory examples python workflow_email/run_with_python_package.py
 ```
 
+`run_with_python_package.py` now executes `custom_worker.handler` through `workflow_email/handlers.py` (for `GetRagData`) via the Rust-backed package API.
+
 ## Python (script)
 
 ```bash
