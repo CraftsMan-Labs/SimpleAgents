@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from simple_agents_py import Client, ResponseWithMetadata
 
+from handlers import get_rag_data
 from python_email_workflow_demo import load_llm_settings
 
 try:
@@ -147,39 +148,27 @@ def complete_structured(
     return payload
 
 
-def mock_rag(topic: str) -> dict[str, str]:
-    data = {
-        "probation": (
-            "hr_policy/probation.md",
-            "Collect manager review, performance evidence, and probation timeline.",
-        ),
-        "leave_request": (
-            "hr_policy/leave.md",
-            "Validate leave balance, manager approval, and blackout dates.",
-        ),
-        "supply_chain_order_assessment": (
-            "supply_chain/order_assessment.md",
-            "Review order specs, inventory risk, and vendor lead-time guidance.",
-        ),
-        "supply_chain_order_replacement": (
-            "supply_chain/order_replacement.md",
-            "Collect order id, damage proof, and replacement SLA policy.",
-        ),
-        "termination_first_time_offense": (
-            "hr_policy/termination_first_offense.md",
-            "Validate first-incident criteria and route to HRBP review.",
-        ),
-        "termination_repeated_offense": (
-            "hr_policy/termination_repeated_offense.md",
-            "Collect prior warnings and escalation approvals before final action.",
-        ),
-        "clarification": (
-            "shared/request_clarification.md",
-            "Request clarifying details before routing.",
-        ),
-    }
-    kb_source, playbook = data.get(topic, data["clarification"])
-    return {"kb_source": kb_source, "playbook": playbook}
+HANDLER_REGISTRY = {
+    "GetRagData": get_rag_data,
+}
+
+
+def run_custom_worker_handler(
+    handler: str,
+    topic: str,
+    *,
+    email_text: str,
+    outputs: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    fn = HANDLER_REGISTRY.get(handler)
+    if fn is None:
+        raise RuntimeError(f"Unsupported custom worker handler: {handler}")
+
+    return fn(
+        topic,
+        email_text=email_text,
+        context={"input": {"email_text": email_text}, "nodes": outputs},
+    )
 
 
 def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
@@ -241,12 +230,14 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
         if "custom_worker" in node_type:
             handler = node_type["custom_worker"].get("handler")
-            if handler != "GetRagData":
-                raise RuntimeError(f"Unsupported custom worker handler: {handler}")
             topic = (
                 node.get("config", {}).get("payload", {}).get("topic", "clarification")
             )
-            outputs[current] = {"output": mock_rag(str(topic))}
+            outputs[current] = {
+                "output": run_custom_worker_handler(
+                    str(handler), str(topic), email_text=email_text, outputs=outputs
+                )
+            }
             break
 
         raise RuntimeError(f"Unsupported node type for node '{current}'")
