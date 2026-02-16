@@ -37,6 +37,13 @@ nodes:
           "category": "...",
           "reason": "short explanation"
         }
+      update_globals:
+        classifications_seen:
+          op: increment
+          by: 1
+        category_history:
+          op: append
+          from: nodes.classify_top_level.output.category
 
   - id: route_top_level
     name: "Route Top Level"
