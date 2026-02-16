@@ -118,3 +118,23 @@ print(coerced.value)
 - `Client` reads provider API keys from environment variables when `api_key` is omitted.
 - `complete()` accepts a prompt string or a list of message dicts.
 - `response_format="json"` enables JSON parsing when paired with `heal=True`.
+
+## Workflow YAML Runner (Rust-backed)
+
+Python binding now exposes Rust workflow YAML execution directly:
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai", api_base="https://...", api_key="...")
+result = client.run_email_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+)
+
+print(result["terminal_output"])
+print(result["step_timings"])      # per-node elapsed ms
+print(result["total_elapsed_ms"])  # end-to-end runtime
+```
+
+This method delegates to Rust `simple-agents-workflow` as the source of truth.
