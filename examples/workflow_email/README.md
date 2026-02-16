@@ -10,6 +10,7 @@ Primary workflow file:
 
 - `python_email_workflow_demo.py`: direct Python implementation (LLM + mock RAG routing)
 - `run_yaml.py`: lightweight runner script (optional convenience)
+- `handlers.py`: real Python custom worker handlers (e.g. `GetRagData`)
 
 ## Prerequisites
 
@@ -81,6 +82,8 @@ Pass a custom email inline:
 ```bash
 uv run --directory examples python workflow_email/run_yaml.py email-intake-classification.yaml --email "Termination request, second warning already issued"
 ```
+
+`custom_worker.handler: GetRagData` is executed by the real Python function `handlers.get_rag_data(...)` in `examples/workflow_email/handlers.py`.
 
 ## Node.js / TypeScript (package API)
 
