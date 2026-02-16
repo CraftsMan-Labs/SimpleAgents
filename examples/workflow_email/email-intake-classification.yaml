@@ -18,6 +18,7 @@ nodes:
       llm_call:
         provider: openai
         model: gpt-4.1
+        stream: true
         temperature: 0.0
     config:
       prompt: |
@@ -58,6 +59,7 @@ nodes:
       llm_call:
         provider: openai
         model: gpt-4.1
+        stream: true
         temperature: 0.0
     config:
       prompt: |
@@ -92,6 +94,8 @@ nodes:
       llm_call:
         provider: openai
         model: gpt-4.1
+        stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |

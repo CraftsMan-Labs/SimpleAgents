@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal, Mapping, Sequence, overload, Never
+from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, overload, Never
 
 class ParseResult:
     value: Any
@@ -296,6 +296,12 @@ class Client:
     ): ...
     def run_email_workflow_yaml(
         self, workflow_path: str, email_text: str
+    ) -> dict[str, Any]: ...
+    def run_email_workflow_yaml_stream(
+        self,
+        workflow_path: str,
+        email_text: str,
+        on_event: Callable[[dict[str, Any]], object] | None = None,
     ) -> dict[str, Any]: ...
 
 class ProviderConfig:
