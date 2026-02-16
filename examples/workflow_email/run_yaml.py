@@ -111,6 +111,17 @@ def schema_for_node(node_id: str) -> dict[str, Any]:
             "additionalProperties": False,
         }
 
+    if node_id == "generate_email_draft":
+        return {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["subject", "body"],
+            "additionalProperties": False,
+        }
+
     raise RuntimeError(f"No schema mapping defined for llm node: {node_id}")
 
 
@@ -238,7 +249,11 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
                     str(handler), str(topic), email_text=email_text, outputs=outputs
                 )
             }
-            break
+            next_node = edges.get(current)
+            if next_node is None:
+                break
+            current = next_node
+            continue
 
         raise RuntimeError(f"Unsupported node type for node '{current}'")
 

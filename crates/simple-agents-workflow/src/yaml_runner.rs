@@ -601,7 +601,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             };
 
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
-            None
+            edge_map.get(node.id.as_str()).map(|value| value.to_string())
         } else {
             return Err(YamlWorkflowRunError::UnsupportedNodeType {
                 node_id: node.id.clone(),
@@ -831,6 +831,18 @@ fn schema_for_node(node_id: &str) -> Option<Value> {
                 "reason": { "type": "string" }
             },
             "required": ["subtype", "reason"],
+            "additionalProperties": false
+        }));
+    }
+
+    if node_id == "generate_email_draft" {
+        return Some(json!({
+            "type": "object",
+            "properties": {
+                "subject": { "type": "string" },
+                "body": { "type": "string" }
+            },
+            "required": ["subject", "body"],
             "additionalProperties": false
         }));
     }
