@@ -194,6 +194,32 @@ nodes:
       payload:
         topic: clarification
 
+  - id: generate_email_draft
+    name: "Generate Draft Email"
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4.1
+        stream: true
+        temperature: 0.1
+    config:
+      prompt: |
+        Generate a professional response email draft for this request.
+
+        Requirements:
+        - Return JSON only.
+        - Include concise subject and body.
+        - Keep tone polite, compliant, and action-oriented.
+
+        Respond with JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+        Original incoming email:
+        {{ input.email_text }}
+
 edges:
   - from: classify_top_level
     to: route_top_level
@@ -203,3 +229,24 @@ edges:
 
   - from: classify_termination_subtype
     to: route_termination_subtype
+
+  - from: rag_probation
+    to: generate_email_draft
+
+  - from: rag_leave_request
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_assessment
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_replacement
+    to: generate_email_draft
+
+  - from: rag_termination_first_time_offense
+    to: generate_email_draft
+
+  - from: rag_termination_repeated_offense
+    to: generate_email_draft
+
+  - from: rag_clarification
+    to: generate_email_draft
