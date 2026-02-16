@@ -968,4 +968,40 @@ mod tests {
         assert!(matches!(error, WorkerPoolError::InvalidRequest { .. }));
         pool.shutdown().await;
     }
+
+    #[tokio::test]
+    async fn handles_parallel_submissions_without_deadlock() {
+        let pool = Arc::new(
+            WorkerPool::new_inprocess(
+                vec![Arc::new(EchoWorker), Arc::new(EchoWorker)],
+                WorkerPoolOptions {
+                    queue_capacity: 32,
+                    health_probe_interval: Duration::from_millis(5),
+                    default_request_timeout: Some(Duration::from_secs(1)),
+                    ..WorkerPoolOptions::default()
+                },
+                None,
+            )
+            .expect("pool should initialize"),
+        );
+
+        let mut tasks = Vec::new();
+        for idx in 0..32usize {
+            let pool = Arc::clone(&pool);
+            tasks.push(tokio::spawn(async move {
+                pool.submit(sample_request(&format!("parallel-{idx}"))).await
+            }));
+        }
+
+        let joined = tokio::time::timeout(Duration::from_secs(3), async {
+            for task in tasks {
+                let result = task.await.expect("join should succeed");
+                assert!(result.is_ok(), "submit should succeed under parallel load");
+            }
+        })
+        .await;
+
+        assert!(joined.is_ok(), "parallel submissions should not deadlock");
+        pool.shutdown().await;
+    }
 }
