@@ -133,6 +133,10 @@ nodes:
     config:
       payload:
         topic: probation
+      set_globals:
+        rag_topic: nodes.rag_probation.output.topic
+        rag_playbook: nodes.rag_probation.output.playbook
+        rag_kb_source: nodes.rag_probation.output.kb_source
 
   - id: rag_leave_request
     name: "Mock RAG: Leave Request"
@@ -143,6 +147,10 @@ nodes:
     config:
       payload:
         topic: leave_request
+      set_globals:
+        rag_topic: nodes.rag_leave_request.output.topic
+        rag_playbook: nodes.rag_leave_request.output.playbook
+        rag_kb_source: nodes.rag_leave_request.output.kb_source
 
   - id: rag_supply_chain_order_assessment
     name: "Mock RAG: Supply Chain Order Assessment"
@@ -153,6 +161,10 @@ nodes:
     config:
       payload:
         topic: supply_chain_order_assessment
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_assessment.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_assessment.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_assessment.output.kb_source
 
   - id: rag_supply_chain_order_replacement
     name: "Mock RAG: Supply Chain Order Replacement"
@@ -163,6 +175,10 @@ nodes:
     config:
       payload:
         topic: supply_chain_order_replacement
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_replacement.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_replacement.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_replacement.output.kb_source
 
   - id: rag_termination_first_time_offense
     name: "Mock RAG: Termination First Time Offense"
@@ -173,6 +189,10 @@ nodes:
     config:
       payload:
         topic: termination_first_time_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_first_time_offense.output.topic
+        rag_playbook: nodes.rag_termination_first_time_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_first_time_offense.output.kb_source
 
   - id: rag_termination_repeated_offense
     name: "Mock RAG: Termination Repeated Offense"
@@ -183,6 +203,10 @@ nodes:
     config:
       payload:
         topic: termination_repeated_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_repeated_offense.output.topic
+        rag_playbook: nodes.rag_termination_repeated_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_repeated_offense.output.kb_source
 
   - id: rag_clarification
     name: "Mock RAG: Clarification"
@@ -193,6 +217,10 @@ nodes:
     config:
       payload:
         topic: clarification
+      set_globals:
+        rag_topic: nodes.rag_clarification.output.topic
+        rag_playbook: nodes.rag_clarification.output.playbook
+        rag_kb_source: nodes.rag_clarification.output.kb_source
 
   - id: generate_email_draft
     name: "Generate Draft Email"
@@ -210,6 +238,12 @@ nodes:
         - Return JSON only.
         - Include concise subject and body.
         - Keep tone polite, compliant, and action-oriented.
+
+        Classification context:
+        - Category: {{ nodes.classify_top_level.output.category }}
+        - RAG topic: {{ globals.rag_topic }}
+        - RAG source: {{ globals.rag_kb_source }}
+        - RAG playbook: {{ globals.rag_playbook }}
 
         Respond with JSON:
         {
