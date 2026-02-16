@@ -81,6 +81,14 @@ YAML `llm_call` supports:
 - `stream: true` to enable token delta events for that node
 - `heal: true` to enable healing mode (non-streamable for that node)
 
+YAML nodes also support memory interpolation via globals:
+
+- `config.set_globals` can promote values into `globals.*`
+- downstream prompts can read:
+  - `{{ globals.some_key }}`
+  - `{{ nodes.some_node.output.some_field }}`
+  - `{{ input.email_text }}`
+
 When `stream=true` and `heal=true` together, runtime emits a `node_streaming_unavailable` event with explanatory text and runs non-streaming with healing.
 
 `run_with_python_package.py` now executes `custom_worker.handler` through `workflow_email/handlers.py` (for `GetRagData`) via the Rust-backed package API.
