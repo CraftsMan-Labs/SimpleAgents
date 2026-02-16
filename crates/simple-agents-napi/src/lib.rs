@@ -23,7 +23,7 @@ use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, 
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
+use simple_agents_workflow::run_workflow_yaml_file_with_client;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -172,6 +172,7 @@ pub struct CompleteOptions {
 
 #[napi(object)]
 pub struct MessageInput {
+    #[napi(ts_type = "'system' | 'user' | 'assistant' | 'tool'")]
     pub role: String,
     pub content: String,
     pub name: Option<String>,
@@ -296,10 +297,13 @@ fn build_messages(input: Either<String, Vec<MessageInput>>) -> SaResult<Vec<Mess
 }
 
 fn parse_message(input: MessageInput) -> SaResult<Message> {
-    let role = input.role.as_str();
-    let mut message = match role {
-        "user" => Message::user(input.content),
-        "assistant" => {
+    let parsed_role = input.role.parse::<Role>().map_err(|_| {
+        SimpleAgentsError::Config("role must be one of: user, assistant, system, tool".to_string())
+    })?;
+
+    let mut message = match parsed_role {
+        Role::User => Message::user(input.content),
+        Role::Assistant => {
             let mut msg = Message::assistant(input.content);
             if let Some(tool_calls) = input.tool_calls {
                 let calls = tool_calls
@@ -312,17 +316,12 @@ fn parse_message(input: MessageInput) -> SaResult<Message> {
             }
             msg
         }
-        "system" => Message::system(input.content),
-        "tool" => {
+        Role::System => Message::system(input.content),
+        Role::Tool => {
             let tool_call_id = input.tool_call_id.ok_or_else(|| {
                 SimpleAgentsError::Config("tool role requires tool_call_id".to_string())
             })?;
             Message::tool(input.content, tool_call_id)
-        }
-        _ => {
-            return Err(SimpleAgentsError::Config(
-                "role must be one of: user, assistant, system, tool".to_string(),
-            ))
         }
     };
 
@@ -374,21 +373,11 @@ fn tool_type_to_str(tool_type: ToolType) -> &'static str {
 }
 
 fn finish_reason_to_str(finish_reason: FinishReason) -> &'static str {
-    match finish_reason {
-        FinishReason::Stop => "stop",
-        FinishReason::Length => "length",
-        FinishReason::ContentFilter => "content_filter",
-        FinishReason::ToolCalls => "tool_calls",
-    }
+    finish_reason.as_str()
 }
 
 fn role_to_str(role: Role) -> &'static str {
-    match role {
-        Role::User => "user",
-        Role::Assistant => "assistant",
-        Role::System => "system",
-        Role::Tool => "tool",
-    }
+    role.as_str()
 }
 
 impl From<ToolCall> for ToolCallResult {
@@ -932,20 +921,34 @@ impl Client {
         workflow_path: String,
         email_text: String,
     ) -> Result<JsonValue> {
+        self.run_workflow_yaml(workflow_path, serde_json::json!({"email_text": email_text}))
+    }
+
+    #[napi(
+        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }",
+        ts_return_type = "any"
+    )]
+    pub fn run_workflow_yaml(
+        &self,
+        workflow_path: String,
+        workflow_input: JsonValue,
+    ) -> Result<JsonValue> {
         if workflow_path.trim().is_empty() {
             return Err(Error::from_reason(
                 "workflow_path cannot be empty".to_string(),
             ));
         }
-        if email_text.trim().is_empty() {
-            return Err(Error::from_reason("email_text cannot be empty".to_string()));
+        if !workflow_input.is_object() {
+            return Err(Error::from_reason(
+                "workflowInput must be a JSON object".to_string(),
+            ));
         }
 
         let output = self
             .runtime
-            .block_on(run_email_workflow_yaml_file_with_client(
+            .block_on(run_workflow_yaml_file_with_client(
                 std::path::Path::new(workflow_path.as_str()),
-                email_text.as_str(),
+                &workflow_input,
                 &self.client,
             ))
             .map_err(|error| Error::from_reason(error.to_string()))?;

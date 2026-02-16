@@ -151,6 +151,21 @@ print(result["events"][0]["event_type"])
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
+For chat-history workflows, use `run_workflow_yaml(...)` with structured workflow input:
+
+```python
+result = client.run_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    {
+        "email_text": "Termination request, second warning already issued",
+        "messages": [
+            {"role": "system", "content": "You are an HR classifier."},
+            {"role": "user", "content": "Termination request, second warning already issued"},
+        ],
+    },
+)
+```
+
 ### Live Workflow Events + LLM Deltas
 
 `Client.run_email_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
