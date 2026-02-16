@@ -65,6 +65,11 @@ pub enum YamlWorkflowRunError {
         node_id: String,
         message: String,
     },
+    #[error("custom worker execution failed for node '{node_id}': {message}")]
+    CustomWorker {
+        node_id: String,
+        message: String,
+    },
 }
 
 #[async_trait]
@@ -74,6 +79,17 @@ pub trait YamlWorkflowLlmExecutor: Send + Sync {
         model: &str,
         prompt: &str,
         schema: &Value,
+    ) -> Result<Value, String>;
+}
+
+#[async_trait]
+pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
+    async fn execute(
+        &self,
+        handler: &str,
+        payload: &Value,
+        email_text: &str,
+        context: &Value,
     ) -> Result<Value, String>;
 }
 
@@ -120,6 +136,37 @@ pub async fn run_email_workflow_yaml_with_client(
     email_text: &str,
     client: &SimpleAgentsClient,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_email_workflow_yaml_with_client_and_custom_worker(workflow, email_text, client, None)
+        .await
+}
+
+pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
+    workflow_path: &Path,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let contents = std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+        path: workflow_path.display().to_string(),
+        source,
+    })?;
+
+    let workflow: YamlWorkflow =
+        serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    run_email_workflow_yaml_with_client_and_custom_worker(&workflow, email_text, client, custom_worker)
+        .await
+}
+
+pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
     }
@@ -165,13 +212,22 @@ pub async fn run_email_workflow_yaml_with_client(
     }
 
     let executor = BorrowedClientExecutor { client };
-    run_email_workflow_yaml(workflow, email_text, &executor).await
+    run_email_workflow_yaml_with_custom_worker(workflow, email_text, &executor, custom_worker).await
 }
 
 pub async fn run_email_workflow_yaml(
     workflow: &YamlWorkflow,
     email_text: &str,
     executor: &dyn YamlWorkflowLlmExecutor,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_email_workflow_yaml_with_custom_worker(workflow, email_text, executor, None).await
+}
+
+pub async fn run_email_workflow_yaml_with_custom_worker(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     if workflow.nodes.is_empty() {
         return Err(YamlWorkflowRunError::EmptyNodes {
@@ -251,20 +307,42 @@ pub async fn run_email_workflow_yaml(
             })?;
             Some(chosen)
         } else if let Some(custom) = &node.node_type.custom_worker {
-            if custom.handler != "GetRagData" {
-                return Err(YamlWorkflowRunError::UnsupportedCustomHandler {
-                    handler: custom.handler.clone(),
-                });
-            }
-
-            let topic = node
+            let payload = node
                 .config
                 .as_ref()
                 .and_then(|cfg| cfg.payload.as_ref())
-                .and_then(|payload| payload.get("topic"))
-                .and_then(Value::as_str)
-                .unwrap_or("clarification");
-            outputs.insert(node.id.clone(), json!({ "output": mock_rag(topic) }));
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let context = json!({ "input": { "email_text": email_text }, "nodes": outputs });
+
+            let worker_output = if let Some(custom_worker_executor) = custom_worker {
+                custom_worker_executor
+                    .execute(
+                        custom.handler.as_str(),
+                        &payload,
+                        email_text,
+                        &context,
+                    )
+                    .await
+                    .map_err(|message| YamlWorkflowRunError::CustomWorker {
+                        node_id: node.id.clone(),
+                        message,
+                    })?
+            } else {
+                if custom.handler != "GetRagData" {
+                    return Err(YamlWorkflowRunError::UnsupportedCustomHandler {
+                        handler: custom.handler.clone(),
+                    });
+                }
+
+                let topic = payload
+                    .get("topic")
+                    .and_then(Value::as_str)
+                    .unwrap_or("clarification");
+                mock_rag(topic)
+            };
+
+            outputs.insert(node.id.clone(), json!({ "output": worker_output }));
             None
         } else {
             return Err(YamlWorkflowRunError::UnsupportedNodeType {
