@@ -261,3 +261,10 @@
 - [x] Rust validation run completed for changed crates: `simple-agent-type`, `simple-agents-core`, `simple-agents-providers`, `simple-agents-workflow`, `simple-agents-workflow-workers`.
 - [x] Go worker validation completed via `go test ./...` in `workers/go`.
 - [x] M1 drift-risk fix uses `worker.proto` as runtime source-of-truth (descriptor parsed from proto) and removes manual descriptor construction.
+
+## Additional Test Coverage Added (Post-review)
+
+- [x] Python routing tests now cover duplicate provider aliasing for localhost OpenAI registration and collision fallback aliases.
+- [x] Python routing tests cover duplicate aliasing via both `add_provider` and `add_provider_config`.
+- [x] Worker pool tests include explicit single-worker retry index sequence coverage.
+- [x] Workflow worker tests include parallel-submit no-deadlock regression coverage.

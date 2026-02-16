@@ -145,4 +145,13 @@ mod tests {
         assert_eq!(GrpcWorkerPool::worker_index(1, 2, len), 0);
         assert_eq!(GrpcWorkerPool::worker_index(1, 3, len), 1);
     }
+
+    #[test]
+    fn single_worker_retries_repeat_same_worker_index() {
+        let attempts = GrpcWorkerPool::max_attempts(3);
+        let sequence: Vec<_> = (0..attempts)
+            .map(|attempt| GrpcWorkerPool::worker_index(0, attempt, 1))
+            .collect();
+        assert_eq!(sequence, vec![0, 0, 0, 0]);
+    }
 }
