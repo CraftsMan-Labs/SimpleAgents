@@ -2,6 +2,8 @@
 
 This guide covers workflow debugging surfaces added for timeline, retries, and replay inspection.
 
+For end-to-end authoring and runtime behavior (nodes, schemas, workers, chat input), see [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+
 ## Inspect + Replay Controls
 
 `simple-agents-workflow` now includes foundational controls for failure recovery and replay tuning:
