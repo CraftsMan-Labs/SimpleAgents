@@ -13,6 +13,12 @@ char *sa_run_email_workflow_yaml(
     const char *email_text
 );
 
+char *sa_run_workflow_yaml(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json
+);
+
 extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
@@ -49,6 +55,7 @@ static char *sa_run_email_workflow_yaml_go(
 ) {
     return sa_run_email_workflow_yaml(client, workflow_path, email_text);
 }
+
 */
 import "C"
 
@@ -63,8 +70,17 @@ import (
 )
 
 // Message represents a chat message for message-based completions.
+type MessageRole string
+
+const (
+	MessageRoleSystem    MessageRole = "system"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleTool      MessageRole = "tool"
+)
+
 type Message struct {
-	Role       string
+	Role       MessageRole
 	Content    string
 	Name       string
 	ToolCallID string
@@ -263,14 +279,28 @@ func (c *Client) RunEmailWorkflowYAML(
 	workflowPath string,
 	emailText string,
 ) (WorkflowYAMLOutput, error) {
+	return c.RunWorkflowYAML(ctx, workflowPath, map[string]any{"email_text": emailText})
+}
+
+// RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.
+func (c *Client) RunWorkflowYAML(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+) (WorkflowYAMLOutput, error) {
 	if workflowPath == "" {
 		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
 	}
-	if emailText == "" {
-		return WorkflowYAMLOutput{}, errors.New("emailText cannot be empty")
+	if workflowInput == nil {
+		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	workflowInputJSON, err := json.Marshal(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
 	}
 
 	ptr, err := c.beginCall()
@@ -282,11 +312,11 @@ func (c *Client) RunEmailWorkflowYAML(
 	go func() {
 		defer c.endCall()
 		cWorkflowPath := C.CString(workflowPath)
-		cEmailText := C.CString(emailText)
+		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
 		defer C.free(unsafe.Pointer(cWorkflowPath))
-		defer C.free(unsafe.Pointer(cEmailText))
+		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
 
-		response := C.sa_run_email_workflow_yaml_go(ptr, cWorkflowPath, cEmailText)
+		response := C.sa_run_workflow_yaml(ptr, cWorkflowPath, cWorkflowInputJSON)
 		if response == nil {
 			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
 			return
@@ -456,7 +486,7 @@ func (c *Client) CompleteMessages(
 		defer freeAll()
 
 		for i, msg := range messagesCopy {
-			role := C.CString(msg.Role)
+			role := C.CString(string(msg.Role))
 			content := C.CString(msg.Content)
 			allocated = append(allocated, role, content)
 			cMessages[i].role = role
@@ -570,7 +600,7 @@ func (c *Client) StreamMessages(
 		defer freeAll()
 
 		for i, msg := range messagesCopy {
-			role := C.CString(msg.Role)
+			role := C.CString(string(msg.Role))
 			content := C.CString(msg.Content)
 			allocated = append(allocated, role, content)
 			cMessages[i].role = role
@@ -664,6 +694,11 @@ func validateMessagesInput(model string, messages []Message) error {
 	for i, msg := range messages {
 		if msg.Role == "" {
 			return fmt.Errorf("messages[%d].role cannot be empty", i)
+		}
+		switch msg.Role {
+		case MessageRoleSystem, MessageRoleUser, MessageRoleAssistant, MessageRoleTool:
+		default:
+			return fmt.Errorf("messages[%d].role must be one of: system, user, assistant, tool", i)
 		}
 		if msg.Content == "" {
 			return fmt.Errorf("messages[%d].content cannot be empty", i)

@@ -73,9 +73,11 @@ where
 
                 // Calculate backoff and sleep (prefer provider retry-after hint when present)
                 let backoff = match &e {
-                    SimpleAgentsError::Provider(simple_agent_type::error::ProviderError::RateLimit {
-                        retry_after: Some(retry_after),
-                    }) => *retry_after,
+                    SimpleAgentsError::Provider(
+                        simple_agent_type::error::ProviderError::RateLimit {
+                            retry_after: Some(retry_after),
+                        },
+                    ) => *retry_after,
                     _ => config.calculate_backoff(attempt),
                 };
                 tracing::debug!(
@@ -241,9 +243,12 @@ mod tests {
             jitter: false,
         };
 
-        let result = execute_with_retry(&config, None, |_| true, || async {
-            Ok::<_, SimpleAgentsError>("never")
-        })
+        let result = execute_with_retry(
+            &config,
+            None,
+            |_| true,
+            || async { Ok::<_, SimpleAgentsError>("never") },
+        )
         .await;
 
         assert!(matches!(result, Err(SimpleAgentsError::Config(_))));

@@ -171,7 +171,7 @@ References:
 | Deterministic run model | not workflow-graph aware | step-based deterministic workflow runtime |
 | Trace/replay | provider metrics/logging only | typed trace schema + recorder + replay validator |
 | Scope boundaries | request-level | runtime scoped state with capability checks |
-| YAML workflow execution | not available | `run_email_workflow_yaml_file_with_client` / `run_email_workflow_yaml_with_client` |
+| YAML workflow execution | not available | `run_workflow_yaml_file_with_client` / `run_workflow_yaml_with_client` (email wrappers remain) |
 | Workflow live events | not available | `run_email_workflow_yaml_with_client_and_custom_worker_and_events` + `YamlWorkflowEventSink` |
 | YAML workflow verifier | not available | `verify_yaml_workflow` diagnostics before execution |
 | YAML prompt memory | not available | `set_globals` + `update_globals` + `{{ globals.* }}` interpolation |
@@ -181,11 +181,11 @@ References:
 
 Rust remains source of truth. Language bindings should wrap Rust behavior, not re-implement core logic.
 
-- FFI: `sa_run_email_workflow_yaml` returns JSON output from Rust runner.
-- Go: `Client.RunEmailWorkflowYAML(...)` delegates through FFI.
-- Node: `Client.runEmailWorkflowYaml(...)` delegates through Rust binding.
-- Python: `Client.run_email_workflow_yaml(...)` delegates through Rust binding.
-- Python streaming: `Client.run_email_workflow_yaml_stream(...)` delegates through Rust event stream + callback sink.
+- FFI: `sa_run_workflow_yaml` returns JSON output from Rust runner (`sa_run_email_workflow_yaml` remains as wrapper).
+- Go: `Client.RunWorkflowYAML(...)` delegates through FFI (`RunEmailWorkflowYAML(...)` remains as wrapper).
+- Node: `Client.runWorkflowYaml(...)` delegates through Rust binding (`runEmailWorkflowYaml(...)` remains as wrapper).
+- Python: `Client.run_workflow_yaml(...)` delegates through Rust binding (`run_email_workflow_yaml(...)` remains as wrapper).
+- Python streaming: `Client.run_workflow_yaml_stream(...)` delegates through Rust event stream + callback sink.
 
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 

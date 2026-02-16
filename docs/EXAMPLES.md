@@ -157,11 +157,17 @@ Simple workflow execution from YAML is available through the Rust workflow crate
 Rust core API:
 
 ```rust
-use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
+use serde_json::json;
+use simple_agents_workflow::run_workflow_yaml_file_with_client;
 
-let output = run_email_workflow_yaml_file_with_client(
+let output = run_workflow_yaml_file_with_client(
     std::path::Path::new("examples/workflow_email/email-intake-classification.yaml"),
-    "Termination request, second warning already issued",
+    &json!({
+        "email_text": "Termination request, second warning already issued",
+        "messages": [
+            {"role": "user", "content": "Termination request, second warning already issued"}
+        ]
+    }),
     &client,
 )
 .await?;
@@ -176,5 +182,6 @@ for step in output.step_timings {
 Cross-language runnable examples:
 
 - Python: `examples/workflow_email/run_with_python_package.py`
+- Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
 - Node: `examples/workflow_email/run_with_node_package.js`
 - Go: `bindings/go/examples/workflow_yaml/main.go`

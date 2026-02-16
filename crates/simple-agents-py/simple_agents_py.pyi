@@ -1,6 +1,28 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator, Literal, Mapping, Sequence, overload, Never
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Literal,
+    Mapping,
+    Sequence,
+    TypedDict,
+    overload,
+    Never,
+)
+
+WorkflowMessageRole = Literal["system", "user", "assistant", "tool"]
+
+class WorkflowMessage(TypedDict, total=False):
+    role: WorkflowMessageRole
+    content: str
+    name: str
+    tool_call_id: str
+
+class WorkflowInput(TypedDict, total=False):
+    email_text: str
+    messages: list[WorkflowMessage]
 
 class ParseResult:
     value: Any
@@ -304,6 +326,18 @@ class Client:
         self,
         workflow_path: str,
         email_text: str,
+        on_event: Callable[[dict[str, Any]], object] | None = None,
+    ) -> dict[str, Any]: ...
+    def run_workflow_yaml(
+        self,
+        workflow_path: str,
+        workflow_input: WorkflowInput | Mapping[str, Any],
+        include_events: bool = False,
+    ) -> dict[str, Any]: ...
+    def run_workflow_yaml_stream(
+        self,
+        workflow_path: str,
+        workflow_input: WorkflowInput | Mapping[str, Any],
         on_event: Callable[[dict[str, Any]], object] | None = None,
     ) -> dict[str, Any]: ...
 

@@ -85,8 +85,9 @@ For YAML workflow execution, the output includes per-step timing and total runti
 
 Rust API entrypoints:
 
-- `run_email_workflow_yaml_file_with_client`
-- `run_email_workflow_yaml_with_client`
+- `run_workflow_yaml_file_with_client`
+- `run_workflow_yaml_with_client`
+- compatibility wrappers: `run_email_workflow_yaml_file_with_client`, `run_email_workflow_yaml_with_client`
 
 These are also exposed in Python/Node/Go bindings and return the same timing fields.
 
@@ -114,3 +115,10 @@ Workflow event telemetry includes per-node resolved LLM input details:
 ## Workflow Visualization
 
 Use `workflow_to_mermaid(&WorkflowDefinition)` to render canonical IR workflows as Mermaid diagrams for debugging/review.
+
+For YAML workflows, use:
+
+- `yaml_workflow_to_mermaid(&YamlWorkflow)`
+- `yaml_workflow_file_to_mermaid(path)`
+
+YAML Mermaid rendering now prefers YAML -> canonical IR conversion (`yaml_workflow_to_ir`) when the YAML feature set is IR-compatible, and falls back to direct YAML graph rendering otherwise.

@@ -989,7 +989,8 @@ mod tests {
         for idx in 0..32usize {
             let pool = Arc::clone(&pool);
             tasks.push(tokio::spawn(async move {
-                pool.submit(sample_request(&format!("parallel-{idx}"))).await
+                pool.submit(sample_request(&format!("parallel-{idx}")))
+                    .await
             }));
         }
 

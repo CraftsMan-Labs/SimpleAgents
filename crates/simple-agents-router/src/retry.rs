@@ -205,7 +205,8 @@ mod tests {
             jitter: false,
         };
 
-        let result = execute_with_retry(policy, || async { Ok::<_, SimpleAgentsError>("ok") }).await;
+        let result =
+            execute_with_retry(policy, || async { Ok::<_, SimpleAgentsError>("ok") }).await;
         assert!(matches!(result, Err(SimpleAgentsError::Config(_))));
     }
 }

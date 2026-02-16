@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use std::time::Instant;
 
@@ -6,12 +6,22 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use simple_agent_type::message::Message;
+use simple_agent_type::message::{Message, Role};
 use simple_agent_type::request::CompletionRequest;
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 };
 use thiserror::Error;
+
+use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
+use crate::runtime::{
+    LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
+    ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeOptions,
+};
+use crate::visualize::workflow_to_mermaid;
+
+const YAML_START_NODE_ID: &str = "__yaml_start";
+const YAML_LLM_TOOL_ID: &str = "__yaml_llm_call";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlStepTiming {
@@ -43,6 +53,18 @@ pub struct YamlWorkflowEvent {
     pub delta: Option<String>,
     pub elapsed_ms: Option<u128>,
     pub metadata: Option<Value>,
+}
+
+pub type WorkflowMessageRole = Role;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkflowMessage {
+    pub role: WorkflowMessageRole,
+    pub content: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default, alias = "toolCallId")]
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -93,8 +115,6 @@ pub enum YamlWorkflowRunError {
     UnsupportedCondition { condition: String },
     #[error("switch node '{node_id}' has no valid next target")]
     InvalidSwitchTarget { node_id: String },
-    #[error("llm schema mapping not defined for node '{node_id}'")]
-    MissingLlmSchema { node_id: String },
     #[error("llm returned non-object payload for node '{node_id}'")]
     LlmPayloadNotObject { node_id: String },
     #[error("custom worker handler '{handler}' is not supported")]
@@ -108,6 +128,8 @@ pub enum YamlWorkflowRunError {
         diagnostics_count: usize,
         diagnostics: Vec<YamlWorkflowDiagnostic>,
     },
+    #[error("invalid workflow input: {message}")]
+    InvalidInput { message: String },
 }
 
 pub trait YamlWorkflowEventSink: Send + Sync {
@@ -120,10 +142,293 @@ impl YamlWorkflowEventSink for NoopYamlWorkflowEventSink {
     fn emit(&self, _event: &YamlWorkflowEvent) {}
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum YamlToIrError {
+    #[error("entry node '{entry_node}' does not exist")]
+    MissingEntry { entry_node: String },
+    #[error("node '{node_id}' has multiple outgoing edges in YAML; IR llm/tool nodes require one")]
+    MultipleOutgoingEdge { node_id: String },
+    #[error("node '{node_id}' is unsupported for IR conversion: {reason}")]
+    UnsupportedNode { node_id: String, reason: String },
+}
+
+/// Render a YAML workflow graph as Mermaid flowchart.
+pub fn yaml_workflow_to_mermaid(workflow: &YamlWorkflow) -> String {
+    if let Ok(ir) = yaml_workflow_to_ir(workflow) {
+        return workflow_to_mermaid(&ir);
+    }
+
+    yaml_workflow_to_mermaid_fallback(workflow)
+}
+
+fn yaml_workflow_to_mermaid_fallback(workflow: &YamlWorkflow) -> String {
+    let mut lines = Vec::new();
+    lines.push("flowchart TD".to_string());
+
+    for node in &workflow.nodes {
+        lines.push(format!(
+            "  {}[\"{}\\n({})\"]",
+            sanitize_mermaid_id(&node.id),
+            escape_mermaid_label(&node.id),
+            node.kind_name()
+        ));
+    }
+
+    let mut emitted: HashSet<(String, String, String)> = HashSet::new();
+
+    for edge in &workflow.edges {
+        emitted.insert((edge.from.clone(), String::new(), edge.to.clone()));
+    }
+
+    for node in &workflow.nodes {
+        if let Some(switch) = node.node_type.switch.as_ref() {
+            for branch in &switch.branches {
+                emitted.insert((
+                    node.id.clone(),
+                    branch.condition.clone(),
+                    branch.target.clone(),
+                ));
+            }
+            emitted.insert((
+                node.id.clone(),
+                "default".to_string(),
+                switch.default.clone(),
+            ));
+        }
+    }
+
+    let mut edges = emitted.into_iter().collect::<Vec<_>>();
+    edges.sort_by(|a, b| a.cmp(b));
+
+    for (from, label, to) in edges {
+        if label.is_empty() {
+            lines.push(format!(
+                "  {} --> {}",
+                sanitize_mermaid_id(&from),
+                sanitize_mermaid_id(&to)
+            ));
+        } else {
+            lines.push(format!(
+                "  {} -- \"{}\" --> {}",
+                sanitize_mermaid_id(&from),
+                escape_mermaid_label(&label),
+                sanitize_mermaid_id(&to)
+            ));
+        }
+    }
+
+    lines.join("\n")
+}
+
+/// Load a YAML workflow file and render it as Mermaid flowchart.
+pub fn yaml_workflow_file_to_mermaid(workflow_path: &Path) -> Result<String, YamlWorkflowRunError> {
+    let contents =
+        std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    let workflow: YamlWorkflow =
+        serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
+            path: workflow_path.display().to_string(),
+            source,
+        })?;
+
+    Ok(yaml_workflow_to_mermaid(&workflow))
+}
+
+pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition, YamlToIrError> {
+    let known_ids: HashSet<&str> = workflow.nodes.iter().map(|n| n.id.as_str()).collect();
+    if !known_ids.contains(workflow.entry_node.as_str()) {
+        return Err(YamlToIrError::MissingEntry {
+            entry_node: workflow.entry_node.clone(),
+        });
+    }
+
+    let mut outgoing: HashMap<&str, Vec<&str>> = HashMap::new();
+    for edge in &workflow.edges {
+        outgoing
+            .entry(edge.from.as_str())
+            .or_default()
+            .push(edge.to.as_str());
+    }
+
+    let mut nodes = Vec::with_capacity(workflow.nodes.len() + 1);
+    nodes.push(Node {
+        id: YAML_START_NODE_ID.to_string(),
+        kind: NodeKind::Start {
+            next: workflow.entry_node.clone(),
+        },
+    });
+
+    for node in &workflow.nodes {
+        if let Some(llm) = node.node_type.llm_call.as_ref() {
+            if node
+                .config
+                .as_ref()
+                .and_then(|c| c.set_globals.as_ref())
+                .is_some()
+                || node
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.update_globals.as_ref())
+                    .is_some()
+            {
+                return Err(YamlToIrError::UnsupportedNode {
+                    node_id: node.id.clone(),
+                    reason: "set_globals/update_globals are not represented in canonical IR llm nodes yet"
+                        .to_string(),
+                });
+            }
+
+            let next = single_next_for_node(&outgoing, &node.id)?;
+            nodes.push(Node {
+                id: node.id.clone(),
+                kind: NodeKind::Tool {
+                    tool: YAML_LLM_TOOL_ID.to_string(),
+                    input: json!({
+                        "node_id": node.id,
+                        "model": llm.model,
+                        "prompt_template": node
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.prompt.clone())
+                            .unwrap_or_default(),
+                        "stream": llm.stream.unwrap_or(false),
+                        "heal": llm.heal.unwrap_or(false),
+                        "messages_path": llm.messages_path,
+                        "append_prompt_as_user": llm.append_prompt_as_user.unwrap_or(true),
+                        "output_schema": node
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.output_schema.clone())
+                            .unwrap_or_else(default_llm_output_schema),
+                    }),
+                    next,
+                },
+            });
+            continue;
+        }
+
+        if let Some(worker) = node.node_type.custom_worker.as_ref() {
+            if node
+                .config
+                .as_ref()
+                .and_then(|c| c.set_globals.as_ref())
+                .is_some()
+                || node
+                    .config
+                    .as_ref()
+                    .and_then(|c| c.update_globals.as_ref())
+                    .is_some()
+            {
+                return Err(YamlToIrError::UnsupportedNode {
+                    node_id: node.id.clone(),
+                    reason: "set_globals/update_globals are not represented in canonical IR tool nodes yet"
+                        .to_string(),
+                });
+            }
+
+            let next = single_next_for_node(&outgoing, &node.id)?;
+            nodes.push(Node {
+                id: node.id.clone(),
+                kind: NodeKind::Tool {
+                    tool: worker.handler.clone(),
+                    input: node
+                        .config
+                        .as_ref()
+                        .and_then(|c| c.payload.clone())
+                        .unwrap_or_else(|| json!({})),
+                    next,
+                },
+            });
+            continue;
+        }
+
+        if let Some(switch) = node.node_type.switch.as_ref() {
+            nodes.push(Node {
+                id: node.id.clone(),
+                kind: NodeKind::Router {
+                    routes: switch
+                        .branches
+                        .iter()
+                        .map(|b| RouterRoute {
+                            when: rewrite_yaml_condition_to_ir(&b.condition),
+                            next: b.target.clone(),
+                        })
+                        .collect(),
+                    default: switch.default.clone(),
+                },
+            });
+            continue;
+        }
+
+        return Err(YamlToIrError::UnsupportedNode {
+            node_id: node.id.clone(),
+            reason: "node_type must be llm_call, switch, or custom_worker".to_string(),
+        });
+    }
+
+    Ok(WorkflowDefinition {
+        version: WORKFLOW_IR_V0.to_string(),
+        name: workflow.id.clone(),
+        nodes,
+    })
+}
+
+fn single_next_for_node(
+    outgoing: &HashMap<&str, Vec<&str>>,
+    node_id: &str,
+) -> Result<Option<String>, YamlToIrError> {
+    match outgoing.get(node_id) {
+        None => Ok(None),
+        Some(targets) if targets.len() == 1 => Ok(Some(targets[0].to_string())),
+        Some(_) => Err(YamlToIrError::MultipleOutgoingEdge {
+            node_id: node_id.to_string(),
+        }),
+    }
+}
+
+fn rewrite_yaml_condition_to_ir(expr: &str) -> String {
+    expr.replace("$.nodes.", "$.node_outputs.")
+        .replace(".output.", ".")
+        .replace(".output", "")
+}
+
+fn sanitize_mermaid_id(id: &str) -> String {
+    let mut out = String::with_capacity(id.len() + 1);
+    if id
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+    {
+        out.push_str(id);
+    } else {
+        out.push('n');
+        out.push('_');
+        out.push_str(id);
+    }
+    out.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn escape_mermaid_label(label: &str) -> String {
+    label.replace('"', "\\\"")
+}
+
 #[derive(Debug, Clone)]
 pub struct YamlLlmExecutionRequest {
     pub node_id: String,
     pub model: String,
+    pub messages: Option<Vec<Message>>,
+    pub append_prompt_as_user: bool,
     pub prompt: String,
     pub prompt_template: String,
     pub prompt_bindings: Vec<YamlTemplateBinding>,
@@ -152,9 +457,9 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
     ) -> Result<Value, String>;
 }
 
-pub async fn run_email_workflow_yaml_file(
+pub async fn run_workflow_yaml_file(
     workflow_path: &Path,
-    email_text: &str,
+    workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let contents =
@@ -169,12 +474,21 @@ pub async fn run_email_workflow_yaml_file(
             source,
         })?;
 
-    run_email_workflow_yaml(&workflow, email_text, executor).await
+    run_workflow_yaml(&workflow, workflow_input, executor).await
 }
 
-pub async fn run_email_workflow_yaml_file_with_client(
+pub async fn run_email_workflow_yaml_file(
     workflow_path: &Path,
     email_text: &str,
+    executor: &dyn YamlWorkflowLlmExecutor,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_file(workflow_path, &workflow_input, executor).await
+}
+
+pub async fn run_workflow_yaml_file_with_client(
+    workflow_path: &Path,
+    workflow_input: &Value,
     client: &SimpleAgentsClient,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let contents =
@@ -189,7 +503,24 @@ pub async fn run_email_workflow_yaml_file_with_client(
             source,
         })?;
 
-    run_email_workflow_yaml_with_client(&workflow, email_text, client).await
+    run_workflow_yaml_with_client(&workflow, workflow_input, client).await
+}
+
+pub async fn run_email_workflow_yaml_file_with_client(
+    workflow_path: &Path,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_file_with_client(workflow_path, &workflow_input, client).await
+}
+
+pub async fn run_workflow_yaml_with_client(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_client_and_custom_worker(workflow, workflow_input, client, None).await
 }
 
 pub async fn run_email_workflow_yaml_with_client(
@@ -197,12 +528,13 @@ pub async fn run_email_workflow_yaml_with_client(
     email_text: &str,
     client: &SimpleAgentsClient,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_client_and_custom_worker(workflow, email_text, client, None).await
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_with_client(workflow, &workflow_input, client).await
 }
 
-pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
+pub async fn run_workflow_yaml_file_with_client_and_custom_worker(
     workflow_path: &Path,
-    email_text: &str,
+    workflow_input: &Value,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
@@ -218,18 +550,34 @@ pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
             source,
         })?;
 
-    run_email_workflow_yaml_with_client_and_custom_worker(
+    run_workflow_yaml_with_client_and_custom_worker(
         &workflow,
-        email_text,
+        workflow_input,
         client,
         custom_worker,
     )
     .await
 }
 
-pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker_and_events(
+pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
     workflow_path: &Path,
     email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_file_with_client_and_custom_worker(
+        workflow_path,
+        &workflow_input,
+        client,
+        custom_worker,
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+    workflow_path: &Path,
+    workflow_input: &Value,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
@@ -246,12 +594,46 @@ pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker_and_even
             source,
         })?;
 
-    run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+    run_workflow_yaml_with_client_and_custom_worker_and_events(
         &workflow,
-        email_text,
+        workflow_input,
         client,
         custom_worker,
         event_sink,
+    )
+    .await
+}
+
+pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker_and_events(
+    workflow_path: &Path,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+        workflow_path,
+        &workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_with_client_and_custom_worker(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_client_and_custom_worker_and_events(
+        workflow,
+        workflow_input,
+        client,
+        custom_worker,
+        None,
     )
     .await
 }
@@ -262,19 +644,19 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_with_client_and_custom_worker(
         workflow,
-        email_text,
+        &workflow_input,
         client,
         custom_worker,
-        None,
     )
     .await
 }
 
-pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     workflow: &YamlWorkflow,
-    email_text: &str,
+    workflow_input: &Value,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
@@ -310,12 +692,21 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
                 }
             }
 
-            let mut builder = CompletionRequest::builder()
-                .model(&request.model)
-                .messages(vec![
+            let messages = if let Some(mut history) = request.messages.clone() {
+                if request.append_prompt_as_user && !request.prompt.trim().is_empty() {
+                    history.push(Message::user(&request.prompt));
+                }
+                history
+            } else {
+                vec![
                     Message::system("You execute workflow classification steps."),
                     Message::user(&request.prompt),
-                ]);
+                ]
+            };
+
+            let mut builder = CompletionRequest::builder()
+                .model(&request.model)
+                .messages(messages);
 
             if effective_stream {
                 builder = builder.stream(true);
@@ -401,9 +792,9 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
     }
 
     let executor = BorrowedClientExecutor { client };
-    run_email_workflow_yaml_with_custom_worker_and_events(
+    run_workflow_yaml_with_custom_worker_and_events(
         workflow,
-        email_text,
+        workflow_input,
         &executor,
         custom_worker,
         event_sink,
@@ -411,13 +802,54 @@ pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
     .await
 }
 
+pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_with_client_and_custom_worker_and_events(
+        workflow,
+        &workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_custom_worker_and_events(workflow, workflow_input, executor, None, None)
+        .await
+}
+
 pub async fn run_email_workflow_yaml(
     workflow: &YamlWorkflow,
     email_text: &str,
     executor: &dyn YamlWorkflowLlmExecutor,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_custom_worker_and_events(
-        workflow, email_text, executor, None, None,
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml(workflow, &workflow_input, executor).await
+}
+
+pub async fn run_workflow_yaml_with_custom_worker(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_custom_worker_and_events(
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        None,
     )
     .await
 }
@@ -428,23 +860,34 @@ pub async fn run_email_workflow_yaml_with_custom_worker(
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_email_workflow_yaml_with_custom_worker_and_events(
-        workflow,
-        email_text,
-        executor,
-        custom_worker,
-        None,
-    )
-    .await
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_with_custom_worker(workflow, &workflow_input, executor, custom_worker).await
 }
 
-pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
+pub async fn run_workflow_yaml_with_custom_worker_and_events(
     workflow: &YamlWorkflow,
-    email_text: &str,
+    workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    if let Some(output) =
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker).await?
+    {
+        return Ok(output);
+    }
+
+    if !workflow_input.is_object() {
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: "workflow input must be a JSON object".to_string(),
+        });
+    }
+
+    let email_text = workflow_input
+        .get("email_text")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+
     let diagnostics = verify_yaml_workflow(workflow);
     let errors: Vec<YamlWorkflowDiagnostic> = diagnostics
         .iter()
@@ -542,21 +985,31 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 .and_then(|cfg| cfg.prompt.as_deref())
                 .unwrap_or_default();
             let context = json!({
-                "input": { "email_text": email_text },
+                "input": workflow_input,
                 "nodes": outputs,
                 "globals": Value::Object(globals.clone())
             });
+            let messages = if let Some(path) = llm.messages_path.as_deref() {
+                Some(
+                    parse_messages_from_context(path, &context).map_err(|message| {
+                        YamlWorkflowRunError::Llm {
+                            node_id: node.id.clone(),
+                            message,
+                        }
+                    })?,
+                )
+            } else {
+                None
+            };
             let prompt_bindings = collect_template_bindings(prompt_template, &context);
             let prompt = interpolate_template(prompt_template, &context);
-            let schema = schema_for_node(node.id.as_str()).ok_or_else(|| {
-                YamlWorkflowRunError::MissingLlmSchema {
-                    node_id: node.id.clone(),
-                }
-            })?;
+            let schema = llm_output_schema_for_node(node);
 
             let request = YamlLlmExecutionRequest {
                 node_id: node.id.clone(),
                 model: llm.model.clone(),
+                messages,
+                append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
                 prompt,
                 prompt_template: prompt_template.to_string(),
                 prompt_bindings,
@@ -602,14 +1055,14 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             }
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
-            apply_set_globals(node, &outputs, email_text, &mut globals);
-            apply_update_globals(node, &outputs, email_text, &mut globals);
+            apply_set_globals(node, &outputs, workflow_input, &mut globals);
+            apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
                 .get(node.id.as_str())
                 .map(|value| value.to_string())
         } else if let Some(switch) = &node.node_type.switch {
             let context = json!({
-                "input": { "email_text": email_text },
+                "input": workflow_input,
                 "nodes": outputs,
                 "globals": Value::Object(globals.clone())
             });
@@ -632,7 +1085,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 .cloned()
                 .unwrap_or_else(|| json!({}));
             let context = json!({
-                "input": { "email_text": email_text },
+                "input": workflow_input,
                 "nodes": outputs,
                 "globals": Value::Object(globals.clone())
             });
@@ -646,22 +1099,12 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                         message,
                     })?
             } else {
-                if custom.handler != "GetRagData" {
-                    return Err(YamlWorkflowRunError::UnsupportedCustomHandler {
-                        handler: custom.handler.clone(),
-                    });
-                }
-
-                let topic = payload
-                    .get("topic")
-                    .and_then(Value::as_str)
-                    .unwrap_or("clarification");
-                mock_rag(topic)
+                mock_custom_worker_output(custom.handler.as_str(), &payload)?
             };
 
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
-            apply_set_globals(node, &outputs, email_text, &mut globals);
-            apply_update_globals(node, &outputs, email_text, &mut globals);
+            apply_set_globals(node, &outputs, workflow_input, &mut globals);
+            apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
                 .get(node.id.as_str())
                 .map(|value| value.to_string())
@@ -739,6 +1182,242 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
     Ok(output)
 }
 
+async fn try_run_yaml_via_ir_runtime(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<Option<YamlWorkflowRunOutput>, YamlWorkflowRunError> {
+    let ir = match yaml_workflow_to_ir(workflow) {
+        Ok(def) => def,
+        Err(YamlToIrError::UnsupportedNode { .. })
+        | Err(YamlToIrError::MultipleOutgoingEdge { .. }) => return Ok(None),
+        Err(err) => {
+            return Err(YamlWorkflowRunError::InvalidInput {
+                message: err.to_string(),
+            });
+        }
+    };
+
+    struct NoopLlm;
+    #[async_trait]
+    impl LlmExecutor for NoopLlm {
+        async fn execute(
+            &self,
+            _input: LlmExecutionInput,
+        ) -> Result<LlmExecutionOutput, LlmExecutionError> {
+            Err(LlmExecutionError::UnexpectedOutcome("yaml_ir_uses_tool_path"))
+        }
+    }
+
+    struct YamlIrToolExecutor<'a> {
+        llm_executor: &'a dyn YamlWorkflowLlmExecutor,
+        custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    }
+
+    #[async_trait]
+    impl ToolExecutor for YamlIrToolExecutor<'_> {
+        async fn execute_tool(&self, input: ToolExecutionInput) -> Result<Value, ToolExecutionError> {
+            let context = build_yaml_context_from_ir_scope(&input.scoped_input);
+
+            if input.tool == YAML_LLM_TOOL_ID {
+                let node_id = input
+                    .input
+                    .get("node_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolExecutionError::Failed("yaml llm call missing node_id".to_string()))?
+                    .to_string();
+                let model = input
+                    .input
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| ToolExecutionError::Failed("yaml llm call missing model".to_string()))?
+                    .to_string();
+                let prompt_template = input
+                    .input
+                    .get("prompt_template")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let stream = input
+                    .input
+                    .get("stream")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let heal = input
+                    .input
+                    .get("heal")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let append_prompt_as_user = input
+                    .input
+                    .get("append_prompt_as_user")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                let messages_path = input
+                    .input
+                    .get("messages_path")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+
+                let messages = if let Some(path) = messages_path.as_deref() {
+                    Some(
+                        parse_messages_from_context(path, &context)
+                            .map_err(ToolExecutionError::Failed)?,
+                    )
+                } else {
+                    None
+                };
+
+                let prompt_bindings = collect_template_bindings(&prompt_template, &context);
+                let prompt = interpolate_template(&prompt_template, &context);
+                let schema = input
+                    .input
+                    .get("output_schema")
+                    .cloned()
+                    .unwrap_or_else(default_llm_output_schema);
+
+                let request = YamlLlmExecutionRequest {
+                    node_id,
+                    model,
+                    messages,
+                    append_prompt_as_user,
+                    prompt,
+                    prompt_template,
+                    prompt_bindings,
+                    schema,
+                    stream,
+                    heal,
+                };
+
+                return self
+                    .llm_executor
+                    .complete_structured(request, None)
+                    .await
+                    .map_err(ToolExecutionError::Failed);
+            }
+
+            let worker = self.custom_worker.ok_or_else(|| {
+                ToolExecutionError::NotFound {
+                    tool: input.tool.clone(),
+                }
+            })?;
+
+            let payload = input.input.clone();
+            let email_text = context
+                .get("input")
+                .and_then(|v| v.get("email_text"))
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+
+            worker
+                .execute(&input.tool, &payload, email_text, &context)
+                .await
+                .map_err(ToolExecutionError::Failed)
+        }
+    }
+
+    let tool_executor = YamlIrToolExecutor {
+        llm_executor: executor,
+        custom_worker,
+    };
+
+    let runtime = WorkflowRuntime::new(
+        ir,
+        &NoopLlm,
+        Some(&tool_executor),
+        WorkflowRuntimeOptions::default(),
+    );
+
+    let started = Instant::now();
+    let result = match runtime.execute(workflow_input.clone(), None).await {
+        Ok(result) => result,
+        Err(_) => return Ok(None),
+    };
+    let total_elapsed_ms = started.elapsed().as_millis();
+
+    let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
+    for (node_id, output) in result.node_outputs {
+        if node_id == YAML_START_NODE_ID {
+            continue;
+        }
+        outputs.insert(node_id, json!({"output": output}));
+    }
+
+    let mut trace = Vec::new();
+    let mut step_timings = Vec::new();
+    for execution in result.node_executions {
+        if execution.node_id == YAML_START_NODE_ID {
+            continue;
+        }
+        trace.push(execution.node_id.clone());
+        step_timings.push(YamlStepTiming {
+            node_id: execution.node_id,
+            node_kind: "ir_runtime".to_string(),
+            elapsed_ms: 0,
+        });
+    }
+
+    let terminal_node = result.terminal_node_id;
+    let terminal_output = outputs
+        .get(&terminal_node)
+        .and_then(|v| v.get("output"))
+        .cloned();
+
+    let email_text = workflow_input
+        .get("email_text")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    Ok(Some(YamlWorkflowRunOutput {
+        workflow_id: workflow.id.clone(),
+        entry_node: workflow.entry_node.clone(),
+        email_text,
+        trace,
+        outputs,
+        terminal_node,
+        terminal_output,
+        step_timings,
+        total_elapsed_ms,
+    }))
+}
+
+fn build_yaml_context_from_ir_scope(scoped_input: &Value) -> Value {
+    let input = scoped_input.get("input").cloned().unwrap_or(Value::Null);
+
+    let mut nodes = serde_json::Map::new();
+    if let Some(node_outputs) = scoped_input.get("node_outputs").and_then(Value::as_object) {
+        for (node_id, output) in node_outputs {
+            nodes.insert(node_id.clone(), json!({"output": output.clone()}));
+        }
+    }
+
+    json!({
+        "input": input,
+        "nodes": Value::Object(nodes),
+        "globals": Value::Object(serde_json::Map::new())
+    })
+}
+
+pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
+    workflow: &YamlWorkflow,
+    email_text: &str,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let workflow_input = json!({ "email_text": email_text });
+    run_workflow_yaml_with_custom_worker_and_events(
+        workflow,
+        &workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+    )
+    .await
+}
+
 fn evaluate_switch_condition(
     condition: &str,
     context: &Value,
@@ -757,6 +1436,43 @@ fn evaluate_switch_condition(
         .and_then(Value::as_str)
         .map(|value| value == right_literal)
         .unwrap_or(false))
+}
+
+fn parse_messages_from_context(path: &str, context: &Value) -> Result<Vec<Message>, String> {
+    let normalized_path = path.trim().trim_start_matches("$.");
+    let value = resolve_path(context, normalized_path)
+        .ok_or_else(|| format!("messages_path not found: {path}"))?;
+    let list: Vec<WorkflowMessage> = serde_json::from_value(value.clone()).map_err(|err| {
+        format!("messages_path must resolve to a list of messages: {path}; {err}")
+    })?;
+    if list.is_empty() {
+        return Err(format!(
+            "messages_path must not resolve to an empty list: {path}"
+        ));
+    }
+
+    let mut messages = Vec::with_capacity(list.len());
+    for (index, item) in list.into_iter().enumerate() {
+        let mut message = match item.role {
+            Role::System => Message::system(item.content),
+            Role::User => Message::user(item.content),
+            Role::Assistant => Message::assistant(item.content),
+            Role::Tool => {
+                let tool_call_id = item
+                    .tool_call_id
+                    .ok_or_else(|| format!("tool message at index {index} missing tool_call_id"))?;
+                Message::tool(item.content, tool_call_id)
+            }
+        };
+
+        if let Some(name) = item.name {
+            message = message.with_name(name);
+        }
+
+        messages.push(message);
+    }
+
+    Ok(messages)
 }
 
 pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnostic> {
@@ -968,7 +1684,7 @@ fn value_to_template_string(value: &Value) -> String {
 fn apply_set_globals(
     node: &YamlNode,
     outputs: &BTreeMap<String, Value>,
-    email_text: &str,
+    workflow_input: &Value,
     globals: &mut serde_json::Map<String, Value>,
 ) {
     let Some(config) = node.config.as_ref() else {
@@ -979,7 +1695,7 @@ fn apply_set_globals(
     };
 
     let context = json!({
-        "input": { "email_text": email_text },
+        "input": workflow_input,
         "nodes": outputs,
         "globals": Value::Object(globals.clone())
     });
@@ -995,7 +1711,7 @@ fn apply_set_globals(
 fn apply_update_globals(
     node: &YamlNode,
     outputs: &BTreeMap<String, Value>,
-    email_text: &str,
+    workflow_input: &Value,
     globals: &mut serde_json::Map<String, Value>,
 ) {
     let Some(config) = node.config.as_ref() else {
@@ -1006,7 +1722,7 @@ fn apply_update_globals(
     };
 
     let context = json!({
-        "input": { "email_text": email_text },
+        "input": workflow_input,
         "nodes": outputs,
         "globals": Value::Object(globals.clone())
     });
@@ -1070,71 +1786,23 @@ fn apply_update_globals(
     }
 }
 
-fn schema_for_node(node_id: &str) -> Option<Value> {
-    if node_id == "classify_top_level" {
-        return Some(json!({
-            "type": "object",
-            "properties": {
-                "category": {
-                    "type": "string",
-                    "enum": [
-                        "probation",
-                        "termination",
-                        "leave_request",
-                        "supply_chain_request",
-                        "clarification"
-                    ]
-                },
-                "reason": { "type": "string" }
-            },
-            "required": ["category", "reason"],
-            "additionalProperties": false
-        }));
+fn llm_output_schema_for_node(node: &YamlNode) -> Value {
+    if let Some(schema) = node
+        .config
+        .as_ref()
+        .and_then(|cfg| cfg.output_schema.clone())
+    {
+        return schema;
     }
 
-    if node_id == "classify_supply_chain_subtype" {
-        return Some(json!({
-            "type": "object",
-            "properties": {
-                "subtype": {
-                    "type": "string",
-                    "enum": ["order_assessment", "order_replacement", "clarification"]
-                },
-                "reason": { "type": "string" }
-            },
-            "required": ["subtype", "reason"],
-            "additionalProperties": false
-        }));
-    }
+    default_llm_output_schema()
+}
 
-    if node_id == "classify_termination_subtype" {
-        return Some(json!({
-            "type": "object",
-            "properties": {
-                "subtype": {
-                    "type": "string",
-                    "enum": ["first_time_offense", "repeated_offense", "clarification"]
-                },
-                "reason": { "type": "string" }
-            },
-            "required": ["subtype", "reason"],
-            "additionalProperties": false
-        }));
-    }
-
-    if node_id == "generate_email_draft" {
-        return Some(json!({
-            "type": "object",
-            "properties": {
-                "subject": { "type": "string" },
-                "body": { "type": "string" }
-            },
-            "required": ["subject", "body"],
-            "additionalProperties": false
-        }));
-    }
-
-    None
+fn default_llm_output_schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": true
+    })
 }
 
 fn mock_rag(topic: &str) -> Value {
@@ -1172,6 +1840,20 @@ fn mock_rag(topic: &str) -> Value {
     json!({
         "kb_source": kb_source,
         "playbook": playbook,
+    })
+}
+
+fn mock_custom_worker_output(handler: &str, payload: &Value) -> Result<Value, YamlWorkflowRunError> {
+    if let Some(topic) = payload.get("topic").and_then(Value::as_str) {
+        let mut value = mock_rag(topic);
+        if let Value::Object(object) = &mut value {
+            object.insert("handler".to_string(), Value::String(handler.to_string()));
+        }
+        return Ok(value);
+    }
+
+    Err(YamlWorkflowRunError::UnsupportedCustomHandler {
+        handler: handler.to_string(),
     })
 }
 
@@ -1218,6 +1900,8 @@ pub struct YamlLlmCall {
     pub model: String,
     pub stream: Option<bool>,
     pub heal: Option<bool>,
+    pub messages_path: Option<String>,
+    pub append_prompt_as_user: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1241,6 +1925,8 @@ pub struct YamlCustomWorker {
 #[derive(Debug, Clone, Deserialize)]
 pub struct YamlNodeConfig {
     pub prompt: Option<String>,
+    #[serde(default, alias = "schema")]
+    pub output_schema: Option<Value>,
     pub payload: Option<Value>,
     pub set_globals: Option<HashMap<String, String>>,
     pub update_globals: Option<HashMap<String, YamlGlobalUpdate>>,
@@ -1442,6 +2128,183 @@ nodes:
             bindings[0]["resolved_type"],
             Value::String("string".to_string())
         );
+    }
+
+    struct MessageHistoryExecutor;
+
+    #[async_trait]
+    impl YamlWorkflowLlmExecutor for MessageHistoryExecutor {
+        async fn complete_structured(
+            &self,
+            request: YamlLlmExecutionRequest,
+            _event_sink: Option<&dyn YamlWorkflowEventSink>,
+        ) -> Result<Value, String> {
+            let messages = request
+                .messages
+                .ok_or_else(|| "expected messages in request".to_string())?;
+            if messages.len() != 2 {
+                return Err(format!("expected 2 messages, got {}", messages.len()));
+            }
+            Ok(json!({"category":"termination","reason":"history"}))
+        }
+    }
+
+    #[tokio::test]
+    async fn supports_messages_path_in_workflow_input() {
+        let yaml = r#"
+id: email-intake-classification
+entry_node: classify_top_level
+nodes:
+  - id: classify_top_level
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        messages_path: input.messages
+        append_prompt_as_user: false
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let input = json!({
+            "email_text": "ignored",
+            "messages": [
+                {"role": "system", "content": "You are a classifier"},
+                {"role": "user", "content": "Please classify this"}
+            ]
+        });
+
+        let output = run_workflow_yaml(&workflow, &input, &MessageHistoryExecutor)
+            .await
+            .expect("workflow should use chat history from input");
+
+        assert_eq!(output.terminal_node, "classify_top_level");
+        assert_eq!(
+            output.outputs["classify_top_level"]["output"]["reason"],
+            Value::String("history".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_invalid_messages_path_shape() {
+        let yaml = r#"
+id: email-intake-classification
+entry_node: classify_top_level
+nodes:
+  - id: classify_top_level
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        messages_path: input.messages
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let input = json!({
+            "email_text": "ignored",
+            "messages": "not-a-list"
+        });
+
+        let err = run_workflow_yaml(&workflow, &input, &MessageHistoryExecutor)
+            .await
+            .expect_err("workflow should fail for invalid messages shape");
+
+        assert!(matches!(err, YamlWorkflowRunError::Llm { .. }));
+    }
+
+    #[test]
+    fn renders_yaml_workflow_to_mermaid_with_switch_labels() {
+        let yaml = r#"
+id: chat-workflow
+entry_node: decide
+nodes:
+  - id: decide
+    node_type:
+      switch:
+        branches:
+          - condition: '$.input.mode == "draft"'
+            target: draft
+        default: ask
+  - id: draft
+    node_type:
+      llm_call:
+        model: gpt-4.1
+  - id: ask
+    node_type:
+      llm_call:
+        model: gpt-4.1
+edges:
+  - from: draft
+    to: ask
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let mermaid = yaml_workflow_to_mermaid(&workflow);
+
+        assert!(mermaid.contains("flowchart TD"));
+        assert!(mermaid.contains("decide -- \"route1\" --> draft"));
+        assert!(mermaid.contains("decide -- \"default\" --> ask"));
+        assert!(mermaid.contains("draft --> ask"));
+    }
+
+    #[test]
+    fn converts_yaml_workflow_to_ir_definition() {
+        let yaml = r#"
+id: chat-workflow
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        classify
+  - id: route
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify.output.kind == "x"'
+            target: done
+        default: done
+  - id: done
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: test
+edges:
+  - from: classify
+    to: route
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let ir = yaml_workflow_to_ir(&workflow).expect("yaml should convert to ir");
+
+        assert_eq!(ir.name, "chat-workflow");
+        assert!(ir.nodes.iter().any(|n| n.id == "__yaml_start"));
+        assert!(ir.nodes.iter().any(|n| n.id == "classify"));
+        assert!(ir.nodes.iter().any(|n| n.id == "route"));
+        assert!(ir.nodes.iter().any(|n| n.id == "done"));
+    }
+
+    #[test]
+    fn supports_yaml_to_ir_when_messages_path_is_used() {
+        let yaml = r#"
+id: chat-workflow
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        messages_path: input.messages
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let ir = yaml_workflow_to_ir(&workflow).expect("messages_path should convert to tool-based IR");
+        assert!(ir.nodes.iter().any(|node| matches!(
+            node.kind,
+            crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
+        )));
     }
 
     #[test]
