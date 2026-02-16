@@ -138,3 +138,26 @@ print(result["total_elapsed_ms"])  # end-to-end runtime
 ```
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
+
+### Live Workflow Events + LLM Deltas
+
+`Client.run_email_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
+
+```python
+def on_event(event: dict[str, object]) -> None:
+    if event.get("event_type") == "node_stream_delta":
+        print(event.get("delta", ""), end="", flush=True)
+    else:
+        print(event)
+
+result = client.run_email_workflow_yaml_stream(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+    on_event=on_event,
+)
+```
+
+Notes:
+
+- Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
+- If `llm_call` uses `heal=true`, streaming deltas are disabled for that node and a non-streamable event is emitted.
