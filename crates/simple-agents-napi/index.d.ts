@@ -13,7 +13,7 @@ export interface CompleteOptions {
   schema?: unknown
 }
 export interface MessageInput {
-  role: string
+  role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
   name?: string
   toolCallId?: string
@@ -92,4 +92,5 @@ export declare class Client {
   stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
   streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
   runEmailWorkflowYaml(workflowPath: string, emailText: string): any
+  runWorkflowYaml(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }): any
 }

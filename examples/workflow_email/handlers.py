@@ -7,6 +7,42 @@ def get_rag_data(
     topic: str, *, email_text: str, context: dict[str, Any]
 ) -> dict[str, str]:
     """Real Python handler for YAML custom_worker: GetRagData."""
+    if topic == "terminated":
+        policy_violation = (
+            "ignore" in email_text.lower() or "bypass" in email_text.lower()
+        )
+        if policy_violation:
+            message = (
+                "Interview terminated due to instruction/policy deviation. "
+                "No further questions will be asked in this session."
+            )
+        else:
+            message = (
+                "Interview terminated because the required step-by-step reasoning process "
+                "was not followed."
+            )
+        return {
+            "decision": "terminated",
+            "message": message,
+            "handler": "GetRagData",
+            "topic": topic,
+            "email_preview": email_text[:120],
+            "context_nodes": str(len(context.get("nodes", {}))),
+        }
+
+    if topic == "already_terminated":
+        return {
+            "decision": "terminated",
+            "message": (
+                "This interview session is already closed due to a prior termination decision. "
+                "Please start a new session for a new candidate."
+            ),
+            "handler": "GetRagData",
+            "topic": topic,
+            "email_preview": email_text[:120],
+            "context_nodes": str(len(context.get("nodes", {}))),
+        }
+
     time.sleep(10)
     data = {
         "probation": (
@@ -45,5 +81,38 @@ def get_rag_data(
         "handler": "GetRagData",
         "topic": topic,
         "email_preview": email_text[:120],
+        "context_nodes": str(len(context.get("nodes", {}))),
+    }
+
+
+def terminate_interview(
+    topic: str, *, email_text: str, context: dict[str, Any]
+) -> dict[str, str]:
+    """Deterministic termination handler for interview workflows."""
+    if topic == "already_terminated":
+        message = (
+            "This interview session is already closed due to a prior termination decision. "
+            "Please start a new session for a new candidate."
+        )
+    else:
+        policy_violation = (
+            "ignore" in email_text.lower() or "bypass" in email_text.lower()
+        )
+        if policy_violation:
+            message = (
+                "Interview terminated due to instruction/policy deviation. "
+                "No further questions will be asked in this session."
+            )
+        else:
+            message = (
+                "Interview terminated because the required step-by-step reasoning process "
+                "was not followed."
+            )
+
+    return {
+        "decision": "terminated",
+        "message": message,
+        "handler": "TerminateInterview",
+        "topic": topic,
         "context_nodes": str(len(context.get("nodes", {}))),
     }

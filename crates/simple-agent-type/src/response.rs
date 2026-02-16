@@ -205,6 +205,18 @@ pub enum FinishReason {
     ToolCalls,
 }
 
+impl FinishReason {
+    /// Returns this finish reason as its canonical snake_case string value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Stop => "stop",
+            Self::Length => "length",
+            Self::ContentFilter => "content_filter",
+            Self::ToolCalls => "tool_calls",
+        }
+    }
+}
+
 /// Token usage statistics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Usage {

@@ -71,6 +71,8 @@ Cache implementations:
 
 CLI surface:
 - `complete`, `chat`, `benchmark`, `test-provider`.
+- `workflow trace`, `workflow replay`, `workflow inspect`.
+- `workflow mermaid <workflow.yaml|workflow.json>` for graph visualization.
 - Config-driven provider and routing setup.
 
 ## Bindings

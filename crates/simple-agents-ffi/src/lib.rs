@@ -16,7 +16,9 @@ use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, 
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
+use simple_agents_workflow::{
+    run_email_workflow_yaml_file_with_client, run_workflow_yaml_file_with_client,
+};
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_void};
@@ -339,21 +341,11 @@ fn completion_options(mode: Option<&str>, schema_json: Option<&str>) -> Result<C
 }
 
 fn role_to_string(role: Role) -> String {
-    match role {
-        Role::User => "user".to_string(),
-        Role::Assistant => "assistant".to_string(),
-        Role::System => "system".to_string(),
-        Role::Tool => "tool".to_string(),
-    }
+    role.as_str().to_string()
 }
 
 fn finish_reason_to_string(finish_reason: FinishReason) -> String {
-    match finish_reason {
-        FinishReason::Stop => "stop".to_string(),
-        FinishReason::Length => "length".to_string(),
-        FinishReason::ContentFilter => "content_filter".to_string(),
-        FinishReason::ToolCalls => "tool_calls".to_string(),
-    }
+    finish_reason.as_str().to_string()
 }
 
 fn tool_type_to_string(tool_type: ToolType) -> String {
@@ -449,22 +441,23 @@ fn parse_messages(messages: *const SAMessage, messages_len: usize) -> Result<Vec
                 cstr_to_optional_string(msg.tool_call_id, &format!("messages[{idx}].tool_call_id"))?
             };
 
-            let parsed = match role.as_str() {
-                "user" => Message::user(content),
-                "assistant" => Message::assistant(content),
-                "system" => Message::system(content),
-                "tool" => {
+            let parsed_role = role.parse::<Role>().map_err(|_| {
+                SimpleAgentsError::Config(format!(
+                    "messages[{idx}].role must be one of user|assistant|system|tool"
+                ))
+            })?;
+
+            let parsed = match parsed_role {
+                Role::User => Message::user(content),
+                Role::Assistant => Message::assistant(content),
+                Role::System => Message::system(content),
+                Role::Tool => {
                     let call_id = tool_call_id.ok_or_else(|| {
                         SimpleAgentsError::Config(format!(
                             "messages[{idx}].tool_call_id is required for tool role"
                         ))
                     })?;
                     Message::tool(content, call_id)
-                }
-                _ => {
-                    return Err(SimpleAgentsError::Config(format!(
-                        "messages[{idx}].role must be one of user|assistant|system|tool"
-                    )))
                 }
             };
 
@@ -875,6 +868,59 @@ pub unsafe extern "C" fn sa_run_email_workflow_yaml(
             .block_on(run_email_workflow_yaml_file_with_client(
                 std::path::Path::new(workflow_path.as_str()),
                 email_text.as_str(),
+                &client.client,
+            ))
+            .map_err(|error| {
+                SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
+            })?;
+
+        serde_json::to_string(&output)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
+    })
+}
+
+/// Execute workflow YAML with arbitrary workflow input JSON and return JSON output.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env`.
+/// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
+/// - `workflow_input_json` must be a valid JSON object string.
+/// - Returned string must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_run_workflow_yaml(
+    client: *mut SAClient,
+    workflow_path: *const c_char,
+    workflow_input_json: *const c_char,
+) -> *mut c_char {
+    if client.is_null() {
+        set_last_error("client cannot be null".to_string());
+        return std::ptr::null_mut();
+    }
+
+    ffi_guard(|| {
+        let workflow_path = cstr_to_string(workflow_path, "workflow_path")?;
+        let workflow_input_json = cstr_to_string(workflow_input_json, "workflow_input_json")?;
+        let workflow_input: JsonValue =
+            serde_json::from_str(&workflow_input_json).map_err(|e| {
+                SimpleAgentsError::Config(format!("workflow_input_json must be valid JSON: {e}"))
+            })?;
+        if !workflow_input.is_object() {
+            return Err(SimpleAgentsError::Config(
+                "workflow_input_json must decode to a JSON object".to_string(),
+            ));
+        }
+
+        let client = &(*client).inner;
+        let runtime = client
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        let output = runtime
+            .block_on(run_workflow_yaml_file_with_client(
+                std::path::Path::new(workflow_path.as_str()),
+                &workflow_input,
                 &client.client,
             ))
             .map_err(|error| {

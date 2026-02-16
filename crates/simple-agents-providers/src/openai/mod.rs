@@ -374,7 +374,8 @@ impl Provider for OpenAIProvider {
                 }
             };
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
+            let openai_error =
+                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
 
             // Log additional context for debugging
             tracing::debug!(
@@ -590,7 +591,8 @@ impl OpenAIProvider {
                 "Streaming API request failed"
             );
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
+            let openai_error =
+                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 
