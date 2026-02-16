@@ -45,6 +45,88 @@ type Runtime = tokio::runtime::Runtime;
 type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
 type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
 
+struct NamedProvider {
+    name: String,
+    inner: Arc<dyn Provider>,
+}
+
+impl NamedProvider {
+    fn new(name: String, inner: Arc<dyn Provider>) -> Self {
+        Self { name, inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for NamedProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn transform_request(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<simple_agent_type::provider::ProviderRequest> {
+        self.inner.transform_request(req)
+    }
+
+    async fn execute(
+        &self,
+        req: simple_agent_type::provider::ProviderRequest,
+    ) -> Result<simple_agent_type::provider::ProviderResponse> {
+        self.inner.execute(req).await
+    }
+
+    fn transform_response(
+        &self,
+        resp: simple_agent_type::provider::ProviderResponse,
+    ) -> Result<CompletionResponse> {
+        self.inner.transform_response(resp)
+    }
+
+    fn retry_config(&self) -> simple_agent_type::config::RetryConfig {
+        self.inner.retry_config()
+    }
+
+    fn capabilities(&self) -> simple_agent_type::config::Capabilities {
+        self.inner.capabilities()
+    }
+
+    fn timeout(&self) -> Duration {
+        self.inner.timeout()
+    }
+
+    async fn execute_stream(
+        &self,
+        req: simple_agent_type::provider::ProviderRequest,
+    ) -> Result<Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        self.inner.execute_stream(req).await
+    }
+}
+
+fn provider_name_exists(providers: &[Arc<dyn Provider>], name: &str) -> bool {
+    providers.iter().any(|p| p.name() == name)
+}
+
+fn alias_duplicate_provider_name(
+    providers: &[Arc<dyn Provider>],
+    provider: &str,
+    api_base: Option<&str>,
+) -> String {
+    let prefer_local_alias = provider == "openai" && api_base.map(is_local_base).unwrap_or(false);
+    if prefer_local_alias && !provider_name_exists(providers, "local") {
+        return "local".to_string();
+    }
+
+    let mut suffix = 2usize;
+    loop {
+        let candidate = format!("{}_{}", provider, suffix);
+        if !provider_name_exists(providers, &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
 struct ResponsePlan {
     response_format: Option<ResponseFormat>,
     schema_value: Option<Value>,
@@ -1385,7 +1467,7 @@ impl ClientBuilder {
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
         // Enable healing by default for providers added through ClientBuilder
-        let provider = provider_from_params(
+        let mut provider = provider_from_params(
             provider,
             api_key.as_deref(),
             api_base.as_deref(),
@@ -1393,6 +1475,11 @@ impl ClientBuilder {
             Duration::from_secs(30),
         )
         .map_err(py_err)?;
+
+        if provider_name_exists(&slf.providers, provider.name()) {
+            let alias = alias_duplicate_provider_name(&slf.providers, provider.name(), api_base.as_deref());
+            provider = Arc::new(NamedProvider::new(alias, provider));
+        }
 
         slf.providers.push(provider);
         Ok(slf)
@@ -1403,7 +1490,7 @@ impl ClientBuilder {
         mut slf: PyRefMut<'a, Self>,
         config: &ProviderConfig,
     ) -> PyResult<PyRefMut<'a, Self>> {
-        let provider = provider_from_params(
+        let mut provider = provider_from_params(
             &config.provider,
             config.api_key.as_deref(),
             config.api_base.as_deref(),
@@ -1411,6 +1498,15 @@ impl ClientBuilder {
             Duration::from_secs(30),
         )
         .map_err(py_err)?;
+
+        if provider_name_exists(&slf.providers, provider.name()) {
+            let alias = alias_duplicate_provider_name(
+                &slf.providers,
+                provider.name(),
+                config.api_base.as_deref(),
+            );
+            provider = Arc::new(NamedProvider::new(alias, provider));
+        }
 
         slf.providers.push(provider);
         Ok(slf)
