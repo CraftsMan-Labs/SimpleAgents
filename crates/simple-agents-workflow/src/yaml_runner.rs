@@ -468,6 +468,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
     let mut current = workflow.entry_node.clone();
     let mut trace = Vec::new();
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
+    let mut globals = serde_json::Map::new();
     let mut step_timings = Vec::new();
     let started = Instant::now();
 
@@ -522,7 +523,12 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 .as_ref()
                 .and_then(|cfg| cfg.prompt.as_deref())
                 .unwrap_or_default();
-            let prompt = prompt_template.replace("{{ input.email_text }}", email_text);
+            let context = json!({
+                "input": { "email_text": email_text },
+                "nodes": outputs,
+                "globals": Value::Object(globals.clone())
+            });
+            let prompt = interpolate_template(prompt_template, &context);
             let schema = schema_for_node(node.id.as_str()).ok_or_else(|| {
                 YamlWorkflowRunError::MissingLlmSchema {
                     node_id: node.id.clone(),
@@ -553,11 +559,16 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             }
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
+            apply_set_globals(node, &outputs, email_text, &mut globals);
             edge_map
                 .get(node.id.as_str())
                 .map(|value| value.to_string())
         } else if let Some(switch) = &node.node_type.switch {
-            let context = json!({ "input": { "email_text": email_text }, "nodes": outputs });
+            let context = json!({
+                "input": { "email_text": email_text },
+                "nodes": outputs,
+                "globals": Value::Object(globals.clone())
+            });
             let mut chosen = Some(switch.default.clone());
             for branch in &switch.branches {
                 if evaluate_switch_condition(branch.condition.as_str(), &context)? {
@@ -576,7 +587,11 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
                 .and_then(|cfg| cfg.payload.as_ref())
                 .cloned()
                 .unwrap_or_else(|| json!({}));
-            let context = json!({ "input": { "email_text": email_text }, "nodes": outputs });
+            let context = json!({
+                "input": { "email_text": email_text },
+                "nodes": outputs,
+                "globals": Value::Object(globals.clone())
+            });
 
             let worker_output = if let Some(custom_worker_executor) = custom_worker {
                 custom_worker_executor
@@ -601,6 +616,7 @@ pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
             };
 
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
+            apply_set_globals(node, &outputs, email_text, &mut globals);
             edge_map.get(node.id.as_str()).map(|value| value.to_string())
         } else {
             return Err(YamlWorkflowRunError::UnsupportedNodeType {
@@ -783,6 +799,72 @@ fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
         .try_fold(value, |current, segment| current.get(segment))
 }
 
+fn interpolate_template(template: &str, context: &Value) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+
+    loop {
+        let Some(start) = rest.find("{{") else {
+            out.push_str(rest);
+            break;
+        };
+
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+
+        let expr = after_start[..end].trim();
+        let replacement = resolve_path(context, expr)
+            .map(value_to_template_string)
+            .unwrap_or_default();
+        out.push_str(replacement.as_str());
+
+        rest = &after_start[end + 2..];
+    }
+
+    out
+}
+
+fn value_to_template_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(v) => v.to_string(),
+        Value::Number(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}
+
+fn apply_set_globals(
+    node: &YamlNode,
+    outputs: &BTreeMap<String, Value>,
+    email_text: &str,
+    globals: &mut serde_json::Map<String, Value>,
+) {
+    let Some(config) = node.config.as_ref() else {
+        return;
+    };
+    let Some(set_globals) = config.set_globals.as_ref() else {
+        return;
+    };
+
+    let context = json!({
+        "input": { "email_text": email_text },
+        "nodes": outputs,
+        "globals": Value::Object(globals.clone())
+    });
+
+    for (key, expr) in set_globals {
+        let value = resolve_path(&context, expr.as_str())
+            .cloned()
+            .unwrap_or(Value::Null);
+        globals.insert(key.clone(), value);
+    }
+}
+
 fn schema_for_node(node_id: &str) -> Option<Value> {
     if node_id == "classify_top_level" {
         return Some(json!({
@@ -955,6 +1037,7 @@ pub struct YamlCustomWorker {
 pub struct YamlNodeConfig {
     pub prompt: Option<String>,
     pub payload: Option<Value>,
+    pub set_globals: Option<HashMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
