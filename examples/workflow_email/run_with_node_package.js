@@ -53,7 +53,74 @@ async function main() {
   const emailText = process.argv[3] || 'Please process supply chain replacement, order 9921 arrived damaged.'
 
   const result = client.runEmailWorkflowYaml(workflowPath, emailText)
+
+  // Execute real JS custom handlers for custom_worker nodes.
+  const started = Date.now()
+  for (const step of result.step_timings || []) {
+    if (step.node_kind !== 'custom_worker') continue
+    const nodeId = step.node_id
+    const topic = nodeId.startsWith('rag_') ? nodeId.slice(4) : 'clarification'
+    const context = {
+      input: { email_text: emailText },
+      nodes: Object.fromEntries(
+        Object.entries(result.outputs || {}).map(([k, v]) => [k, v.output || {}]),
+      ),
+    }
+    const handled = getRagData(topic, { emailText, context })
+    result.outputs[nodeId] = { output: handled }
+    if (result.terminal_node === nodeId) {
+      result.terminal_output = handled
+    }
+  }
+
+  const customElapsed = Date.now() - started
+  if (customElapsed > 0) {
+    result.total_elapsed_ms = (result.total_elapsed_ms || 0) + customElapsed
+  }
+
   console.log(JSON.stringify(result, null, 2))
+}
+
+function getRagData(topic, { emailText, context }) {
+  const data = {
+    probation: [
+      'hr_policy/probation.md',
+      'Collect manager review, performance evidence, and probation timeline.',
+    ],
+    leave_request: [
+      'hr_policy/leave.md',
+      'Validate leave balance, manager approval, and blackout dates.',
+    ],
+    supply_chain_order_assessment: [
+      'supply_chain/order_assessment.md',
+      'Review order specs, inventory risk, and vendor lead-time guidance.',
+    ],
+    supply_chain_order_replacement: [
+      'supply_chain/order_replacement.md',
+      'Collect order id, damage proof, and replacement SLA policy.',
+    ],
+    termination_first_time_offense: [
+      'hr_policy/termination_first_offense.md',
+      'Validate first-incident criteria and route to HRBP review.',
+    ],
+    termination_repeated_offense: [
+      'hr_policy/termination_repeated_offense.md',
+      'Collect prior warnings and escalation approvals before final action.',
+    ],
+    clarification: [
+      'shared/request_clarification.md',
+      'Request clarifying details before routing.',
+    ],
+  }
+  const [kbSource, playbook] = data[topic] || data.clarification
+  return {
+    kb_source: kbSource,
+    playbook,
+    handler: 'GetRagData',
+    topic,
+    email_preview: emailText.slice(0, 120),
+    context_nodes: String(Object.keys(context.nodes || {}).length),
+  }
 }
 
 main().catch((error) => {

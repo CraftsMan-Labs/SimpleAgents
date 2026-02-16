@@ -11,6 +11,9 @@ Primary workflow file:
 - `python_email_workflow_demo.py`: direct Python implementation (LLM + mock RAG routing)
 - `run_yaml.py`: lightweight runner script (optional convenience)
 - `handlers.py`: real Python custom worker handlers (e.g. `GetRagData`)
+- `python/`: Python run docs
+- `node/`: Node/TS run docs
+- `go/`: Go run docs
 
 ## Prerequisites
 
