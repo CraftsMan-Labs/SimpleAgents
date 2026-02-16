@@ -32,7 +32,9 @@ use simple_agents_providers::healing_integration::{
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
-use simple_agents_workflow::run_email_workflow_yaml_file_with_client;
+use simple_agents_workflow::{
+    run_email_workflow_yaml_file_with_client_and_custom_worker, YamlWorkflowCustomWorkerExecutor,
+};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -2655,15 +2657,101 @@ impl Client {
             ));
         }
 
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let handlers_path = workflow_path_buf
+            .parent()
+            .map(|parent| parent.join("handlers.py"))
+            .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"));
+
+        struct PythonCustomWorkerExecutor {
+            handlers_path: std::path::PathBuf,
+        }
+
+        #[async_trait::async_trait]
+        impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
+            async fn execute(
+                &self,
+                handler: &str,
+                payload: &Value,
+                _email_text: &str,
+                context: &Value,
+            ) -> std::result::Result<Value, String> {
+                Python::with_gil(|py| {
+                    if handler != "GetRagData" {
+                        return Err(format!("unsupported custom worker handler: {handler}"));
+                    }
+
+                    if !self.handlers_path.exists() {
+                        return Err(format!(
+                            "custom worker handlers file not found: {}",
+                            self.handlers_path.display()
+                        ));
+                    }
+
+                    let importlib_util = py
+                        .import_bound("importlib.util")
+                        .map_err(|error| error.to_string())?;
+                    let module_path = self.handlers_path.to_string_lossy().to_string();
+                    let spec = importlib_util
+                        .call_method1(
+                            "spec_from_file_location",
+                            ("simple_agents_workflow_handlers", module_path.as_str()),
+                        )
+                        .map_err(|error| error.to_string())?;
+                    if spec.is_none() {
+                        return Err(format!(
+                            "failed to load module spec from {}",
+                            self.handlers_path.display()
+                        ));
+                    }
+
+                    let module = importlib_util
+                        .call_method1("module_from_spec", (&spec,))
+                        .map_err(|error| error.to_string())?;
+                    let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
+                    if loader.is_none() {
+                        return Err("module loader is missing for handlers.py".to_string());
+                    }
+                    loader
+                        .call_method1("exec_module", (&module,))
+                        .map_err(|error| error.to_string())?;
+
+                    let function = module
+                        .getattr("get_rag_data")
+                        .map_err(|error| error.to_string())?;
+                    let topic = payload
+                        .get("topic")
+                        .and_then(Value::as_str)
+                        .unwrap_or("clarification");
+                    let kwargs = PyDict::new_bound(py);
+                    let context_obj =
+                        pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
+                    kwargs
+                        .set_item("email_text", context["input"]["email_text"].as_str().unwrap_or_default())
+                        .map_err(|error| error.to_string())?;
+                    kwargs
+                        .set_item("context", context_obj)
+                        .map_err(|error| error.to_string())?;
+
+                    let result = function
+                        .call((topic,), Some(&kwargs))
+                        .map_err(|error| error.to_string())?;
+                    pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
+                })
+            }
+        }
+
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
         let output = runtime
-            .block_on(run_email_workflow_yaml_file_with_client(
-                std::path::Path::new(workflow_path),
+            .block_on(run_email_workflow_yaml_file_with_client_and_custom_worker(
+                workflow_path_buf.as_path(),
                 email_text,
                 &self.client,
+                Some(&custom_executor),
             ))
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
