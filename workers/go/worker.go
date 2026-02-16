@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
+	"runtime"
 
+	"github.com/jhump/protoreflect/desc/protoparse"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/descriptorpb"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
@@ -123,123 +125,28 @@ func registerWorkerService(server *grpc.Server, fd protoreflect.FileDescriptor, 
 }
 
 func buildWorkerFileDescriptor() (protoreflect.FileDescriptor, error) {
-	file := &descriptorpb.FileDescriptorProto{
-		Syntax:  protoString("proto3"),
-		Name:    protoString("worker.proto"),
-		Package: protoString("workflow.worker.v1"),
-		EnumType: []*descriptorpb.EnumDescriptorProto{
-			{
-				Name: protoString("HealthStatus"),
-				Value: []*descriptorpb.EnumValueDescriptorProto{
-					{Name: protoString("HEALTH_STATUS_UNKNOWN"), Number: protoInt32(0)},
-					{Name: protoString("HEALTH_STATUS_SERVING"), Number: protoInt32(1)},
-					{Name: protoString("HEALTH_STATUS_NOT_SERVING"), Number: protoInt32(2)},
-				},
-			},
-		},
-		MessageType: []*descriptorpb.DescriptorProto{
-			{
-				Name: protoString("ExecuteRequest"),
-				Field: []*descriptorpb.FieldDescriptorProto{
-					field("request_id", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("workflow_name", 2, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("node_id", 3, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("operation", 4, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("target", 5, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("payload_json", 6, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("timeout_ms", 7, descriptorpb.FieldDescriptorProto_TYPE_UINT64),
-				},
-			},
-			{
-				Name: protoString("WorkerError"),
-				Field: []*descriptorpb.FieldDescriptorProto{
-					field("code", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("message", 2, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("retryable", 3, descriptorpb.FieldDescriptorProto_TYPE_BOOL),
-				},
-			},
-			{
-				Name: protoString("ExecuteResponse"),
-				Field: []*descriptorpb.FieldDescriptorProto{
-					field("request_id", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("worker_id", 2, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					field("elapsed_ms", 3, descriptorpb.FieldDescriptorProto_TYPE_UINT64),
-					field("ok", 4, descriptorpb.FieldDescriptorProto_TYPE_BOOL),
-					field("output_json", 5, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					msgField("error", 6, ".workflow.worker.v1.WorkerError"),
-				},
-			},
-			{
-				Name: protoString("HealthRequest"),
-			},
-			{
-				Name: protoString("HealthResponse"),
-				Field: []*descriptorpb.FieldDescriptorProto{
-					field("worker_id", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING),
-					enumField("status", 2, ".workflow.worker.v1.HealthStatus"),
-					field("consecutive_failures", 3, descriptorpb.FieldDescriptorProto_TYPE_UINT32),
-					field("last_probe_unix_ms", 4, descriptorpb.FieldDescriptorProto_TYPE_UINT64),
-				},
-			},
-		},
-		Service: []*descriptorpb.ServiceDescriptorProto{
-			{
-				Name: protoString("WorkerService"),
-				Method: []*descriptorpb.MethodDescriptorProto{
-					{
-						Name:       protoString("Execute"),
-						InputType:  protoString(".workflow.worker.v1.ExecuteRequest"),
-						OutputType: protoString(".workflow.worker.v1.ExecuteResponse"),
-					},
-					{
-						Name:       protoString("Health"),
-						InputType:  protoString(".workflow.worker.v1.HealthRequest"),
-						OutputType: protoString(".workflow.worker.v1.HealthResponse"),
-					},
-				},
-			},
-		},
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		return nil, fmt.Errorf("resolve source path")
 	}
 
-	return protodesc.NewFile(file, nil)
-}
-
-func field(name string, number int32, kind descriptorpb.FieldDescriptorProto_Type) *descriptorpb.FieldDescriptorProto {
-	label := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL
-	return &descriptorpb.FieldDescriptorProto{
-		Name:   protoString(name),
-		Number: protoInt32(number),
-		Type:   &kind,
-		Label:  &label,
+	protoPath := filepath.Clean(filepath.Join(
+		filepath.Dir(thisFile),
+		"../../crates/simple-agents-workflow-workers/proto/worker.proto",
+	))
+	parser := protoparse.Parser{
+		ImportPaths: []string{filepath.Dir(protoPath)},
 	}
-}
-
-func msgField(name string, number int32, typeName string) *descriptorpb.FieldDescriptorProto {
-	label := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL
-	kind := descriptorpb.FieldDescriptorProto_TYPE_MESSAGE
-	return &descriptorpb.FieldDescriptorProto{
-		Name:     protoString(name),
-		Number:   protoInt32(number),
-		Type:     &kind,
-		Label:    &label,
-		TypeName: protoString(typeName),
+	files, err := parser.ParseFiles(filepath.Base(protoPath))
+	if err != nil {
+		return nil, fmt.Errorf("parse worker proto: %w", err)
 	}
-}
-
-func enumField(name string, number int32, typeName string) *descriptorpb.FieldDescriptorProto {
-	label := descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL
-	kind := descriptorpb.FieldDescriptorProto_TYPE_ENUM
-	return &descriptorpb.FieldDescriptorProto{
-		Name:     protoString(name),
-		Number:   protoInt32(number),
-		Type:     &kind,
-		Label:    &label,
-		TypeName: protoString(typeName),
+	if len(files) == 0 {
+		return nil, fmt.Errorf("worker proto parse produced no descriptors")
 	}
-}
 
-func protoString(v string) *string { return &v }
-func protoInt32(v int32) *int32    { return &v }
+	return protodesc.NewFile(files[0].AsFileDescriptorProto(), nil)
+}
 
 func run(listenAddr string, workerID string) error {
 	fd, err := buildWorkerFileDescriptor()

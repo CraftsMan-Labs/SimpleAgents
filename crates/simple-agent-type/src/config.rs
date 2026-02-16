@@ -9,6 +9,7 @@ use std::time::Duration;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetryConfig {
     /// Maximum number of retry attempts
+    #[serde(deserialize_with = "non_zero_u32")]
     pub max_attempts: u32,
     /// Initial backoff duration
     #[serde(with = "duration_millis")]
@@ -35,6 +36,14 @@ impl Default for RetryConfig {
 }
 
 impl RetryConfig {
+    /// Validate retry configuration invariants.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.max_attempts == 0 {
+            return Err("max_attempts must be >= 1".to_string());
+        }
+        Ok(())
+    }
+
     /// Calculate backoff duration for a given attempt.
     ///
     /// # Example
@@ -62,6 +71,17 @@ impl RetryConfig {
 
         duration.min(self.max_backoff)
     }
+}
+
+fn non_zero_u32<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = u32::deserialize(deserializer)?;
+    if value == 0 {
+        return Err(serde::de::Error::custom("max_attempts must be >= 1"));
+    }
+    Ok(value)
 }
 
 // Cryptographically secure random number generator for jitter (0.0-1.0)
@@ -301,6 +321,7 @@ mod tests {
     #[test]
     fn test_retry_config_default() {
         let config = RetryConfig::default();
+        assert!(config.validate().is_ok());
         assert_eq!(config.max_attempts, 3);
         assert_eq!(config.initial_backoff, Duration::from_millis(100));
         assert_eq!(config.max_backoff, Duration::from_secs(10));
@@ -325,6 +346,29 @@ mod tests {
         assert_eq!(backoff1, Duration::from_millis(100));
         assert_eq!(backoff2, Duration::from_millis(200));
         assert_eq!(backoff3, Duration::from_millis(400));
+    }
+
+    #[test]
+    fn test_retry_config_validate_rejects_zero_attempts() {
+        let config = RetryConfig {
+            max_attempts: 0,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        assert_eq!(
+            config.validate().unwrap_err(),
+            "max_attempts must be >= 1".to_string()
+        );
+    }
+
+    #[test]
+    fn test_retry_config_deserialize_rejects_zero_attempts() {
+        let json = r#"{\"max_attempts\":0,\"initial_backoff\":100,\"max_backoff\":1000,\"backoff_multiplier\":2.0,\"jitter\":false}"#;
+        let parsed: Result<RetryConfig, _> = serde_json::from_str(json);
+        assert!(parsed.is_err());
     }
 
     #[test]
