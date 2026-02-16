@@ -71,6 +71,14 @@ impl GrpcWorkerPool {
             _ => false,
         }
     }
+
+    fn max_attempts(max_retries: usize) -> usize {
+        max_retries.saturating_add(1)
+    }
+
+    fn worker_index(start: usize, attempt: usize, len: usize) -> usize {
+        (start + attempt) % len
+    }
 }
 
 #[async_trait]
@@ -79,12 +87,12 @@ impl WorkerPoolClient for GrpcWorkerPool {
         let timeout_budget = self.timeout_for_request(&request);
         let len = self.clients.len();
         let start = self.next.fetch_add(1, Ordering::Relaxed) % len;
-        let max_attempts = self.options.max_retries.saturating_add(1).min(len.max(1));
+        let max_attempts = Self::max_attempts(self.options.max_retries);
 
         let mut last_error = None;
 
         for attempt in 0..max_attempts {
-            let idx = (start + attempt) % len;
+            let idx = Self::worker_index(start, attempt, len);
             let client = &self.clients[idx];
 
             match client.execute(request.clone(), timeout_budget).await {
@@ -107,5 +115,34 @@ impl WorkerPoolClient for GrpcWorkerPool {
             snapshot.push(client.health().await);
         }
         snapshot
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GrpcWorkerPool;
+
+    #[test]
+    fn max_attempts_is_retries_plus_first_attempt() {
+        assert_eq!(GrpcWorkerPool::max_attempts(0), 1);
+        assert_eq!(GrpcWorkerPool::max_attempts(1), 2);
+        assert_eq!(GrpcWorkerPool::max_attempts(3), 4);
+    }
+
+    #[test]
+    fn worker_index_cycles_for_single_worker() {
+        let len = 1;
+        assert_eq!(GrpcWorkerPool::worker_index(0, 0, len), 0);
+        assert_eq!(GrpcWorkerPool::worker_index(0, 1, len), 0);
+        assert_eq!(GrpcWorkerPool::worker_index(0, 5, len), 0);
+    }
+
+    #[test]
+    fn worker_index_rotates_across_workers() {
+        let len = 3;
+        assert_eq!(GrpcWorkerPool::worker_index(1, 0, len), 1);
+        assert_eq!(GrpcWorkerPool::worker_index(1, 1, len), 2);
+        assert_eq!(GrpcWorkerPool::worker_index(1, 2, len), 0);
+        assert_eq!(GrpcWorkerPool::worker_index(1, 3, len), 1);
     }
 }

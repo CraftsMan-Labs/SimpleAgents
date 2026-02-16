@@ -87,8 +87,6 @@ impl AnthropicProvider {
             .pool_idle_timeout(Duration::from_secs(90));
         if is_local {
             client_builder = client_builder.no_proxy();
-        } else {
-            client_builder = client_builder.http2_prior_knowledge();
         }
         let client = client_builder.build().map_err(|e| {
             SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -108,7 +106,6 @@ impl AnthropicProvider {
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
-            .http2_prior_knowledge()
             .build()
             .map_err(|e| {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -339,6 +336,11 @@ impl Provider for AnthropicProvider {
         };
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -361,7 +363,8 @@ impl Provider for AnthropicProvider {
                 }
             };
 
-            let anthropic_error = AnthropicError::from_response(status.as_u16(), &error_body);
+            let anthropic_error =
+                AnthropicError::from_response(status.as_u16(), &error_body, retry_after);
 
             // Record error metrics
             timer.complete_error(format!("http_{}", status.as_u16()));
@@ -565,6 +568,11 @@ impl AnthropicProvider {
             })?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -578,7 +586,8 @@ impl AnthropicProvider {
                 "Anthropic streaming request failed"
             );
 
-            let anthropic_error = AnthropicError::from_response(status.as_u16(), &error_body);
+            let anthropic_error =
+                AnthropicError::from_response(status.as_u16(), &error_body, retry_after);
             return Err(SimpleAgentsError::Provider(anthropic_error.into()));
         }
 

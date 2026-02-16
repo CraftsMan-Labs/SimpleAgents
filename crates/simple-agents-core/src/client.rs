@@ -15,7 +15,7 @@ use simple_agent_type::prelude::{
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -447,6 +447,17 @@ impl SimpleAgentsClientBuilder {
             ));
         }
 
+        let mut seen = HashSet::new();
+        for provider in &self.providers {
+            let name = provider.name();
+            if !seen.insert(name.to_string()) {
+                return Err(SimpleAgentsError::Config(format!(
+                    "duplicate provider configured in builder: {}",
+                    name
+                )));
+            }
+        }
+
         let provider_map = self
             .providers
             .iter()
@@ -577,6 +588,37 @@ mod tests {
         assert!(matches!(
             result,
             Err(SimpleAgentsError::Config(msg)) if msg.contains("provider already registered")
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_provider_in_builder_with_provider_fails() {
+        let p1 = Arc::new(MockProvider::new("p1"));
+        let p1_dup = Arc::new(MockProvider::new("p1"));
+
+        let result = SimpleAgentsClientBuilder::new()
+            .with_provider(p1)
+            .with_provider(p1_dup)
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Config(msg)) if msg.contains("duplicate provider configured in builder")
+        ));
+    }
+
+    #[tokio::test]
+    async fn duplicate_provider_in_builder_with_providers_fails() {
+        let result = SimpleAgentsClientBuilder::new()
+            .with_providers(vec![
+                Arc::new(MockProvider::new("p1")),
+                Arc::new(MockProvider::new("p1")),
+            ])
+            .build();
+
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Config(msg)) if msg.contains("duplicate provider configured in builder")
         ));
     }
 

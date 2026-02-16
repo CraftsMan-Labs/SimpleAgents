@@ -67,3 +67,197 @@
   - Subtasks:
     - [x] Refactor `get` to first read under a shared lock, then upgrade/mutate minimally for touch/removal.
     - [x] Add a concurrency-focused test (multiple `get` calls) to ensure correctness and no deadlocks.
+
+- [x] **Task 5: Repository-wide review for hygiene, KISS/DRY, CX, and bug reporting**
+  - **Scope reviewed:** core/runtime/providers/router/cache/workflow workers/bindings.
+  - **Method:** static code review with focus on correctness, maintainability, API consistency, and operator/developer experience.
+  - **Outcome:** documented prioritized issues and positive observations below.
+
+## Grading
+
+- **Scale used:** A (excellent), B (good), C (needs improvement), D (high risk), F (critical).
+- **Code hygiene:** **B** (generally clean structure; some concurrency/retry edge cases remain).
+- **KISS:** **B-** (most modules are readable; a few flows are over-coupled, especially worker/pool internals).
+- **DRY:** **B-** (good reuse overall; retry and transport behaviors diverge across components/providers).
+- **CX (developer/operator/user experience):** **C+** (good guardrails and middleware progress, but docs/config/runtime consistency gaps remain).
+- **Reliability/Bug risk:** **C** (two high-priority correctness risks identified).
+- **Overall grade:** **B-**.
+
+## Findings (Prioritized)
+
+### High
+
+- [x] **H1: Duplicate providers can still be silently accepted at build-time**
+  - **Grade:** **D**
+  - **Why it matters:** Routing can include duplicate providers while `provider_map` keeps only the last value for a name, creating inconsistent behavior and skewed routing.
+  - **Evidence:** `crates/simple-agents-core/src/client.rs:401`, `crates/simple-agents-core/src/client.rs:407`, `crates/simple-agents-core/src/client.rs:450`.
+  - **Bug report:** `with_provider`/`with_providers` allow duplicates; map collection in `build()` overwrites by key with no validation.
+  - **Recommended fix:** Validate unique provider names in `build()` and return `SimpleAgentsError::Config` on duplicates (aligned with `register_provider`).
+
+- [x] **H2: Retry helpers can panic when `max_attempts == 0`**
+  - **Grade:** **F**
+  - **Why it matters:** Invalid config can trigger runtime panic instead of returning a typed error.
+  - **Evidence:** `crates/simple-agents-providers/src/retry.rs:53`, `crates/simple-agents-providers/src/retry.rs:89`, `crates/simple-agents-router/src/retry.rs:66`, `crates/simple-agents-router/src/retry.rs:85`, `crates/simple-agent-type/src/config.rs:12`.
+  - **Bug report:** `Err(last_error.unwrap())` can panic if loop never runs.
+  - **Recommended fix:** Enforce `max_attempts >= 1` at config boundaries and guard retry helpers with a typed config error when zero.
+
+### Medium
+
+- [x] **M1: gRPC schema drift risk in Go worker**
+  - **Grade:** **C**
+  - **Why it matters:** Proto evolution can diverge from manually constructed descriptors, causing protocol mismatch.
+  - **Evidence:** `crates/simple-agents-workflow-workers/proto/worker.proto:18`, `workers/go/worker.go:143`.
+  - **Issue:** `metadata` exists in proto but is not represented in manual descriptor fields.
+  - **Recommended fix:** Generate Go bindings from `worker.proto` to keep one source of truth.
+
+- [x] **M2: `GrpcWorkerPool` retries effectively disabled for single-worker pools**
+  - **Grade:** **C-**
+  - **Why it matters:** Transient failures on a single endpoint are not retried despite configured retries.
+  - **Evidence:** `crates/simple-agents-workflow-workers/src/pool.rs:16`, `crates/simple-agents-workflow-workers/src/pool.rs:82`.
+  - **Issue:** Attempt cap uses worker count, so `len == 1` results in one attempt.
+  - **Recommended fix:** Base attempts on `max_retries + 1` and permit retrying same worker when pool size is 1 (optional jitter/backoff).
+
+- [x] **M3: Await while holding pool-wide mutex in worker selection path**
+  - **Grade:** **C-**
+  - **Why it matters:** Increases contention and deadlock risk under future changes.
+  - **Evidence:** `crates/simple-agents-workflow/src/worker.rs:467`, `crates/simple-agents-workflow/src/worker.rs:481`, `crates/simple-agents-workflow/src/worker.rs:486`.
+  - **Issue:** Async operations occur while `slots` mutex is held.
+  - **Recommended fix:** Snapshot required data, drop lock, then perform async health/hook calls.
+
+- [x] **M4: `Retry-After` support is incomplete and not wired end-to-end**
+  - **Grade:** **C**
+  - **Why it matters:** Clients may ignore backoff hints and amplify rate-limit errors.
+  - **Evidence:** `crates/simple-agents-providers/src/utils.rs:32`, `crates/simple-agents-providers/src/openai/error.rs:84`, `crates/simple-agents-providers/src/anthropic/error.rs:78`.
+  - **Issue:** Parser only handles integer seconds and is not integrated into provider error mapping.
+  - **Recommended fix:** Parse seconds and HTTP-date variants, plumb into provider errors, and apply in retry sleep policy.
+
+- [x] **M5: Inconsistent HTTP client defaults across providers**
+  - **Grade:** **C+**
+  - **Why it matters:** Mixed protocol behavior reduces portability with proxies/custom endpoints and complicates support.
+  - **Evidence:** `crates/simple-agents-providers/src/anthropic/mod.rs:91`, `crates/simple-agents-providers/src/anthropic/mod.rs:111`, `crates/simple-agents-providers/src/openrouter/mod.rs:127`, `crates/simple-agents-providers/src/openai/mod.rs:84`.
+  - **Issue:** Some providers force HTTP/2 prior knowledge while others rely on negotiated transport.
+  - **Recommended fix:** Standardize on ALPN negotiation by default; keep forced prior-knowledge opt-in.
+
+### Low (CX / Docs)
+
+- [x] **L1: README version appears stale vs workspace metadata**
+  - **Grade:** **B-**
+  - **Why it matters:** Documentation mismatch harms developer trust and onboarding clarity.
+  - **Evidence:** `README.md:80`, `Cargo.toml:6`.
+  - **Recommended fix:** Update README versioning guidance and/or add CI check for doc-version consistency.
+
+- [x] **L2: TypeScript worker identity/config is hardcoded**
+  - **Grade:** **C+**
+  - **Why it matters:** Weak operability for multi-instance deployment and lower parity with other workers.
+  - **Evidence:** `workers/typescript/worker.ts:49`, `workers/typescript/worker.ts:54`, `workers/typescript/worker.ts:70`.
+  - **Recommended fix:** Add CLI/env config for `worker-id` and listen address.
+
+## Positive Notes
+
+- [x] Streaming middleware instrumentation is integrated and improves observability: `crates/simple-agents-core/src/client.rs:245`, `crates/simple-agents-core/src/client.rs:347`.
+- [x] Cache read path now reduces contention and includes concurrency-oriented validation: `crates/simple-agents-cache/src/memory.rs:136`, `crates/simple-agents-cache/src/memory.rs:351`.
+- [x] Worker runtime validation includes strong guardrails and limits: `crates/simple-agents-workflow/src/worker.rs:639`.
+
+## Recommended Next Fix Order
+
+1. H2 panic guard (`max_attempts == 0`).
+2. H1 duplicate provider validation in builder path.
+3. M2 retry behavior for single-worker pools.
+4. M3 mutex/await separation in worker selection.
+5. M4 Retry-After end-to-end wiring.
+
+## Next Steps to Get These Fixed
+
+### Phase 1 (Immediate: correctness and panic safety)
+
+- [x] **Step 1: Patch H2 first (panic prevention)**
+  - Implement `max_attempts >= 1` validation in config construction and deserialization boundaries.
+  - Replace `unwrap()`-based terminal paths with explicit typed errors in retry helpers.
+  - Add tests: `max_attempts = 0` should return config error (never panic), `max_attempts = 1` should still behave correctly.
+  - **Definition of done:** No panic path remains for retry attempt count; tests cover guardrails.
+
+- [x] **Step 2: Patch H1 next (provider uniqueness invariant)**
+  - Add duplicate-name validation in builder flow before router construction.
+  - Keep behavior consistent with `register_provider` by returning `SimpleAgentsError::Config`.
+  - Add tests for `with_provider` and `with_providers` duplicate cases.
+  - **Definition of done:** provider list and provider map cannot diverge by duplicate names.
+
+### Phase 2 (Reliability and concurrency)
+
+- [x] **Step 3: Fix M2 retry semantics for single-worker pools**
+  - Compute attempts as `max_retries + 1` independent of pool size.
+  - Allow retries on the same worker when pool size is one; add optional small jitter/backoff.
+  - Add tests for one-worker transient failures and eventual success/final failure behavior.
+  - **Definition of done:** configured retries are honored for both single and multi-worker pools.
+
+- [x] **Step 4: Fix M3 lock/await coupling in worker selection**
+  - Refactor to snapshot slot state under lock, release lock, then run async health/hook calls.
+  - Add a contention test (parallel selection + health checks) to verify no lock starvation/deadlock.
+  - **Definition of done:** no `.await` occurs while holding pool-wide mutex.
+
+### Phase 3 (Resilience and DX/CX consistency)
+
+- [x] **Step 5: Complete M4 Retry-After support end-to-end**
+  - Extend parser to support both integer seconds and HTTP-date forms.
+  - Propagate parsed values through provider error mapping and retry policies.
+  - Add tests for 429 responses with both header formats.
+  - **Definition of done:** client honors server backoff hints consistently.
+
+- [x] **Step 6: Address M1/M5/L1/L2 cleanup items**
+  - M1: move Go worker to generated proto bindings.
+  - M5: standardize provider transport defaults (ALPN by default; prior-knowledge opt-in).
+  - L1: align README versioning with workspace metadata and add CI drift check.
+  - L2: add TypeScript worker `worker-id` and listen address CLI/env config.
+  - **Definition of done:** protocol and configuration behavior are consistent across workers/providers/docs.
+
+## Suggested Delivery Cadence
+
+- **PR 1 (high-priority):** H2 + H1 + tests.
+- **PR 2 (runtime reliability):** M2 + M3 + tests/bench checks.
+- **PR 3 (resilience + DX):** M4 + M1 + M5 + L1 + L2.
+- **Validation gates for each PR:** `cargo test --workspace`, targeted integration tests for touched crates, and changelog/docs update when behavior changes.
+
+## How to Maintain Grade-Quality Code (Ongoing)
+
+### Quality Bar (Team Standard)
+
+- [ ] **Set explicit release gate:** no new panic paths, no `.unwrap()`/`.expect()` in runtime paths (except tests), and no duplicate config invariants.
+- [ ] **Require evidence with every PR:** tests for bug fix + one regression case + short note describing risk and rollback.
+- [ ] **Keep KISS as policy:** prefer smaller functions and single-responsibility modules; reject broad refactors mixed with behavior changes.
+- [ ] **Keep DRY with intent:** centralize shared retry/transport behavior in common utilities instead of per-provider drift.
+
+### CI and Automation Guardrails
+
+- [ ] **Static checks in CI:** `cargo fmt --check`, `cargo clippy --workspace --all-targets -D warnings`, `cargo test --workspace`.
+- [ ] **Risk-focused checks:** add custom lint/check script for `unwrap/expect` in non-test runtime crates.
+- [ ] **Doc consistency checks:** fail CI when README/version references drift from `Cargo.toml` workspace version.
+- [ ] **Protocol safety checks:** ensure generated bindings are up-to-date (proto generation verification in CI for worker interfaces).
+
+### Code Review Checklist (Fast, Repeatable)
+
+- [ ] **Correctness:** can malformed input/config cause panic or undefined behavior?
+- [ ] **Concurrency:** any `.await` while holding mutex/RwLock or lock upgrades that can starve?
+- [ ] **Resilience:** retries/backoff/hints (e.g., `Retry-After`) handled consistently?
+- [ ] **Consistency:** same behavior across providers/workers for transport, errors, and config defaults?
+- [ ] **CX impact:** will users/operators understand failure mode and recovery action from error messages/docs?
+
+### Testing Strategy to Sustain Grades
+
+- [ ] **Test pyramid by change type:** unit tests for logic, integration tests for crate boundaries, scenario tests for worker/provider behavior.
+- [ ] **Regression-first approach:** when bug found, write failing test first, then fix, then keep test permanently.
+- [ ] **Concurrency coverage:** include targeted parallel tests for cache/pool/worker scheduling hotspots.
+- [ ] **Contract tests:** lock API/proto/error-shape behavior so refactors do not break downstream consumers.
+
+### Operational Feedback Loop
+
+- [ ] **Track quality KPIs per release:** panic count, retry success rate, 429 recovery rate, flaky test count, and bug reopen rate.
+- [ ] **Do lightweight retros every release:** top 3 regressions, why they escaped, and one preventive rule added.
+- [ ] **Maintain an optimization backlog:** keep this file updated with grades before/after each fix batch.
+- [ ] **Re-grade monthly:** rerun this review rubric and compare deltas to ensure trend is improving (target: move overall from **B-** to **A-**).
+
+## Completion Update (2026-02-16)
+
+- [x] High/medium/low findings in this review were implemented and validated.
+- [x] Rust validation run completed for changed crates: `simple-agent-type`, `simple-agents-core`, `simple-agents-providers`, `simple-agents-workflow`, `simple-agents-workflow-workers`.
+- [x] Go worker validation completed via `go test ./...` in `workers/go`.
+- [x] M1 drift-risk fix uses `worker.proto` as runtime source-of-truth (descriptor parsed from proto) and removes manual descriptor construction.
