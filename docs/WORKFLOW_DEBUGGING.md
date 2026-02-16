@@ -75,3 +75,21 @@ See `crates/simple-agents-workflow/examples/debug_inspection.rs` for a complete 
 - node timeline entries
 - retry reason groups
 - replay validation output
+
+## YAML Run Timing Output
+
+For YAML workflow execution, the output includes per-step timing and total runtime:
+
+- `step_timings[]` with `node_id`, `node_kind`, `elapsed_ms`
+- `total_elapsed_ms`
+
+Rust API entrypoints:
+
+- `run_email_workflow_yaml_file_with_client`
+- `run_email_workflow_yaml_with_client`
+
+These are also exposed in Python/Node/Go bindings and return the same timing fields.
+
+## Workflow Visualization
+
+Use `workflow_to_mermaid(&WorkflowDefinition)` to render canonical IR workflows as Mermaid diagrams for debugging/review.
