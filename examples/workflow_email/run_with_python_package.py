@@ -15,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--workflow",
-        default="examples/workflow_email/email-intake-classification.yaml",
+        default="workflow_email/email-intake-classification.yaml",
         help="Path to workflow YAML file",
     )
     parser.add_argument(
@@ -47,7 +47,18 @@ def main() -> None:
     provider, api_base, api_key, _model = load_config()
     client = Client(provider, api_base=api_base, api_key=api_key)
 
-    result = client.run_email_workflow_yaml(args.workflow, args.email)
+    workflow_path = Path(args.workflow)
+    if not workflow_path.exists():
+        repo_relative = Path(__file__).resolve().parents[2] / args.workflow
+        if repo_relative.exists():
+            workflow_path = repo_relative
+        elif args.workflow.startswith("examples/"):
+            trimmed = args.workflow[len("examples/") :]
+            trimmed_path = Path(__file__).resolve().parents[1] / trimmed
+            if trimmed_path.exists():
+                workflow_path = trimmed_path
+
+    result = client.run_email_workflow_yaml(str(workflow_path), args.email)
     print(json.dumps(result, indent=2))
 
 
