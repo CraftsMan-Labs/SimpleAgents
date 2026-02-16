@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import time
 from typing import Any
 
 
@@ -7,6 +7,7 @@ def get_rag_data(
     topic: str, *, email_text: str, context: dict[str, Any]
 ) -> dict[str, str]:
     """Real Python handler for YAML custom_worker: GetRagData."""
+    time.sleep(10)
     data = {
         "probation": (
             "hr_policy/probation.md",
