@@ -1,6 +1,7 @@
 //! Anthropic-specific error handling.
 
 use simple_agent_type::error::ProviderError;
+use std::time::Duration;
 use thiserror::Error;
 
 use super::models::AnthropicErrorResponse;
@@ -14,7 +15,7 @@ pub enum AnthropicError {
 
     /// Rate limit exceeded
     #[error("Rate limit exceeded")]
-    RateLimitExceeded,
+    RateLimitExceeded { retry_after: Option<Duration> },
 
     /// Invalid request
     #[error("Invalid request: {0}")]
@@ -38,19 +39,22 @@ impl AnthropicError {
     ///
     /// # Returns
     /// Appropriate `AnthropicError` variant based on the error details
-    pub fn from_response(status: u16, body: &str) -> Self {
+    pub fn from_response(status: u16, body: &str, retry_after_hint: Option<Duration>) -> Self {
         // Try to parse as structured error response
         if let Ok(error_response) = serde_json::from_str::<AnthropicErrorResponse>(body) {
             return Self::from_error_type(
                 &error_response.error.error_type,
                 &error_response.error.message,
+                retry_after_hint,
             );
         }
 
         // Fall back to status code mapping
         match status {
             401 => Self::InvalidApiKey,
-            429 => Self::RateLimitExceeded,
+            429 => Self::RateLimitExceeded {
+                retry_after: retry_after_hint,
+            },
             400 => Self::InvalidRequest(body.to_string()),
             503 => Self::Overloaded,
             _ => Self::Unknown(format!("HTTP {} - {}", status, body)),
@@ -58,12 +62,18 @@ impl AnthropicError {
     }
 
     /// Create error from Anthropic error type.
-    fn from_error_type(error_type: &str, message: &str) -> Self {
+    fn from_error_type(
+        error_type: &str,
+        message: &str,
+        retry_after_hint: Option<Duration>,
+    ) -> Self {
         match error_type {
             "authentication_error" | "invalid_request_error" if message.contains("api_key") => {
                 Self::InvalidApiKey
             }
-            "rate_limit_error" => Self::RateLimitExceeded,
+            "rate_limit_error" => Self::RateLimitExceeded {
+                retry_after: retry_after_hint,
+            },
             "invalid_request_error" => Self::InvalidRequest(message.to_string()),
             "overloaded_error" => Self::Overloaded,
             _ => Self::Unknown(format!("{}: {}", error_type, message)),
@@ -75,7 +85,9 @@ impl From<AnthropicError> for ProviderError {
     fn from(error: AnthropicError) -> Self {
         match error {
             AnthropicError::InvalidApiKey => ProviderError::InvalidApiKey,
-            AnthropicError::RateLimitExceeded => ProviderError::RateLimit { retry_after: None },
+            AnthropicError::RateLimitExceeded { retry_after } => {
+                ProviderError::RateLimit { retry_after }
+            }
             AnthropicError::InvalidRequest(msg) => ProviderError::BadRequest(msg),
             AnthropicError::Overloaded => ProviderError::ServerError(error.to_string()),
             AnthropicError::Unknown(msg) => ProviderError::BadRequest(msg),
@@ -97,7 +109,7 @@ mod tests {
             }
         }"#;
 
-        let error = AnthropicError::from_response(401, body);
+        let error = AnthropicError::from_response(401, body, None);
         assert!(matches!(error, AnthropicError::InvalidApiKey));
     }
 
@@ -111,8 +123,13 @@ mod tests {
             }
         }"#;
 
-        let error = AnthropicError::from_response(429, body);
-        assert!(matches!(error, AnthropicError::RateLimitExceeded));
+        let error = AnthropicError::from_response(429, body, Some(Duration::from_secs(12)));
+        assert!(matches!(
+            error,
+            AnthropicError::RateLimitExceeded {
+                retry_after: Some(d)
+            } if d == Duration::from_secs(12)
+        ));
     }
 
     #[test]
@@ -125,13 +142,13 @@ mod tests {
             }
         }"#;
 
-        let error = AnthropicError::from_response(400, body);
+        let error = AnthropicError::from_response(400, body, None);
         assert!(matches!(error, AnthropicError::InvalidRequest(_)));
     }
 
     #[test]
     fn test_fallback_status_mapping() {
-        let error = AnthropicError::from_response(503, "Service unavailable");
+        let error = AnthropicError::from_response(503, "Service unavailable", None);
         assert!(matches!(error, AnthropicError::Overloaded));
     }
 

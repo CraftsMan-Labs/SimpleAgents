@@ -464,8 +464,28 @@ impl WorkerPool {
         &self,
         request: &WorkerRequest,
     ) -> Result<(usize, String, mpsc::Sender<WorkItem>), WorkerPoolError> {
-        let slots = self.slots.lock().await;
-        if slots.is_empty() {
+        let candidates = {
+            let slots = self.slots.lock().await;
+            if slots.is_empty() {
+                Vec::new()
+            } else {
+                let start = self.next_worker.fetch_add(1, Ordering::Relaxed) % slots.len();
+                let mut candidates = Vec::with_capacity(slots.len());
+                for offset in 0..slots.len() {
+                    let idx = (start + offset) % slots.len();
+                    let slot = &slots[idx];
+                    candidates.push((
+                        idx,
+                        slot.worker_id.clone(),
+                        slot.sender.clone(),
+                        Arc::clone(&slot.health),
+                    ));
+                }
+                candidates
+            }
+        };
+
+        if candidates.is_empty() {
             if let Some(hooks) = &self.hooks {
                 hooks
                     .on_request_rejected(None, request, WorkerErrorCode::Unavailable)
@@ -474,12 +494,9 @@ impl WorkerPool {
             return Err(WorkerPoolError::NoHealthyWorker);
         }
 
-        let start = self.next_worker.fetch_add(1, Ordering::Relaxed) % slots.len();
-        for offset in 0..slots.len() {
-            let idx = (start + offset) % slots.len();
-            let slot = &slots[idx];
-            if slot.health.read().await.is_schedulable() {
-                return Ok((idx, slot.worker_id.clone(), slot.sender.clone()));
+        for (idx, worker_id, sender, health_ref) in candidates {
+            if health_ref.read().await.is_schedulable() {
+                return Ok((idx, worker_id, sender));
             }
         }
 
