@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"simpleagents"
@@ -72,6 +73,25 @@ func main() {
 	out, err := client.RunEmailWorkflowYAML(ctx, workflowPath, emailText)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Execute real Go custom handler functions for custom_worker nodes.
+	for _, step := range out.StepTimings {
+		if step.NodeKind != "custom_worker" {
+			continue
+		}
+		topic := "clarification"
+		if strings.HasPrefix(step.NodeID, "rag_") {
+			topic = strings.TrimPrefix(step.NodeID, "rag_")
+		}
+		handled := getRagData(topic, emailText, len(out.Outputs))
+		if out.Outputs == nil {
+			out.Outputs = map[string]map[string]any{}
+		}
+		out.Outputs[step.NodeID] = map[string]any{"output": handled}
+		if out.TerminalNode == step.NodeID {
+			out.TerminalOutput = handled
+		}
 	}
 
 	payload, err := json.MarshalIndent(out, "", "  ")
