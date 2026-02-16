@@ -64,6 +64,50 @@ def resolve_path(root: dict[str, Any], dotted_path: str) -> Any:
     return current
 
 
+def interpolate_template(template: str, context: dict[str, Any]) -> str:
+    output = template
+    while True:
+        start = output.find("{{")
+        if start < 0:
+            break
+        end = output.find("}}", start + 2)
+        if end < 0:
+            break
+        expr = output[start + 2 : end].strip()
+        value = resolve_path(context, expr)
+        if isinstance(value, (dict, list)):
+            replacement = json.dumps(value)
+        elif value is None:
+            replacement = ""
+        else:
+            replacement = str(value)
+        output = output[:start] + replacement + output[end + 2 :]
+    return output
+
+
+def apply_set_globals(
+    node: dict[str, Any],
+    *,
+    email_text: str,
+    outputs: dict[str, dict[str, Any]],
+    globals_state: dict[str, Any],
+) -> None:
+    config = node.get("config", {})
+    set_globals = config.get("set_globals")
+    if not isinstance(set_globals, dict):
+        return
+
+    context = {
+        "input": {"email_text": email_text},
+        "nodes": outputs,
+        "globals": globals_state,
+    }
+    for key, expr in set_globals.items():
+        if not isinstance(key, str) or not isinstance(expr, str):
+            continue
+        globals_state[key] = resolve_path(context, expr)
+
+
 def evaluate_condition(condition: str, context: dict[str, Any]) -> bool:
     match = CONDITION_RE.match(condition.strip())
     if not match:
@@ -170,6 +214,7 @@ def run_custom_worker_handler(
     *,
     email_text: str,
     outputs: dict[str, dict[str, Any]],
+    globals_state: dict[str, Any],
 ) -> dict[str, Any]:
     fn = HANDLER_REGISTRY.get(handler)
     if fn is None:
@@ -178,7 +223,11 @@ def run_custom_worker_handler(
     return fn(
         topic,
         email_text=email_text,
-        context={"input": {"email_text": email_text}, "nodes": outputs},
+        context={
+            "input": {"email_text": email_text},
+            "nodes": outputs,
+            "globals": globals_state,
+        },
     )
 
 
@@ -196,6 +245,7 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
     client = Client(provider, api_base=api_base, api_key=api_key)
 
     outputs: dict[str, dict[str, Any]] = {}
+    globals_state: dict[str, Any] = {}
     trace: list[str] = []
 
     while True:
@@ -210,10 +260,21 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
             else:
                 model = default_model
             prompt_template = node.get("config", {}).get("prompt", "")
-            prompt = str(prompt_template).replace("{{ input.email_text }}", email_text)
+            context = {
+                "input": {"email_text": email_text},
+                "nodes": outputs,
+                "globals": globals_state,
+            }
+            prompt = interpolate_template(str(prompt_template), context)
             schema = schema_for_node(current)
             payload = complete_structured(client, model, prompt, schema, api_base)
             outputs[current] = {"output": payload}
+            apply_set_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
             next_node = edges.get(current)
             if next_node is None:
                 break
@@ -222,7 +283,11 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
         if "switch" in node_type:
             switch = node_type["switch"]
-            context = {"input": {"email_text": email_text}, "nodes": outputs}
+            context = {
+                "input": {"email_text": email_text},
+                "nodes": outputs,
+                "globals": globals_state,
+            }
             next_node = switch.get("default")
             for branch in switch.get("branches", []):
                 condition = branch.get("condition")
@@ -246,9 +311,19 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
             )
             outputs[current] = {
                 "output": run_custom_worker_handler(
-                    str(handler), str(topic), email_text=email_text, outputs=outputs
+                    str(handler),
+                    str(topic),
+                    email_text=email_text,
+                    outputs=outputs,
+                    globals_state=globals_state,
                 )
             }
+            apply_set_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
             next_node = edges.get(current)
             if next_node is None:
                 break
@@ -263,6 +338,7 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
         "email_text": email_text,
         "trace": trace,
         "outputs": outputs,
+        "globals": globals_state,
         "terminal_node": trace[-1],
         "terminal_output": outputs.get(trace[-1], {}).get("output"),
     }
