@@ -84,6 +84,11 @@ YAML `llm_call` supports:
 YAML nodes also support memory interpolation via globals:
 
 - `config.set_globals` can promote values into `globals.*`
+- `config.update_globals` supports mutable updates:
+  - `op: set`
+  - `op: append`
+  - `op: increment`
+  - `op: merge`
 - downstream prompts can read:
   - `{{ globals.some_key }}`
   - `{{ nodes.some_node.output.some_field }}`
