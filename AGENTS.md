@@ -97,6 +97,8 @@ This document defines practical coding standards for contributors and automated 
 ## Documentation Standards
 
 - Update docs in the same PR as behavior changes.
+- Add docs under `docs/` for every newly implemented feature as soon as the feature is implemented.
+- Minor tasks and bug fixes do not require new feature documentation unless behavior or contracts changed.
 - Include runnable commands and realistic examples.
 - Keep docs explicit about defaults, constraints, and failure modes.
 - Prefer concise language; avoid ambiguous instructions.
