@@ -581,7 +581,7 @@ impl WorkflowEngine {
                 self.execute_transform(transform_node, state).await
             }
             // ... other node types ...
-            _ => todo!("Implement other node types"),
+            _ => Err(anyhow::anyhow!("node type not implemented in this minimal example")),
         }
     }
 
@@ -1020,12 +1020,12 @@ let result = engine.execute(&workflow, input).await?;
 - ✅ Distributed tracing and metrics
 - ✅ Code DSL for Rust, Python, TypeScript, Go
 
-See [workflow-engine-research/README.md](workflow-engine-research/README.md) for details.
+See [README.md](README.md) for details.
 ```
 
 ### Create Workflow Guide
 
-**File**: `docs/WORKFLOW_GUIDE.md`
+**File**: `docs/YAML_WORKFLOW_SYSTEM.md`
 
 ```markdown
 # Workflow Engine Guide
