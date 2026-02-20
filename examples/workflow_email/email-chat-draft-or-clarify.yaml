@@ -1,0 +1,117 @@
+# Chat-based Email Draft Workflow
+# Uses chat history in input.messages. If scenario context is missing,
+# workflow asks for scenario details instead of drafting an email.
+
+id: email-chat-draft-or-clarify
+version: 1.0.0
+
+metadata:
+  name: "Email Chat Draft Or Clarify"
+  description: "Draft email when scenario exists, otherwise ask for scenario"
+  tags: ["example", "chat-history", "email-draft", "clarification"]
+
+entry_node: detect_scenario_context
+
+nodes:
+  - id: detect_scenario_context
+    name: "Detect Scenario Context"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        Determine the user's intent state.
+
+        Return JSON only:
+        {
+          "state": "ready" | "missing_scenario" | "capabilities_query",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - state="capabilities_query" when user asks what you can do, what emails you can compose,
+          or asks for guidance without requesting a concrete draft yet.
+        - state="missing_scenario" when key drafting details are missing (recipient, purpose, tone,
+          relevant facts, desired outcome).
+        - state="ready" when there is enough scenario context to draft.
+
+  - id: route_scenario_state
+    name: "Route By Scenario State"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_scenario_context.output.state == "capabilities_query"'
+            target: explain_capabilities
+          - condition: '$.nodes.detect_scenario_context.output.state == "ready"'
+            target: generate_email_draft
+        default: ask_for_scenario
+
+  - id: explain_capabilities
+    name: "Explain Capabilities"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        User is new and asked about capabilities.
+
+        Return JSON only:
+        {
+          "question": "Short friendly explanation of what emails you can draft + one follow-up question asking for scenario details"
+        }
+
+        Include examples such as support replies, replacement/refund emails, internal updates, and formal HR communication.
+
+  - id: ask_for_scenario
+    name: "Ask For Scenario"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        You cannot draft yet because scenario context is incomplete.
+
+        Return JSON only:
+        {
+          "question": "One concise follow-up question asking for missing scenario details"
+        }
+
+  - id: generate_email_draft
+    name: "Generate Draft Email"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        heal: true
+    config:
+      prompt: |
+        Draft a professional reply email based on the conversation.
+
+        Requirements:
+        - Return JSON only.
+        - Keep tone polite and action-oriented.
+        - Include concise subject and body.
+
+        Return JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+edges:
+  - from: detect_scenario_context
+    to: route_scenario_state

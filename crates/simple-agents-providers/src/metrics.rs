@@ -173,7 +173,29 @@ pub mod prometheus {
     //!
     //! Enable with the "prometheus" feature flag.
 
+    use std::io;
     use std::net::SocketAddr;
+    use thiserror::Error;
+
+    /// Typed errors for Prometheus exporter initialization.
+    #[derive(Debug, Error)]
+    pub enum PrometheusInitError {
+        /// Metrics recorder installation failed.
+        #[error("failed to install Prometheus recorder: {0}")]
+        RecorderInstall(#[from] metrics_exporter_prometheus::BuildError),
+
+        /// Prometheus endpoint socket bind/listen failed.
+        #[error("failed to bind Prometheus exporter at {addr}: {source}")]
+        Bind {
+            addr: SocketAddr,
+            #[source]
+            source: io::Error,
+        },
+
+        /// Exporter requires a Tokio runtime to spawn serving task.
+        #[error("failed to start Prometheus exporter task: no active Tokio runtime")]
+        MissingRuntime,
+    }
 
     /// Initialize Prometheus metrics exporter.
     ///
@@ -191,27 +213,42 @@ pub mod prometheus {
     ///     prometheus::init(addr).expect("Failed to start Prometheus exporter");
     /// });
     /// ```
-    pub fn init(addr: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn init(addr: SocketAddr) -> Result<(), PrometheusInitError> {
+        let listener = std::net::TcpListener::bind(addr)
+            .map_err(|source| PrometheusInitError::Bind { addr, source })?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|source| PrometheusInitError::Bind { addr, source })?;
+
+        let listener = tokio::net::TcpListener::from_std(listener)
+            .map_err(|source| PrometheusInitError::Bind { addr, source })?;
+
+        let runtime_handle = tokio::runtime::Handle::try_current()
+            .map_err(|_| PrometheusInitError::MissingRuntime)?;
+
         let builder = metrics_exporter_prometheus::PrometheusBuilder::new();
         let handle = builder.install_recorder()?;
 
         // Start HTTP server for /metrics endpoint
-        tokio::spawn(async move {
-            use std::net::TcpListener;
-
-            let listener = TcpListener::bind(addr).expect("Failed to bind Prometheus exporter");
+        runtime_handle.spawn(async move {
+            use tokio::io::AsyncWriteExt;
 
             loop {
-                if let Ok((mut stream, _)) = listener.accept() {
-                    let metrics = handle.render();
-                    let response = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
-                        metrics.len(),
-                        metrics
-                    );
+                match listener.accept().await {
+                    Ok((mut stream, _)) => {
+                        let metrics = handle.render();
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {}\r\n\r\n{}",
+                            metrics.len(),
+                            metrics
+                        );
 
-                    use std::io::Write;
-                    let _ = stream.write_all(response.as_bytes());
+                        let _ = stream.write_all(response.as_bytes()).await;
+                        let _ = stream.shutdown().await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "Prometheus exporter accept failed; retrying");
+                    }
                 }
             }
         });
@@ -239,5 +276,26 @@ mod tests {
             "simple_agents_request_duration_seconds"
         );
         assert_eq!(names::TOKENS_TOTAL, "simple_agents_tokens_total");
+    }
+
+    #[cfg(feature = "prometheus")]
+    #[tokio::test]
+    async fn test_prometheus_init_fails_fast_when_port_in_use() {
+        use std::net::TcpListener;
+
+        let listener =
+            TcpListener::bind("127.0.0.1:0").expect("test should bind ephemeral local port");
+        let addr = listener
+            .local_addr()
+            .expect("test should read local bound address");
+
+        let result = crate::metrics::prometheus::init(addr);
+        assert!(
+            matches!(
+                result,
+                Err(crate::metrics::prometheus::PrometheusInitError::Bind { .. })
+            ),
+            "init should return bind error when address is already in use"
+        );
     }
 }

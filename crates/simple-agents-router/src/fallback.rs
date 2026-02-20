@@ -86,6 +86,8 @@ impl FallbackRouter {
         &self,
         request: &CompletionRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let mut last_error: Option<SimpleAgentsError> = None;
+
         for provider in &self.providers {
             let provider_request = provider.transform_request(request)?;
             match provider.execute_stream(provider_request).await {
@@ -94,14 +96,13 @@ impl FallbackRouter {
                     if !self.should_fallback(&err) {
                         return Err(err);
                     }
-                    // Continue to next provider
+                    last_error = Some(err);
                 }
             }
         }
 
-        Err(SimpleAgentsError::Routing(
-            "no providers configured".to_string(),
-        ))
+        Err(last_error
+            .unwrap_or_else(|| SimpleAgentsError::Routing("no providers configured".to_string())))
     }
 
     async fn execute_provider(
@@ -263,5 +264,23 @@ mod tests {
 
         let response = router.complete(&build_request()).await.unwrap();
         assert_eq!(response.provider.as_deref(), Some("p2"));
+    }
+
+    #[tokio::test]
+    async fn stream_returns_last_provider_error() {
+        let router = FallbackRouter::new(vec![
+            Arc::new(MockProvider::new("p1", MockResult::RetryableError)),
+            Arc::new(MockProvider::new("p2", MockResult::RetryableError)),
+        ])
+        .unwrap();
+
+        let err = match router.stream(&build_request()).await {
+            Ok(_) => panic!("expected stream setup to fail"),
+            Err(err) => err,
+        };
+        match err {
+            SimpleAgentsError::Provider(ProviderError::Timeout(_)) => {}
+            _ => panic!("unexpected error"),
+        }
     }
 }

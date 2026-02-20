@@ -25,6 +25,7 @@ metrics = "0.23"
 metrics-exporter-prometheus = { version = "0.15", optional = true }
 governor = "0.6"
 pin-project-lite = "0.2"
+httpdate = "1.0"
 
 [features]
 default = []

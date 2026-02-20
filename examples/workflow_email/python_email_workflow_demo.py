@@ -48,19 +48,24 @@ class ClassificationResult:
     mode: str = "llm"
 
 
-def load_llm_settings() -> tuple[str, str, str]:
+def load_llm_settings() -> tuple[str, str, str, str]:
     env_path = Path(__file__).resolve().parents[1] / ".env"
     load_dotenv(env_path)
     load_dotenv()
 
-    api_base = os.getenv("CUSTOM_API_BASE")
-    api_key = os.getenv("CUSTOM_API_KEY")
-    model = os.getenv("CUSTOM_API_MODEL")
+    provider = (
+        os.getenv("WORKFLOW_PROVIDER")
+        or os.getenv("SIMPLE_AGENTS_PROVIDER")
+        or "openai"
+    )
+    api_base = os.getenv("WORKFLOW_API_BASE") or os.getenv("CUSTOM_API_BASE")
+    api_key = os.getenv("WORKFLOW_API_KEY") or os.getenv("CUSTOM_API_KEY")
+    model = os.getenv("WORKFLOW_MODEL") or os.getenv("CUSTOM_API_MODEL")
     if not api_base or not api_key or not model:
         raise RuntimeError(
-            "Missing LLM settings. Set CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL in examples/.env or environment."
+            "Missing LLM settings. Set WORKFLOW_API_BASE, WORKFLOW_API_KEY, WORKFLOW_MODEL (or CUSTOM_API_BASE, CUSTOM_API_KEY, CUSTOM_API_MODEL) in examples/.env or environment."
         )
-    return api_base, api_key, model
+    return provider, api_base, api_key, model
 
 
 def coerce_top_level(value: str) -> TopLevelCategory:
@@ -89,8 +94,8 @@ def coerce_termination(value: Optional[str]) -> Optional[TerminationSubtype]:
 
 
 def classify_with_llm(email_text: str) -> ClassificationResult:
-    api_base, api_key, model = load_llm_settings()
-    client = Client("openai", api_base=api_base, api_key=api_key)
+    provider, api_base, api_key, model = load_llm_settings()
+    client = Client(provider, api_base=api_base, api_key=api_key)
 
     schema = {
         "type": "object",

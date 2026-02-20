@@ -52,7 +52,10 @@ struct MetricsState {
 
 impl InMemoryWorkflowMetrics {
     pub fn snapshot(&self) -> InMemoryMetricsSnapshot {
-        let state = self.inner.lock().expect("metrics mutex poisoned");
+        let state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         InMemoryMetricsSnapshot {
             success: state.success.clone(),
             failure: state.failure.clone(),
@@ -65,7 +68,10 @@ impl InMemoryWorkflowMetrics {
 
 impl WorkflowMetrics for InMemoryWorkflowMetrics {
     fn observe_node_latency(&self, workflow_name: &str, node_id: &str, latency: Duration) {
-        let mut state = self.inner.lock().expect("metrics mutex poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state
             .latency_ms
             .entry((workflow_name.to_string(), node_id.to_string()))
@@ -74,7 +80,10 @@ impl WorkflowMetrics for InMemoryWorkflowMetrics {
     }
 
     fn increment_node_success(&self, workflow_name: &str, node_id: &str) {
-        let mut state = self.inner.lock().expect("metrics mutex poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *state
             .success
             .entry((workflow_name.to_string(), node_id.to_string()))
@@ -82,7 +91,10 @@ impl WorkflowMetrics for InMemoryWorkflowMetrics {
     }
 
     fn increment_node_failure(&self, workflow_name: &str, node_id: &str) {
-        let mut state = self.inner.lock().expect("metrics mutex poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *state
             .failure
             .entry((workflow_name.to_string(), node_id.to_string()))
@@ -90,12 +102,18 @@ impl WorkflowMetrics for InMemoryWorkflowMetrics {
     }
 
     fn set_queue_depth(&self, queue_name: &str, depth: u64) {
-        let mut state = self.inner.lock().expect("metrics mutex poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.queue_depth.insert(queue_name.to_string(), depth);
     }
 
     fn set_worker_health(&self, worker_id: &str, health: WorkerHealthState) {
-        let mut state = self.inner.lock().expect("metrics mutex poisoned");
+        let mut state = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.worker_health.insert(worker_id.to_string(), health);
     }
 }

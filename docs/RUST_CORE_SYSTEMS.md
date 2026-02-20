@@ -61,7 +61,7 @@ Macro support:
   - noop
 
 ### Interface crates
-- `simple-agents-cli`: command-line UX (complete/chat/benchmark/test-provider).
+- `simple-agents-cli`: command-line UX (complete/chat/benchmark/test-provider + workflow trace/replay/inspect/mermaid).
 - `simple-agents-ffi`: stable C ABI surface.
 - `simple-agents-napi`: Node API.
 - `simple-agents-py`: Python API + schema/healing helpers.

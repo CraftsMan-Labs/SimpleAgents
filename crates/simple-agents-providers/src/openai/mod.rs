@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use simple_agent_type::prelude::*;
 use simple_agent_type::request::ResponseFormat;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::healing_integration::{HealingConfig, HealingIntegration};
@@ -30,7 +30,6 @@ pub struct OpenAIProvider {
     client: Client,
     rate_limiter: crate::rate_limit::MaybeRateLimiter,
     healing: Option<Arc<HealingIntegration>>,
-    current_request: Arc<Mutex<Option<CompletionRequest>>>,
 }
 
 impl std::fmt::Debug for OpenAIProvider {
@@ -144,7 +143,6 @@ impl OpenAIProvider {
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
-            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -237,7 +235,6 @@ impl OpenAIProvider {
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
-            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -254,13 +251,6 @@ impl Provider for OpenAIProvider {
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
-        // Store request context for potential healing
-        if self.healing.is_some() && req.response_format.is_some() {
-            if let Ok(mut current) = self.current_request.lock() {
-                *current = Some(req.clone());
-            }
-        }
-
         // Build OpenAI-specific request (borrowing messages to avoid cloning)
         let openai_request = OpenAICompletionRequest {
             model: &req.model,
@@ -276,7 +266,8 @@ impl Provider for OpenAIProvider {
             tool_choice: req.tool_choice.as_ref(),
         };
 
-        let body = serde_json::to_value(&openai_request)?;
+        let mut body = serde_json::to_value(&openai_request)?;
+        self.embed_healing_schema(&mut body, req)?;
 
         Ok(ProviderRequest {
             url: format!("{}/chat/completions", self.base_url),
@@ -295,7 +286,9 @@ impl Provider for OpenAIProvider {
         })
     }
 
-    async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
+    async fn execute(&self, mut req: ProviderRequest) -> Result<ProviderResponse> {
+        let healing_schema = Self::take_healing_schema(&mut req.body);
+
         // Apply rate limiting
         self.rate_limiter
             .until_ready(Some(self.api_key.expose()))
@@ -335,6 +328,11 @@ impl Provider for OpenAIProvider {
         };
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses with structured logging
         if !status.is_success() {
@@ -369,7 +367,8 @@ impl Provider for OpenAIProvider {
                 }
             };
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error =
+                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
 
             // Log additional context for debugging
             tracing::debug!(
@@ -386,7 +385,7 @@ impl Provider for OpenAIProvider {
         }
 
         // Parse successful response
-        let body = match response.json::<serde_json::Value>().await {
+        let mut body = match response.json::<serde_json::Value>().await {
             Ok(b) => b,
             Err(e) => {
                 timer.complete_error("parse_error");
@@ -397,8 +396,20 @@ impl Provider for OpenAIProvider {
         };
 
         // Extract token usage for metrics
-        let prompt_tokens = body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        let completion_tokens = body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+        let prompt_tokens = Self::safe_token_count(
+            body["usage"]["prompt_tokens"].as_u64(),
+            "usage.prompt_tokens",
+        );
+        let completion_tokens = Self::safe_token_count(
+            body["usage"]["completion_tokens"].as_u64(),
+            "usage.completion_tokens",
+        );
+
+        if let Some(schema) = healing_schema {
+            if let serde_json::Value::Object(map) = &mut body {
+                map.insert(Self::HEALING_SCHEMA_KEY.to_string(), schema);
+            }
+        }
 
         // Record success metrics
         timer.complete_success(prompt_tokens, completion_tokens);
@@ -462,9 +473,66 @@ impl Provider for OpenAIProvider {
             }
         }
     }
+
+    async fn execute_stream(
+        &self,
+        req: ProviderRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        self.execute_stream_impl(req).await
+    }
 }
 
 impl OpenAIProvider {
+    const HEALING_SCHEMA_KEY: &'static str = "_simple_agents_healing_schema";
+
+    fn embed_healing_schema(
+        &self,
+        body: &mut serde_json::Value,
+        req: &CompletionRequest,
+    ) -> Result<()> {
+        if self.healing.is_none() {
+            return Ok(());
+        }
+
+        let Some(ResponseFormat::JsonSchema { json_schema }) = req.response_format.as_ref() else {
+            return Ok(());
+        };
+
+        let serde_json::Value::Object(map) = body else {
+            return Err(SimpleAgentsError::Provider(ProviderError::BadRequest(
+                "OpenAI request body must be a JSON object".to_string(),
+            )));
+        };
+
+        map.insert(
+            Self::HEALING_SCHEMA_KEY.to_string(),
+            json_schema.schema.clone(),
+        );
+        Ok(())
+    }
+
+    fn take_healing_schema(body: &mut serde_json::Value) -> Option<serde_json::Value> {
+        if let serde_json::Value::Object(map) = body {
+            return map.remove(Self::HEALING_SCHEMA_KEY);
+        }
+        None
+    }
+
+    fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
+        let raw = raw.unwrap_or(0);
+        match u32::try_from(raw) {
+            Ok(value) => value,
+            Err(_) => {
+                tracing::warn!(
+                    field = field,
+                    raw = raw,
+                    "Token count exceeded u32::MAX; clamping value"
+                );
+                u32::MAX
+            }
+        }
+    }
+
     /// Attempt to heal a malformed response using the healing system.
     fn try_healing(
         &self,
@@ -473,27 +541,11 @@ impl OpenAIProvider {
     ) -> Result<CompletionResponse> {
         let healing = self.healing.as_ref().unwrap();
 
-        // Get the stored request context
-        let request = self
-            .current_request
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-            .ok_or_else(|| {
-                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No request context available for healing".to_string(),
-                ))
-            })?;
-
-        // Extract JSON schema from request
-        let json_schema = match request.response_format.as_ref() {
-            Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
-            _ => {
-                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No JSON schema available for healing".to_string(),
-                )))
-            }
-        };
+        let json_schema = resp.body.get(Self::HEALING_SCHEMA_KEY).ok_or_else(|| {
+            SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                "No JSON schema available for healing".to_string(),
+            ))
+        })?;
 
         // Extract the content from the response
         let content = resp.body["choices"][0]["message"]["content"]
@@ -507,7 +559,7 @@ impl OpenAIProvider {
         // Attempt healing
         let healed = healing.heal_response(
             content,
-            &json_schema.schema,
+            json_schema,
             &format!("JSON parse error: {}", original_error),
         )?;
 
@@ -524,11 +576,18 @@ impl OpenAIProvider {
                 logprobs: None,
             }],
             usage: Usage {
-                prompt_tokens: resp.body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: resp.body["usage"]["completion_tokens"]
-                    .as_u64()
-                    .unwrap_or(0) as u32,
-                total_tokens: resp.body["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
+                prompt_tokens: Self::safe_token_count(
+                    resp.body["usage"]["prompt_tokens"].as_u64(),
+                    "usage.prompt_tokens",
+                ),
+                completion_tokens: Self::safe_token_count(
+                    resp.body["usage"]["completion_tokens"].as_u64(),
+                    "usage.completion_tokens",
+                ),
+                total_tokens: Self::safe_token_count(
+                    resp.body["usage"]["total_tokens"].as_u64(),
+                    "usage.total_tokens",
+                ),
             },
             created: resp.body["created"].as_i64(),
             provider: Some(self.name().to_string()),
@@ -536,11 +595,12 @@ impl OpenAIProvider {
         })
     }
 
-    #[allow(dead_code)]
-    async fn execute_stream(
+    async fn execute_stream_impl(
         &self,
-        req: ProviderRequest,
+        mut req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let _ = Self::take_healing_schema(&mut req.body);
+
         // Apply rate limiting
         self.rate_limiter
             .until_ready(Some(self.api_key.expose()))
@@ -567,6 +627,11 @@ impl OpenAIProvider {
             })?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -580,7 +645,8 @@ impl OpenAIProvider {
                 "Streaming API request failed"
             );
 
-            let openai_error = OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error =
+                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 
