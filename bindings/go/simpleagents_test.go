@@ -23,6 +23,11 @@ func TestValidateMessagesInput(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected role validation error")
 	}
+
+	err = validateMessagesInput("gpt-4", []Message{{Role: MessageRole("invalid"), Content: "hi"}})
+	if err == nil {
+		t.Fatal("expected enum role validation error")
+	}
 }
 
 func TestValidatePromptInput(t *testing.T) {
@@ -91,6 +96,22 @@ func TestCompleteWithContextUninitializedClient(t *testing.T) {
 func TestStreamMessagesUninitializedClient(t *testing.T) {
 	c := &Client{}
 	_, err := c.StreamMessages(context.Background(), "gpt-4", []Message{{Role: "user", Content: "hi"}}, CompleteOptions{})
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
+func TestRunWorkflowYAMLValidation(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAML(context.Background(), "workflow.yaml", nil)
+	if err == nil {
+		t.Fatal("expected workflowInput validation error")
+	}
+}
+
+func TestRunWorkflowYAMLUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAML(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"})
 	if err == nil {
 		t.Fatal("expected uninitialized client error")
 	}

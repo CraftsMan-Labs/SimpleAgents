@@ -1,0 +1,362 @@
+# Unified Chat + Intake Classification Workflow
+# Combines:
+# - chat capability/clarification handling
+# - hierarchical category/subtype classification
+# - mock RAG routing
+# - final draft email generation
+
+id: email-unified-chat-intake-classification
+version: 1.0.0
+
+metadata:
+  name: "Email Unified Chat Intake Classification"
+  description: "Chat-first email drafting with classification and RAG routing"
+  tags: ["example", "chat-history", "classification", "routing", "rag", "email-draft"]
+
+entry_node: detect_scenario_context
+
+nodes:
+  - id: detect_scenario_context
+    name: "Detect Scenario Context"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        Determine the user's intent state.
+
+        Return JSON only:
+        {
+          "state": "ready" | "missing_scenario" | "capabilities_query",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - state="capabilities_query" when user asks what you can do, what emails you can compose,
+          or asks for guidance without requesting a concrete draft yet.
+        - state="missing_scenario" when key drafting details are missing (recipient, purpose, tone,
+          relevant facts, desired outcome).
+        - state="ready" when there is enough scenario context to continue classification/routing.
+
+  - id: route_scenario_state
+    name: "Route By Scenario State"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_scenario_context.output.state == "capabilities_query"'
+            target: explain_capabilities
+          - condition: '$.nodes.detect_scenario_context.output.state == "ready"'
+            target: classify_top_level
+        default: ask_for_scenario
+
+  - id: explain_capabilities
+    name: "Explain Capabilities"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        User is new and asked about capabilities.
+
+        Return JSON only:
+        {
+          "question": "Short friendly explanation of what emails you can draft + one follow-up question asking for scenario details"
+        }
+
+        Include examples such as support replies, replacement/refund emails, internal updates, and formal HR communication.
+
+  - id: ask_for_scenario
+    name: "Ask For Scenario"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      prompt: |
+        You cannot draft yet because scenario context is incomplete.
+
+        Return JSON only:
+        {
+          "question": "One concise follow-up question asking for missing scenario details"
+        }
+
+  - id: classify_top_level
+    name: "Classify Top Level Category"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        - probation
+        - termination
+        - leave_request
+        - supply_chain_request
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "category": "...",
+          "reason": "short explanation"
+        }
+      update_globals:
+        classifications_seen:
+          op: increment
+          by: 1
+        category_history:
+          op: append
+          from: nodes.classify_top_level.output.category
+
+  - id: route_top_level
+    name: "Route Top Level"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_top_level.output.category == "probation"'
+            target: rag_probation
+          - condition: '$.nodes.classify_top_level.output.category == "termination"'
+            target: classify_termination_subtype
+          - condition: '$.nodes.classify_top_level.output.category == "leave_request"'
+            target: rag_leave_request
+          - condition: '$.nodes.classify_top_level.output.category == "supply_chain_request"'
+            target: classify_supply_chain_subtype
+        default: rag_clarification
+
+  - id: classify_supply_chain_subtype
+    name: "Classify Supply Chain Subtype"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
+    config:
+      prompt: |
+        Determine supply chain subtype:
+        - order_assessment
+        - order_replacement
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "subtype": "...",
+          "reason": "short explanation"
+        }
+
+  - id: route_supply_chain_subtype
+    name: "Route Supply Chain Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_supply_chain_subtype.output.subtype == "order_assessment"'
+            target: rag_supply_chain_order_assessment
+          - condition: '$.nodes.classify_supply_chain_subtype.output.subtype == "order_replacement"'
+            target: rag_supply_chain_order_replacement
+        default: rag_clarification
+
+  - id: classify_termination_subtype
+    name: "Classify Termination Subtype"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
+    config:
+      prompt: |
+        Determine termination subtype:
+        - first_time_offense
+        - repeated_offense
+        - clarification
+
+        Email:
+        {{ input.email_text }}
+
+        Respond with JSON:
+        {
+          "subtype": "...",
+          "reason": "short explanation"
+        }
+
+  - id: route_termination_subtype
+    name: "Route Termination Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_termination_subtype.output.subtype == "first_time_offense"'
+            target: rag_termination_first_time_offense
+          - condition: '$.nodes.classify_termination_subtype.output.subtype == "repeated_offense"'
+            target: rag_termination_repeated_offense
+        default: rag_clarification
+
+  - id: rag_probation
+    name: "Mock RAG: Probation"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: probation
+      set_globals:
+        rag_topic: nodes.rag_probation.output.topic
+        rag_playbook: nodes.rag_probation.output.playbook
+        rag_kb_source: nodes.rag_probation.output.kb_source
+
+  - id: rag_leave_request
+    name: "Mock RAG: Leave Request"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: leave_request
+      set_globals:
+        rag_topic: nodes.rag_leave_request.output.topic
+        rag_playbook: nodes.rag_leave_request.output.playbook
+        rag_kb_source: nodes.rag_leave_request.output.kb_source
+
+  - id: rag_supply_chain_order_assessment
+    name: "Mock RAG: Supply Chain Order Assessment"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: supply_chain_order_assessment
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_assessment.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_assessment.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_assessment.output.kb_source
+
+  - id: rag_supply_chain_order_replacement
+    name: "Mock RAG: Supply Chain Order Replacement"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: supply_chain_order_replacement
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_replacement.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_replacement.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_replacement.output.kb_source
+
+  - id: rag_termination_first_time_offense
+    name: "Mock RAG: Termination First Time Offense"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: termination_first_time_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_first_time_offense.output.topic
+        rag_playbook: nodes.rag_termination_first_time_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_first_time_offense.output.kb_source
+
+  - id: rag_termination_repeated_offense
+    name: "Mock RAG: Termination Repeated Offense"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: termination_repeated_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_repeated_offense.output.topic
+        rag_playbook: nodes.rag_termination_repeated_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_repeated_offense.output.kb_source
+
+  - id: rag_clarification
+    name: "Mock RAG: Clarification"
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: clarification
+      set_globals:
+        rag_topic: nodes.rag_clarification.output.topic
+        rag_playbook: nodes.rag_clarification.output.playbook
+        rag_kb_source: nodes.rag_clarification.output.kb_source
+
+  - id: generate_email_draft
+    name: "Generate Draft Email"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        heal: true
+    config:
+      prompt: |
+        Draft a professional response email based on the conversation and classification context.
+
+        Requirements:
+        - Return JSON only.
+        - Include concise subject and body.
+        - Keep tone polite, compliant, and action-oriented.
+
+        Classification context:
+        - Category: {{ nodes.classify_top_level.output.category }}
+        - RAG topic: {{ globals.rag_topic }}
+        - RAG source: {{ globals.rag_kb_source }}
+        - RAG playbook: {{ globals.rag_playbook }}
+
+        Return JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+edges:
+  - from: detect_scenario_context
+    to: route_scenario_state
+
+  - from: classify_top_level
+    to: route_top_level
+
+  - from: classify_supply_chain_subtype
+    to: route_supply_chain_subtype
+
+  - from: classify_termination_subtype
+    to: route_termination_subtype
+
+  - from: rag_probation
+    to: generate_email_draft
+
+  - from: rag_leave_request
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_assessment
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_replacement
+    to: generate_email_draft
+
+  - from: rag_termination_first_time_offense
+    to: generate_email_draft
+
+  - from: rag_termination_repeated_offense
+    to: generate_email_draft
+
+  - from: rag_clarification
+    to: generate_email_draft

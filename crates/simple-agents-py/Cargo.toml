@@ -23,3 +23,4 @@ simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.6" }
 simple-agents-router = { path = "../simple-agents-router", version = "0.2.6" }
 simple-agent-type = { workspace = true }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.6" }
+simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.6" }

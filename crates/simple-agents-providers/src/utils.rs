@@ -2,7 +2,7 @@
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use std::borrow::Cow;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 /// Default timeout for HTTP requests
 #[allow(dead_code)]
@@ -35,7 +35,16 @@ pub fn parse_retry_after(header_value: &str) -> Option<Duration> {
         return Some(Duration::from_secs(seconds));
     }
 
-    // TODO: Parse HTTP date format if needed
+    // Parse RFC 7231 HTTP-date
+    if let Ok(retry_at) = httpdate::parse_http_date(header_value) {
+        let now = SystemTime::now();
+        return Some(
+            retry_at
+                .duration_since(now)
+                .unwrap_or_else(|_| Duration::from_secs(0)),
+        );
+    }
+
     None
 }
 
@@ -71,5 +80,14 @@ mod tests {
     fn test_parse_retry_after_invalid() {
         let duration = parse_retry_after("invalid");
         assert!(duration.is_none());
+    }
+
+    #[test]
+    fn test_parse_retry_after_http_date() {
+        let retry_at = SystemTime::now() + Duration::from_secs(90);
+        let header = httpdate::fmt_http_date(retry_at);
+        let duration = parse_retry_after(&header).unwrap();
+        assert!(duration.as_secs() <= 90);
+        assert!(duration.as_secs() >= 80);
     }
 }

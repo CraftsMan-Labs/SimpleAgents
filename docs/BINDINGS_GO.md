@@ -64,3 +64,24 @@ text, err := client.Complete("gpt-4", "Hello", 128, 0.7)
 - `NewClientFromEnv` reads provider keys from environment variables (e.g., `OPENAI_API_KEY`).
 - `CompleteMessages` returns structured data including tool calls, usage, and optional healing/coercion metadata.
 - Always call `Close()` to release the underlying FFI client.
+
+## Workflow YAML Runner (Rust-backed)
+
+Go binding now exposes the Rust YAML workflow runner through FFI:
+
+```go
+out, err := client.RunEmailWorkflowYAML(
+    context.Background(),
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+)
+if err != nil {
+    panic(err)
+}
+
+fmt.Println(out.TerminalOutput)
+fmt.Println(out.StepTimings)   // per-node elapsed ms
+fmt.Println(out.TotalElapsedMS)
+```
+
+This method delegates to Rust `simple-agents-workflow` as the source of truth.
