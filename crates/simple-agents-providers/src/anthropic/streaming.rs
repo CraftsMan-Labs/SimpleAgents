@@ -170,6 +170,7 @@ fn transform_stream_event(
                             delta: MessageDelta {
                                 role: Some(Role::Assistant),
                                 content: Some(text),
+                                reasoning_content: None,
                             },
                             finish_reason: None,
                         }],
@@ -204,6 +205,7 @@ fn transform_stream_event(
                         delta: MessageDelta {
                             role: None,
                             content: None,
+                            reasoning_content: None,
                         },
                         finish_reason: state.finish_reason,
                     }],
