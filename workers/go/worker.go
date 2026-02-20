@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"path/filepath"
-	"runtime"
 
 	"github.com/jhump/protoreflect/desc/protoparse"
 	"google.golang.org/grpc"
@@ -16,6 +14,59 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
 )
+
+const workerProtoFilename = "worker.proto"
+
+const workerProtoSource = `syntax = "proto3";
+
+package workflow.worker.v1;
+
+service WorkerService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}
+
+message ExecuteRequest {
+  string request_id = 1;
+  string workflow_name = 2;
+  string node_id = 3;
+  string operation = 4;
+  string target = 5;
+  string payload_json = 6;
+  optional uint64 timeout_ms = 7;
+  map<string, string> metadata = 8;
+}
+
+message WorkerError {
+  string code = 1;
+  string message = 2;
+  bool retryable = 3;
+}
+
+message ExecuteResponse {
+  string request_id = 1;
+  string worker_id = 2;
+  uint64 elapsed_ms = 3;
+  bool ok = 4;
+  string output_json = 5;
+  WorkerError error = 6;
+}
+
+message HealthRequest {}
+
+enum HealthStatus {
+  HEALTH_STATUS_UNKNOWN = 0;
+  HEALTH_STATUS_SERVING = 1;
+  HEALTH_STATUS_NOT_SERVING = 2;
+}
+
+message HealthResponse {
+  string worker_id = 1;
+  HealthStatus status = 2;
+  uint32 consecutive_failures = 3;
+  optional uint64 last_probe_unix_ms = 4;
+}
+`
 
 type workerServer struct {
 	workerID        string
@@ -125,19 +176,12 @@ func registerWorkerService(server *grpc.Server, fd protoreflect.FileDescriptor, 
 }
 
 func buildWorkerFileDescriptor() (protoreflect.FileDescriptor, error) {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		return nil, fmt.Errorf("resolve source path")
-	}
-
-	protoPath := filepath.Clean(filepath.Join(
-		filepath.Dir(thisFile),
-		"../../crates/simple-agents-workflow-workers/proto/worker.proto",
-	))
 	parser := protoparse.Parser{
-		ImportPaths: []string{filepath.Dir(protoPath)},
+		Accessor: protoparse.FileContentsFromMap(map[string]string{
+			workerProtoFilename: workerProtoSource,
+		}),
 	}
-	files, err := parser.ParseFiles(filepath.Base(protoPath))
+	files, err := parser.ParseFiles(workerProtoFilename)
 	if err != nil {
 		return nil, fmt.Errorf("parse worker proto: %w", err)
 	}
