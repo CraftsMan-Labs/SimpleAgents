@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::healing_integration::{HealingConfig, HealingIntegration};
+use crate::utils::DEFAULT_TIMEOUT;
 
 /// Anthropic API provider
 #[derive(Clone)]
@@ -81,7 +82,7 @@ impl AnthropicProvider {
         let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
 
         let mut client_builder = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(DEFAULT_TIMEOUT)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90));
         if is_local {
@@ -102,7 +103,7 @@ impl AnthropicProvider {
     /// * `base_url` - Custom base URL
     pub fn with_base_url(api_key: ApiKey, base_url: String) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(DEFAULT_TIMEOUT)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
@@ -318,7 +319,7 @@ impl Provider for AnthropicProvider {
                 if e.is_timeout() {
                     timer.complete_timeout();
                     return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
-                        Duration::from_secs(30),
+                        DEFAULT_TIMEOUT,
                     )));
                 } else {
                     timer.complete_error("network");
@@ -619,7 +620,7 @@ impl AnthropicProvider {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(30)))
+                    SimpleAgentsError::Provider(ProviderError::Timeout(DEFAULT_TIMEOUT))
                 } else {
                     SimpleAgentsError::Network(format!("Network error: {}", e))
                 }
@@ -660,6 +661,68 @@ impl AnthropicProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    async fn spawn_hanging_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind should succeed");
+        let addr = listener.local_addr().expect("local addr should resolve");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\n").await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        format!("http://{}", addr)
+    }
+
+    async fn spawn_error_server(
+        status_line: &str,
+        retry_after: Option<&str>,
+        body: &str,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind should succeed");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let response = if let Some(retry_after) = retry_after {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\nretry-after: {retry_after}\r\ncontent-length: {len}\r\n\r\n{body}",
+                status = status_line,
+                retry_after = retry_after,
+                len = body.len(),
+                body = body
+            )
+        } else {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {len}\r\n\r\n{body}",
+                status = status_line,
+                len = body.len(),
+                body = body
+            )
+        };
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        format!("http://{}", addr)
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
     fn require_streaming() -> bool {
         std::env::var("SIMPLE_AGENTS_REQUIRE_STREAMING")
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -826,5 +889,69 @@ mod tests {
                 return;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_execute_timeout_maps_to_default_timeout_constant() {
+        let base_url = spawn_hanging_server().await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(30))
+            .build()
+            .expect("client should build");
+        let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890").unwrap();
+        let provider = AnthropicProvider::with_client(api_key, base_url, client).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("claude-3-opus-20240229")
+            .message(Message::user("Hello"))
+            .build()
+            .unwrap();
+        let provider_request = provider.transform_request(&request).unwrap();
+
+        let result = provider.execute(provider_request).await;
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Provider(ProviderError::Timeout(d))) if d == crate::utils::DEFAULT_TIMEOUT
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_stream_non_success_maps_retry_after() {
+        let body = r#"{"type":"error","error":{"type":"rate_limit_error","message":"Rate limit exceeded"}}"#;
+        let base_url = spawn_error_server("429 Too Many Requests", Some("3"), body).await;
+        let api_key = ApiKey::new("sk-ant-test1234567890123456789012345678901234567890").unwrap();
+        let provider = AnthropicProvider::with_base_url(api_key, base_url).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("claude-3-opus-20240229")
+            .message(Message::user("Hello"))
+            .stream(true)
+            .build()
+            .unwrap();
+        let provider_request = provider.transform_request(&request).unwrap();
+
+        let result = provider.execute_stream(provider_request).await;
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Provider(ProviderError::RateLimit { retry_after: Some(d) })) if d == Duration::from_secs(3)
+        ));
+    }
+
+    #[test]
+    fn test_from_env_accepts_double_underscore_base_var() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        std::env::set_var(
+            "ANTHROPIC_API_KEY",
+            "sk-ant-test1234567890123456789012345678901234567890",
+        );
+        std::env::remove_var("ANTHROPIC_API_BASE");
+        std::env::set_var("ANTHROPIC__API_BASE", "http://localhost:8123/v1");
+
+        let provider = AnthropicProvider::from_env().expect("from_env should build provider");
+        assert_eq!(provider.base_url(), "http://localhost:8123/v1");
+
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("ANTHROPIC_API_BASE");
+        std::env::remove_var("ANTHROPIC__API_BASE");
     }
 }
