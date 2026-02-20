@@ -66,6 +66,13 @@ char *sa_run_workflow_yaml(
     const char *workflow_input_json
 );
 
+char *sa_run_workflow_yaml_with_options(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+);
+
 char *sa_last_error_message(void);
 void sa_string_free(char *value);
 

@@ -193,7 +193,12 @@ result = client.run_email_workflow_yaml_stream(
 Notes:
 
 - Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
-- If `llm_call` uses `heal=true`, streaming deltas are disabled for that node and a non-streamable event is emitted.
+- Structured `node_stream_delta` content is sanitized to JSON object payload content, so reasoning/preamble/trailing chatter is not forwarded to callbacks.
+- If a YAML `llm_call` sets `stream_json_as_text: true`, non-thinking stream tokens are emitted as plain text lines (`key: value`) instead of raw JSON token chunks.
+- Token stream events include token attribution fields:
+  - `step_id`: workflow step/node id for token attribution
+  - `token_kind`: `output` or `thinking`
+  - `is_terminal_node_token`: `true` when token is emitted from a terminal node
 - `node_llm_input_resolved` is emitted before each `llm_call` with `metadata` containing:
   - resolved `prompt` and `prompt_template`
   - selected `model`, `schema`, and effective stream/heal flags

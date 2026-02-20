@@ -17,7 +17,9 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
-    run_email_workflow_yaml_file_with_client, run_workflow_yaml_file_with_client,
+    run_email_workflow_yaml_file_with_client,
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
+    YamlWorkflowRunOptions,
 };
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -177,6 +179,22 @@ unsafe fn cstr_to_optional_string(ptr: *const c_char, field: &str) -> Result<Opt
         return Ok(None);
     }
     Ok(Some(value.to_string()))
+}
+
+fn parse_workflow_run_options(raw_json: Option<String>) -> Result<YamlWorkflowRunOptions> {
+    match raw_json {
+        None => Ok(YamlWorkflowRunOptions::default()),
+        Some(value) => {
+            if value.trim().is_empty() {
+                return Ok(YamlWorkflowRunOptions::default());
+            }
+            serde_json::from_str::<YamlWorkflowRunOptions>(&value).map_err(|error| {
+                SimpleAgentsError::Config(format!(
+                    "workflow_options_json must be valid JSON: {error}"
+                ))
+            })
+        }
+    }
 }
 
 fn build_client(provider: Arc<dyn Provider>) -> Result<SimpleAgentsClient> {
@@ -893,6 +911,27 @@ pub unsafe extern "C" fn sa_run_workflow_yaml(
     workflow_path: *const c_char,
     workflow_input_json: *const c_char,
 ) -> *mut c_char {
+    sa_run_workflow_yaml_with_options(client, workflow_path, workflow_input_json, std::ptr::null())
+}
+
+/// Execute workflow YAML with arbitrary input JSON and optional telemetry options JSON.
+///
+/// `workflow_options_json` accepts a `YamlWorkflowRunOptions` JSON object and may be null.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env` and remain valid for the call.
+/// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
+/// - `workflow_input_json` must be a valid JSON object string.
+/// - `workflow_options_json` may be null; when non-null it must be valid null-terminated UTF-8 JSON.
+/// - Returned string must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_run_workflow_yaml_with_options(
+    client: *mut SAClient,
+    workflow_path: *const c_char,
+    workflow_input_json: *const c_char,
+    workflow_options_json: *const c_char,
+) -> *mut c_char {
     if client.is_null() {
         set_last_error("client cannot be null".to_string());
         return std::ptr::null_mut();
@@ -901,6 +940,8 @@ pub unsafe extern "C" fn sa_run_workflow_yaml(
     ffi_guard(|| {
         let workflow_path = cstr_to_string(workflow_path, "workflow_path")?;
         let workflow_input_json = cstr_to_string(workflow_input_json, "workflow_input_json")?;
+        let workflow_options_json =
+            cstr_to_optional_string(workflow_options_json, "workflow_options_json")?;
         let workflow_input: JsonValue =
             serde_json::from_str(&workflow_input_json).map_err(|e| {
                 SimpleAgentsError::Config(format!("workflow_input_json must be valid JSON: {e}"))
@@ -910,6 +951,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml(
                 "workflow_input_json must decode to a JSON object".to_string(),
             ));
         }
+        let workflow_options = parse_workflow_run_options(workflow_options_json)?;
 
         let client = &(*client).inner;
         let runtime = client
@@ -918,11 +960,16 @@ pub unsafe extern "C" fn sa_run_workflow_yaml(
             .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
 
         let output = runtime
-            .block_on(run_workflow_yaml_file_with_client(
-                std::path::Path::new(workflow_path.as_str()),
-                &workflow_input,
-                &client.client,
-            ))
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                    std::path::Path::new(workflow_path.as_str()),
+                    &workflow_input,
+                    &client.client,
+                    None,
+                    None,
+                    &workflow_options,
+                ),
+            )
             .map_err(|error| {
                 SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
             })?;

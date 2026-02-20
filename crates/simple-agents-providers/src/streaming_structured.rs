@@ -239,6 +239,7 @@ mod tests {
                     delta: MessageDelta {
                         role: None,
                         content: Some(r#"{"message":"Hello"}"#.to_string()),
+                        reasoning_content: None,
                     },
                     finish_reason: None,
                 }],
@@ -252,6 +253,7 @@ mod tests {
                     delta: MessageDelta {
                         role: None,
                         content: None,
+                        reasoning_content: None,
                     },
                     finish_reason: Some(simple_agent_type::response::FinishReason::Stop),
                 }],

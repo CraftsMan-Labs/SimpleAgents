@@ -176,6 +176,15 @@ pub struct OpenAIDelta {
     /// Incremental content
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+
+    /// Optional incremental reasoning/thinking tokens from OpenAI-compatible providers.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        alias = "reasoning_content",
+        alias = "reasoning",
+        alias = "thinking"
+    )]
+    pub reasoning_content: Option<String>,
 }
 
 #[cfg(test)]

@@ -1078,144 +1078,52 @@ impl<'a> WorkflowRuntime<'a> {
         retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
         match &node.kind {
-            NodeKind::Start { next } => Ok(NodeExecution {
-                step,
-                node_id: node.id.clone(),
-                data: NodeExecutionData::Start { next: next.clone() },
-            }),
+            NodeKind::Start { next } => Ok(self.execute_start_node(step, node, next)),
             NodeKind::Llm {
                 model,
                 prompt,
                 next,
             } => {
-                let next_node =
-                    next.clone()
-                        .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
-                            node_id: node.id.clone(),
-                        })?;
-
-                let (output, llm_retries) = self
-                    .execute_llm_with_policy(step, node, model, prompt, scope, cancellation)
-                    .await?;
-                retry_events.extend(llm_retries);
-
-                scope
-                    .record_llm_output(&node.id, output.content.clone(), ScopeCapability::LlmWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
+                self.execute_llm_node(
                     step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Llm {
-                        model: model.clone(),
-                        output: output.content,
-                        next: next_node,
+                    node,
+                    LlmNodeSpec {
+                        model,
+                        prompt,
+                        next,
                     },
-                })
+                    scope,
+                    cancellation,
+                    retry_events,
+                )
+                .await
             }
             NodeKind::Tool { tool, input, next } => {
-                let next_node =
-                    next.clone()
-                        .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
-                            node_id: node.id.clone(),
-                        })?;
-
-                let executor = self.tool_executor.ok_or_else(|| {
-                    WorkflowRuntimeError::MissingToolExecutor {
-                        node_id: node.id.clone(),
-                    }
-                })?;
-
-                let scoped_input =
-                    scope
-                        .scoped_input(ScopeCapability::ToolRead)
-                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                            node_id: node.id.clone(),
-                            source,
-                        })?;
-
-                let (tool_output, tool_retries) = self
-                    .execute_tool_with_policy_for_scope(ToolPolicyRequest {
-                        step,
-                        node,
-                        tool,
-                        input,
-                        executor,
-                        scoped_input,
-                        cancellation,
-                    })
-                    .await?;
-                retry_events.extend(tool_retries);
-
-                scope
-                    .record_tool_output(&node.id, tool_output.clone(), ScopeCapability::ToolWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
+                self.execute_tool_node(
                     step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Tool {
-                        tool: tool.clone(),
-                        output: tool_output,
-                        next: next_node,
-                    },
-                })
+                    node,
+                    ToolNodeSpec { tool, input, next },
+                    scope,
+                    cancellation,
+                    retry_events,
+                )
+                .await
             }
             NodeKind::Condition {
                 expression,
                 on_true,
                 on_false,
-            } => {
-                check_cancelled(cancellation)?;
-                let scoped_input =
-                    scope
-                        .scoped_input(ScopeCapability::ConditionRead)
-                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                            node_id: node.id.clone(),
-                            source,
-                        })?;
-                enforce_expression_scope_budget(
-                    &node.id,
-                    &scoped_input,
-                    self.options.security_limits.max_expression_scope_bytes,
-                )?;
-                let evaluated =
-                    expressions::evaluate_bool(expression, &scoped_input).map_err(|reason| {
-                        WorkflowRuntimeError::InvalidCondition {
-                            node_id: node.id.clone(),
-                            expression: expression.clone(),
-                            reason: reason.to_string(),
-                        }
-                    })?;
-                let next = if evaluated {
-                    on_true.clone()
-                } else {
-                    on_false.clone()
-                };
-
-                scope
-                    .record_condition_output(&node.id, evaluated, ScopeCapability::ConditionWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Condition {
-                        expression: expression.clone(),
-                        evaluated,
-                        next,
-                    },
-                })
-            }
+            } => self.execute_condition_node(
+                step,
+                node,
+                ConditionNodeSpec {
+                    expression,
+                    on_true,
+                    on_false,
+                },
+                scope,
+                cancellation,
+            ),
             NodeKind::Debounce {
                 key_path,
                 window_steps,
@@ -1772,269 +1680,63 @@ impl<'a> WorkflowRuntime<'a> {
                 next,
                 max_in_flight,
             } => {
-                check_cancelled(cancellation)?;
-                if branches.len() > self.options.security_limits.max_parallel_branches {
-                    return Err(WorkflowRuntimeError::ParallelBranchLimitExceeded {
-                        node_id: node.id.clone(),
-                        actual_branches: branches.len(),
-                        max_branches: self.options.security_limits.max_parallel_branches,
-                    });
-                }
-                let base_scope =
-                    scope
-                        .scoped_input(ScopeCapability::MapRead)
-                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                            node_id: node.id.clone(),
-                            source,
-                        })?;
-                let scheduler = DagScheduler::new(
-                    max_in_flight.unwrap_or(self.options.scheduler_max_in_flight),
-                );
-                let parallel_node_id = node.id.clone();
-
-                let branch_outputs: Vec<(String, Value, Vec<WorkflowRetryEvent>)> = scheduler
-                    .run_bounded(branches.iter().cloned(), |branch_id| {
-                        let parallel_node_id = parallel_node_id.clone();
-                        let base_scope = base_scope.clone();
-                        async move {
-                            let branch_node =
-                                node_index.get(branch_id.as_str()).ok_or_else(|| {
-                                    WorkflowRuntimeError::NodeNotFound {
-                                        node_id: branch_id.clone(),
-                                    }
-                                })?;
-                            self.execute_parallel_branch(
-                                step,
-                                &parallel_node_id,
-                                branch_node,
-                                base_scope,
-                                cancellation,
-                            )
-                            .await
-                        }
-                    })
-                    .await?;
-
-                let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
-                for (branch_id, output, branch_retry_events) in branch_outputs {
-                    retry_events.extend(branch_retry_events);
-                    scope
-                        .record_node_output(&branch_id, output.clone(), ScopeCapability::MapWrite)
-                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                            node_id: node.id.clone(),
-                            source,
-                        })?;
-                    outputs.insert(branch_id, output);
-                }
-
-                scope
-                    .record_node_output(
-                        &node.id,
-                        Value::Object(
-                            outputs
-                                .iter()
-                                .map(|(key, value)| (key.clone(), value.clone()))
-                                .collect(),
-                        ),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
+                self.execute_parallel_node(
                     step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Parallel {
-                        branches: branches.clone(),
-                        outputs,
-                        next: next.clone(),
+                    node,
+                    ParallelNodeSpec {
+                        node_index,
+                        branches,
+                        next,
+                        max_in_flight: *max_in_flight,
                     },
-                })
+                    scope,
+                    cancellation,
+                    retry_events,
+                )
+                .await
             }
             NodeKind::Merge {
                 sources,
                 policy,
                 quorum,
                 next,
-            } => {
-                let mut resolved = Vec::with_capacity(sources.len());
-                for source in sources {
-                    let Some(value) = scope.node_output(source).cloned() else {
-                        return Err(WorkflowRuntimeError::MissingMergeSource {
-                            node_id: node.id.clone(),
-                            source_id: source.clone(),
-                        });
-                    };
-                    resolved.push((source.clone(), value));
-                }
-
-                let output = match policy {
-                    MergePolicy::First => resolved
-                        .first()
-                        .map(|(_, value)| value.clone())
-                        .unwrap_or(Value::Null),
-                    MergePolicy::All => Value::Array(
-                        resolved
-                            .iter()
-                            .map(|(_, value)| value.clone())
-                            .collect::<Vec<_>>(),
-                    ),
-                    MergePolicy::Quorum => {
-                        let required = quorum.unwrap_or_default();
-                        let resolved_count = resolved.len();
-                        if resolved_count < required {
-                            return Err(WorkflowRuntimeError::MergeQuorumNotMet {
-                                node_id: node.id.clone(),
-                                required,
-                                resolved: resolved_count,
-                            });
-                        }
-                        Value::Array(
-                            resolved
-                                .iter()
-                                .take(required)
-                                .map(|(_, value)| value.clone())
-                                .collect::<Vec<_>>(),
-                        )
-                    }
-                };
-
-                scope
-                    .record_node_output(&node.id, output.clone(), ScopeCapability::ReduceWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Merge {
-                        policy: policy.clone(),
-                        sources: sources.clone(),
-                        output,
-                        next: next.clone(),
-                    },
-                })
-            }
+            } => self.execute_merge_node(
+                step,
+                node,
+                MergeNodeSpec {
+                    sources,
+                    policy,
+                    quorum: *quorum,
+                    next,
+                },
+                scope,
+            ),
             NodeKind::Map {
                 tool,
                 items_path,
                 next,
                 max_in_flight,
             } => {
-                let executor = self.tool_executor.ok_or_else(|| {
-                    WorkflowRuntimeError::MissingToolExecutor {
-                        node_id: node.id.clone(),
-                    }
-                })?;
-
-                let scoped_input =
-                    scope
-                        .scoped_input(ScopeCapability::MapRead)
-                        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                            node_id: node.id.clone(),
-                            source,
-                        })?;
-                let items = resolve_path(&scoped_input, items_path)
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| WorkflowRuntimeError::MapItemsNotArray {
-                        node_id: node.id.clone(),
-                        items_path: items_path.clone(),
-                    })?
-                    .clone();
-                if items.len() > self.options.security_limits.max_map_items {
-                    return Err(WorkflowRuntimeError::MapItemLimitExceeded {
-                        node_id: node.id.clone(),
-                        actual_items: items.len(),
-                        max_items: self.options.security_limits.max_map_items,
-                    });
-                }
-
-                let scheduler = DagScheduler::new(
-                    max_in_flight.unwrap_or(self.options.scheduler_max_in_flight),
-                );
-                let map_node = node.clone();
-                let mapped: Vec<(Value, Vec<WorkflowRetryEvent>)> = scheduler
-                    .run_bounded(items.into_iter().enumerate(), |(index, item)| {
-                        let scoped_input = scoped_input.clone();
-                        let map_node = map_node.clone();
-                        async move {
-                            let item_scope = map_item_scoped_input(&scoped_input, &item, index);
-                            let (output, retries) = self
-                                .execute_tool_with_policy_for_scope(ToolPolicyRequest {
-                                    step,
-                                    node: &map_node,
-                                    tool,
-                                    input: &item,
-                                    executor,
-                                    scoped_input: item_scope,
-                                    cancellation,
-                                })
-                                .await?;
-                            Ok::<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError>((
-                                output, retries,
-                            ))
-                        }
-                    })
-                    .await?;
-
-                let mut outputs = Vec::with_capacity(mapped.len());
-                for (output, local_retries) in mapped {
-                    outputs.push(output);
-                    retry_events.extend(local_retries);
-                }
-
-                let output = Value::Array(outputs);
-                scope
-                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
+                self.execute_map_node(
                     step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Map {
-                        item_count: output.as_array().map_or(0, Vec::len),
-                        output,
-                        next: next.clone(),
+                    node,
+                    MapNodeSpec {
+                        tool,
+                        items_path,
+                        next,
+                        max_in_flight: *max_in_flight,
                     },
-                })
+                    scope,
+                    cancellation,
+                    retry_events,
+                )
+                .await
             }
             NodeKind::Reduce {
                 source,
                 operation,
                 next,
-            } => {
-                let source_value = scope.node_output(source).cloned().ok_or_else(|| {
-                    WorkflowRuntimeError::MissingMergeSource {
-                        node_id: node.id.clone(),
-                        source_id: source.clone(),
-                    }
-                })?;
-
-                let reduced = reduce_value(&node.id, source, operation, source_value)?;
-                scope
-                    .record_node_output(&node.id, reduced.clone(), ScopeCapability::ReduceWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Reduce {
-                        operation: operation.clone(),
-                        output: reduced,
-                        next: next.clone(),
-                    },
-                })
-            }
+            } => self.execute_reduce_node(step, node, source, operation, next, scope),
             NodeKind::Subgraph { graph, next } => {
                 check_cancelled(cancellation)?;
                 let next_node =
@@ -2099,124 +1801,588 @@ impl<'a> WorkflowRuntime<'a> {
                 })
             }
             NodeKind::Batch { items_path, next } => {
-                let scoped = scope
-                    .scoped_input(ScopeCapability::MapRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-                let items = resolve_path(&scoped, items_path).ok_or_else(|| {
-                    WorkflowRuntimeError::BatchItemsNotArray {
-                        node_id: node.id.clone(),
-                        items_path: items_path.clone(),
-                    }
-                })?;
-                let array =
-                    items
-                        .as_array()
-                        .ok_or_else(|| WorkflowRuntimeError::BatchItemsNotArray {
-                            node_id: node.id.clone(),
-                            items_path: items_path.clone(),
-                        })?;
-
-                let output = Value::Array(array.clone());
-                scope
-                    .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Batch {
-                        items_path: items_path.clone(),
-                        item_count: array.len(),
-                        next: next.clone(),
-                    },
-                })
+                self.execute_batch_node(step, node, items_path, next, scope)
             }
             NodeKind::Filter {
                 items_path,
                 expression,
                 next,
-            } => {
-                let scoped = scope
-                    .scoped_input(ScopeCapability::MapRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-                let items_value = resolve_path(&scoped, items_path).ok_or_else(|| {
-                    WorkflowRuntimeError::FilterItemsNotArray {
-                        node_id: node.id.clone(),
-                        items_path: items_path.clone(),
-                    }
-                })?;
-                let array = items_value.as_array().ok_or_else(|| {
-                    WorkflowRuntimeError::FilterItemsNotArray {
-                        node_id: node.id.clone(),
-                        items_path: items_path.clone(),
-                    }
-                })?;
-                if array.len() > self.options.security_limits.max_filter_items {
-                    return Err(WorkflowRuntimeError::FilterItemLimitExceeded {
-                        node_id: node.id.clone(),
-                        actual_items: array.len(),
-                        max_items: self.options.security_limits.max_filter_items,
-                    });
-                }
-
-                let mut kept = Vec::new();
-                for (index, item) in array.iter().enumerate() {
-                    let mut eval_scope = scoped.clone();
-                    if let Some(object) = eval_scope.as_object_mut() {
-                        object.insert("item".to_string(), item.clone());
-                        object.insert("item_index".to_string(), Value::from(index as u64));
-                    }
-                    enforce_expression_scope_budget(
-                        &node.id,
-                        &eval_scope,
-                        self.options.security_limits.max_expression_scope_bytes,
-                    )?;
-                    let include =
-                        expressions::evaluate_bool(expression, &eval_scope).map_err(|reason| {
-                            WorkflowRuntimeError::InvalidFilterExpression {
-                                node_id: node.id.clone(),
-                                expression: expression.clone(),
-                                reason: reason.to_string(),
-                            }
-                        })?;
-                    if include {
-                        kept.push(item.clone());
-                    }
-                }
-                let output = Value::Array(kept.clone());
-                scope
-                    .record_node_output(&node.id, output, ScopeCapability::MapWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step,
-                    node_id: node.id.clone(),
-                    data: NodeExecutionData::Filter {
-                        items_path: items_path.clone(),
-                        expression: expression.clone(),
-                        kept: kept.len(),
-                        next: next.clone(),
-                    },
-                })
-            }
+            } => self.execute_filter_node(step, node, items_path, expression, next, scope),
             NodeKind::End => Ok(NodeExecution {
                 step,
                 node_id: node.id.clone(),
                 data: NodeExecutionData::End,
             }),
         }
+    }
+
+    fn execute_start_node(&self, step: usize, node: &Node, next: &str) -> NodeExecution {
+        NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Start {
+                next: next.to_string(),
+            },
+        }
+    }
+
+    async fn execute_llm_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: LlmNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+        cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let next_node = spec
+            .next
+            .clone()
+            .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
+                node_id: node.id.clone(),
+            })?;
+
+        let (output, llm_retries) = self
+            .execute_llm_with_policy(step, node, spec.model, spec.prompt, scope, cancellation)
+            .await?;
+        retry_events.extend(llm_retries);
+
+        scope
+            .record_llm_output(&node.id, output.content.clone(), ScopeCapability::LlmWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Llm {
+                model: spec.model.to_string(),
+                output: output.content,
+                next: next_node,
+            },
+        })
+    }
+
+    async fn execute_tool_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: ToolNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+        cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let next_node = spec
+            .next
+            .clone()
+            .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
+                node_id: node.id.clone(),
+            })?;
+
+        let executor =
+            self.tool_executor
+                .ok_or_else(|| WorkflowRuntimeError::MissingToolExecutor {
+                    node_id: node.id.clone(),
+                })?;
+
+        let scoped_input = scope
+            .scoped_input(ScopeCapability::ToolRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        let (tool_output, tool_retries) = self
+            .execute_tool_with_policy_for_scope(ToolPolicyRequest {
+                step,
+                node,
+                tool: spec.tool,
+                input: spec.input,
+                executor,
+                scoped_input,
+                cancellation,
+            })
+            .await?;
+        retry_events.extend(tool_retries);
+
+        scope
+            .record_tool_output(&node.id, tool_output.clone(), ScopeCapability::ToolWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Tool {
+                tool: spec.tool.to_string(),
+                output: tool_output,
+                next: next_node,
+            },
+        })
+    }
+
+    fn execute_condition_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: ConditionNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+        cancellation: Option<&dyn CancellationSignal>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        check_cancelled(cancellation)?;
+        let scoped_input =
+            scope
+                .scoped_input(ScopeCapability::ConditionRead)
+                .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                    node_id: node.id.clone(),
+                    source,
+                })?;
+        enforce_expression_scope_budget(
+            &node.id,
+            &scoped_input,
+            self.options.security_limits.max_expression_scope_bytes,
+        )?;
+        let evaluated =
+            expressions::evaluate_bool(spec.expression, &scoped_input).map_err(|reason| {
+                WorkflowRuntimeError::InvalidCondition {
+                    node_id: node.id.clone(),
+                    expression: spec.expression.to_string(),
+                    reason: reason.to_string(),
+                }
+            })?;
+        let next = if evaluated {
+            spec.on_true.to_string()
+        } else {
+            spec.on_false.to_string()
+        };
+
+        scope
+            .record_condition_output(&node.id, evaluated, ScopeCapability::ConditionWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Condition {
+                expression: spec.expression.to_string(),
+                evaluated,
+                next,
+            },
+        })
+    }
+
+    async fn execute_parallel_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: ParallelNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+        cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        check_cancelled(cancellation)?;
+        if spec.branches.len() > self.options.security_limits.max_parallel_branches {
+            return Err(WorkflowRuntimeError::ParallelBranchLimitExceeded {
+                node_id: node.id.clone(),
+                actual_branches: spec.branches.len(),
+                max_branches: self.options.security_limits.max_parallel_branches,
+            });
+        }
+        let base_scope = scope
+            .scoped_input(ScopeCapability::MapRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+        let scheduler = DagScheduler::new(
+            spec.max_in_flight
+                .unwrap_or(self.options.scheduler_max_in_flight),
+        );
+        let parallel_node_id = node.id.clone();
+
+        let branch_outputs: Vec<(String, Value, Vec<WorkflowRetryEvent>)> = scheduler
+            .run_bounded(spec.branches.iter().cloned(), |branch_id| {
+                let parallel_node_id = parallel_node_id.clone();
+                let base_scope = base_scope.clone();
+                async move {
+                    let branch_node = spec.node_index.get(branch_id.as_str()).ok_or_else(|| {
+                        WorkflowRuntimeError::NodeNotFound {
+                            node_id: branch_id.clone(),
+                        }
+                    })?;
+                    self.execute_parallel_branch(
+                        step,
+                        &parallel_node_id,
+                        branch_node,
+                        base_scope,
+                        cancellation,
+                    )
+                    .await
+                }
+            })
+            .await?;
+
+        let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
+        for (branch_id, output, branch_retry_events) in branch_outputs {
+            retry_events.extend(branch_retry_events);
+            scope
+                .record_node_output(&branch_id, output.clone(), ScopeCapability::MapWrite)
+                .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                    node_id: node.id.clone(),
+                    source,
+                })?;
+            outputs.insert(branch_id, output);
+        }
+
+        scope
+            .record_node_output(
+                &node.id,
+                Value::Object(
+                    outputs
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                ),
+                ScopeCapability::MapWrite,
+            )
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Parallel {
+                branches: spec.branches.to_vec(),
+                outputs,
+                next: spec.next.to_string(),
+            },
+        })
+    }
+
+    fn execute_merge_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: MergeNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let mut resolved = Vec::with_capacity(spec.sources.len());
+        for source in spec.sources {
+            let Some(value) = scope.node_output(source).cloned() else {
+                return Err(WorkflowRuntimeError::MissingMergeSource {
+                    node_id: node.id.clone(),
+                    source_id: source.clone(),
+                });
+            };
+            resolved.push((source.clone(), value));
+        }
+
+        let output = match spec.policy {
+            MergePolicy::First => resolved
+                .first()
+                .map(|(_, value)| value.clone())
+                .unwrap_or(Value::Null),
+            MergePolicy::All => Value::Array(
+                resolved
+                    .iter()
+                    .map(|(_, value)| value.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            MergePolicy::Quorum => {
+                let required = spec.quorum.unwrap_or_default();
+                let resolved_count = resolved.len();
+                if resolved_count < required {
+                    return Err(WorkflowRuntimeError::MergeQuorumNotMet {
+                        node_id: node.id.clone(),
+                        required,
+                        resolved: resolved_count,
+                    });
+                }
+                Value::Array(
+                    resolved
+                        .iter()
+                        .take(required)
+                        .map(|(_, value)| value.clone())
+                        .collect::<Vec<_>>(),
+                )
+            }
+        };
+
+        scope
+            .record_node_output(&node.id, output.clone(), ScopeCapability::ReduceWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Merge {
+                policy: spec.policy.clone(),
+                sources: spec.sources.to_vec(),
+                output,
+                next: spec.next.to_string(),
+            },
+        })
+    }
+
+    async fn execute_map_node(
+        &self,
+        step: usize,
+        node: &Node,
+        spec: MapNodeSpec<'_>,
+        scope: &mut RuntimeScope,
+        cancellation: Option<&dyn CancellationSignal>,
+        retry_events: &mut Vec<WorkflowRetryEvent>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let executor =
+            self.tool_executor
+                .ok_or_else(|| WorkflowRuntimeError::MissingToolExecutor {
+                    node_id: node.id.clone(),
+                })?;
+
+        let scoped_input = scope
+            .scoped_input(ScopeCapability::MapRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+        let items = resolve_path(&scoped_input, spec.items_path)
+            .and_then(Value::as_array)
+            .ok_or_else(|| WorkflowRuntimeError::MapItemsNotArray {
+                node_id: node.id.clone(),
+                items_path: spec.items_path.to_string(),
+            })?
+            .clone();
+        if items.len() > self.options.security_limits.max_map_items {
+            return Err(WorkflowRuntimeError::MapItemLimitExceeded {
+                node_id: node.id.clone(),
+                actual_items: items.len(),
+                max_items: self.options.security_limits.max_map_items,
+            });
+        }
+
+        let scheduler = DagScheduler::new(
+            spec.max_in_flight
+                .unwrap_or(self.options.scheduler_max_in_flight),
+        );
+        let map_node = node.clone();
+        let mapped: Vec<(Value, Vec<WorkflowRetryEvent>)> = scheduler
+            .run_bounded(items.into_iter().enumerate(), |(index, item)| {
+                let scoped_input = scoped_input.clone();
+                let map_node = map_node.clone();
+                async move {
+                    let item_scope = map_item_scoped_input(&scoped_input, &item, index);
+                    let (output, retries) = self
+                        .execute_tool_with_policy_for_scope(ToolPolicyRequest {
+                            step,
+                            node: &map_node,
+                            tool: spec.tool,
+                            input: &item,
+                            executor,
+                            scoped_input: item_scope,
+                            cancellation,
+                        })
+                        .await?;
+                    Ok::<(Value, Vec<WorkflowRetryEvent>), WorkflowRuntimeError>((output, retries))
+                }
+            })
+            .await?;
+
+        let mut outputs = Vec::with_capacity(mapped.len());
+        for (output, local_retries) in mapped {
+            outputs.push(output);
+            retry_events.extend(local_retries);
+        }
+
+        let output = Value::Array(outputs);
+        scope
+            .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Map {
+                item_count: output.as_array().map_or(0, Vec::len),
+                output,
+                next: spec.next.to_string(),
+            },
+        })
+    }
+
+    fn execute_reduce_node(
+        &self,
+        step: usize,
+        node: &Node,
+        source: &str,
+        operation: &ReduceOperation,
+        next: &str,
+        scope: &mut RuntimeScope,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let source_value = scope.node_output(source).cloned().ok_or_else(|| {
+            WorkflowRuntimeError::MissingMergeSource {
+                node_id: node.id.clone(),
+                source_id: source.to_string(),
+            }
+        })?;
+
+        let reduced = reduce_value(&node.id, source, operation, source_value)?;
+        scope
+            .record_node_output(&node.id, reduced.clone(), ScopeCapability::ReduceWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Reduce {
+                operation: operation.clone(),
+                output: reduced,
+                next: next.to_string(),
+            },
+        })
+    }
+
+    fn execute_batch_node(
+        &self,
+        step: usize,
+        node: &Node,
+        items_path: &str,
+        next: &str,
+        scope: &mut RuntimeScope,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let scoped = scope
+            .scoped_input(ScopeCapability::MapRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+        let items = resolve_path(&scoped, items_path).ok_or_else(|| {
+            WorkflowRuntimeError::BatchItemsNotArray {
+                node_id: node.id.clone(),
+                items_path: items_path.to_string(),
+            }
+        })?;
+        let array = items
+            .as_array()
+            .ok_or_else(|| WorkflowRuntimeError::BatchItemsNotArray {
+                node_id: node.id.clone(),
+                items_path: items_path.to_string(),
+            })?;
+
+        let output = Value::Array(array.clone());
+        scope
+            .record_node_output(&node.id, output.clone(), ScopeCapability::MapWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Batch {
+                items_path: items_path.to_string(),
+                item_count: array.len(),
+                next: next.to_string(),
+            },
+        })
+    }
+
+    fn execute_filter_node(
+        &self,
+        step: usize,
+        node: &Node,
+        items_path: &str,
+        expression: &str,
+        next: &str,
+        scope: &mut RuntimeScope,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let scoped = scope
+            .scoped_input(ScopeCapability::MapRead)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+        let items_value = resolve_path(&scoped, items_path).ok_or_else(|| {
+            WorkflowRuntimeError::FilterItemsNotArray {
+                node_id: node.id.clone(),
+                items_path: items_path.to_string(),
+            }
+        })?;
+        let array =
+            items_value
+                .as_array()
+                .ok_or_else(|| WorkflowRuntimeError::FilterItemsNotArray {
+                    node_id: node.id.clone(),
+                    items_path: items_path.to_string(),
+                })?;
+        if array.len() > self.options.security_limits.max_filter_items {
+            return Err(WorkflowRuntimeError::FilterItemLimitExceeded {
+                node_id: node.id.clone(),
+                actual_items: array.len(),
+                max_items: self.options.security_limits.max_filter_items,
+            });
+        }
+
+        let mut kept = Vec::new();
+        for (index, item) in array.iter().enumerate() {
+            let mut eval_scope = scoped.clone();
+            if let Some(object) = eval_scope.as_object_mut() {
+                object.insert("item".to_string(), item.clone());
+                object.insert("item_index".to_string(), Value::from(index as u64));
+            }
+            enforce_expression_scope_budget(
+                &node.id,
+                &eval_scope,
+                self.options.security_limits.max_expression_scope_bytes,
+            )?;
+            let include =
+                expressions::evaluate_bool(expression, &eval_scope).map_err(|reason| {
+                    WorkflowRuntimeError::InvalidFilterExpression {
+                        node_id: node.id.clone(),
+                        expression: expression.to_string(),
+                        reason: reason.to_string(),
+                    }
+                })?;
+            if include {
+                kept.push(item.clone());
+            }
+        }
+        let output = Value::Array(kept.clone());
+        scope
+            .record_node_output(&node.id, output, ScopeCapability::MapWrite)
+            .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                node_id: node.id.clone(),
+                source,
+            })?;
+
+        Ok(NodeExecution {
+            step,
+            node_id: node.id.clone(),
+            data: NodeExecutionData::Filter {
+                items_path: items_path.to_string(),
+                expression: expression.to_string(),
+                kept: kept.len(),
+                next: next.to_string(),
+            },
+        })
     }
 
     async fn execute_llm_with_policy(
@@ -2482,6 +2648,45 @@ struct ToolPolicyRequest<'a> {
     executor: &'a dyn ToolExecutor,
     scoped_input: Value,
     cancellation: Option<&'a dyn CancellationSignal>,
+}
+
+struct LlmNodeSpec<'a> {
+    model: &'a str,
+    prompt: &'a str,
+    next: &'a Option<String>,
+}
+
+struct ToolNodeSpec<'a> {
+    tool: &'a str,
+    input: &'a Value,
+    next: &'a Option<String>,
+}
+
+struct ConditionNodeSpec<'a> {
+    expression: &'a str,
+    on_true: &'a str,
+    on_false: &'a str,
+}
+
+struct ParallelNodeSpec<'a> {
+    node_index: &'a HashMap<&'a str, &'a Node>,
+    branches: &'a [String],
+    next: &'a str,
+    max_in_flight: Option<usize>,
+}
+
+struct MergeNodeSpec<'a> {
+    sources: &'a [String],
+    policy: &'a MergePolicy,
+    quorum: Option<usize>,
+    next: &'a str,
+}
+
+struct MapNodeSpec<'a> {
+    tool: &'a str,
+    items_path: &'a str,
+    next: &'a str,
+    max_in_flight: Option<usize>,
 }
 
 impl RuntimeScope {
@@ -3374,6 +3579,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn linear_flow_records_expected_node_execution_payloads() {
+        let llm = MockLlmExecutor {
+            output: "ok".to_string(),
+        };
+        let tools = MockToolExecutor {
+            output: json!({"status": "done"}),
+            fail: false,
+        };
+        let runtime = WorkflowRuntime::new(
+            linear_workflow(),
+            &llm,
+            Some(&tools),
+            WorkflowRuntimeOptions::default(),
+        );
+
+        let result = runtime
+            .execute(json!({"request_id": "r1"}), None)
+            .await
+            .expect("linear workflow should succeed");
+
+        assert!(matches!(
+            result.node_executions[0].data,
+            NodeExecutionData::Start { ref next } if next == "llm"
+        ));
+        assert!(matches!(
+            result.node_executions[1].data,
+            NodeExecutionData::Llm {
+                ref model,
+                ref output,
+                ref next
+            } if model == "gpt-4" && output == "ok" && next == "tool"
+        ));
+        assert!(matches!(
+            result.node_executions[2].data,
+            NodeExecutionData::Tool {
+                ref tool,
+                ref next,
+                ..
+            } if tool == "extract" && next == "end"
+        ));
+    }
+
+    #[tokio::test]
     async fn executes_conditional_branching() {
         let workflow = WorkflowDefinition {
             version: "v0".to_string(),
@@ -4139,6 +4387,53 @@ mod tests {
             .expect("event mismatch should route to fallback");
 
         assert_eq!(result.terminal_node_id, "end_mismatch");
+    }
+
+    #[tokio::test]
+    async fn cache_read_routes_to_on_miss_when_value_absent() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "cache-read-miss".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "cache_read".to_string(),
+                    },
+                },
+                Node {
+                    id: "cache_read".to_string(),
+                    kind: NodeKind::CacheRead {
+                        key_path: "input.cache_key".to_string(),
+                        next: "end_hit".to_string(),
+                        on_miss: Some("end_miss".to_string()),
+                    },
+                },
+                Node {
+                    id: "end_hit".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_miss".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+        let runtime = WorkflowRuntime::new(workflow, &llm, None, WorkflowRuntimeOptions::default());
+
+        let result = runtime
+            .execute(json!({"cache_key": "new-customer"}), None)
+            .await
+            .expect("cache read miss should still execute via on_miss route");
+
+        assert_eq!(
+            result.node_outputs.get("cache_read"),
+            Some(&json!({"key": "new-customer", "hit": false, "value": null}))
+        );
+        assert_eq!(result.terminal_node_id, "end_miss");
     }
 
     #[tokio::test]
