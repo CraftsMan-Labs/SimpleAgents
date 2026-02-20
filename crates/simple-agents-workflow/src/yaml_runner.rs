@@ -305,6 +305,46 @@ struct StreamedPayloadResolution {
     heal_confidence: Option<f32>,
 }
 
+#[derive(Debug, Default)]
+struct StreamJsonAsTextFormatter {
+    raw_json: String,
+    emitted: bool,
+}
+
+impl StreamJsonAsTextFormatter {
+    fn push(&mut self, chunk: &str) {
+        self.raw_json.push_str(chunk);
+    }
+
+    fn emit_if_ready(&mut self, complete: bool) -> Option<String> {
+        if self.emitted || !complete {
+            return None;
+        }
+        self.emitted = true;
+        Some(render_json_object_as_text(self.raw_json.as_str()))
+    }
+}
+
+fn render_json_object_as_text(raw_json: &str) -> String {
+    let value = match serde_json::from_str::<Value>(raw_json) {
+        Ok(value) => value,
+        Err(_) => return raw_json.to_string(),
+    };
+    let Some(object) = value.as_object() else {
+        return raw_json.to_string();
+    };
+
+    let mut lines = Vec::with_capacity(object.len());
+    for (key, value) in object {
+        let rendered = match value {
+            Value::String(text) => text.clone(),
+            _ => value.to_string(),
+        };
+        lines.push(format!("{key}: {rendered}"));
+    }
+    lines.join("\n")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum YamlWorkflowTokenKind {
@@ -390,6 +430,10 @@ impl StructuredJsonDeltaFilter {
         };
 
         (output, thinking)
+    }
+
+    fn completed(&self) -> bool {
+        self.completed
     }
 }
 
@@ -763,6 +807,7 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
                             .and_then(|c| c.prompt.clone())
                             .unwrap_or_default(),
                         "stream": llm.stream.unwrap_or(false),
+                        "stream_json_as_text": llm.stream_json_as_text.unwrap_or(false),
                         "heal": llm.heal.unwrap_or(false),
                         "messages_path": llm.messages_path,
                         "append_prompt_as_user": llm.append_prompt_as_user.unwrap_or(true),
@@ -900,6 +945,7 @@ fn escape_mermaid_label(label: &str) -> String {
 pub struct YamlLlmExecutionRequest {
     pub node_id: String,
     pub is_terminal_node: bool,
+    pub stream_json_as_text: bool,
     pub model: String,
     pub messages: Option<Vec<Message>>,
     pub append_prompt_as_user: bool,
@@ -1229,6 +1275,11 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     let mut aggregated = String::new();
                     let mut delta_filter = StructuredJsonDeltaFilter::default();
                     let include_raw_debug = include_raw_stream_debug_events();
+                    let mut json_text_formatter = if request.stream_json_as_text {
+                        Some(StreamJsonAsTextFormatter::default())
+                    } else {
+                        None
+                    };
                     while let Some(chunk_result) = stream.next().await {
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
@@ -1236,6 +1287,17 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 aggregated.push_str(delta.as_str());
                                 let (output_delta, thinking_delta) =
                                     delta_filter.split(delta.as_str());
+                                let rendered_output_delta = if let Some(output_chunk) = output_delta
+                                {
+                                    if let Some(formatter) = json_text_formatter.as_mut() {
+                                        formatter.push(output_chunk.as_str());
+                                        formatter.emit_if_ready(delta_filter.completed())
+                                    } else {
+                                        Some(output_chunk)
+                                    }
+                                } else {
+                                    None
+                                };
                                 if include_raw_debug {
                                     if let Some(sink) = event_sink {
                                         if let Some(raw_thinking_delta) = thinking_delta.as_ref() {
@@ -1255,7 +1317,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                                 metadata: None,
                                             });
                                         }
-                                        if let Some(raw_output_delta) = output_delta.as_ref() {
+                                        if let Some(raw_output_delta) =
+                                            rendered_output_delta.as_ref()
+                                        {
                                             sink.emit(&YamlWorkflowEvent {
                                                 event_type: "node_stream_raw_delta".to_string(),
                                                 node_id: Some(request.node_id.clone()),
@@ -1274,7 +1338,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                         }
                                     }
                                 }
-                                if let Some(filtered_delta) = output_delta {
+                                if let Some(filtered_delta) = rendered_output_delta {
                                     if let Some(sink) = event_sink {
                                         sink.emit(&YamlWorkflowEvent {
                                             event_type: "node_stream_delta".to_string(),
@@ -1659,6 +1723,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             let request = YamlLlmExecutionRequest {
                 node_id: node.id.clone(),
                 is_terminal_node,
+                stream_json_as_text: llm.stream_json_as_text.unwrap_or(false),
                 model: llm.model.clone(),
                 messages,
                 append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
@@ -1692,6 +1757,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     metadata: Some(json!({
                         "model": request.model.clone(),
                         "stream_requested": request.stream,
+                        "stream_json_as_text": request.stream_json_as_text,
                         "heal_requested": request.heal,
                         "effective_stream": request.stream,
                         "prompt_template": request.prompt_template.clone(),
@@ -2075,6 +2141,11 @@ async fn try_run_yaml_via_ir_runtime(
                 let request = YamlLlmExecutionRequest {
                     node_id,
                     is_terminal_node: false,
+                    stream_json_as_text: input
+                        .input
+                        .get("stream_json_as_text")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     model,
                     messages,
                     append_prompt_as_user,
@@ -2787,6 +2858,7 @@ pub struct YamlNodeType {
 pub struct YamlLlmCall {
     pub model: String,
     pub stream: Option<bool>,
+    pub stream_json_as_text: Option<bool>,
     pub heal: Option<bool>,
     pub messages_path: Option<String>,
     pub append_prompt_as_user: Option<bool>,
@@ -3423,6 +3495,30 @@ Some trailing explanation"#;
             filtered,
             "{\"reason\":\"brace } in text\",\"state\":\"ok\"}"
         );
+    }
+
+    #[test]
+    fn render_json_object_as_text_converts_top_level_fields() {
+        let rendered =
+            render_json_object_as_text(r#"{"question":"q","confidence":0.8,"nested":{"a":1}}"#);
+        let lines: std::collections::HashSet<&str> = rendered.lines().collect();
+
+        assert_eq!(lines.len(), 3);
+        assert!(lines.contains("question: q"));
+        assert!(lines.contains("confidence: 0.8"));
+        assert!(lines.contains("nested: {\"a\":1}"));
+    }
+
+    #[test]
+    fn stream_json_as_text_formatter_emits_once_when_complete() {
+        let mut formatter = StreamJsonAsTextFormatter::default();
+        formatter.push("{\"question\":\"hello\"}");
+
+        let first = formatter.emit_if_ready(true);
+        let second = formatter.emit_if_ready(true);
+
+        assert_eq!(first, Some("question: hello".to_string()));
+        assert_eq!(second, None);
     }
 
     #[test]
