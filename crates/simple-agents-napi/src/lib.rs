@@ -23,7 +23,10 @@ use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, 
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_workflow::run_workflow_yaml_file_with_client;
+use simple_agents_workflow::{
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
+    YamlWorkflowRunOptions,
+};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -933,6 +936,19 @@ impl Client {
         workflow_path: String,
         workflow_input: JsonValue,
     ) -> Result<JsonValue> {
+        self.run_workflow_yaml_with_options(workflow_path, workflow_input, None)
+    }
+
+    #[napi(
+        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_return_type = "any"
+    )]
+    pub fn run_workflow_yaml_with_options(
+        &self,
+        workflow_path: String,
+        workflow_input: JsonValue,
+        workflow_options: Option<JsonValue>,
+    ) -> Result<JsonValue> {
         if workflow_path.trim().is_empty() {
             return Err(Error::from_reason(
                 "workflow_path cannot be empty".to_string(),
@@ -944,13 +960,27 @@ impl Client {
             ));
         }
 
+        let options = workflow_options
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                    Error::from_reason(format!("invalid workflowOptions: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+
         let output = self
             .runtime
-            .block_on(run_workflow_yaml_file_with_client(
-                std::path::Path::new(workflow_path.as_str()),
-                &workflow_input,
-                &self.client,
-            ))
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                    std::path::Path::new(workflow_path.as_str()),
+                    &workflow_input,
+                    &self.client,
+                    None,
+                    None,
+                    &options,
+                ),
+            )
             .map_err(|error| Error::from_reason(error.to_string()))?;
 
         serde_json::to_value(output)

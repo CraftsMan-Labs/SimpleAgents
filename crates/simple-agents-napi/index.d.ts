@@ -86,6 +86,10 @@ export interface StreamEvent {
   delta?: StreamDelta
   error?: StreamErrorEvent
 }
+export interface WorkflowRunOptions {
+  telemetry?: Record<string, unknown>
+  trace?: Record<string, unknown>
+}
 export declare class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
@@ -93,4 +97,5 @@ export declare class Client {
   streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
   runEmailWorkflowYaml(workflowPath: string, emailText: string): any
   runWorkflowYaml(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }): any
+  runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: WorkflowRunOptions): any
 }

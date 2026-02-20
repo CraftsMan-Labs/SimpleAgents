@@ -19,6 +19,13 @@ char *sa_run_workflow_yaml(
     const char *workflow_input_json
 );
 
+char *sa_run_workflow_yaml_with_options(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+);
+
 extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
@@ -54,6 +61,20 @@ static char *sa_run_email_workflow_yaml_go(
     const char *email_text
 ) {
     return sa_run_email_workflow_yaml(client, workflow_path, email_text);
+}
+
+static char *sa_run_workflow_yaml_with_options_go(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+) {
+    return sa_run_workflow_yaml_with_options(
+        client,
+        workflow_path,
+        workflow_input_json,
+        workflow_options_json
+    );
 }
 
 */
@@ -188,6 +209,13 @@ type WorkflowYAMLOutput struct {
 	TerminalOutput any                       `json:"terminal_output"`
 	StepTimings    []WorkflowStepTiming      `json:"step_timings"`
 	TotalElapsedMS uint64                    `json:"total_elapsed_ms"`
+	TraceID        string                    `json:"trace_id,omitempty"`
+	Metadata       map[string]any            `json:"metadata,omitempty"`
+}
+
+type WorkflowRunOptions struct {
+	Telemetry map[string]any `json:"telemetry,omitempty"`
+	Trace     map[string]any `json:"trace,omitempty"`
 }
 
 type streamBridge struct {
@@ -285,6 +313,16 @@ func (c *Client) RunWorkflowYAML(
 	workflowPath string,
 	workflowInput map[string]any,
 ) (WorkflowYAMLOutput, error) {
+	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, nil)
+}
+
+// RunWorkflowYAMLWithOptions executes the Rust workflow YAML runner with telemetry options.
+func (c *Client) RunWorkflowYAMLWithOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options map[string]any,
+) (WorkflowYAMLOutput, error) {
 	if workflowPath == "" {
 		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
 	}
@@ -300,6 +338,15 @@ func (c *Client) RunWorkflowYAML(
 		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
 	}
 
+	workflowOptionsJSON := ""
+	if options != nil {
+		encoded, marshalErr := json.Marshal(options)
+		if marshalErr != nil {
+			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
+		}
+		workflowOptionsJSON = string(encoded)
+	}
+
 	ptr, err := c.beginCall()
 	if err != nil {
 		return WorkflowYAMLOutput{}, err
@@ -310,10 +357,17 @@ func (c *Client) RunWorkflowYAML(
 		defer c.endCall()
 		cWorkflowPath := C.CString(workflowPath)
 		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
+		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
 		defer C.free(unsafe.Pointer(cWorkflowPath))
 		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
+		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
 
-		response := C.sa_run_workflow_yaml(ptr, cWorkflowPath, cWorkflowInputJSON)
+		response := C.sa_run_workflow_yaml_with_options_go(
+			ptr,
+			cWorkflowPath,
+			cWorkflowInputJSON,
+			cWorkflowOptionsJSON,
+		)
 		if response == nil {
 			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
 			return
