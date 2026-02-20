@@ -12,6 +12,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Guard against vendored docs dependencies
+        run: |
+          tracked_count=$(git ls-files -- "docs/node_modules" "docs/node_modules/**" | wc -l)
+          if [ "$tracked_count" -ne 0 ]; then
+            echo "Error: docs/node_modules has tracked files ($tracked_count)."
+            echo "Remove vendored docs dependencies from git index and keep docs/package-lock.json only."
+            exit 1
+          fi
+          echo "OK: no vendored docs dependencies are tracked."
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:
@@ -22,6 +31,8 @@ jobs:
           cache: npm
           cache-dependency-path: crates/simple-agents-napi/package-lock.json
       - uses: astral-sh/setup-uv@v4
+      - name: Check README/workspace version sync
+        run: ./scripts/check-readme-version.sh
       - name: Run cross-language capability contract gates
         run: ./scripts/run-binding-contracts.sh
 

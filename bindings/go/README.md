@@ -71,6 +71,8 @@ See runnable example: `bindings/go/examples/client/main.go`.
 - `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (compatibility alias)
 - `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
 - `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
+- `(*Client).RunWorkflowYAML(ctx, workflowPath, workflowInput)` (generic workflow input)
+- `(*Client).RunEmailWorkflowYAML(ctx, workflowPath, emailText)` (compatibility wrapper)
 - `(*Client).Complete(...)` (backward-compatible prompt helper)
 - `(*Client).Close()`
 
@@ -83,6 +85,18 @@ See runnable example: `bindings/go/examples/client/main.go`.
 - Streaming currently supports only `standard` mode.
 
 ## Test layers
+
+- Recommended (repo-root, reproducible env/linker setup): `make test-go-bindings`
+- Build-only check (repo-root): `make release-go`
+- Direct local invocation from `bindings/go/` (equivalent env wiring):
+
+```sh
+CGO_CFLAGS="-I$(pwd)/../../crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$(pwd)/../../target/release" \
+GOCACHE="$(pwd)/.gocache" \
+LD_LIBRARY_PATH="$(pwd)/../../target/release:${LD_LIBRARY_PATH}" \
+go test ./...
+```
 
 - Unit: `go test ./... -run 'TestValidate|TestCompleteMessagesUninitializedClient|TestCompleteWithContextUninitializedClient|TestStreamMessagesUninitializedClient'`
 - Contract: `go test ./... -run 'TestGoBindingsFollowSharedContractFixture|TestValidateCompleteOptionsGoldenCases'`

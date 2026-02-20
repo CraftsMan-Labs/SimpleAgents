@@ -124,7 +124,6 @@ impl OpenRouterProvider {
             .timeout(Duration::from_secs(30))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
-            .http2_prior_knowledge()
             .build()
             .map_err(|e| {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -232,6 +231,11 @@ impl Provider for OpenRouterProvider {
         };
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -246,8 +250,11 @@ impl Provider for OpenRouterProvider {
             );
 
             // Use OpenAI error parsing (compatible format)
-            let openai_error =
-                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = crate::openai::OpenAIError::from_response(
+                status.as_u16(),
+                &error_body,
+                retry_after,
+            );
             timer.complete_error(format!("http_{}", status.as_u16()));
 
             return Err(SimpleAgentsError::Provider(openai_error.into()));
@@ -265,8 +272,14 @@ impl Provider for OpenRouterProvider {
         };
 
         // Extract token usage for metrics
-        let prompt_tokens = body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        let completion_tokens = body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+        let prompt_tokens = safe_token_count(
+            body["usage"]["prompt_tokens"].as_u64(),
+            "usage.prompt_tokens",
+        );
+        let completion_tokens = safe_token_count(
+            body["usage"]["completion_tokens"].as_u64(),
+            "usage.completion_tokens",
+        );
 
         // Record success metrics
         timer.complete_success(prompt_tokens, completion_tokens);
@@ -355,6 +368,11 @@ impl Provider for OpenRouterProvider {
             })?;
 
         let status = response.status();
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(crate::utils::parse_retry_after);
 
         // Handle error responses
         if !status.is_success() {
@@ -368,8 +386,11 @@ impl Provider for OpenRouterProvider {
                 "OpenRouter streaming request failed"
             );
 
-            let openai_error =
-                crate::openai::OpenAIError::from_response(status.as_u16(), &error_body);
+            let openai_error = crate::openai::OpenAIError::from_response(
+                status.as_u16(),
+                &error_body,
+                retry_after,
+            );
             return Err(SimpleAgentsError::Provider(openai_error.into()));
         }
 
@@ -378,6 +399,21 @@ impl Provider for OpenRouterProvider {
         let sse_stream = crate::openai::streaming::SseStream::new(byte_stream);
 
         Ok(Box::new(sse_stream))
+    }
+}
+
+fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
+    let raw = raw.unwrap_or(0);
+    match u32::try_from(raw) {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(
+                field = field,
+                raw = raw,
+                "Token count exceeded u32::MAX; clamping value"
+            );
+            u32::MAX
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde_json::{Number, Value};
 use thiserror::Error;
@@ -108,6 +108,12 @@ impl ExpressionEngine {
         eval_node(&node, scoped_input)
     }
 
+    fn cache_lock(&self) -> MutexGuard<'_, HashMap<String, ExpressionNode>> {
+        self.cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     fn compile(&self, expression: &str) -> Result<ExpressionNode, ExpressionError> {
         let normalized = expression.trim();
         if normalized.is_empty() {
@@ -122,13 +128,7 @@ impl ExpressionEngine {
             });
         }
 
-        if let Some(cached) = self
-            .cache
-            .lock()
-            .expect("expression cache lock poisoned")
-            .get(normalized)
-            .cloned()
-        {
+        if let Some(cached) = self.cache_lock().get(normalized).cloned() {
             return Ok(cached);
         }
 
@@ -153,7 +153,7 @@ impl ExpressionEngine {
         }
         validate_path_segments(&parsed, self.limits.max_path_segments)?;
 
-        let mut cache = self.cache.lock().expect("expression cache lock poisoned");
+        let mut cache = self.cache_lock();
         if cache.len() >= self.limits.max_cache_entries {
             if let Some(evicted) = cache.keys().next().cloned() {
                 cache.remove(&evicted);

@@ -1,31 +1,52 @@
 from __future__ import annotations
 
-from typing import Any, Iterator, Literal, Mapping, Sequence, overload, Never
+from typing import (
+    Any,
+    Callable,
+    Iterator,
+    Literal,
+    Mapping,
+    Sequence,
+    TypedDict,
+    overload,
+    Never,
+)
 
+WorkflowMessageRole = Literal["system", "user", "assistant", "tool"]
+
+class WorkflowMessage(TypedDict, total=False):
+    role: WorkflowMessageRole
+    content: str
+    name: str
+    tool_call_id: str
+
+class WorkflowInput(TypedDict, total=False):
+    email_text: str
+    messages: list[WorkflowMessage]
 
 class ParseResult:
     value: Any
     confidence: float
     was_healed: bool
 
-    def __init__(self, value: Any, confidence: float, was_healed: bool, flags: list[str]) -> None: ...
+    def __init__(
+        self, value: Any, confidence: float, was_healed: bool, flags: list[str]
+    ) -> None: ...
     @property
     def flags(self) -> list[str]: ...
-
 
 class CoercionResult:
     value: Any
     confidence: float
     was_coerced: bool
 
-    def __init__(self, value: Any, confidence: float, was_coerced: bool, flags: list[str]) -> None: ...
+    def __init__(
+        self, value: Any, confidence: float, was_coerced: bool, flags: list[str]
+    ) -> None: ...
     @property
     def flags(self) -> list[str]: ...
 
-
-class PySchema:
-    ...
-
+class PySchema: ...
 
 class SchemaBuilder:
     def __init__(self) -> None: ...
@@ -43,7 +64,6 @@ class SchemaBuilder:
     ) -> None: ...
     def build(self) -> PySchema: ...
 
-
 class StreamingParser:
     def __init__(self, config: dict[str, Any] | None = None) -> None: ...
     def feed(self, chunk: str) -> None: ...
@@ -52,18 +72,15 @@ class StreamingParser:
     def is_empty(self) -> bool: ...
     def clear(self) -> None: ...
 
-
 class StreamChunk:
     content: str
     finish_reason: str | None
     model: str
     index: int
 
-
 class PyStreamIterator:
     def __iter__(self) -> Iterator[StreamChunk]: ...
     def __next__(self) -> StreamChunk: ...
-
 
 class HealedJsonResult:
     content: str
@@ -95,7 +112,6 @@ class HealedJsonResult:
     @property
     def flags(self) -> list[str]: ...
 
-
 class PyStructuredEvent:
     is_partial: bool
     is_complete: bool
@@ -103,7 +119,6 @@ class PyStructuredEvent:
     partial_value: Any
     confidence: float
     was_healed: bool
-
 
 class ResponseWithMetadata:
     content: str
@@ -122,11 +137,9 @@ class ResponseWithMetadata:
     @property
     def flags(self) -> list[str]: ...
 
-
 class StructuredStreamIterator:
     def __iter__(self) -> Iterator[PyStructuredEvent]: ...
     def __next__(self) -> PyStructuredEvent: ...
-
 
 class Client:
     def __init__(
@@ -137,7 +150,6 @@ class Client:
         healing: bool = True,
         timeout_seconds: int = 30,
     ) -> None: ...
-
     @overload
     def complete(
         self,
@@ -156,7 +168,6 @@ class Client:
         stream: Literal[True],
         heal: Literal[False] = False,
     ) -> Iterator[PyStructuredEvent]: ...
-
     @overload
     def complete(
         self,
@@ -175,7 +186,6 @@ class Client:
         stream: Literal[True],
         heal: Literal[False] = False,
     ) -> Iterator[StreamChunk]: ...
-
     @overload
     def complete(
         self,
@@ -194,7 +204,6 @@ class Client:
         stream: Literal[True],
         heal: Literal[True],
     ) -> Never: ...
-
     @overload
     def complete(
         self,
@@ -213,7 +222,6 @@ class Client:
         stream: Literal[False] = False,
         heal: Literal[True],
     ) -> HealedJsonResult: ...
-
     @overload
     def complete(
         self,
@@ -232,7 +240,6 @@ class Client:
         stream: Literal[False] = False,
         heal: Literal[False] = False,
     ) -> str: ...
-
     @overload
     def complete(
         self,
@@ -251,7 +258,6 @@ class Client:
         stream: Literal[False] = False,
         heal: Literal[True],
     ) -> HealedJsonResult: ...
-
     @overload
     def complete(
         self,
@@ -270,7 +276,6 @@ class Client:
         stream: Literal[False] = False,
         heal: Literal[False] = False,
     ) -> str: ...
-
     @overload
     def complete(
         self,
@@ -289,7 +294,6 @@ class Client:
         stream: Literal[False] = False,
         heal: bool = False,
     ) -> ResponseWithMetadata: ...
-
     def complete(
         self,
         model: str,
@@ -305,8 +309,37 @@ class Client:
         strict: bool = True,
         stream: bool = False,
         heal: bool = False,
-    ) -> ResponseWithMetadata | HealedJsonResult | str | Iterator[StreamChunk] | Iterator[PyStructuredEvent]: ...
-
+    ) -> (
+        ResponseWithMetadata
+        | HealedJsonResult
+        | str
+        | Iterator[StreamChunk]
+        | Iterator[PyStructuredEvent]
+    ): ...
+    def run_email_workflow_yaml(
+        self,
+        workflow_path: str,
+        email_text: str,
+        include_events: bool = False,
+    ) -> dict[str, Any]: ...
+    def run_email_workflow_yaml_stream(
+        self,
+        workflow_path: str,
+        email_text: str,
+        on_event: Callable[[dict[str, Any]], object] | None = None,
+    ) -> dict[str, Any]: ...
+    def run_workflow_yaml(
+        self,
+        workflow_path: str,
+        workflow_input: WorkflowInput | Mapping[str, Any],
+        include_events: bool = False,
+    ) -> dict[str, Any]: ...
+    def run_workflow_yaml_stream(
+        self,
+        workflow_path: str,
+        workflow_input: WorkflowInput | Mapping[str, Any],
+        on_event: Callable[[dict[str, Any]], object] | None = None,
+    ) -> dict[str, Any]: ...
 
 class ProviderConfig:
     def __init__(
@@ -322,7 +355,6 @@ class ProviderConfig:
     @property
     def api_base(self) -> str | None: ...
 
-
 class RoutingPolicy:
     @staticmethod
     def direct() -> RoutingPolicy: ...
@@ -337,12 +369,10 @@ class RoutingPolicy:
     @property
     def mode(self) -> str: ...
 
-
 class CacheConfig:
     def __init__(self, ttl_seconds: int) -> None: ...
     @property
     def ttl_seconds(self) -> int: ...
-
 
 class HealingConfig:
     def __init__(
@@ -357,7 +387,6 @@ class HealingConfig:
     def min_confidence(self) -> float: ...
     @property
     def fuzzy_match_threshold(self) -> float: ...
-
 
 class ClientBuilder:
     def __init__(self) -> None: ...
@@ -378,9 +407,10 @@ class ClientBuilder:
     def with_healing_config(self, config: dict[str, Any]) -> ClientBuilder: ...
     def with_healing(self, config: HealingConfig) -> ClientBuilder: ...
     def add_middleware(self, middleware: object) -> ClientBuilder: ...
-    def with_custom_cache(self, cache: object, ttl_seconds: int | None = None) -> ClientBuilder: ...
+    def with_custom_cache(
+        self, cache: object, ttl_seconds: int | None = None
+    ) -> ClientBuilder: ...
     def build(self) -> Client: ...
-
 
 def heal_json(text: str, config: dict[str, Any] | None = None) -> ParseResult: ...
 def coerce_to_schema(

@@ -5,17 +5,17 @@
 use futures_util::{Stream, StreamExt};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
 use reqwest::Client as HttpClient;
-use serde_json::Value;
+use serde_json::{json, Value};
 use simple_agent_type::cache::Cache;
-use simple_agent_type::message::Message;
+use simple_agent_type::message::{parse_messages_value, Message};
 use simple_agent_type::prelude::{
     ApiKey, CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
 };
 use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
 use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
-use simple_agent_type::tool::{ToolCall, ToolChoice, ToolDefinition};
+use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
     SimpleAgentsClient, SimpleAgentsClientBuilder,
@@ -32,6 +32,11 @@ use simple_agents_providers::healing_integration::{
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
+use simple_agents_workflow::{
+    run_workflow_yaml_file_with_client_and_custom_worker,
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
+};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -39,6 +44,88 @@ use std::time::{Duration, Instant};
 type Runtime = tokio::runtime::Runtime;
 type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
 type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
+
+struct NamedProvider {
+    name: String,
+    inner: Arc<dyn Provider>,
+}
+
+impl NamedProvider {
+    fn new(name: String, inner: Arc<dyn Provider>) -> Self {
+        Self { name, inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for NamedProvider {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn transform_request(
+        &self,
+        req: &CompletionRequest,
+    ) -> Result<simple_agent_type::provider::ProviderRequest> {
+        self.inner.transform_request(req)
+    }
+
+    async fn execute(
+        &self,
+        req: simple_agent_type::provider::ProviderRequest,
+    ) -> Result<simple_agent_type::provider::ProviderResponse> {
+        self.inner.execute(req).await
+    }
+
+    fn transform_response(
+        &self,
+        resp: simple_agent_type::provider::ProviderResponse,
+    ) -> Result<CompletionResponse> {
+        self.inner.transform_response(resp)
+    }
+
+    fn retry_config(&self) -> simple_agent_type::config::RetryConfig {
+        self.inner.retry_config()
+    }
+
+    fn capabilities(&self) -> simple_agent_type::config::Capabilities {
+        self.inner.capabilities()
+    }
+
+    fn timeout(&self) -> Duration {
+        self.inner.timeout()
+    }
+
+    async fn execute_stream(
+        &self,
+        req: simple_agent_type::provider::ProviderRequest,
+    ) -> Result<Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        self.inner.execute_stream(req).await
+    }
+}
+
+fn provider_name_exists(providers: &[Arc<dyn Provider>], name: &str) -> bool {
+    providers.iter().any(|p| p.name() == name)
+}
+
+fn alias_duplicate_provider_name(
+    providers: &[Arc<dyn Provider>],
+    provider: &str,
+    api_base: Option<&str>,
+) -> String {
+    let prefer_local_alias = provider == "openai" && api_base.map(is_local_base).unwrap_or(false);
+    if prefer_local_alias && !provider_name_exists(providers, "local") {
+        return "local".to_string();
+    }
+
+    let mut suffix = 2usize;
+    loop {
+        let candidate = format!("{}_{}", provider, suffix);
+        if !provider_name_exists(providers, &candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
 
 struct ResponsePlan {
     response_format: Option<ResponseFormat>,
@@ -1380,7 +1467,7 @@ impl ClientBuilder {
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
         // Enable healing by default for providers added through ClientBuilder
-        let provider = provider_from_params(
+        let mut provider = provider_from_params(
             provider,
             api_key.as_deref(),
             api_base.as_deref(),
@@ -1388,6 +1475,12 @@ impl ClientBuilder {
             Duration::from_secs(30),
         )
         .map_err(py_err)?;
+
+        if provider_name_exists(&slf.providers, provider.name()) {
+            let alias =
+                alias_duplicate_provider_name(&slf.providers, provider.name(), api_base.as_deref());
+            provider = Arc::new(NamedProvider::new(alias, provider));
+        }
 
         slf.providers.push(provider);
         Ok(slf)
@@ -1398,7 +1491,7 @@ impl ClientBuilder {
         mut slf: PyRefMut<'a, Self>,
         config: &ProviderConfig,
     ) -> PyResult<PyRefMut<'a, Self>> {
-        let provider = provider_from_params(
+        let mut provider = provider_from_params(
             &config.provider,
             config.api_key.as_deref(),
             config.api_base.as_deref(),
@@ -1406,6 +1499,15 @@ impl ClientBuilder {
             Duration::from_secs(30),
         )
         .map_err(py_err)?;
+
+        if provider_name_exists(&slf.providers, provider.name()) {
+            let alias = alias_duplicate_provider_name(
+                &slf.providers,
+                provider.name(),
+                config.api_base.as_deref(),
+            );
+            provider = Arc::new(NamedProvider::new(alias, provider));
+        }
 
         slf.providers.push(provider);
         Ok(slf)
@@ -2065,104 +2167,210 @@ fn response_with_metadata_from_response(
 }
 
 fn finish_reason_to_str(reason: FinishReason) -> &'static str {
-    match reason {
-        FinishReason::Stop => "stop",
-        FinishReason::Length => "length",
-        FinishReason::ContentFilter => "content_filter",
-        FinishReason::ToolCalls => "tool_calls",
-    }
+    reason.as_str()
 }
 
 fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
-    let list: &Bound<'_, PyList> = messages
-        .downcast()
+    let value: Value = pythonize::depythonize(messages)
         .map_err(|_| SimpleAgentsError::Config("messages must be a list of dicts".to_string()))?;
-    let mut result = Vec::with_capacity(list.len());
+    parse_messages_value(&value).map_err(SimpleAgentsError::Config)
+}
 
-    for (idx, item) in list.iter().enumerate() {
-        let dict: &Bound<'_, PyDict> = item
-            .downcast()
-            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] must be a dict")))?;
-
-        let role_obj = dict
-            .get_item("role")
-            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] missing 'role'")))?
-            .ok_or_else(|| SimpleAgentsError::Config(format!("message[{idx}] missing 'role'")))?;
-        let role: String = role_obj.extract().map_err(|_| {
-            SimpleAgentsError::Config(format!("message[{idx}].role must be a string"))
-        })?;
-
-        let content_obj = dict
-            .get_item("content")
-            .map_err(|_| SimpleAgentsError::Config(format!("message[{idx}] missing 'content'")))?
-            .ok_or_else(|| {
-                SimpleAgentsError::Config(format!("message[{idx}] missing 'content'"))
-            })?;
-        let content: String = content_obj.extract().map_err(|_| {
-            SimpleAgentsError::Config(format!("message[{idx}].content must be a string"))
-        })?;
-
-        let mut message = match role.as_str() {
-            "user" => Message::user(&content),
-            "assistant" => Message::assistant(&content),
-            "system" => Message::system(&content),
-            "tool" => {
-                let tool_call_id = dict
-                    .get_item("tool_call_id")
-                    .map_err(|_| {
-                        SimpleAgentsError::Config(format!(
-                            "message[{idx}] missing 'tool_call_id' for tool role"
-                        ))
-                    })?
-                    .ok_or_else(|| {
-                        SimpleAgentsError::Config(format!(
-                            "message[{idx}] missing 'tool_call_id' for tool role"
-                        ))
-                    })?
-                    .extract::<String>()
-                    .map_err(|_| {
-                        SimpleAgentsError::Config(format!(
-                            "message[{idx}].tool_call_id must be a string"
-                        ))
-                    })?;
-                Message::tool(&content, tool_call_id)
+fn handler_to_python_function_name(handler: &str) -> String {
+    let mut out = String::new();
+    for (idx, ch) in handler.chars().enumerate() {
+        if ch.is_ascii_uppercase() {
+            if idx != 0 {
+                out.push('_');
             }
-            _ => {
-                return Err(SimpleAgentsError::Config(format!(
-                    "message[{idx}].role must be one of: user, assistant, system, tool"
-                )))
-            }
-        };
-
-        if let Some(name_obj) = dict.get_item("name").map_err(|_| {
-            SimpleAgentsError::Config(format!("message[{idx}].name must be a string"))
-        })? {
-            if !name_obj.is_none() {
-                let name: String = name_obj.extract().map_err(|_| {
-                    SimpleAgentsError::Config(format!("message[{idx}].name must be a string"))
-                })?;
-                message = message.with_name(name);
-            }
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch);
         }
+    }
+    out
+}
 
-        if let Some(tool_calls_obj) = dict.get_item("tool_calls").map_err(|_| {
-            SimpleAgentsError::Config(format!("message[{idx}].tool_calls must be a list"))
-        })? {
-            if !tool_calls_obj.is_none() {
-                let tool_calls: Vec<ToolCall> =
-                    pythonize::depythonize(&tool_calls_obj).map_err(|_| {
-                        SimpleAgentsError::Config(format!("message[{idx}].tool_calls invalid"))
-                    })?;
-                if !tool_calls.is_empty() {
-                    message = message.with_tool_calls(tool_calls);
+fn workflow_handlers_path(workflow_path: &std::path::Path) -> std::path::PathBuf {
+    workflow_path
+        .parent()
+        .map(|parent| parent.join("handlers.py"))
+        .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"))
+}
+
+struct PythonCustomWorkerExecutor {
+    handlers_path: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
+    async fn execute(
+        &self,
+        handler: &str,
+        payload: &Value,
+        _email_text: &str,
+        context: &Value,
+    ) -> std::result::Result<Value, String> {
+        Python::with_gil(|py| {
+            if !self.handlers_path.exists() {
+                return Err(format!(
+                    "custom worker handlers file not found: {}",
+                    self.handlers_path.display()
+                ));
+            }
+
+            let importlib_util = py
+                .import_bound("importlib.util")
+                .map_err(|error| error.to_string())?;
+            let module_path = self.handlers_path.to_string_lossy().to_string();
+            let spec = importlib_util
+                .call_method1(
+                    "spec_from_file_location",
+                    ("simple_agents_workflow_handlers", module_path.as_str()),
+                )
+                .map_err(|error| error.to_string())?;
+            if spec.is_none() {
+                return Err(format!(
+                    "failed to load module spec from {}",
+                    self.handlers_path.display()
+                ));
+            }
+
+            let module = importlib_util
+                .call_method1("module_from_spec", (&spec,))
+                .map_err(|error| error.to_string())?;
+            let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
+            if loader.is_none() {
+                return Err("module loader is missing for handlers.py".to_string());
+            }
+            loader
+                .call_method1("exec_module", (&module,))
+                .map_err(|error| error.to_string())?;
+
+            let function_name = handler_to_python_function_name(handler);
+            let function = module
+                .getattr(function_name.as_str())
+                .map_err(|error| error.to_string())?;
+            let topic = payload
+                .get("topic")
+                .and_then(Value::as_str)
+                .unwrap_or("clarification");
+            let kwargs = PyDict::new_bound(py);
+            let context_obj =
+                pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
+            let payload_obj =
+                pythonize::pythonize(py, payload).map_err(|error| error.to_string())?;
+            kwargs
+                .set_item(
+                    "email_text",
+                    context["input"]["email_text"].as_str().unwrap_or_default(),
+                )
+                .map_err(|error| error.to_string())?;
+            kwargs
+                .set_item("context", context_obj)
+                .map_err(|error| error.to_string())?;
+            kwargs
+                .set_item("payload", payload_obj)
+                .map_err(|error| error.to_string())?;
+
+            let result = match function.call((topic,), Some(&kwargs)) {
+                Ok(result) => result,
+                Err(with_payload_error) => {
+                    if kwargs.del_item("payload").is_err() {
+                        return Err(with_payload_error.to_string());
+                    }
+                    function
+                        .call((topic,), Some(&kwargs))
+                        .map_err(|fallback_error| {
+                            format!(
+                                "handler call with payload failed: {with_payload_error}; fallback without payload failed: {fallback_error}"
+                            )
+                        })?
                 }
-            }
-        }
+            };
+            pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
+        })
+    }
+}
 
-        result.push(message);
+struct RecordingWorkflowEventSink {
+    events: Mutex<Vec<YamlWorkflowEvent>>,
+}
+
+impl RecordingWorkflowEventSink {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
     }
 
-    Ok(result)
+    fn events_value(&self) -> PyResult<Value> {
+        let events = self
+            .events
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
+            .clone();
+        serde_json::to_value(events).map_err(|error| {
+            PyRuntimeError::new_err(format!("event serialization failed: {error}"))
+        })
+    }
+}
+
+impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(event.clone());
+        }
+    }
+}
+
+fn attach_workflow_events(
+    value: &mut Value,
+    event_sink: &RecordingWorkflowEventSink,
+) -> PyResult<()> {
+    let events_value = event_sink.events_value()?;
+    if let Value::Object(object) = value {
+        object.insert("events".to_string(), events_value);
+    }
+    Ok(())
+}
+
+struct PythonWorkflowEventSink {
+    callback: Option<Py<PyAny>>,
+}
+
+// Safe because callback interaction always happens under the Python GIL.
+unsafe impl Send for PythonWorkflowEventSink {}
+unsafe impl Sync for PythonWorkflowEventSink {}
+
+impl YamlWorkflowEventSink for PythonWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        let Some(callback) = self.callback.as_ref() else {
+            return;
+        };
+
+        Python::with_gil(|py| {
+            let event_value = match serde_json::to_value(event) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
+                    return;
+                }
+            };
+            let py_event = match pythonize::pythonize(py, &event_value) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!(
+                        "[simple-agents-py] failed to convert workflow event for callback: {error}"
+                    );
+                    return;
+                }
+            };
+            if let Err(error) = callback.bind(py).call1((py_event,)) {
+                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
+            }
+        });
+    }
 }
 
 fn parse_tools(tools: &Bound<'_, PyAny>) -> Result<Vec<ToolDefinition>> {
@@ -2634,6 +2842,235 @@ impl Client {
         let response_with_metadata =
             response_with_metadata_from_response(py, response, latency_ms)?;
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
+    }
+
+    #[pyo3(signature = (workflow_path, email_text, include_events=false))]
+    fn run_email_workflow_yaml(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        email_text: &str,
+        include_events: bool,
+    ) -> PyResult<PyObject> {
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+        if email_text.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "email_text cannot be empty".to_string(),
+            ));
+        }
+
+        let workflow_input = json!({ "email_text": email_text });
+
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let event_sink = RecordingWorkflowEventSink::new();
+        let output = if include_events {
+            runtime
+                .block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                        workflow_path_buf.as_path(),
+                        &workflow_input,
+                        &self.client,
+                        Some(&custom_executor),
+                        Some(&event_sink),
+                    ),
+                )
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        } else {
+            runtime
+                .block_on(run_workflow_yaml_file_with_client_and_custom_worker(
+                    workflow_path_buf.as_path(),
+                    &workflow_input,
+                    &self.client,
+                    Some(&custom_executor),
+                ))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        };
+
+        let mut value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        if include_events {
+            attach_workflow_events(&mut value, &event_sink)?;
+        }
+
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    #[pyo3(signature = (workflow_path, workflow_input, include_events=false))]
+    fn run_workflow_yaml(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        workflow_input: &Bound<'_, PyAny>,
+        include_events: bool,
+    ) -> PyResult<PyObject> {
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+
+        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
+            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
+        if !workflow_input_value.is_object() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_input must be a dict/object".to_string(),
+            ));
+        }
+
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let event_sink = RecordingWorkflowEventSink::new();
+
+        let output = if include_events {
+            runtime
+                .block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                        workflow_path_buf.as_path(),
+                        &workflow_input_value,
+                        &self.client,
+                        Some(&custom_executor),
+                        Some(&event_sink),
+                    ),
+                )
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        } else {
+            runtime
+                .block_on(run_workflow_yaml_file_with_client_and_custom_worker(
+                    workflow_path_buf.as_path(),
+                    &workflow_input_value,
+                    &self.client,
+                    Some(&custom_executor),
+                ))
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+        };
+
+        let mut value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        if include_events {
+            attach_workflow_events(&mut value, &event_sink)?;
+        }
+
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    #[pyo3(signature = (workflow_path, email_text, on_event=None))]
+    fn run_email_workflow_yaml_stream(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        email_text: &str,
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<PyObject> {
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+        if email_text.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "email_text cannot be empty".to_string(),
+            ));
+        }
+
+        let workflow_input = json!({ "email_text": email_text });
+
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let event_sink = PythonWorkflowEventSink { callback: on_event };
+        let output = runtime
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                    workflow_path_buf.as_path(),
+                    &workflow_input,
+                    &self.client,
+                    Some(&custom_executor),
+                    Some(&event_sink),
+                ),
+            )
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    #[pyo3(signature = (workflow_path, workflow_input, on_event=None))]
+    fn run_workflow_yaml_stream(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        workflow_input: &Bound<'_, PyAny>,
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<PyObject> {
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_path cannot be empty".to_string(),
+            ));
+        }
+
+        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
+            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
+        if !workflow_input_value.is_object() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_input must be a dict/object".to_string(),
+            ));
+        }
+
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let event_sink = PythonWorkflowEventSink { callback: on_event };
+        let output = runtime
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                    workflow_path_buf.as_path(),
+                    &workflow_input_value,
+                    &self.client,
+                    Some(&custom_executor),
+                    Some(&event_sink),
+                ),
+            )
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
     }
 }
 

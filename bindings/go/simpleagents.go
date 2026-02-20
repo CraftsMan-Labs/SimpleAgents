@@ -7,6 +7,18 @@ package simpleagents
 #include <stdlib.h>
 #include "simple_agents.h"
 
+char *sa_run_email_workflow_yaml(
+    SAClient *client,
+    const char *workflow_path,
+    const char *email_text
+);
+
+char *sa_run_workflow_yaml(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json
+);
+
 extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
@@ -35,6 +47,15 @@ static int32_t sa_stream_messages_go(
         user_data
     );
 }
+
+static char *sa_run_email_workflow_yaml_go(
+    SAClient *client,
+    const char *workflow_path,
+    const char *email_text
+) {
+    return sa_run_email_workflow_yaml(client, workflow_path, email_text);
+}
+
 */
 import "C"
 
@@ -49,8 +70,17 @@ import (
 )
 
 // Message represents a chat message for message-based completions.
+type MessageRole string
+
+const (
+	MessageRoleSystem    MessageRole = "system"
+	MessageRoleUser      MessageRole = "user"
+	MessageRoleAssistant MessageRole = "assistant"
+	MessageRoleTool      MessageRole = "tool"
+)
+
 type Message struct {
-	Role       string
+	Role       MessageRole
 	Content    string
 	Name       string
 	ToolCallID string
@@ -142,6 +172,24 @@ type StreamResult struct {
 	Err   error
 }
 
+type WorkflowStepTiming struct {
+	NodeID    string `json:"node_id"`
+	NodeKind  string `json:"node_kind"`
+	ElapsedMS uint64 `json:"elapsed_ms"`
+}
+
+type WorkflowYAMLOutput struct {
+	WorkflowID     string                    `json:"workflow_id"`
+	EntryNode      string                    `json:"entry_node"`
+	EmailText      string                    `json:"email_text"`
+	Trace          []string                  `json:"trace"`
+	Outputs        map[string]map[string]any `json:"outputs"`
+	TerminalNode   string                    `json:"terminal_node"`
+	TerminalOutput any                       `json:"terminal_output"`
+	StepTimings    []WorkflowStepTiming      `json:"step_timings"`
+	TotalElapsedMS uint64                    `json:"total_elapsed_ms"`
+}
+
 type streamBridge struct {
 	ctx context.Context
 	out chan StreamResult
@@ -178,16 +226,13 @@ func (c *Client) Close() {
 	}
 	c.closed = true
 	ptr := c.ptr
+	c.ptr = nil
 	c.mu.Unlock()
 
-	c.inFlight.Wait()
-
-	c.mu.Lock()
-	if c.ptr == ptr {
-		C.sa_client_free(c.ptr)
-		c.ptr = nil
-	}
-	c.mu.Unlock()
+	go func() {
+		c.inFlight.Wait()
+		C.sa_client_free(ptr)
+	}()
 }
 
 func (c *Client) beginCall() (*C.SAClient, error) {
@@ -225,6 +270,76 @@ func (c *Client) CompletePrompt(
 	return c.CompleteWithContext(ctx, model, prompt, maxTokens, temperature)
 }
 
+// RunEmailWorkflowYAML executes the Rust workflow YAML runner and returns structured output.
+func (c *Client) RunEmailWorkflowYAML(
+	ctx context.Context,
+	workflowPath string,
+	emailText string,
+) (WorkflowYAMLOutput, error) {
+	return c.RunWorkflowYAML(ctx, workflowPath, map[string]any{"email_text": emailText})
+}
+
+// RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.
+func (c *Client) RunWorkflowYAML(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+) (WorkflowYAMLOutput, error) {
+	if workflowPath == "" {
+		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
+	}
+	if workflowInput == nil {
+		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	workflowInputJSON, err := json.Marshal(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	resultCh := make(chan workflowRunResult, 1)
+	go func() {
+		defer c.endCall()
+		cWorkflowPath := C.CString(workflowPath)
+		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
+		defer C.free(unsafe.Pointer(cWorkflowPath))
+		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
+
+		response := C.sa_run_workflow_yaml(ptr, cWorkflowPath, cWorkflowInputJSON)
+		if response == nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
+			return
+		}
+		defer C.sa_string_free(response)
+
+		var output WorkflowYAMLOutput
+		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
+			return
+		}
+
+		sendIfWaiting(resultCh, workflowRunResult{output, nil})
+	}()
+
+	select {
+	case <-ctx.Done():
+		return WorkflowYAMLOutput{}, ctx.Err()
+	case result := <-resultCh:
+		if result.err != nil {
+			return WorkflowYAMLOutput{}, result.err
+		}
+		return result.value, nil
+	}
+}
+
 type completeResult struct {
 	value string
 	err   error
@@ -232,6 +347,11 @@ type completeResult struct {
 
 type completeMessagesResult struct {
 	value CompletionResult
+	err   error
+}
+
+type workflowRunResult struct {
+	value WorkflowYAMLOutput
 	err   error
 }
 
@@ -363,7 +483,7 @@ func (c *Client) CompleteMessages(
 		defer freeAll()
 
 		for i, msg := range messagesCopy {
-			role := C.CString(msg.Role)
+			role := C.CString(string(msg.Role))
 			content := C.CString(msg.Content)
 			allocated = append(allocated, role, content)
 			cMessages[i].role = role
@@ -477,7 +597,7 @@ func (c *Client) StreamMessages(
 		defer freeAll()
 
 		for i, msg := range messagesCopy {
-			role := C.CString(msg.Role)
+			role := C.CString(string(msg.Role))
 			content := C.CString(msg.Content)
 			allocated = append(allocated, role, content)
 			cMessages[i].role = role
@@ -571,6 +691,11 @@ func validateMessagesInput(model string, messages []Message) error {
 	for i, msg := range messages {
 		if msg.Role == "" {
 			return fmt.Errorf("messages[%d].role cannot be empty", i)
+		}
+		switch msg.Role {
+		case MessageRoleSystem, MessageRoleUser, MessageRoleAssistant, MessageRoleTool:
+		default:
+			return fmt.Errorf("messages[%d].role must be one of: system, user, assistant, tool", i)
 		}
 		if msg.Content == "" {
 			return fmt.Errorf("messages[%d].content cannot be empty", i)

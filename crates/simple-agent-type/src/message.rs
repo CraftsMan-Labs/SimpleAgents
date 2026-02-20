@@ -3,6 +3,9 @@
 //! Provides role-based messages compatible with OpenAI's message format.
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::str::FromStr;
+use thiserror::Error;
 
 use crate::tool::ToolCall;
 
@@ -19,6 +22,42 @@ pub enum Role {
     /// Tool/function call result
     #[serde(rename = "tool")]
     Tool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[error("invalid message role '{role}' (expected: system|user|assistant|tool)")]
+/// Error returned when parsing an unknown message role string.
+pub struct ParseRoleError {
+    /// Original role string that failed to parse.
+    pub role: String,
+}
+
+impl Role {
+    /// Returns this role as its canonical lowercase string value.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::System => "system",
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Tool => "tool",
+        }
+    }
+}
+
+impl FromStr for Role {
+    type Err = ParseRoleError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "system" => Ok(Self::System),
+            "user" => Ok(Self::User),
+            "assistant" => Ok(Self::Assistant),
+            "tool" => Ok(Self::Tool),
+            _ => Err(ParseRoleError {
+                role: s.to_string(),
+            }),
+        }
+    }
 }
 
 /// A message in a conversation.
@@ -137,6 +176,72 @@ impl Message {
         self.tool_calls = Some(tool_calls);
         self
     }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct MessageInputWire {
+    role: Role,
+    content: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default, alias = "toolCallId")]
+    tool_call_id: Option<String>,
+    #[serde(default)]
+    tool_calls: Option<Vec<ToolCall>>,
+}
+
+/// Parses a JSON value containing an array of message objects into typed messages.
+pub fn parse_messages_value(value: &Value) -> Result<Vec<Message>, String> {
+    let wire_messages: Vec<MessageInputWire> = serde_json::from_value(value.clone())
+        .map_err(|e| format!("messages must be a list of message objects: {e}"))?;
+    if wire_messages.is_empty() {
+        return Err("messages cannot be empty".to_string());
+    }
+
+    wire_messages
+        .into_iter()
+        .enumerate()
+        .map(|(idx, wire)| {
+            if wire.content.is_empty() {
+                return Err(format!("message[{idx}].content cannot be empty"));
+            }
+
+            let mut msg = match wire.role {
+                Role::System => Message::system(wire.content),
+                Role::User => Message::user(wire.content),
+                Role::Assistant => {
+                    let mut m = Message::assistant(wire.content);
+                    if let Some(calls) = wire.tool_calls {
+                        if !calls.is_empty() {
+                            m = m.with_tool_calls(calls);
+                        }
+                    }
+                    m
+                }
+                Role::Tool => {
+                    let call_id = wire.tool_call_id.ok_or_else(|| {
+                        format!("message[{idx}].tool_call_id is required for tool role")
+                    })?;
+                    Message::tool(wire.content, call_id)
+                }
+            };
+
+            if let Some(name) = wire.name {
+                if !name.is_empty() {
+                    msg = msg.with_name(name);
+                }
+            }
+
+            Ok(msg)
+        })
+        .collect()
+}
+
+/// Parses a JSON string containing an array of message objects.
+pub fn parse_messages_json(messages_json: &str) -> Result<Vec<Message>, String> {
+    let value: Value =
+        serde_json::from_str(messages_json).map_err(|e| format!("invalid messages json: {e}"))?;
+    parse_messages_value(&value)
 }
 
 #[cfg(test)]

@@ -32,6 +32,14 @@ cargo run -p simple-agents-cli -- benchmark \
 
 # Provider health check
 cargo run -p simple-agents-cli -- test-provider --model gpt-4 --provider openai
+
+# Render workflow as Mermaid (YAML or IR JSON)
+cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Workflow trace utilities
+cargo run -p simple-agents-cli -- workflow trace path/to/trace.json
+cargo run -p simple-agents-cli -- workflow replay path/to/trace.json
+cargo run -p simple-agents-cli -- workflow inspect path/to/trace.json classify_top_level
 ```
 
 ## Configuration

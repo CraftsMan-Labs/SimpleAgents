@@ -6,9 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 from dotenv import load_dotenv
+
 load_dotenv()
 from simple_agents_py import Client, ResponseWithMetadata
 
+from handlers import get_rag_data
 from python_email_workflow_demo import load_llm_settings
 
 try:
@@ -62,6 +64,109 @@ def resolve_path(root: dict[str, Any], dotted_path: str) -> Any:
     return current
 
 
+def interpolate_template(template: str, context: dict[str, Any]) -> str:
+    output = template
+    while True:
+        start = output.find("{{")
+        if start < 0:
+            break
+        end = output.find("}}", start + 2)
+        if end < 0:
+            break
+        expr = output[start + 2 : end].strip()
+        value = resolve_path(context, expr)
+        if isinstance(value, (dict, list)):
+            replacement = json.dumps(value)
+        elif value is None:
+            replacement = ""
+        else:
+            replacement = str(value)
+        output = output[:start] + replacement + output[end + 2 :]
+    return output
+
+
+def apply_set_globals(
+    node: dict[str, Any],
+    *,
+    email_text: str,
+    outputs: dict[str, dict[str, Any]],
+    globals_state: dict[str, Any],
+) -> None:
+    config = node.get("config", {})
+    set_globals = config.get("set_globals")
+    if not isinstance(set_globals, dict):
+        return
+
+    context = {
+        "input": {"email_text": email_text},
+        "nodes": outputs,
+        "globals": globals_state,
+    }
+    for key, expr in set_globals.items():
+        if not isinstance(key, str) or not isinstance(expr, str):
+            continue
+        globals_state[key] = resolve_path(context, expr)
+
+
+def apply_update_globals(
+    node: dict[str, Any],
+    *,
+    email_text: str,
+    outputs: dict[str, dict[str, Any]],
+    globals_state: dict[str, Any],
+) -> None:
+    config = node.get("config", {})
+    update_globals = config.get("update_globals")
+    if not isinstance(update_globals, dict):
+        return
+
+    context = {
+        "input": {"email_text": email_text},
+        "nodes": outputs,
+        "globals": globals_state,
+    }
+
+    for key, spec in update_globals.items():
+        if not isinstance(key, str) or not isinstance(spec, dict):
+            continue
+        op = str(spec.get("op", "")).strip()
+
+        if op == "increment":
+            by = spec.get("by", 1)
+            try:
+                by_num = float(by)
+            except (TypeError, ValueError):
+                by_num = 1.0
+            current = globals_state.get(key, 0)
+            try:
+                current_num = float(current)
+            except (TypeError, ValueError):
+                current_num = 0.0
+            globals_state[key] = current_num + by_num
+            continue
+
+        from_path = spec.get("from")
+        if not isinstance(from_path, str):
+            continue
+        value = resolve_path(context, from_path)
+
+        if op == "set":
+            globals_state[key] = value
+        elif op == "append":
+            existing = globals_state.get(key)
+            if not isinstance(existing, list):
+                existing = [] if existing is None else [existing]
+            existing.append(value)
+            globals_state[key] = existing
+        elif op == "merge":
+            if isinstance(value, dict):
+                existing = globals_state.get(key)
+                if not isinstance(existing, dict):
+                    existing = {}
+                existing.update(value)
+                globals_state[key] = existing
+
+
 def evaluate_condition(condition: str, context: dict[str, Any]) -> bool:
     match = CONDITION_RE.match(condition.strip())
     if not match:
@@ -109,6 +214,17 @@ def schema_for_node(node_id: str) -> dict[str, Any]:
             "additionalProperties": False,
         }
 
+    if node_id == "generate_email_draft":
+        return {
+            "type": "object",
+            "properties": {
+                "subject": {"type": "string"},
+                "body": {"type": "string"},
+            },
+            "required": ["subject", "body"],
+            "additionalProperties": False,
+        }
+
     raise RuntimeError(f"No schema mapping defined for llm node: {node_id}")
 
 
@@ -146,39 +262,32 @@ def complete_structured(
     return payload
 
 
-def mock_rag(topic: str) -> dict[str, str]:
-    data = {
-        "probation": (
-            "hr_policy/probation.md",
-            "Collect manager review, performance evidence, and probation timeline.",
-        ),
-        "leave_request": (
-            "hr_policy/leave.md",
-            "Validate leave balance, manager approval, and blackout dates.",
-        ),
-        "supply_chain_order_assessment": (
-            "supply_chain/order_assessment.md",
-            "Review order specs, inventory risk, and vendor lead-time guidance.",
-        ),
-        "supply_chain_order_replacement": (
-            "supply_chain/order_replacement.md",
-            "Collect order id, damage proof, and replacement SLA policy.",
-        ),
-        "termination_first_time_offense": (
-            "hr_policy/termination_first_offense.md",
-            "Validate first-incident criteria and route to HRBP review.",
-        ),
-        "termination_repeated_offense": (
-            "hr_policy/termination_repeated_offense.md",
-            "Collect prior warnings and escalation approvals before final action.",
-        ),
-        "clarification": (
-            "shared/request_clarification.md",
-            "Request clarifying details before routing.",
-        ),
-    }
-    kb_source, playbook = data.get(topic, data["clarification"])
-    return {"kb_source": kb_source, "playbook": playbook}
+HANDLER_REGISTRY = {
+    "GetRagData": get_rag_data,
+}
+
+
+def run_custom_worker_handler(
+    handler: str,
+    topic: str,
+    *,
+    email_text: str,
+    outputs: dict[str, dict[str, Any]],
+    globals_state: dict[str, Any],
+) -> dict[str, Any]:
+    fn = HANDLER_REGISTRY.get(handler)
+    if fn is None:
+        raise RuntimeError(f"Unsupported custom worker handler: {handler}")
+
+    return fn(
+        topic,
+        email_text=email_text,
+        context={
+            "input": {"email_text": email_text},
+            "nodes": outputs,
+            "globals": globals_state,
+        },
+    )
 
 
 def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
@@ -191,10 +300,11 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
     if not isinstance(current, str) or current not in nodes:
         raise RuntimeError("Invalid or missing entry_node")
 
-    api_base, api_key, default_model = load_llm_settings()
-    client = Client("openai", api_base=api_base, api_key=api_key)
+    provider, api_base, api_key, default_model = load_llm_settings()
+    client = Client(provider, api_base=api_base, api_key=api_key)
 
     outputs: dict[str, dict[str, Any]] = {}
+    globals_state: dict[str, Any] = {}
     trace: list[str] = []
 
     while True:
@@ -209,10 +319,27 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
             else:
                 model = default_model
             prompt_template = node.get("config", {}).get("prompt", "")
-            prompt = str(prompt_template).replace("{{ input.email_text }}", email_text)
+            context = {
+                "input": {"email_text": email_text},
+                "nodes": outputs,
+                "globals": globals_state,
+            }
+            prompt = interpolate_template(str(prompt_template), context)
             schema = schema_for_node(current)
             payload = complete_structured(client, model, prompt, schema, api_base)
             outputs[current] = {"output": payload}
+            apply_set_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
+            apply_update_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
             next_node = edges.get(current)
             if next_node is None:
                 break
@@ -221,7 +348,11 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
         if "switch" in node_type:
             switch = node_type["switch"]
-            context = {"input": {"email_text": email_text}, "nodes": outputs}
+            context = {
+                "input": {"email_text": email_text},
+                "nodes": outputs,
+                "globals": globals_state,
+            }
             next_node = switch.get("default")
             for branch in switch.get("branches", []):
                 condition = branch.get("condition")
@@ -240,13 +371,35 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
         if "custom_worker" in node_type:
             handler = node_type["custom_worker"].get("handler")
-            if handler != "GetRagData":
-                raise RuntimeError(f"Unsupported custom worker handler: {handler}")
             topic = (
                 node.get("config", {}).get("payload", {}).get("topic", "clarification")
             )
-            outputs[current] = {"output": mock_rag(str(topic))}
-            break
+            outputs[current] = {
+                "output": run_custom_worker_handler(
+                    str(handler),
+                    str(topic),
+                    email_text=email_text,
+                    outputs=outputs,
+                    globals_state=globals_state,
+                )
+            }
+            apply_set_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
+            apply_update_globals(
+                node,
+                email_text=email_text,
+                outputs=outputs,
+                globals_state=globals_state,
+            )
+            next_node = edges.get(current)
+            if next_node is None:
+                break
+            current = next_node
+            continue
 
         raise RuntimeError(f"Unsupported node type for node '{current}'")
 
@@ -256,6 +409,7 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
         "email_text": email_text,
         "trace": trace,
         "outputs": outputs,
+        "globals": globals_state,
         "terminal_node": trace[-1],
         "terminal_output": outputs.get(trace[-1], {}).get("output"),
     }
