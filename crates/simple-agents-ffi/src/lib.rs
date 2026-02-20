@@ -917,6 +917,14 @@ pub unsafe extern "C" fn sa_run_workflow_yaml(
 /// Execute workflow YAML with arbitrary input JSON and optional telemetry options JSON.
 ///
 /// `workflow_options_json` accepts a `YamlWorkflowRunOptions` JSON object and may be null.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env` and remain valid for the call.
+/// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
+/// - `workflow_input_json` must be a valid JSON object string.
+/// - `workflow_options_json` may be null; when non-null it must be valid null-terminated UTF-8 JSON.
+/// - Returned string must be freed with `sa_string_free`.
 #[no_mangle]
 pub unsafe extern "C" fn sa_run_workflow_yaml_with_options(
     client: *mut SAClient,
