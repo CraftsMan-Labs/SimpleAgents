@@ -1283,6 +1283,25 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     while let Some(chunk_result) = stream.next().await {
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
+                            if include_raw_debug {
+                                if let Some(reasoning_delta) = choice.delta.reasoning_content.as_ref() {
+                                    if let Some(sink) = event_sink {
+                                        sink.emit(&YamlWorkflowEvent {
+                                            event_type: "node_stream_raw_delta".to_string(),
+                                            node_id: Some(request.node_id.clone()),
+                                            step_id: Some(request.node_id.clone()),
+                                            node_kind: Some("llm_call".to_string()),
+                                            streamable: Some(true),
+                                            message: None,
+                                            delta: Some(reasoning_delta.clone()),
+                                            token_kind: Some(YamlWorkflowTokenKind::Thinking),
+                                            is_terminal_node_token: Some(request.is_terminal_node),
+                                            elapsed_ms: None,
+                                            metadata: None,
+                                        });
+                                    }
+                                }
+                            }
                             if let Some(delta) = choice.delta.content.clone() {
                                 aggregated.push_str(delta.as_str());
                                 let (output_delta, thinking_delta) =
