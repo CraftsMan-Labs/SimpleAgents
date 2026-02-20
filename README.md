@@ -479,7 +479,7 @@ More examples in [`crates/simple-agents-providers/examples/`](crates/simple-agen
 - ✅ **LRU cache** - O(1) lookup with automatic eviction
 - ✅ **Lazy initialization** - Only allocate when needed
 
-See [OPTIMISATION.md](OPTIMISATION.md) for detailed performance analysis.
+See [docs/WORKFLOW_PERFORMANCE.md](docs/WORKFLOW_PERFORMANCE.md) for detailed performance analysis.
 
 ---
 
@@ -532,19 +532,19 @@ let response = client.complete(&conversation).await?;
 | 📘 **API Documentation** | Complete API reference with examples | [docs.rs](https://docs.rs/simple-agent-type) |
 | 🚀 **Quick Start Guide** | Get up and running in 5 minutes | [Above](#-quick-start) |
 | 📋 **Examples** | Real-world usage patterns | [examples/](crates/simple-agents-providers/examples/) |
-| 🏗️ **Architecture Guide** | System design and patterns | [research/](research/) |
+| 🏗️ **Architecture Guide** | System design and patterns | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | ✅ **Task Tracking** | Current progress and next steps | [TODO.md](TODO.md) |
 | 🎨 **Coding Guidelines** | Best practices and style guide | [CODING_GUIDELINES.md](CODING_GUIDELINES.md) |
-| ⚡ **Performance Guide** | Optimization techniques | [OPTIMISATION.md](OPTIMISATION.md) |
+| ⚡ **Performance Guide** | Optimization techniques | [docs/WORKFLOW_PERFORMANCE.md](docs/WORKFLOW_PERFORMANCE.md) |
 
 ### Comprehensive Research
 
-44,500+ lines of framework analysis:
+Workflow engine research and planning docs:
 
-- **[litellm-analysis.md](research/litellm-analysis.md)** - Multi-provider patterns (115 providers)
-- **[baml-analysis.md](research/baml-analysis.md)** - Response healing system
-- **[implementation-plan.md](research/implementation-plan.md)** - 12-week roadmap
-- **[mvp-scope-update.md](research/mvp-scope-update.md)** - MVP features and streaming
+- **[workflow-engine-research/README.md](workflow-engine-research/README.md)** - Research index and entry point
+- **[workflow-engine-research/research.md](workflow-engine-research/research.md)** - Consolidated technical research
+- **[workflow-engine-research/implementation-plan.md](workflow-engine-research/implementation-plan.md)** - Implementation roadmap
+- **[workflow-engine-research/features.md](workflow-engine-research/features.md)** - Feature inventory and scope
 
 ---
 
@@ -564,8 +564,11 @@ export OPENAI_API_KEY="sk-..."
 export ANTHROPIC_API_KEY="sk-ant-..."
 cargo test --workspace -- --ignored
 
-# With coverage
-cargo tarpaulin --workspace --out Html
+# Enforce Rust coverage gate (auto-select tarpaulin/grcov, threshold: 100%)
+make coverage-rust
+
+# Use grcov instead
+COVERAGE_TOOL=grcov make coverage-rust
 ```
 
 ### Test Coverage
@@ -671,14 +674,11 @@ We follow the [Rust Code of Conduct](https://www.rust-lang.org/policies/code-of-
 
 This project is dual-licensed under:
 
-- **MIT License** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-- **Apache License 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- **Repository License** ([LICENSE](LICENSE))
 
 You may choose either license for your use.
 
-### Third-Party Licenses
-
-See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for dependencies.
+For third-party dependency licenses, consult `Cargo.lock` and package manager metadata for each binding.
 
 ---
 
