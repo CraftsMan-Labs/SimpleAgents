@@ -682,6 +682,7 @@ mod tests {
                     delta: MessageDelta {
                         role: Some(Role::Assistant),
                         content: Some(content.to_string()),
+                        reasoning_content: None,
                     },
                     finish_reason: None,
                 }],

@@ -274,6 +274,9 @@ pub struct MessageDelta {
     /// Incremental content
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// Optional incremental reasoning/thinking content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 #[cfg(test)]
@@ -374,6 +377,7 @@ mod tests {
                 delta: MessageDelta {
                     role: Some(crate::message::Role::Assistant),
                     content: Some("Hello".to_string()),
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
@@ -390,6 +394,7 @@ mod tests {
         let delta = MessageDelta {
             role: Some(crate::message::Role::Assistant),
             content: Some("Hi".to_string()),
+            reasoning_content: None,
         };
 
         let json = serde_json::to_value(&delta).unwrap();
