@@ -70,7 +70,8 @@ pub fn transform_openai_chunk(chunk: OpenAIStreamChunk) -> Result<CompletionChun
                 index: choice.index,
                 delta: MessageDelta {
                     role,
-                    content: choice.delta.content.or(choice.delta.reasoning_content),
+                    content: choice.delta.content,
+                    reasoning_content: choice.delta.reasoning_content,
                 },
                 finish_reason: choice.finish_reason.as_ref().map(|s| match s.as_str() {
                     "stop" => FinishReason::Stop,
@@ -230,7 +231,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transform_chunk_falls_back_to_reasoning_content() {
+    fn test_transform_chunk_preserves_reasoning_content_separately() {
         let chunk = OpenAIStreamChunk {
             id: "chatcmpl-124".to_string(),
             object: "chat.completion.chunk".to_string(),
@@ -249,8 +250,9 @@ mod tests {
         };
 
         let unified = transform_openai_chunk(chunk).expect("chunk should transform");
+        assert_eq!(unified.choices[0].delta.content, None);
         assert_eq!(
-            unified.choices[0].delta.content,
+            unified.choices[0].delta.reasoning_content,
             Some("thought token".to_string())
         );
     }
