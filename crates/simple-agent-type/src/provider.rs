@@ -271,6 +271,7 @@ pub trait Provider: Send + Sync {
                 delta: crate::response::MessageDelta {
                     role: Some(choice.message.role),
                     content: Some(choice.message.content),
+                    reasoning_content: None,
                 },
                 finish_reason: Some(choice.finish_reason),
             })

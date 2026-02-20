@@ -9,6 +9,8 @@
 use reqwest::Client;
 use std::time::Duration;
 
+use crate::utils::DEFAULT_TIMEOUT;
+
 /// HTTP client wrapper with optimized configuration.
 ///
 /// # Configuration
@@ -44,7 +46,7 @@ impl HttpClient {
     ///
     /// Returns error if the client fails to build (rare, usually system-level issues).
     pub fn new() -> Result<Self, reqwest::Error> {
-        Self::with_timeout(Duration::from_secs(30))
+        Self::with_timeout(DEFAULT_TIMEOUT)
     }
 
     /// Creates a new HTTP client with custom timeout.
@@ -86,14 +88,23 @@ impl HttpClient {
 
 impl Default for HttpClient {
     fn default() -> Self {
-        match Self::new() {
+        Self::default_with_primary_builder(Self::new)
+    }
+}
+
+impl HttpClient {
+    fn default_with_primary_builder<F>(primary_builder: F) -> Self
+    where
+        F: FnOnce() -> Result<Self, reqwest::Error>,
+    {
+        match primary_builder() {
             Ok(client) => client,
             Err(error) => {
                 tracing::warn!(
                     ?error,
                     "Falling back to minimal timeout HTTP client configuration"
                 );
-                let fallback = Client::builder().timeout(Duration::from_secs(30)).build();
+                let fallback = Client::builder().timeout(DEFAULT_TIMEOUT).build();
                 match fallback {
                     Ok(inner) => Self { inner },
                     Err(fallback_error) => {
@@ -141,5 +152,18 @@ mod tests {
         // Both should work - verify we can get inner clients
         let _ = client.inner();
         let _ = cloned.inner();
+    }
+
+    #[test]
+    fn test_default_fallback_path_when_primary_builder_fails() {
+        let client = HttpClient::default_with_primary_builder(|| {
+            let error = reqwest::Client::builder()
+                .user_agent("\n")
+                .build()
+                .expect_err("invalid user-agent should fail client build");
+            Err(error)
+        });
+
+        let _ = client.inner();
     }
 }

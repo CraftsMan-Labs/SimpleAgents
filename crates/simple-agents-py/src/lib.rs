@@ -33,9 +33,10 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use simple_agents_workflow::{
-    run_workflow_yaml_file_with_client_and_custom_worker,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events,
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
     YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
+    YamlWorkflowRunOptions,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -2844,13 +2845,14 @@ impl Client {
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, email_text, include_events=false))]
+    #[pyo3(signature = (workflow_path, email_text, include_events=false, workflow_options=None))]
     fn run_email_workflow_yaml(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         email_text: &str,
         include_events: bool,
+        workflow_options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
             return Err(PyRuntimeError::new_err(
@@ -2867,6 +2869,14 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+        let run_options = workflow_options
+            .map(|value| {
+                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let runtime = self
             .runtime
@@ -2877,23 +2887,28 @@ impl Client {
         let output = if include_events {
             runtime
                 .block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input,
                         &self.client,
                         Some(&custom_executor),
                         Some(&event_sink),
+                        &run_options,
                     ),
                 )
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         } else {
             runtime
-                .block_on(run_workflow_yaml_file_with_client_and_custom_worker(
-                    workflow_path_buf.as_path(),
-                    &workflow_input,
-                    &self.client,
-                    Some(&custom_executor),
-                ))
+                .block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                        workflow_path_buf.as_path(),
+                        &workflow_input,
+                        &self.client,
+                        Some(&custom_executor),
+                        None,
+                        &run_options,
+                    ),
+                )
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         };
 
@@ -2908,13 +2923,14 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, workflow_input, include_events=false))]
+    #[pyo3(signature = (workflow_path, workflow_input, include_events=false, workflow_options=None))]
     fn run_workflow_yaml(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         workflow_input: &Bound<'_, PyAny>,
         include_events: bool,
+        workflow_options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
             return Err(PyRuntimeError::new_err(
@@ -2932,6 +2948,14 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+        let run_options = workflow_options
+            .map(|value| {
+                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let runtime = self
             .runtime
@@ -2943,23 +2967,28 @@ impl Client {
         let output = if include_events {
             runtime
                 .block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input_value,
                         &self.client,
                         Some(&custom_executor),
                         Some(&event_sink),
+                        &run_options,
                     ),
                 )
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         } else {
             runtime
-                .block_on(run_workflow_yaml_file_with_client_and_custom_worker(
-                    workflow_path_buf.as_path(),
-                    &workflow_input_value,
-                    &self.client,
-                    Some(&custom_executor),
-                ))
+                .block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                        workflow_path_buf.as_path(),
+                        &workflow_input_value,
+                        &self.client,
+                        Some(&custom_executor),
+                        None,
+                        &run_options,
+                    ),
+                )
                 .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         };
 
