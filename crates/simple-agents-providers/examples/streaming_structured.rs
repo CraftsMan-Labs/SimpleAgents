@@ -49,6 +49,7 @@ async fn main() {
                 delta: MessageDelta {
                     role: Some(simple_agent_type::message::Role::Assistant),
                     content: Some(json_response[..50].to_string()),
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
@@ -62,6 +63,7 @@ async fn main() {
                 delta: MessageDelta {
                     role: None,
                     content: Some(json_response[50..100].to_string()),
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
@@ -75,6 +77,7 @@ async fn main() {
                 delta: MessageDelta {
                     role: None,
                     content: Some(json_response[100..].to_string()),
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
@@ -88,6 +91,7 @@ async fn main() {
                 delta: MessageDelta {
                     role: None,
                     content: None,
+                    reasoning_content: None,
                 },
                 finish_reason: Some(FinishReason::Stop),
             }],

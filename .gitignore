@@ -243,3 +243,7 @@ pkg/
 *.out
 .coverprofile
 .go-cache/
+
+# Local workflow trace artifacts
+examples/workflow_email/traces/
+examples/examples/
