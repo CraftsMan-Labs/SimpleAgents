@@ -170,4 +170,35 @@ mod tests {
         );
         assert!(matches!(error, OpenAIError::ContextLengthExceeded(_)));
     }
+
+    #[test]
+    fn test_status_matrix_mapping() {
+        let retry_after = Some(Duration::from_secs(5));
+
+        let unauthorized = OpenAIError::from_response(401, "unauthorized", None);
+        assert!(matches!(unauthorized, OpenAIError::InvalidApiKey));
+
+        let forbidden = OpenAIError::from_response(403, "forbidden", None);
+        assert!(matches!(forbidden, OpenAIError::BadRequest(_)));
+
+        let not_found = OpenAIError::from_response(404, "missing model", None);
+        assert!(matches!(not_found, OpenAIError::ModelNotFound(_)));
+
+        let timeout = OpenAIError::from_response(408, "request timeout", None);
+        assert!(matches!(timeout, OpenAIError::BadRequest(_)));
+
+        let rate = OpenAIError::from_response(429, "rate limited", retry_after);
+        assert!(matches!(
+            rate,
+            OpenAIError::RateLimit {
+                retry_after: Some(d)
+            } if d == Duration::from_secs(5)
+        ));
+
+        let server = OpenAIError::from_response(500, "server error", None);
+        assert!(matches!(server, OpenAIError::ServerError(_)));
+
+        let unavailable = OpenAIError::from_response(503, "unavailable", None);
+        assert!(matches!(unavailable, OpenAIError::ServerError(_)));
+    }
 }
