@@ -1284,7 +1284,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
                             if include_raw_debug {
-                                if let Some(reasoning_delta) = choice.delta.reasoning_content.as_ref() {
+                                if let Some(reasoning_delta) =
+                                    choice.delta.reasoning_content.as_ref()
+                                {
                                     if let Some(sink) = event_sink {
                                         sink.emit(&YamlWorkflowEvent {
                                             event_type: "node_stream_raw_delta".to_string(),

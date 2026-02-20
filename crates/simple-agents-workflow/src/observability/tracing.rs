@@ -122,10 +122,9 @@ impl WorkflowSpan for OtelWorkflowSpan {
 
 impl OtelWorkflowTracer {
     fn init_from_env() -> Result<(), String> {
-        if std::env::var("SIMPLE_AGENTS_OTEL_ENABLED")
+        if !std::env::var("SIMPLE_AGENTS_OTEL_ENABLED")
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false)
-            == false
         {
             return Err("otel disabled".to_string());
         }
