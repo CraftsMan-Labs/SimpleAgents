@@ -12,8 +12,9 @@ use simple_agents_router::{
     CostRouterConfig, FallbackRouterConfig, LatencyRouterConfig, ProviderCost,
 };
 use simple_agents_workflow::{
-    inspect_replay_trace, replay_trace_with_options, workflow_to_mermaid, yaml_workflow_file_to_mermaid,
-    ReplayCachePolicy, ReplayOptions, WorkflowDefinition, WorkflowTrace,
+    inspect_replay_trace, replay_trace_with_options, workflow_to_mermaid,
+    yaml_workflow_file_to_mermaid, ReplayCachePolicy, ReplayOptions, WorkflowDefinition,
+    WorkflowTrace,
 };
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -1225,8 +1226,10 @@ fn run_workflow_tools(args: WorkflowArgs, output: OutputFormat) -> Result<()> {
                     .map_err(|err| CliError::Config(err.to_string()))?,
                 "json" => {
                     let bytes = std::fs::read(&workflow_file)?;
-                    let definition = serde_json::from_slice::<WorkflowDefinition>(&bytes)
-                        .map_err(|err| CliError::Config(format!("invalid workflow IR json: {}", err)))?;
+                    let definition =
+                        serde_json::from_slice::<WorkflowDefinition>(&bytes).map_err(|err| {
+                            CliError::Config(format!("invalid workflow IR json: {}", err))
+                        })?;
                     workflow_to_mermaid(&definition)
                 }
                 _ => {

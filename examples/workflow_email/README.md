@@ -17,8 +17,27 @@ Primary workflow file:
 - `run_with_unified_system.py`: separate unified system (chat + classification + RAG + draft)
 - `handlers.py`: real Python custom worker handlers (e.g. `GetRagData`)
 - `python/`: Python run docs
-- `node/`: Node/TS run docs
-- `go/`: Go run docs
+- `node/`: Node/npm run docs (`npm_email_workflow_example.js`)
+- `go/`: Go run docs (uses `bindings/go/examples/workflow_email/main.go`)
+
+## Implementation Plan
+
+1. Reuse existing workflow YAML files so behavior remains consistent across languages.
+2. Add a minimal npm example (`node/npm_email_workflow_example.js`) that maps workflow env vars and runs `runEmailWorkflowYaml`.
+3. Add a minimal Go example (`bindings/go/examples/workflow_email/main.go`) that maps workflow env vars and runs `RunEmailWorkflowYAML`.
+4. Update language-specific docs (`node/README.md`, `go/README.md`) and this top-level README with run commands.
+5. Keep advanced custom-worker examples available separately for deeper integration demos.
+
+```mermaid
+flowchart LR
+    A[User input email text] --> B[Load WORKFLOW_* env]
+    B --> C{Language example}
+    C -->|npm| D[Node Client.runEmailWorkflowYaml]
+    C -->|Go| E[Go Client.RunEmailWorkflowYAML]
+    D --> F[Rust workflow engine executes YAML]
+    E --> F
+    F --> G[JSON result: terminal_output, timings, token metrics, total_elapsed_ms]
+```
 
 ## Prerequisites
 
@@ -206,6 +225,12 @@ Ready-to-run helper file:
 
 ```bash
 npm --prefix crates/simple-agents-napi run build:debug
+node examples/workflow_email/node/npm_email_workflow_example.js
+```
+
+Custom-worker bridge demo (executes real JavaScript handlers for `custom_worker` nodes):
+
+```bash
 node examples/workflow_email/run_with_node_package.js
 ```
 
@@ -242,7 +267,7 @@ cargo build -p simple-agents-ffi --release
 CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
 CGO_LDFLAGS="-L$PWD/target/release" \
 LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
-go run ./bindings/go/examples/workflow_yaml
+go run ./bindings/go/examples/workflow_email
 ```
 
 When running locally in this repo, ensure FFI library is built and linker flags are set:

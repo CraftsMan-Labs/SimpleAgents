@@ -81,7 +81,10 @@ impl CircuitBreaker {
 
     /// Check if the circuit allows a request.
     pub fn allow_request(&self) -> bool {
-        let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match inner.state {
             InternalState::Closed => true,
             InternalState::Open { opened_at } => {
@@ -100,7 +103,10 @@ impl CircuitBreaker {
 
     /// Record a successful request.
     pub fn record_success(&self) {
-        let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match inner.state {
             InternalState::Closed => {
                 inner.consecutive_failures = 0;
@@ -119,7 +125,10 @@ impl CircuitBreaker {
 
     /// Record a failed request.
     pub fn record_failure(&self) {
-        let mut inner = self.inner.lock().expect("circuit breaker lock poisoned");
+        let mut inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match inner.state {
             InternalState::Closed => {
                 inner.consecutive_failures = inner.consecutive_failures.saturating_add(1);
@@ -161,7 +170,10 @@ impl CircuitBreaker {
 
     /// Current circuit state.
     pub fn state(&self) -> CircuitBreakerState {
-        let inner = self.inner.lock().expect("circuit breaker lock poisoned");
+        let inner = self
+            .inner
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         match inner.state {
             InternalState::Closed => CircuitBreakerState::Closed,
             InternalState::Open { .. } => CircuitBreakerState::Open,

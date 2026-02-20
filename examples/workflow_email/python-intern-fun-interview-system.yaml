@@ -19,7 +19,7 @@ nodes:
     name: "Detect Interview Context"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -80,7 +80,7 @@ nodes:
     name: "Explain Interview Capabilities"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -111,7 +111,7 @@ nodes:
     name: "Ask Candidate Attempt"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -136,7 +136,7 @@ nodes:
     name: "Evaluate Submission Style"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -206,7 +206,7 @@ nodes:
     name: "Continue Interview"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -243,7 +243,7 @@ nodes:
     name: "Request More Candidate Attempt"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
