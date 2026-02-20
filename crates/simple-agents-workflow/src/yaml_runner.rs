@@ -14,6 +14,7 @@ use simple_agents_core::{
 use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
+use crate::observability::tracing::{NoopWorkflowTracer, SpanKind, TraceContext, WorkflowTracer};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
@@ -23,6 +24,8 @@ use crate::visualize::workflow_to_mermaid;
 
 const YAML_START_NODE_ID: &str = "__yaml_start";
 const YAML_LLM_TOOL_ID: &str = "__yaml_llm_call";
+
+static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlStepTiming {
@@ -70,6 +73,88 @@ pub struct YamlWorkflowRunOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_thinking_tokens: Option<u64>,
     pub tokens_per_second: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowPayloadMode {
+    #[default]
+    FullPayload,
+    RedactedPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceContextInput {
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub span_id: Option<String>,
+    #[serde(default)]
+    pub parent_span_id: Option<String>,
+    #[serde(default)]
+    pub traceparent: Option<String>,
+    #[serde(default)]
+    pub tracestate: Option<String>,
+    #[serde(default)]
+    pub baggage: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceTenantContext {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct YamlWorkflowTelemetryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f32,
+    #[serde(default)]
+    pub payload_mode: YamlWorkflowPayloadMode,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_true")]
+    pub multi_tenant: bool,
+}
+
+impl Default for YamlWorkflowTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sample_rate: 1.0,
+            payload_mode: YamlWorkflowPayloadMode::FullPayload,
+            retention_days: 30,
+            multi_tenant: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceOptions {
+    #[serde(default)]
+    pub context: Option<YamlWorkflowTraceContextInput>,
+    #[serde(default)]
+    pub tenant: YamlWorkflowTraceTenantContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowRunOptions {
+    #[serde(default)]
+    pub telemetry: YamlWorkflowTelemetryConfig,
+    #[serde(default)]
+    pub trace: YamlWorkflowTraceOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -123,6 +208,84 @@ fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64
         return 0.0;
     }
     round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sample_rate() -> f32 {
+    1.0
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+
+fn generate_trace_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sequence = u128::from(TRACE_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    format!("{:032x}", now_nanos ^ sequence)
+}
+
+fn resolve_trace_id(options: &YamlWorkflowRunOptions, span_context: &TraceContext) -> String {
+    options
+        .trace
+        .context
+        .as_ref()
+        .and_then(|context| context.trace_id.clone())
+        .or_else(|| span_context.trace_id.clone())
+        .unwrap_or_else(generate_trace_id)
+}
+
+fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str) -> Value {
+    json!({
+        "telemetry": {
+            "trace_id": trace_id,
+            "enabled": options.telemetry.enabled,
+            "sample_rate": options.telemetry.sample_rate,
+            "payload_mode": match options.telemetry.payload_mode {
+                YamlWorkflowPayloadMode::FullPayload => "full_payload",
+                YamlWorkflowPayloadMode::RedactedPayload => "redacted_payload",
+            },
+            "retention_days": options.telemetry.retention_days,
+            "multi_tenant": options.telemetry.multi_tenant,
+        }
+    })
+}
+
+fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -> String {
+    match mode {
+        YamlWorkflowPayloadMode::FullPayload => payload.to_string(),
+        YamlWorkflowPayloadMode::RedactedPayload => json!({
+            "redacted": true,
+            "value_type": match payload {
+                Value::Null => "null",
+                Value::Bool(_) => "bool",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            }
+        })
+        .to_string(),
+    }
+}
+
+fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceContext> {
+    options.trace.context.as_ref().map(|input| TraceContext {
+        trace_id: input.trace_id.clone(),
+        span_id: input.span_id.clone(),
+        parent_span_id: input.parent_span_id.clone(),
+        traceparent: input.traceparent.clone(),
+        tracestate: input.tracestate.clone(),
+        baggage: input.baggage.clone(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -671,6 +834,25 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+        workflow_path,
+        workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+    workflow_path: &Path,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let contents =
         std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
             path: workflow_path.display().to_string(),
@@ -683,12 +865,13 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
             source,
         })?;
 
-    run_workflow_yaml_with_client_and_custom_worker_and_events(
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
         &workflow,
         workflow_input,
         client,
         custom_worker,
         event_sink,
+        options,
     )
     .await
 }
@@ -717,12 +900,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker(
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_workflow_yaml_with_client_and_custom_worker_and_events(
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
         workflow,
         workflow_input,
         client,
         custom_worker,
         None,
+        &YamlWorkflowRunOptions::default(),
     )
     .await
 }
@@ -749,6 +933,25 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
@@ -912,12 +1115,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     }
 
     let executor = BorrowedClientExecutor { client };
-    run_workflow_yaml_with_custom_worker_and_events(
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow,
         workflow_input,
         &executor,
         custom_worker,
         event_sink,
+        options,
     )
     .await
 }
@@ -991,6 +1195,25 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
             message: "workflow input must be a JSON object".to_string(),
@@ -1015,8 +1238,24 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         });
     }
 
+    let tracer = NoopWorkflowTracer;
+    let parent_trace_context = trace_context_from_options(options);
+    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
+        "workflow.run",
+        SpanKind::Workflow,
+        parent_trace_context.as_ref(),
+    );
+    let trace_id = if options.telemetry.enabled {
+        let value = resolve_trace_id(options, &workflow_trace_context);
+        workflow_span.set_attribute("trace_id", value.as_str());
+        Some(value)
+    } else {
+        None
+    };
+
     if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker).await?
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
+            .await?
     {
         return Ok(output);
     }
@@ -1076,6 +1315,20 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
 
         trace.push(node.id.clone());
         let step_started = Instant::now();
+
+        let mut node_span = if options.telemetry.enabled {
+            let (_, mut span) = tracer.start_span(
+                "workflow.node.execute",
+                SpanKind::Node,
+                Some(&workflow_trace_context),
+            );
+            span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+            span.set_attribute("node_id", node.id.as_str());
+            span.set_attribute("node_kind", node.kind_name());
+            Some(span)
+        } else {
+            None
+        };
 
         let node_streamable = node
             .node_type
@@ -1141,6 +1394,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                 heal: llm.heal.unwrap_or(false),
             };
 
+            if let Some(span) = node_span.as_mut() {
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(options.telemetry.payload_mode, &context).as_str(),
+                );
+            }
+
             if let Some(sink) = event_sink {
                 sink.emit(&YamlWorkflowEvent {
                     event_type: "node_llm_input_resolved".to_string(),
@@ -1185,6 +1445,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             }
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
+            if let Some(span) = node_span.as_mut() {
+                if let Some(output_payload) = outputs.get(node.id.as_str()) {
+                    span.set_attribute(
+                        "node_output",
+                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
+                    );
+                }
+            }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
             apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
@@ -1220,19 +1488,54 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                 "globals": Value::Object(globals.clone())
             });
 
-            let worker_output = if let Some(custom_worker_executor) = custom_worker {
+            if let Some(span) = node_span.as_mut() {
+                span.set_attribute("handler_name", custom.handler.as_str());
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(options.telemetry.payload_mode, &payload).as_str(),
+                );
+            }
+
+            let mut handler_span = if options.telemetry.enabled {
+                let (_, mut span) = tracer.start_span(
+                    "handler.invoke",
+                    SpanKind::Node,
+                    Some(&workflow_trace_context),
+                );
+                span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+                span.set_attribute("handler_name", custom.handler.as_str());
+                Some(span)
+            } else {
+                None
+            };
+
+            let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
                 custom_worker_executor
                     .execute(custom.handler.as_str(), &payload, email_text, &context)
                     .await
                     .map_err(|message| YamlWorkflowRunError::CustomWorker {
                         node_id: node.id.clone(),
                         message,
-                    })?
+                    })
             } else {
-                mock_custom_worker_output(custom.handler.as_str(), &payload)?
+                mock_custom_worker_output(custom.handler.as_str(), &payload)
             };
 
+            if let Some(span) = handler_span.take() {
+                span.end();
+            }
+
+            let worker_output = worker_output_result?;
+
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
+            if let Some(span) = node_span.as_mut() {
+                if let Some(output_payload) = outputs.get(node.id.as_str()) {
+                    span.set_attribute(
+                        "node_output",
+                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
+                    );
+                }
+            }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
             apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
@@ -1274,6 +1577,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                     ),
                 },
             );
+        }
+
+        if let Some(mut span) = node_span.take() {
+            span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
+            span.add_event("node_completed");
+            span.end();
         }
 
         if let Some(sink) = event_sink {
@@ -1325,6 +1634,10 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
+        trace_id: trace_id.clone(),
+        metadata: trace_id
+            .as_ref()
+            .map(|value| workflow_metadata_with_trace(options, value)),
     };
 
     if let Some(sink) = event_sink {
@@ -1340,6 +1653,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         });
     }
 
+    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
+    if let Some(trace_id_value) = trace_id.as_ref() {
+        workflow_span.set_attribute("trace_id", trace_id_value.as_str());
+    }
+    workflow_span.end();
+
     Ok(output)
 }
 
@@ -1348,6 +1667,7 @@ async fn try_run_yaml_via_ir_runtime(
     workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    options: &YamlWorkflowRunOptions,
 ) -> Result<Option<YamlWorkflowRunOutput>, YamlWorkflowRunError> {
     let ir = match yaml_workflow_to_ir(workflow) {
         Ok(def) => def,
@@ -1358,6 +1678,21 @@ async fn try_run_yaml_via_ir_runtime(
                 message: err.to_string(),
             });
         }
+    };
+
+    let tracer = NoopWorkflowTracer;
+    let parent_trace_context = trace_context_from_options(options);
+    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
+        "workflow.run",
+        SpanKind::Workflow,
+        parent_trace_context.as_ref(),
+    );
+    let trace_id = if options.telemetry.enabled {
+        let value = resolve_trace_id(options, &workflow_trace_context);
+        workflow_span.set_attribute("trace_id", value.as_str());
+        Some(value)
+    } else {
+        None
     };
 
     struct NoopLlm;
@@ -1378,6 +1713,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
         token_totals: std::sync::Mutex<YamlTokenTotals>,
         node_usage: std::sync::Mutex<BTreeMap<String, YamlLlmTokenUsage>>,
+        trace_id: Option<String>,
+        payload_mode: YamlWorkflowPayloadMode,
     }
 
     #[async_trait]
@@ -1496,10 +1833,32 @@ async fn try_run_yaml_via_ir_runtime(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
 
-            worker
+            let tracer = NoopWorkflowTracer;
+            let mut handler_span = if self.trace_id.is_some() {
+                let (_, mut span) = tracer.start_span("handler.invoke", SpanKind::Node, None);
+                if let Some(trace_id) = self.trace_id.as_ref() {
+                    span.set_attribute("trace_id", trace_id.as_str());
+                }
+                span.set_attribute("handler_name", input.tool.as_str());
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(self.payload_mode, &payload).as_str(),
+                );
+                Some(span)
+            } else {
+                None
+            };
+
+            let output_result = worker
                 .execute(&input.tool, &payload, email_text, &context)
                 .await
-                .map_err(ToolExecutionError::Failed)
+                .map_err(ToolExecutionError::Failed);
+
+            if let Some(span) = handler_span.take() {
+                span.end();
+            }
+
+            output_result
         }
     }
 
@@ -1508,6 +1867,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker,
         token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
         node_usage: std::sync::Mutex::new(BTreeMap::new()),
+        trace_id: trace_id.clone(),
+        payload_mode: options.telemetry.payload_mode,
     };
 
     let runtime = WorkflowRuntime::new(
@@ -1595,6 +1956,9 @@ async fn try_run_yaml_via_ir_runtime(
         .map(|totals| totals.clone())
         .unwrap_or_default();
 
+    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
+    workflow_span.end();
+
     Ok(Some(YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
@@ -1611,6 +1975,10 @@ async fn try_run_yaml_via_ir_runtime(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
+        trace_id: trace_id.clone(),
+        metadata: trace_id
+            .as_ref()
+            .map(|value| workflow_metadata_with_trace(options, value)),
     }))
 }
 
@@ -2575,6 +2943,98 @@ nodes:
             node.kind,
             crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
         )));
+    }
+
+    #[tokio::test]
+    async fn workflow_output_contains_trace_id_in_both_locations() {
+        let yaml = r#"
+id: trace-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let output = run_workflow_yaml(&workflow, &json!({"email_text":"hello"}), &MockExecutor)
+            .await
+            .expect("workflow should execute");
+
+        let trace_id = output
+            .trace_id
+            .as_deref()
+            .expect("trace_id should be present");
+        assert!(!trace_id.is_empty());
+        assert_eq!(
+            output.metadata.as_ref().and_then(|value| {
+                value
+                    .get("telemetry")
+                    .and_then(|telemetry| telemetry.get("trace_id"))
+                    .and_then(Value::as_str)
+            }),
+            Some(trace_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_use_explicit_trace_id_and_payload_mode() {
+        let yaml = r#"
+id: trace-options-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                payload_mode: YamlWorkflowPayloadMode::RedactedPayload,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-fixed-123".to_string()),
+                    traceparent: Some("00-trace-fixed-123-span-1-01".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                ..YamlWorkflowTraceOptions::default()
+            },
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.trace_id.as_deref(), Some("trace-fixed-123"));
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("payload_mode"))
+                .and_then(Value::as_str),
+            Some("redacted_payload")
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@ pub struct TraceContext {
     pub trace_id: Option<String>,
     pub span_id: Option<String>,
     pub parent_span_id: Option<String>,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
     pub baggage: BTreeMap<String, String>,
 }
 
