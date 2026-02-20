@@ -141,32 +141,12 @@ def step_display_name(node_id: str | None, node_names: dict[str, str]) -> str:
 
 
 def render_assistant_reply(result: dict) -> str:
-    terminal = result.get("terminal_node")
-    terminal_output = result.get("terminal_output") or {}
-
-    if terminal == "explain_capabilities":
-        for key in ("question", "answer", "message"):
-            value = terminal_output.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-        return json.dumps(terminal_output, indent=2)
-
-    if terminal == "ask_for_scenario":
-        question = terminal_output.get("question")
-        if isinstance(question, str) and question.strip():
-            return question
-        return json.dumps(terminal_output, indent=2)
-
-    if terminal == "generate_email_draft":
-        subject = terminal_output.get("subject", "Draft Email")
-        body = terminal_output.get("body", "")
-        if not isinstance(subject, str):
-            subject = "Draft Email"
-        if not isinstance(body, str):
-            body = ""
-        return f"Subject: {subject}\n\n{body}".strip()
-
-    return json.dumps(terminal_output, indent=2)
+    terminal_output = result.get("terminal_output")
+    if terminal_output is None:
+        return ""
+    if isinstance(terminal_output, str):
+        return terminal_output
+    return json.dumps(terminal_output, indent=2, ensure_ascii=True)
 
 
 def _print_stream_event(
