@@ -20,8 +20,8 @@ nodes:
         model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
-        stream: false
-        heal: true
+        stream: true
+        heal: false
     config:
       prompt: |
         Determine the user's intent state.
@@ -57,8 +57,8 @@ nodes:
         model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
-        stream: false
-        heal: true
+        stream: true
+        heal: false
     config:
       prompt: |
         User is new and asked about capabilities.
@@ -77,8 +77,8 @@ nodes:
         model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
-        stream: false
-        heal: true
+        stream: true
+        heal: false
     config:
       prompt: |
         You cannot draft yet because scenario context is incomplete.
@@ -96,7 +96,7 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        heal: true
+        heal: false
     config:
       prompt: |
         Draft a professional reply email based on the conversation.

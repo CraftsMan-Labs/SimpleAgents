@@ -54,11 +54,6 @@ impl RouterEngine {
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         match self {
             Self::Direct(provider) => {
-                eprintln!(
-                    "RouterEngine.stream: provider={}, stream={:?}",
-                    provider.name(),
-                    request.stream
-                );
                 let provider_request = provider.transform_request(request)?;
                 provider.execute_stream(provider_request).await
             }
