@@ -2258,6 +2258,8 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
             let kwargs = PyDict::new_bound(py);
             let context_obj =
                 pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
+            let payload_obj =
+                pythonize::pythonize(py, payload).map_err(|error| error.to_string())?;
             kwargs
                 .set_item(
                     "email_text",
@@ -2267,10 +2269,25 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
             kwargs
                 .set_item("context", context_obj)
                 .map_err(|error| error.to_string())?;
-
-            let result = function
-                .call((topic,), Some(&kwargs))
+            kwargs
+                .set_item("payload", payload_obj)
                 .map_err(|error| error.to_string())?;
+
+            let result = match function.call((topic,), Some(&kwargs)) {
+                Ok(result) => result,
+                Err(with_payload_error) => {
+                    if kwargs.del_item("payload").is_err() {
+                        return Err(with_payload_error.to_string());
+                    }
+                    function
+                        .call((topic,), Some(&kwargs))
+                        .map_err(|fallback_error| {
+                            format!(
+                                "handler call with payload failed: {with_payload_error}; fallback without payload failed: {fallback_error}"
+                            )
+                        })?
+                }
+            };
             pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
         })
     }
