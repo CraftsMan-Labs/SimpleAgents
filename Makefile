@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -28,6 +28,7 @@ help:
 	@echo "  make test                  - Run all tests"
 	@echo "  make clippy                - Run clippy on all targets"
 	@echo "  make fmt                   - Check formatting"
+	@echo "  make coverage-rust         - Enforce Rust coverage threshold (auto tool, default: 100%)"
 	@echo "  make loc-report            - Print LOC report and README snippet"
 	@echo "  make check-publish         - Run all pre-publish checks"
 	@echo ""
@@ -75,6 +76,9 @@ test-rust:
 
 test-python:
 	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" pytest
+
+coverage-rust:
+	PATH="$(HOME)/.cargo/bin:$$PATH" bash ./scripts/check-rust-coverage.sh
 
 test-binding-contracts:
 	./scripts/run-binding-contracts.sh
