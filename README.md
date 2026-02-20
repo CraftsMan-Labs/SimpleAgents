@@ -13,7 +13,7 @@
 [![CI Status](https://img.shields.io/badge/build-passing-brightgreen?style=flat-square&logo=github-actions)](https://github.com/rishub/simple-agents)
 [![Clippy](https://img.shields.io/badge/clippy-0%20warnings-success?style=flat-square&logo=rust)](https://github.com/rishub/simple-agents)
 
-[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-22K%2B-blue?style=flat-square)]()
+[![Lines of Code](https://img.shields.io/badge/lines%20of%20code-39K%2B-blue?style=flat-square)]()
 [![Tests](https://img.shields.io/badge/tests-passing-success?style=flat-square&logo=checkmarx)]()
 [![Code Coverage](https://img.shields.io/badge/coverage-100%25%20API-success?style=flat-square&logo=codecov)]()
 
@@ -53,7 +53,7 @@
 
 ### Quick Stats
 
-- 🚀 **22,000+ lines** of production Rust source code
+- 🚀 **39,000+ lines** of production Rust source code
 - ✅ **100% complete** - All 7 phases implemented
 - 📦 **11 modular crates** fully functional
 - 🔒 **Type-safe** by design with compile-time guarantees
@@ -82,14 +82,14 @@
 
 | Phase | Component | Status | LOC |
 |-------|-----------|--------|-----|
-| **Phase 1** | Foundation (types, traits) | ✅ Complete | 4,073 |
-| **Phase 2** | Provider Integration | ✅ Complete | 5,665 |
+| **Phase 1** | Foundation (types, traits) | ✅ Complete | 4,280 |
+| **Phase 2** | Provider Integration | ✅ Complete | 6,799 |
 | **Phase 3** | Response Healing | ✅ Complete | 3,187 |
-| **Phase 4** | Router & Strategies | ✅ Complete | 1,618 |
-| **Phase 5** | Unified Client API | ✅ Complete | 1,104 |
-| **Phase 6** | CLI & Tools | ✅ Complete | 1,070 |
-| **Phase 7** | Language Bindings | ✅ Complete | 3,808 |
-| | **TOTAL** | **✅ 100%** | **20,525** |
+| **Phase 4** | Router & Strategies | ✅ Complete | 1,682 |
+| **Phase 5** | Unified Client API | ✅ Complete | 1,142 |
+| **Phase 6** | CLI & Tools | ✅ Complete | 1,279 |
+| **Phase 7** | Language Bindings | ✅ Complete | 5,126 |
+| | **TOTAL** | **✅ 100%** | **23,495** |
 
 _LOC generated from Rust `src/*.rs` via `scripts/loc-report.sh`._
 
