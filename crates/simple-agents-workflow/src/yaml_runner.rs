@@ -1591,6 +1591,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
+    if let Some(output) =
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
+            .await?
+    {
+        return Ok(output);
+    }
+
     let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
     let (workflow_trace_context, mut workflow_span) = tracer.start_span(
@@ -1605,13 +1612,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     } else {
         None
     };
-
-    if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
-            .await?
-    {
-        return Ok(output);
-    }
 
     if workflow.nodes.is_empty() {
         return Err(YamlWorkflowRunError::EmptyNodes {
