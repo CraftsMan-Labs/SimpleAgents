@@ -226,16 +226,13 @@ func (c *Client) Close() {
 	}
 	c.closed = true
 	ptr := c.ptr
+	c.ptr = nil
 	c.mu.Unlock()
 
-	c.inFlight.Wait()
-
-	c.mu.Lock()
-	if c.ptr == ptr {
-		C.sa_client_free(c.ptr)
-		c.ptr = nil
-	}
-	c.mu.Unlock()
+	go func() {
+		c.inFlight.Wait()
+		C.sa_client_free(ptr)
+	}()
 }
 
 func (c *Client) beginCall() (*C.SAClient, error) {

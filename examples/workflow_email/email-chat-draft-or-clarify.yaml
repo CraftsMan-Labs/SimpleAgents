@@ -17,7 +17,7 @@ nodes:
     name: "Detect Scenario Context"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -54,7 +54,7 @@ nodes:
     name: "Explain Capabilities"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -74,7 +74,7 @@ nodes:
     name: "Ask For Scenario"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -92,10 +92,11 @@ nodes:
     name: "Generate Draft Email"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
+        heal: true
     config:
       prompt: |
         Draft a professional reply email based on the conversation.

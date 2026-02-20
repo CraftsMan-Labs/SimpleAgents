@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import time
 from typing import Any
 
@@ -42,8 +43,6 @@ def get_rag_data(
             "email_preview": email_text[:120],
             "context_nodes": str(len(context.get("nodes", {}))),
         }
-
-    time.sleep(10)
     data = {
         "probation": (
             "hr_policy/probation.md",

@@ -133,8 +133,14 @@ result = client.run_email_workflow_yaml(
 )
 
 print(result["terminal_output"])
-print(result["step_timings"])      # per-node elapsed ms
+print(result["step_timings"])      # per-node elapsed ms + optional token usage
+print(result["llm_node_metrics"])  # llm node token/tps metrics by node id
 print(result["total_elapsed_ms"])  # end-to-end runtime
+print(result["total_input_tokens"])
+print(result["total_output_tokens"])
+print(result["total_tokens"])
+print(result["total_thinking_tokens"])  # null when provider does not expose it
+print(result["tokens_per_second"])      # completion tokens / second
 ```
 
 To collect workflow events without live callbacks, set `include_events=True`:

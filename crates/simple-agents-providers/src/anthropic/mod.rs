@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use simple_agent_type::prelude::*;
 use simple_agent_type::request::ResponseFormat;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::healing_integration::{HealingConfig, HealingIntegration};
@@ -30,7 +30,6 @@ pub struct AnthropicProvider {
     client: Client,
     rate_limiter: crate::rate_limit::MaybeRateLimiter,
     healing: Option<Arc<HealingIntegration>>,
-    current_request: Arc<Mutex<Option<CompletionRequest>>>,
 }
 
 impl std::fmt::Debug for AnthropicProvider {
@@ -117,7 +116,6 @@ impl AnthropicProvider {
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
-            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -135,7 +133,6 @@ impl AnthropicProvider {
             client,
             rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
-            current_request: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -220,14 +217,6 @@ impl Provider for AnthropicProvider {
         }
 
         use crate::anthropic::models::{AnthropicJsonSchema, AnthropicOutputFormat};
-        use simple_agent_type::request::ResponseFormat;
-
-        // Store request context for potential healing
-        if self.healing.is_some() && req.response_format.is_some() {
-            if let Ok(mut current) = self.current_request.lock() {
-                *current = Some(req.clone());
-            }
-        }
 
         // Extract system prompt
         let system = Self::extract_system_prompt(&req.messages);
@@ -262,7 +251,8 @@ impl Provider for AnthropicProvider {
             output_format,
         };
 
-        let body = serde_json::to_value(&anthropic_request)?;
+        let mut body = serde_json::to_value(&anthropic_request)?;
+        self.embed_healing_schema(&mut body, req)?;
 
         // Build headers
         let mut headers = vec![
@@ -296,7 +286,9 @@ impl Provider for AnthropicProvider {
         })
     }
 
-    async fn execute(&self, req: ProviderRequest) -> Result<ProviderResponse> {
+    async fn execute(&self, mut req: ProviderRequest) -> Result<ProviderResponse> {
+        let healing_schema = Self::take_healing_schema(&mut req.body);
+
         // Apply rate limiting
         self.rate_limiter
             .until_ready(Some(self.api_key.expose()))
@@ -373,7 +365,7 @@ impl Provider for AnthropicProvider {
         }
 
         // Parse successful response
-        let body = match response.json::<serde_json::Value>().await {
+        let mut body = match response.json::<serde_json::Value>().await {
             Ok(b) => b,
             Err(e) => {
                 timer.complete_error("parse_error");
@@ -384,8 +376,18 @@ impl Provider for AnthropicProvider {
         };
 
         // Extract token usage for metrics
-        let prompt_tokens = body["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32;
-        let completion_tokens = body["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32;
+        let prompt_tokens =
+            Self::safe_token_count(body["usage"]["input_tokens"].as_u64(), "usage.input_tokens");
+        let completion_tokens = Self::safe_token_count(
+            body["usage"]["output_tokens"].as_u64(),
+            "usage.output_tokens",
+        );
+
+        if let Some(schema) = healing_schema {
+            if let serde_json::Value::Object(map) = &mut body {
+                map.insert(Self::HEALING_SCHEMA_KEY.to_string(), schema);
+            }
+        }
 
         // Record success metrics
         timer.complete_success(prompt_tokens, completion_tokens);
@@ -461,9 +463,66 @@ impl Provider for AnthropicProvider {
             }
         }
     }
+
+    async fn execute_stream(
+        &self,
+        req: ProviderRequest,
+    ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        self.execute_stream_impl(req).await
+    }
 }
 
 impl AnthropicProvider {
+    const HEALING_SCHEMA_KEY: &'static str = "_simple_agents_healing_schema";
+
+    fn embed_healing_schema(
+        &self,
+        body: &mut serde_json::Value,
+        req: &CompletionRequest,
+    ) -> Result<()> {
+        if self.healing.is_none() {
+            return Ok(());
+        }
+
+        let Some(ResponseFormat::JsonSchema { json_schema }) = req.response_format.as_ref() else {
+            return Ok(());
+        };
+
+        let serde_json::Value::Object(map) = body else {
+            return Err(SimpleAgentsError::Provider(ProviderError::BadRequest(
+                "Anthropic request body must be a JSON object".to_string(),
+            )));
+        };
+
+        map.insert(
+            Self::HEALING_SCHEMA_KEY.to_string(),
+            json_schema.schema.clone(),
+        );
+        Ok(())
+    }
+
+    fn take_healing_schema(body: &mut serde_json::Value) -> Option<serde_json::Value> {
+        if let serde_json::Value::Object(map) = body {
+            return map.remove(Self::HEALING_SCHEMA_KEY);
+        }
+        None
+    }
+
+    fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
+        let raw = raw.unwrap_or(0);
+        match u32::try_from(raw) {
+            Ok(value) => value,
+            Err(_) => {
+                tracing::warn!(
+                    field = field,
+                    raw = raw,
+                    "Token count exceeded u32::MAX; clamping value"
+                );
+                u32::MAX
+            }
+        }
+    }
+
     /// Attempt to heal a malformed response using the healing system.
     fn try_healing(
         &self,
@@ -472,27 +531,11 @@ impl AnthropicProvider {
     ) -> Result<CompletionResponse> {
         let healing = self.healing.as_ref().unwrap();
 
-        // Get the stored request context
-        let request = self
-            .current_request
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
-            .ok_or_else(|| {
-                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No request context available for healing".to_string(),
-                ))
-            })?;
-
-        // Extract JSON schema from request
-        let json_schema = match request.response_format.as_ref() {
-            Some(ResponseFormat::JsonSchema { json_schema }) => json_schema,
-            _ => {
-                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No JSON schema available for healing".to_string(),
-                )))
-            }
-        };
+        let json_schema = resp.body.get(Self::HEALING_SCHEMA_KEY).ok_or_else(|| {
+            SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                "No JSON schema available for healing".to_string(),
+            ))
+        })?;
 
         // Extract the content from the response - Anthropic uses content array
         let content = resp.body["content"]
@@ -508,7 +551,7 @@ impl AnthropicProvider {
         // Attempt healing
         let healed = healing.heal_response(
             content,
-            &json_schema.schema,
+            json_schema,
             &format!("JSON parse error: {}", original_error),
         )?;
 
@@ -525,11 +568,25 @@ impl AnthropicProvider {
                 logprobs: None,
             }],
             usage: Usage {
-                prompt_tokens: resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0) as u32,
-                completion_tokens: resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0) as u32,
-                total_tokens: (resp.body["usage"]["input_tokens"].as_u64().unwrap_or(0)
-                    + resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0))
-                    as u32,
+                prompt_tokens: Self::safe_token_count(
+                    resp.body["usage"]["input_tokens"].as_u64(),
+                    "usage.input_tokens",
+                ),
+                completion_tokens: Self::safe_token_count(
+                    resp.body["usage"]["output_tokens"].as_u64(),
+                    "usage.output_tokens",
+                ),
+                total_tokens: Self::safe_token_count(
+                    Some(
+                        resp.body["usage"]["input_tokens"]
+                            .as_u64()
+                            .unwrap_or(0)
+                            .saturating_add(
+                                resp.body["usage"]["output_tokens"].as_u64().unwrap_or(0),
+                            ),
+                    ),
+                    "usage.total_tokens",
+                ),
             },
             created: None,
             provider: Some(self.name().to_string()),
@@ -537,11 +594,12 @@ impl AnthropicProvider {
         })
     }
 
-    #[allow(dead_code)]
-    async fn execute_stream(
+    async fn execute_stream_impl(
         &self,
-        req: ProviderRequest,
+        mut req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        let _ = Self::take_healing_schema(&mut req.body);
+
         // Apply rate limiting
         self.rate_limiter
             .until_ready(Some(self.api_key.expose()))

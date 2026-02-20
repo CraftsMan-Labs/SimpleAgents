@@ -20,7 +20,7 @@ nodes:
     name: "Detect Scenario Context"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -57,7 +57,7 @@ nodes:
     name: "Explain Capabilities"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -77,7 +77,7 @@ nodes:
     name: "Ask For Scenario"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: false
@@ -95,8 +95,9 @@ nodes:
     name: "Classify Top Level Category"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
+        heal: true
     config:
       prompt: |
         Classify this email into exactly one category:
@@ -141,8 +142,9 @@ nodes:
     name: "Classify Supply Chain Subtype"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
+        heal: true
     config:
       prompt: |
         Determine supply chain subtype:
@@ -174,7 +176,7 @@ nodes:
     name: "Classify Termination Subtype"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
         heal: true
     config:
@@ -299,10 +301,11 @@ nodes:
     name: "Generate Draft Email"
     node_type:
       llm_call:
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
+        heal: true
     config:
       prompt: |
         Draft a professional response email based on the conversation and classification context.
