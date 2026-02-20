@@ -86,7 +86,28 @@ impl HttpClient {
 
 impl Default for HttpClient {
     fn default() -> Self {
-        Self::new().expect("Failed to create default HTTP client")
+        match Self::new() {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Falling back to minimal timeout HTTP client configuration"
+                );
+                let fallback = Client::builder().timeout(Duration::from_secs(30)).build();
+                match fallback {
+                    Ok(inner) => Self { inner },
+                    Err(fallback_error) => {
+                        tracing::warn!(
+                            ?fallback_error,
+                            "Fallback HTTP client build failed; using reqwest default client"
+                        );
+                        Self {
+                            inner: Client::new(),
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

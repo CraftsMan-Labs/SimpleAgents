@@ -118,3 +118,83 @@ print(coerced.value)
 - `Client` reads provider API keys from environment variables when `api_key` is omitted.
 - `complete()` accepts a prompt string or a list of message dicts.
 - `response_format="json"` enables JSON parsing when paired with `heal=True`.
+
+## Workflow YAML Runner (Rust-backed)
+
+Python binding now exposes Rust workflow YAML execution directly:
+
+```python
+from simple_agents_py import Client
+
+client = Client("openai", api_base="https://...", api_key="...")
+result = client.run_email_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+)
+
+print(result["terminal_output"])
+print(result["step_timings"])      # per-node elapsed ms + optional token usage
+print(result["llm_node_metrics"])  # llm node token/tps metrics by node id
+print(result["total_elapsed_ms"])  # end-to-end runtime
+print(result["total_input_tokens"])
+print(result["total_output_tokens"])
+print(result["total_tokens"])
+print(result["total_thinking_tokens"])  # null when provider does not expose it
+print(result["tokens_per_second"])      # completion tokens / second
+```
+
+To collect workflow events without live callbacks, set `include_events=True`:
+
+```python
+result = client.run_email_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+    include_events=True,
+)
+
+print(result["events"][0]["event_type"])
+```
+
+This method delegates to Rust `simple-agents-workflow` as the source of truth.
+
+For chat-history workflows, use `run_workflow_yaml(...)` with structured workflow input:
+
+```python
+result = client.run_workflow_yaml(
+    "examples/workflow_email/email-intake-classification.yaml",
+    {
+        "email_text": "Termination request, second warning already issued",
+        "messages": [
+            {"role": "system", "content": "You are an HR classifier."},
+            {"role": "user", "content": "Termination request, second warning already issued"},
+        ],
+    },
+)
+```
+
+### Live Workflow Events + LLM Deltas
+
+`Client.run_email_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
+
+```python
+def on_event(event: dict[str, object]) -> None:
+    if event.get("event_type") == "node_stream_delta":
+        print(event.get("delta", ""), end="", flush=True)
+    else:
+        print(event)
+
+result = client.run_email_workflow_yaml_stream(
+    "examples/workflow_email/email-intake-classification.yaml",
+    "Termination request, second warning already issued",
+    on_event=on_event,
+)
+```
+
+Notes:
+
+- Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
+- If `llm_call` uses `heal=true`, streaming deltas are disabled for that node and a non-streamable event is emitted.
+- `node_llm_input_resolved` is emitted before each `llm_call` with `metadata` containing:
+  - resolved `prompt` and `prompt_template`
+  - selected `model`, `schema`, and effective stream/heal flags
+  - `bindings[]` entries that map each template expression to its source path and resolved value

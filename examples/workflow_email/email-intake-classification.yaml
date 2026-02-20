@@ -17,7 +17,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |
@@ -36,6 +38,13 @@ nodes:
           "category": "...",
           "reason": "short explanation"
         }
+      update_globals:
+        classifications_seen:
+          op: increment
+          by: 1
+        category_history:
+          op: append
+          from: nodes.classify_top_level.output.category
 
   - id: route_top_level
     name: "Route Top Level"
@@ -57,7 +66,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |
@@ -91,7 +102,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
+        stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |
@@ -129,6 +142,10 @@ nodes:
     config:
       payload:
         topic: probation
+      set_globals:
+        rag_topic: nodes.rag_probation.output.topic
+        rag_playbook: nodes.rag_probation.output.playbook
+        rag_kb_source: nodes.rag_probation.output.kb_source
 
   - id: rag_leave_request
     name: "Mock RAG: Leave Request"
@@ -139,6 +156,10 @@ nodes:
     config:
       payload:
         topic: leave_request
+      set_globals:
+        rag_topic: nodes.rag_leave_request.output.topic
+        rag_playbook: nodes.rag_leave_request.output.playbook
+        rag_kb_source: nodes.rag_leave_request.output.kb_source
 
   - id: rag_supply_chain_order_assessment
     name: "Mock RAG: Supply Chain Order Assessment"
@@ -149,6 +170,10 @@ nodes:
     config:
       payload:
         topic: supply_chain_order_assessment
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_assessment.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_assessment.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_assessment.output.kb_source
 
   - id: rag_supply_chain_order_replacement
     name: "Mock RAG: Supply Chain Order Replacement"
@@ -159,6 +184,10 @@ nodes:
     config:
       payload:
         topic: supply_chain_order_replacement
+      set_globals:
+        rag_topic: nodes.rag_supply_chain_order_replacement.output.topic
+        rag_playbook: nodes.rag_supply_chain_order_replacement.output.playbook
+        rag_kb_source: nodes.rag_supply_chain_order_replacement.output.kb_source
 
   - id: rag_termination_first_time_offense
     name: "Mock RAG: Termination First Time Offense"
@@ -169,6 +198,10 @@ nodes:
     config:
       payload:
         topic: termination_first_time_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_first_time_offense.output.topic
+        rag_playbook: nodes.rag_termination_first_time_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_first_time_offense.output.kb_source
 
   - id: rag_termination_repeated_offense
     name: "Mock RAG: Termination Repeated Offense"
@@ -179,6 +212,10 @@ nodes:
     config:
       payload:
         topic: termination_repeated_offense
+      set_globals:
+        rag_topic: nodes.rag_termination_repeated_offense.output.topic
+        rag_playbook: nodes.rag_termination_repeated_offense.output.playbook
+        rag_kb_source: nodes.rag_termination_repeated_offense.output.kb_source
 
   - id: rag_clarification
     name: "Mock RAG: Clarification"
@@ -189,6 +226,50 @@ nodes:
     config:
       payload:
         topic: clarification
+      set_globals:
+        rag_topic: nodes.rag_clarification.output.topic
+        rag_playbook: nodes.rag_clarification.output.playbook
+        rag_kb_source: nodes.rag_clarification.output.kb_source
+
+  - id: generate_email_draft
+    name: "Generate Draft Email"
+    node_type:
+      llm_call:
+        provider: openai
+        model: ollama-glm-4.7-flash
+        stream: true
+        heal: true
+        temperature: 0.1
+    config:
+      prompt: |
+        Generate a professional response email draft for this request.
+
+        Requirements:
+        - Return JSON only.
+        - Subject must be 2-6 words.
+        - Body must be exactly 2 short sentences, max 60 words total.
+        - Use an HR-review tone: professional, neutral, and supportive.
+        - Do not mention internal systems or process details (no "RAG", "playbook", "protocol", "guidelines", "escalation approvals", "compliance review").
+        - Focus on customer-facing next steps only.
+        - Include: (1) acknowledgement of request, (2) a request for supporting information needed to proceed.
+        - For termination contexts, request concrete support info (for example dates/details of prior warnings and any relevant records) in clear plain language.
+        - The support-info request must explicitly ask for at least two items (warning dates, incident summaries, or attached records).
+        - Avoid generic phrases like "provide prior details".
+
+        Classification context:
+        - Category: {{ nodes.classify_top_level.output.category }}
+        - RAG topic: {{ globals.rag_topic }}
+        - RAG source: {{ globals.rag_kb_source }}
+        - RAG playbook: {{ globals.rag_playbook }}
+
+        Respond with JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+        Original incoming email:
+        {{ input.email_text }}
 
 edges:
   - from: classify_top_level
@@ -199,3 +280,24 @@ edges:
 
   - from: classify_termination_subtype
     to: route_termination_subtype
+
+  - from: rag_probation
+    to: generate_email_draft
+
+  - from: rag_leave_request
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_assessment
+    to: generate_email_draft
+
+  - from: rag_supply_chain_order_replacement
+    to: generate_email_draft
+
+  - from: rag_termination_first_time_offense
+    to: generate_email_draft
+
+  - from: rag_termination_repeated_offense
+    to: generate_email_draft
+
+  - from: rag_clarification
+    to: generate_email_draft

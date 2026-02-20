@@ -61,6 +61,12 @@ where
     F: Fn() -> Fut,
     Fut: Future<Output = Result<T, SimpleAgentsError>>,
 {
+    if policy.max_attempts == 0 {
+        return Err(SimpleAgentsError::Config(
+            "retry max_attempts must be >= 1".to_string(),
+        ));
+    }
+
     let mut last_error: Option<SimpleAgentsError> = None;
 
     for attempt in 0..policy.max_attempts {
@@ -82,7 +88,9 @@ where
         }
     }
 
-    Err(last_error.unwrap())
+    Err(last_error.unwrap_or_else(|| {
+        SimpleAgentsError::Config("retry loop exhausted without attempts".to_string())
+    }))
 }
 
 fn is_retryable(error: &SimpleAgentsError) -> bool {
@@ -185,5 +193,20 @@ mod tests {
             Err(SimpleAgentsError::Provider(ProviderError::InvalidApiKey))
         ));
         assert_eq!(attempts.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn zero_attempts_returns_config_error() {
+        let policy = RetryPolicy {
+            max_attempts: 0,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(5),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let result =
+            execute_with_retry(policy, || async { Ok::<_, SimpleAgentsError>("ok") }).await;
+        assert!(matches!(result, Err(SimpleAgentsError::Config(_))));
     }
 }

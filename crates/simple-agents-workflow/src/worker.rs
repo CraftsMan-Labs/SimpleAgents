@@ -270,6 +270,15 @@ struct WorkItem {
     response_tx: oneshot::Sender<Result<WorkerResponse, WorkerPoolError>>,
 }
 
+type WorkerResponseRx = oneshot::Receiver<Result<WorkerResponse, WorkerPoolError>>;
+type WorkerCandidate = (usize, String, mpsc::Sender<WorkItem>);
+type CandidateWithHealth = (
+    usize,
+    String,
+    mpsc::Sender<WorkItem>,
+    Arc<RwLock<WorkerHealth>>,
+);
+
 struct WorkerSlot {
     worker_id: String,
     sender: mpsc::Sender<WorkItem>,
@@ -343,27 +352,74 @@ impl WorkerPool {
     /// Submits one request to the pool and waits for completion.
     pub async fn submit(&self, request: WorkerRequest) -> Result<WorkerResponse, WorkerPoolError> {
         validate_request_contract(&request, &self.options.security_policy)?;
-        let (slot_index, worker_id, sender) = self.select_worker(&request).await?;
+        let candidates = self.select_worker_candidates(&request).await?;
+        let mut saw_queue_full = false;
+        let mut saw_circuit_open = false;
 
-        if let Some(hooks) = &self.hooks {
-            if !hooks.allow_request(&worker_id, &request) {
-                hooks
-                    .on_request_rejected(Some(&worker_id), &request, WorkerErrorCode::CircuitOpen)
-                    .await;
-                return Err(WorkerPoolError::CircuitOpen);
+        let mut selected_slot: Option<(usize, String, WorkerResponseRx)> = None;
+
+        for (slot_index, worker_id, sender) in candidates {
+            if let Some(hooks) = &self.hooks {
+                if !hooks.allow_request(&worker_id, &request) {
+                    saw_circuit_open = true;
+                    hooks
+                        .on_request_rejected(
+                            Some(&worker_id),
+                            &request,
+                            WorkerErrorCode::CircuitOpen,
+                        )
+                        .await;
+                    continue;
+                }
+                hooks.on_request_accepted(&worker_id, &request).await;
             }
-            hooks.on_request_accepted(&worker_id, &request).await;
+
+            let (response_tx, response_rx) = oneshot::channel();
+            let work_item = WorkItem {
+                request: request.clone(),
+                response_tx,
+            };
+
+            match sender.try_send(work_item) {
+                Ok(()) => {
+                    selected_slot = Some((slot_index, worker_id, response_rx));
+                    break;
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    saw_queue_full = true;
+                    if let Some(hooks) = &self.hooks {
+                        hooks
+                            .on_request_rejected(
+                                Some(&worker_id),
+                                &request,
+                                WorkerErrorCode::QueueFull,
+                            )
+                            .await;
+                    }
+                }
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    if let Some(hooks) = &self.hooks {
+                        hooks
+                            .on_request_rejected(
+                                Some(&worker_id),
+                                &request,
+                                WorkerErrorCode::Unavailable,
+                            )
+                            .await;
+                    }
+                }
+            }
         }
 
-        let (response_tx, response_rx) = oneshot::channel();
-        let work_item = WorkItem {
-            request: request.clone(),
-            response_tx,
+        let Some((slot_index, worker_id, response_rx)) = selected_slot else {
+            return if saw_queue_full {
+                Err(WorkerPoolError::QueueFull)
+            } else if saw_circuit_open {
+                Err(WorkerPoolError::CircuitOpen)
+            } else {
+                Err(WorkerPoolError::NoHealthyWorker)
+            };
         };
-
-        sender
-            .try_send(work_item)
-            .map_err(|_| WorkerPoolError::QueueFull)?;
 
         let timeout_budget = request
             .timeout_ms
@@ -460,12 +516,32 @@ impl WorkerPool {
         }
     }
 
-    async fn select_worker(
+    async fn select_worker_candidates(
         &self,
         request: &WorkerRequest,
-    ) -> Result<(usize, String, mpsc::Sender<WorkItem>), WorkerPoolError> {
-        let slots = self.slots.lock().await;
-        if slots.is_empty() {
+    ) -> Result<Vec<WorkerCandidate>, WorkerPoolError> {
+        let candidates = {
+            let slots = self.slots.lock().await;
+            if slots.is_empty() {
+                Vec::<CandidateWithHealth>::new()
+            } else {
+                let start = self.next_worker.fetch_add(1, Ordering::Relaxed) % slots.len();
+                let mut candidates = Vec::<CandidateWithHealth>::with_capacity(slots.len());
+                for offset in 0..slots.len() {
+                    let idx = (start + offset) % slots.len();
+                    let slot = &slots[idx];
+                    candidates.push((
+                        idx,
+                        slot.worker_id.clone(),
+                        slot.sender.clone(),
+                        Arc::clone(&slot.health),
+                    ));
+                }
+                candidates
+            }
+        };
+
+        if candidates.is_empty() {
             if let Some(hooks) = &self.hooks {
                 hooks
                     .on_request_rejected(None, request, WorkerErrorCode::Unavailable)
@@ -474,13 +550,15 @@ impl WorkerPool {
             return Err(WorkerPoolError::NoHealthyWorker);
         }
 
-        let start = self.next_worker.fetch_add(1, Ordering::Relaxed) % slots.len();
-        for offset in 0..slots.len() {
-            let idx = (start + offset) % slots.len();
-            let slot = &slots[idx];
-            if slot.health.read().await.is_schedulable() {
-                return Ok((idx, slot.worker_id.clone(), slot.sender.clone()));
+        let mut schedulable = Vec::new();
+        for (idx, worker_id, sender, health_ref) in candidates {
+            if health_ref.read().await.is_schedulable() {
+                schedulable.push((idx, worker_id, sender));
             }
+        }
+
+        if !schedulable.is_empty() {
+            return Ok(schedulable);
         }
 
         if let Some(hooks) = &self.hooks {
@@ -949,6 +1027,43 @@ mod tests {
             .expect_err("request should be rejected by security policy");
 
         assert!(matches!(error, WorkerPoolError::InvalidRequest { .. }));
+        pool.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn handles_parallel_submissions_without_deadlock() {
+        let pool = Arc::new(
+            WorkerPool::new_inprocess(
+                vec![Arc::new(EchoWorker), Arc::new(EchoWorker)],
+                WorkerPoolOptions {
+                    queue_capacity: 32,
+                    health_probe_interval: Duration::from_millis(5),
+                    default_request_timeout: Some(Duration::from_secs(1)),
+                    ..WorkerPoolOptions::default()
+                },
+                None,
+            )
+            .expect("pool should initialize"),
+        );
+
+        let mut tasks = Vec::new();
+        for idx in 0..32usize {
+            let pool = Arc::clone(&pool);
+            tasks.push(tokio::spawn(async move {
+                pool.submit(sample_request(&format!("parallel-{idx}")))
+                    .await
+            }));
+        }
+
+        let joined = tokio::time::timeout(Duration::from_secs(3), async {
+            for task in tasks {
+                let result = task.await.expect("join should succeed");
+                assert!(result.is_ok(), "submit should succeed under parallel load");
+            }
+        })
+        .await;
+
+        assert!(joined.is_ok(), "parallel submissions should not deadlock");
         pool.shutdown().await;
     }
 }

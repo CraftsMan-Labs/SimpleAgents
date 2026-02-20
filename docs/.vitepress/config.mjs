@@ -36,6 +36,7 @@ export default defineConfig({
         text: 'Core Guides',
         items: [
           { text: 'Examples', link: '/EXAMPLES' },
+          { text: 'YAML Workflow System', link: '/YAML_WORKFLOW_SYSTEM' },
           { text: 'Architecture', link: '/ARCHITECTURE' },
           { text: 'Rust Core Systems', link: '/RUST_CORE_SYSTEMS' },
           { text: 'Development Guide', link: '/DEVELOPMENT' }

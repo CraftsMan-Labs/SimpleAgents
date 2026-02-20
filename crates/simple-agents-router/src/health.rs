@@ -46,7 +46,10 @@ impl HealthTracker {
 
     /// Record a successful request.
     pub fn record_success(&self, provider_index: usize, latency: Duration) {
-        let mut metrics = self.metrics.lock().expect("health tracker lock poisoned");
+        let mut metrics = self
+            .metrics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(entry) = metrics.get_mut(provider_index) {
             entry.total_requests = entry.total_requests.saturating_add(1);
             entry.successful_requests = entry.successful_requests.saturating_add(1);
@@ -58,7 +61,10 @@ impl HealthTracker {
 
     /// Record a failed request.
     pub fn record_failure(&self, provider_index: usize, latency: Option<Duration>) {
-        let mut metrics = self.metrics.lock().expect("health tracker lock poisoned");
+        let mut metrics = self
+            .metrics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(entry) = metrics.get_mut(provider_index) {
             entry.total_requests = entry.total_requests.saturating_add(1);
             entry.failed_requests = entry.failed_requests.saturating_add(1);
@@ -72,7 +78,10 @@ impl HealthTracker {
 
     /// Get metrics for a provider.
     pub fn metrics(&self, provider_index: usize) -> Option<ProviderMetrics> {
-        let metrics = self.metrics.lock().expect("health tracker lock poisoned");
+        let metrics = self
+            .metrics
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         metrics.get(provider_index).copied()
     }
 

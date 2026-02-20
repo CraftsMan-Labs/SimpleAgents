@@ -82,6 +82,25 @@ The test/examples convention also supports:
 new Client(provider: string)
 client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
 client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
+client.runEmailWorkflowYaml(workflowPath: string, emailText: string)
 ```
 
 `CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
+
+## Workflow YAML Runner (Rust-backed)
+
+```ts
+import { Client } from "simple-agents-node"
+
+const client = new Client("openai")
+const result = client.runEmailWorkflowYaml(
+  "examples/workflow_email/email-intake-classification.yaml",
+  "Please process supply chain replacement, order 9921 arrived damaged.",
+)
+
+console.log(result.terminal_output)
+console.log(result.step_timings)
+console.log(result.total_elapsed_ms)
+```
+
+This method delegates to Rust `simple-agents-workflow` as the source of truth.
