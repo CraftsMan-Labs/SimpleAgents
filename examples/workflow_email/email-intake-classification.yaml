@@ -17,8 +17,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |
@@ -65,8 +66,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
+        heal: true
         temperature: 0.0
     config:
       prompt: |
@@ -100,7 +102,7 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-lfm2.5-thinking
         stream: true
         heal: true
         temperature: 0.0
@@ -234,8 +236,9 @@ nodes:
     node_type:
       llm_call:
         provider: openai
-        model: gpt-4.1
+        model: ollama-glm-4.7-flash
         stream: true
+        heal: true
         temperature: 0.1
     config:
       prompt: |
@@ -243,8 +246,15 @@ nodes:
 
         Requirements:
         - Return JSON only.
-        - Include concise subject and body.
-        - Keep tone polite, compliant, and action-oriented.
+        - Subject must be 2-6 words.
+        - Body must be exactly 2 short sentences, max 60 words total.
+        - Use an HR-review tone: professional, neutral, and supportive.
+        - Do not mention internal systems or process details (no "RAG", "playbook", "protocol", "guidelines", "escalation approvals", "compliance review").
+        - Focus on customer-facing next steps only.
+        - Include: (1) acknowledgement of request, (2) a request for supporting information needed to proceed.
+        - For termination contexts, request concrete support info (for example dates/details of prior warnings and any relevant records) in clear plain language.
+        - The support-info request must explicitly ask for at least two items (warning dates, incident summaries, or attached records).
+        - Avoid generic phrases like "provide prior details".
 
         Classification context:
         - Category: {{ nodes.classify_top_level.output.category }}

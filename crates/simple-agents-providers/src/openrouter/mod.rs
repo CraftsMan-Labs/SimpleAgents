@@ -272,8 +272,14 @@ impl Provider for OpenRouterProvider {
         };
 
         // Extract token usage for metrics
-        let prompt_tokens = body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32;
-        let completion_tokens = body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32;
+        let prompt_tokens = safe_token_count(
+            body["usage"]["prompt_tokens"].as_u64(),
+            "usage.prompt_tokens",
+        );
+        let completion_tokens = safe_token_count(
+            body["usage"]["completion_tokens"].as_u64(),
+            "usage.completion_tokens",
+        );
 
         // Record success metrics
         timer.complete_success(prompt_tokens, completion_tokens);
@@ -393,6 +399,21 @@ impl Provider for OpenRouterProvider {
         let sse_stream = crate::openai::streaming::SseStream::new(byte_stream);
 
         Ok(Box::new(sse_stream))
+    }
+}
+
+fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
+    let raw = raw.unwrap_or(0);
+    match u32::try_from(raw) {
+        Ok(value) => value,
+        Err(_) => {
+            tracing::warn!(
+                field = field,
+                raw = raw,
+                "Token count exceeded u32::MAX; clamping value"
+            );
+            u32::MAX
+        }
     }
 }
 

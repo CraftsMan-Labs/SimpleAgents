@@ -6,7 +6,6 @@ use simple_agents_workflow::{
     WorkerErrorCode, WorkerHealth, WorkerHealthStatus, WorkerOperation, WorkerPoolError,
     WorkerProtocolError, WorkerRequest, WorkerResponse, WorkerResult,
 };
-use tokio::sync::Mutex;
 use tonic::transport::Channel;
 
 use crate::proto::{
@@ -17,7 +16,7 @@ use crate::proto::{
 pub struct GrpcWorkerClient {
     worker_id: String,
     endpoint: String,
-    client: Mutex<WorkerServiceClient<Channel>>,
+    channel: Channel,
 }
 
 impl GrpcWorkerClient {
@@ -37,7 +36,7 @@ impl GrpcWorkerClient {
         Ok(Self {
             worker_id,
             endpoint,
-            client: Mutex::new(WorkerServiceClient::new(channel)),
+            channel,
         })
     }
 
@@ -62,10 +61,7 @@ impl GrpcWorkerClient {
             grpc_request.set_timeout(timeout);
         }
 
-        let response = self
-            .client
-            .lock()
-            .await
+        let response = WorkerServiceClient::new(self.channel.clone())
             .execute(grpc_request)
             .await
             .map_err(map_status_error)?
@@ -76,10 +72,7 @@ impl GrpcWorkerClient {
 
     /// Probes worker health via gRPC.
     pub async fn health(&self) -> WorkerHealth {
-        let result = self
-            .client
-            .lock()
-            .await
+        let result = WorkerServiceClient::new(self.channel.clone())
             .health(tonic::Request::new(HealthRequest {}))
             .await;
 
