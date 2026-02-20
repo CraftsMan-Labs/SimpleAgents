@@ -22,6 +22,7 @@ Every subagent item must map to a parent item in `TODO.md`.
 | T8 | Main-Agent | Integration verification and final readiness report | Final quality gate after subagents complete | Consolidated pass/fail report and next actions | completed | Verification commands executed and recorded in `TODO.md` |
 | S1, S2, S3 | Main-Agent | `crates/simple-agents-workflow/src/yaml_runner.rs`, `examples/workflow_email/run_with_chat_history.py`, `docs/BINDINGS_PYTHON.md` | Streaming bug fix is scoped and does not require parallel ownership | Core emits sanitized stream deltas; example output clean; docs updated | completed | Implemented core JSON delta filter and removed stale example fallback messaging |
 | S4 | Main-Agent | `crates/simple-agents-workflow/src/yaml_runner.rs`, `docs/BINDINGS_PYTHON.md` | Stream consumers need token-level attribution in core events | Per-token event attributes identify step, token kind, and terminal-node ownership | completed | Added `step_id`, `token_kind`, and `is_terminal_node_token` to workflow stream events |
+| S5 | Main-Agent | `crates/simple-agents-workflow/src/yaml_runner.rs`, `docs/YAML_WORKFLOW_SYSTEM.md`, `examples/workflow_email/email-chat-draft-or-clarify.yaml` | Avoid hardcoded key rendering while preserving readable stream UX | Core `stream_json_as_text` flag emits non-thinking output tokens as plain text lines | completed | Added YAML flag + formatter and wired example workflow to enable it |
 
 ## Coordination checklist
 
