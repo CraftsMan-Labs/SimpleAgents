@@ -42,6 +42,7 @@ use simple_agent_type::prelude::*;
 use std::time::Duration;
 
 use crate::openai::{OpenAICompletionRequest, OpenAICompletionResponse};
+use crate::utils::DEFAULT_TIMEOUT;
 
 /// OpenRouter API provider.
 ///
@@ -121,7 +122,7 @@ impl OpenRouterProvider {
     /// * `base_url` - Custom base URL
     pub fn with_base_url(api_key: ApiKey, base_url: String) -> Result<Self> {
         let client = Client::builder()
-            .timeout(Duration::from_secs(30))
+            .timeout(DEFAULT_TIMEOUT)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
@@ -129,6 +130,16 @@ impl OpenRouterProvider {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
             })?;
 
+        Ok(Self {
+            api_key,
+            base_url,
+            client,
+            rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
+        })
+    }
+
+    /// Create a new OpenRouter provider with a custom HTTP client.
+    pub fn with_client(api_key: ApiKey, base_url: String, client: Client) -> Result<Self> {
         Ok(Self {
             api_key,
             base_url,
@@ -221,7 +232,7 @@ impl Provider for OpenRouterProvider {
                 if e.is_timeout() {
                     timer.complete_timeout();
                     return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
-                        Duration::from_secs(30),
+                        DEFAULT_TIMEOUT,
                     )));
                 } else {
                     timer.complete_error("network");
@@ -361,7 +372,7 @@ impl Provider for OpenRouterProvider {
             .await
             .map_err(|e| {
                 if e.is_timeout() {
-                    SimpleAgentsError::Provider(ProviderError::Timeout(Duration::from_secs(30)))
+                    SimpleAgentsError::Provider(ProviderError::Timeout(DEFAULT_TIMEOUT))
                 } else {
                     SimpleAgentsError::Network(format!("Network error: {}", e))
                 }
@@ -420,6 +431,67 @@ fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+
+    async fn spawn_hanging_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind should succeed");
+        let addr = listener.local_addr().expect("local addr should resolve");
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\n").await;
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        });
+
+        format!("http://{}", addr)
+    }
+
+    async fn spawn_error_server(
+        status_line: &str,
+        retry_after: Option<&str>,
+        body: &str,
+    ) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind should succeed");
+        let addr = listener.local_addr().expect("local addr should resolve");
+        let response = if let Some(retry_after) = retry_after {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\nretry-after: {retry_after}\r\ncontent-length: {len}\r\n\r\n{body}",
+                status = status_line,
+                retry_after = retry_after,
+                len = body.len(),
+                body = body
+            )
+        } else {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {len}\r\n\r\n{body}",
+                status = status_line,
+                len = body.len(),
+                body = body
+            )
+        };
+
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
+
+        format!("http://{}", addr)
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn test_provider_creation() {
@@ -499,5 +571,65 @@ mod tests {
         let response = provider.transform_response(provider_response).unwrap();
 
         assert!(!response.choices.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_execute_timeout_maps_to_default_timeout_constant() {
+        let base_url = spawn_hanging_server().await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(30))
+            .build()
+            .expect("client should build");
+        let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenRouterProvider::with_client(api_key, base_url, client).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("openai/gpt-4")
+            .message(Message::user("Hello"))
+            .build()
+            .unwrap();
+        let provider_request = provider.transform_request(&request).unwrap();
+
+        let result = provider.execute(provider_request).await;
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Provider(ProviderError::Timeout(d))) if d == crate::utils::DEFAULT_TIMEOUT
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_execute_stream_non_success_maps_retry_after() {
+        let base_url = spawn_error_server(
+            "429 Too Many Requests",
+            Some("4"),
+            r#"{"error":{"message":"Rate limit exceeded","type":"rate_limit"}}"#,
+        )
+        .await;
+        let api_key = ApiKey::new("sk-or-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenRouterProvider::with_base_url(api_key, base_url).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("openai/gpt-4")
+            .message(Message::user("Hello"))
+            .stream(true)
+            .build()
+            .unwrap();
+        let provider_request = provider.transform_request(&request).unwrap();
+
+        let result = provider.execute_stream(provider_request).await;
+        assert!(matches!(
+            result,
+            Err(SimpleAgentsError::Provider(ProviderError::RateLimit { retry_after: Some(d) })) if d == Duration::from_secs(4)
+        ));
+    }
+
+    #[test]
+    fn test_from_env_requires_api_key() {
+        let _guard = env_lock().lock().expect("env lock should not be poisoned");
+        std::env::remove_var("OPENROUTER_API_KEY");
+        std::env::remove_var("OPENROUTER_API_BASE");
+
+        let result = OpenRouterProvider::from_env();
+        assert!(matches!(result, Err(SimpleAgentsError::Config(_))));
     }
 }

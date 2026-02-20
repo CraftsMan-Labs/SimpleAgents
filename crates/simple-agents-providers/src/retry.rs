@@ -281,4 +281,81 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(20));
         assert!(started.elapsed() < Duration::from_millis(500));
     }
+
+    #[tokio::test]
+    async fn test_single_attempt_does_not_retry() {
+        let config = RetryConfig {
+            max_attempts: 1,
+            initial_backoff: Duration::from_millis(10),
+            max_backoff: Duration::from_secs(1),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let attempt_count = Arc::new(Mutex::new(0));
+        let attempt_count_clone = attempt_count.clone();
+
+        let result = execute_with_retry(
+            &config,
+            None,
+            |_| true,
+            || {
+                let count = attempt_count_clone.clone();
+                async move {
+                    let mut attempts = count.lock().unwrap();
+                    *attempts += 1;
+                    Err::<String, _>(SimpleAgentsError::Provider(ProviderError::Timeout(
+                        Duration::from_secs(1),
+                    )))
+                }
+            },
+        )
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(*attempt_count.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_retry_stops_when_error_becomes_non_retryable() {
+        let config = RetryConfig {
+            max_attempts: 4,
+            initial_backoff: Duration::from_millis(1),
+            max_backoff: Duration::from_millis(2),
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+
+        let attempt_count = Arc::new(Mutex::new(0));
+        let attempt_count_clone = attempt_count.clone();
+
+        let result = execute_with_retry(
+            &config,
+            None,
+            |e| matches!(e, SimpleAgentsError::Provider(pe) if pe.is_retryable()),
+            || {
+                let count = attempt_count_clone.clone();
+                async move {
+                    let mut attempts = count.lock().unwrap();
+                    *attempts += 1;
+
+                    if *attempts == 1 {
+                        Err::<String, _>(SimpleAgentsError::Provider(ProviderError::Timeout(
+                            Duration::from_secs(1),
+                        )))
+                    } else {
+                        Err::<String, _>(SimpleAgentsError::Validation(
+                            simple_agent_type::error::ValidationError::Empty {
+                                field: "message".to_string(),
+                            },
+                        ))
+                    }
+                }
+            },
+        )
+        .await;
+
+        assert!(matches!(result, Err(SimpleAgentsError::Validation(_))));
+        assert_eq!(*attempt_count.lock().unwrap(), 2);
+    }
 }
