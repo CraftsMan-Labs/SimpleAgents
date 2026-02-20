@@ -11,10 +11,11 @@ use simple_agent_type::request::CompletionRequest;
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 };
+use simple_agents_healing::JsonishParser;
 use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
-use crate::observability::tracing::{NoopWorkflowTracer, SpanKind, TraceContext, WorkflowTracer};
+use crate::observability::tracing::{workflow_tracer, SpanKind, TraceContext};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
@@ -288,14 +289,234 @@ fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceC
     })
 }
 
+fn include_raw_stream_debug_events() -> bool {
+    match std::env::var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        }
+        Err(_) => false,
+    }
+}
+
+#[derive(Debug)]
+struct StreamedPayloadResolution {
+    payload: Value,
+    heal_confidence: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowTokenKind {
+    Output,
+    Thinking,
+}
+
+#[derive(Debug, Default)]
+struct StructuredJsonDeltaFilter {
+    started: bool,
+    completed: bool,
+    depth: u32,
+    in_string: bool,
+    escape: bool,
+}
+
+impl StructuredJsonDeltaFilter {
+    fn split(&mut self, delta: &str) -> (Option<String>, Option<String>) {
+        if delta.is_empty() {
+            return (None, None);
+        }
+
+        let mut output = String::new();
+        let mut thinking = String::new();
+
+        for ch in delta.chars() {
+            if self.completed {
+                thinking.push(ch);
+                continue;
+            }
+
+            if !self.started {
+                if ch != '{' {
+                    thinking.push(ch);
+                    continue;
+                }
+                self.started = true;
+                self.depth = 1;
+                output.push(ch);
+                continue;
+            }
+
+            output.push(ch);
+            if self.in_string {
+                if self.escape {
+                    self.escape = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    self.escape = true;
+                    continue;
+                }
+                if ch == '"' {
+                    self.in_string = false;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => self.in_string = true,
+                '{' => self.depth = self.depth.saturating_add(1),
+                '}' => {
+                    if self.depth > 0 {
+                        self.depth -= 1;
+                    }
+                    if self.depth == 0 {
+                        self.completed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let output = if output.is_empty() {
+            None
+        } else {
+            Some(output)
+        };
+        let thinking = if thinking.is_empty() {
+            None
+        } else {
+            Some(thinking)
+        };
+
+        (output, thinking)
+    }
+}
+
+fn extract_last_fenced_json_block(raw: &str) -> Option<&str> {
+    let start = raw.rfind("```json")?;
+    let remainder = &raw[start + "```json".len()..];
+    let end = remainder.find("```")?;
+    let candidate = remainder[..end].trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn extract_balanced_object_from(raw: &str, start_index: usize) -> Option<&str> {
+    let mut depth = 0u32;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (relative_index, ch) in raw[start_index..].char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth = depth.saturating_add(1),
+            '}' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let end_index = start_index + relative_index + ch.len_utf8();
+                    return Some(raw[start_index..end_index].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn extract_last_parsable_object(raw: &str) -> Option<&str> {
+    let starts: Vec<usize> = raw
+        .char_indices()
+        .filter_map(|(index, ch)| if ch == '{' { Some(index) } else { None })
+        .collect();
+
+    for start in starts.into_iter().rev() {
+        let Some(candidate) = extract_balanced_object_from(raw, start) else {
+            continue;
+        };
+        if serde_json::from_str::<Value>(candidate).is_ok() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn resolve_structured_json_candidate(raw: &str) -> Option<&str> {
+    extract_last_fenced_json_block(raw).or_else(|| extract_last_parsable_object(raw))
+}
+
+fn parse_streamed_structured_payload(
+    raw: &str,
+    heal: bool,
+) -> Result<StreamedPayloadResolution, String> {
+    if !heal {
+        if let Ok(payload) = serde_json::from_str::<Value>(raw) {
+            return Ok(StreamedPayloadResolution {
+                payload,
+                heal_confidence: None,
+            });
+        }
+
+        let candidate = resolve_structured_json_candidate(raw).ok_or_else(|| {
+            "failed to parse streamed structured completion JSON: no JSON object candidate found"
+                .to_string()
+        })?;
+        let payload = serde_json::from_str::<Value>(candidate).map_err(|error| {
+            format!(
+                "failed to parse streamed structured completion JSON: {error}; candidate={candidate}"
+            )
+        })?;
+        return Ok(StreamedPayloadResolution {
+            payload,
+            heal_confidence: None,
+        });
+    }
+
+    let candidate = resolve_structured_json_candidate(raw).unwrap_or(raw);
+    let parser = JsonishParser::new();
+    let healed = parser
+        .parse(candidate)
+        .map_err(|error| format!("failed to heal streamed structured completion JSON: {error}"))?;
+
+    Ok(StreamedPayloadResolution {
+        payload: healed.value,
+        heal_confidence: Some(healed.confidence),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlWorkflowEvent {
     pub event_type: String,
     pub node_id: Option<String>,
+    pub step_id: Option<String>,
     pub node_kind: Option<String>,
     pub streamable: Option<bool>,
     pub message: Option<String>,
     pub delta: Option<String>,
+    pub token_kind: Option<YamlWorkflowTokenKind>,
+    pub is_terminal_node_token: Option<bool>,
     pub elapsed_ms: Option<u128>,
     pub metadata: Option<Value>,
 }
@@ -678,6 +899,7 @@ fn escape_mermaid_label(label: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct YamlLlmExecutionRequest {
     pub node_id: String,
+    pub is_terminal_node: bool,
     pub model: String,
     pub messages: Option<Vec<Message>>,
     pub append_prompt_as_user: bool,
@@ -964,26 +1186,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
             request: YamlLlmExecutionRequest,
             event_sink: Option<&dyn YamlWorkflowEventSink>,
         ) -> Result<YamlLlmExecutionResult, String> {
-            let mut effective_stream = request.stream;
-            if request.heal && request.stream {
-                effective_stream = false;
-                if let Some(sink) = event_sink {
-                    sink.emit(&YamlWorkflowEvent {
-                        event_type: "node_streaming_unavailable".to_string(),
-                        node_id: Some(request.node_id.clone()),
-                        node_kind: Some("llm_call".to_string()),
-                        streamable: Some(false),
-                        message: Some(
-                            "stream disabled because heal=true requires non-stream completion"
-                                .to_string(),
-                        ),
-                        delta: None,
-                        elapsed_ms: None,
-                        metadata: None,
-                    });
-                }
-            }
-
             let messages = if let Some(mut history) = request.messages.clone() {
                 if request.append_prompt_as_user && !request.prompt.trim().is_empty() {
                     history.push(Message::user(&request.prompt));
@@ -1000,7 +1202,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 .model(&request.model)
                 .messages(messages);
 
-            if effective_stream {
+            if request.stream {
                 builder = builder.stream(true);
             }
 
@@ -1008,7 +1210,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 .build()
                 .map_err(|error| format!("failed to build completion request: {error}"))?;
 
-            let completion_options = if request.heal {
+            let completion_options = if request.heal && !request.stream {
                 CompletionOptions {
                     mode: CompletionMode::HealedJson,
                 }
@@ -1025,35 +1227,98 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
             match outcome {
                 CompletionOutcome::Stream(mut stream) => {
                     let mut aggregated = String::new();
+                    let mut delta_filter = StructuredJsonDeltaFilter::default();
+                    let include_raw_debug = include_raw_stream_debug_events();
                     while let Some(chunk_result) = stream.next().await {
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
                             if let Some(delta) = choice.delta.content.clone() {
                                 aggregated.push_str(delta.as_str());
-                                if let Some(sink) = event_sink {
-                                    sink.emit(&YamlWorkflowEvent {
-                                        event_type: "node_stream_delta".to_string(),
-                                        node_id: Some(request.node_id.clone()),
-                                        node_kind: Some("llm_call".to_string()),
-                                        streamable: Some(true),
-                                        message: None,
-                                        delta: Some(delta),
-                                        elapsed_ms: None,
-                                        metadata: None,
-                                    });
+                                let (output_delta, thinking_delta) =
+                                    delta_filter.split(delta.as_str());
+                                if include_raw_debug {
+                                    if let Some(sink) = event_sink {
+                                        if let Some(raw_thinking_delta) = thinking_delta.as_ref() {
+                                            sink.emit(&YamlWorkflowEvent {
+                                                event_type: "node_stream_raw_delta".to_string(),
+                                                node_id: Some(request.node_id.clone()),
+                                                step_id: Some(request.node_id.clone()),
+                                                node_kind: Some("llm_call".to_string()),
+                                                streamable: Some(true),
+                                                message: None,
+                                                delta: Some(raw_thinking_delta.clone()),
+                                                token_kind: Some(YamlWorkflowTokenKind::Thinking),
+                                                is_terminal_node_token: Some(
+                                                    request.is_terminal_node,
+                                                ),
+                                                elapsed_ms: None,
+                                                metadata: None,
+                                            });
+                                        }
+                                        if let Some(raw_output_delta) = output_delta.as_ref() {
+                                            sink.emit(&YamlWorkflowEvent {
+                                                event_type: "node_stream_raw_delta".to_string(),
+                                                node_id: Some(request.node_id.clone()),
+                                                step_id: Some(request.node_id.clone()),
+                                                node_kind: Some("llm_call".to_string()),
+                                                streamable: Some(true),
+                                                message: None,
+                                                delta: Some(raw_output_delta.clone()),
+                                                token_kind: Some(YamlWorkflowTokenKind::Output),
+                                                is_terminal_node_token: Some(
+                                                    request.is_terminal_node,
+                                                ),
+                                                elapsed_ms: None,
+                                                metadata: None,
+                                            });
+                                        }
+                                    }
+                                }
+                                if let Some(filtered_delta) = output_delta {
+                                    if let Some(sink) = event_sink {
+                                        sink.emit(&YamlWorkflowEvent {
+                                            event_type: "node_stream_delta".to_string(),
+                                            node_id: Some(request.node_id.clone()),
+                                            step_id: Some(request.node_id.clone()),
+                                            node_kind: Some("llm_call".to_string()),
+                                            streamable: Some(true),
+                                            message: None,
+                                            delta: Some(filtered_delta),
+                                            token_kind: Some(YamlWorkflowTokenKind::Output),
+                                            is_terminal_node_token: Some(request.is_terminal_node),
+                                            elapsed_ms: None,
+                                            metadata: None,
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
 
-                    let payload = serde_json::from_str(aggregated.as_str()).map_err(|error| {
-                        format!(
-                            "failed to parse streamed structured completion JSON: {error}; body={aggregated}"
-                        )
-                    })?;
+                    let resolved =
+                        parse_streamed_structured_payload(aggregated.as_str(), request.heal)?;
+                    if let Some(confidence) = resolved.heal_confidence {
+                        if let Some(sink) = event_sink {
+                            sink.emit(&YamlWorkflowEvent {
+                                event_type: "node_healed".to_string(),
+                                node_id: Some(request.node_id.clone()),
+                                step_id: Some(request.node_id.clone()),
+                                node_kind: Some("llm_call".to_string()),
+                                streamable: Some(true),
+                                message: Some(format!(
+                                    "healed streamed structured response confidence={confidence}"
+                                )),
+                                delta: None,
+                                token_kind: None,
+                                is_terminal_node_token: None,
+                                elapsed_ms: None,
+                                metadata: None,
+                            });
+                        }
+                    }
 
                     Ok(YamlLlmExecutionResult {
-                        payload,
+                        payload: resolved.payload,
                         usage: None,
                     })
                 }
@@ -1080,13 +1345,16 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         sink.emit(&YamlWorkflowEvent {
                             event_type: "node_healed".to_string(),
                             node_id: Some(request.node_id.clone()),
+                            step_id: Some(request.node_id.clone()),
                             node_kind: Some("llm_call".to_string()),
-                            streamable: Some(false),
+                            streamable: Some(request.stream),
                             message: Some(format!(
                                 "healed structured response confidence={}",
                                 healed.parsed.confidence
                             )),
                             delta: None,
+                            token_kind: None,
+                            is_terminal_node_token: None,
                             elapsed_ms: None,
                             metadata: None,
                         });
@@ -1238,7 +1506,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
-    let tracer = NoopWorkflowTracer;
+    let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
     let (workflow_trace_context, mut workflow_span) = tracer.start_span(
         "workflow.run",
@@ -1296,10 +1564,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         sink.emit(&YamlWorkflowEvent {
             event_type: "workflow_started".to_string(),
             node_id: None,
+            step_id: None,
             node_kind: None,
             streamable: None,
             message: Some(format!("workflow_id={}", workflow.id)),
             delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
             elapsed_ms: Some(0),
             metadata: None,
         });
@@ -1340,6 +1611,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             sink.emit(&YamlWorkflowEvent {
                 event_type: "node_started".to_string(),
                 node_id: Some(node.id.clone()),
+                step_id: Some(node.id.clone()),
                 node_kind: Some(node.kind_name().to_string()),
                 streamable: node_streamable,
                 message: if node_streamable == Some(false) {
@@ -1348,12 +1620,15 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     None
                 },
                 delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
                 elapsed_ms: Some(started.elapsed().as_millis()),
                 metadata: None,
             });
         }
 
         let mut node_usage: Option<YamlLlmTokenUsage> = None;
+        let is_terminal_node = !edge_map.contains_key(node.id.as_str());
         let next = if let Some(llm) = &node.node_type.llm_call {
             let prompt_template = node
                 .config
@@ -1383,6 +1658,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
             let request = YamlLlmExecutionRequest {
                 node_id: node.id.clone(),
+                is_terminal_node,
                 model: llm.model.clone(),
                 messages,
                 append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
@@ -1405,16 +1681,19 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 sink.emit(&YamlWorkflowEvent {
                     event_type: "node_llm_input_resolved".to_string(),
                     node_id: Some(node.id.clone()),
+                    step_id: Some(node.id.clone()),
                     node_kind: Some("llm_call".to_string()),
-                    streamable: Some(request.stream && !request.heal),
+                    streamable: Some(request.stream),
                     message: Some("resolved llm input for telemetry".to_string()),
                     delta: None,
+                    token_kind: None,
+                    is_terminal_node_token: None,
                     elapsed_ms: Some(started.elapsed().as_millis()),
                     metadata: Some(json!({
                         "model": request.model.clone(),
                         "stream_requested": request.stream,
                         "heal_requested": request.heal,
-                        "effective_stream": request.stream && !request.heal,
+                        "effective_stream": request.stream,
                         "prompt_template": request.prompt_template.clone(),
                         "prompt": request.prompt.clone(),
                         "schema": request.schema.clone(),
@@ -1589,10 +1868,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             sink.emit(&YamlWorkflowEvent {
                 event_type: "node_completed".to_string(),
                 node_id: Some(node.id.clone()),
+                step_id: Some(node.id.clone()),
                 node_kind: Some(node.kind_name().to_string()),
                 streamable: node_streamable,
                 message: None,
                 delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
                 elapsed_ms: Some(elapsed_ms),
                 metadata: None,
             });
@@ -1644,10 +1926,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         sink.emit(&YamlWorkflowEvent {
             event_type: "workflow_completed".to_string(),
             node_id: None,
+            step_id: None,
             node_kind: None,
             streamable: None,
             message: Some(format!("terminal_node={}", output.terminal_node)),
             delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
             elapsed_ms: Some(output.total_elapsed_ms),
             metadata: None,
         });
@@ -1680,7 +1965,7 @@ async fn try_run_yaml_via_ir_runtime(
         }
     };
 
-    let tracer = NoopWorkflowTracer;
+    let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
     let (workflow_trace_context, mut workflow_span) = tracer.start_span(
         "workflow.run",
@@ -1789,6 +2074,7 @@ async fn try_run_yaml_via_ir_runtime(
 
                 let request = YamlLlmExecutionRequest {
                     node_id,
+                    is_terminal_node: false,
                     model,
                     messages,
                     append_prompt_as_user,
@@ -1833,7 +2119,7 @@ async fn try_run_yaml_via_ir_runtime(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
 
-            let tracer = NoopWorkflowTracer;
+            let tracer = workflow_tracer();
             let mut handler_span = if self.trace_id.is_some() {
                 let (_, mut span) = tracer.start_span("handler.invoke", SpanKind::Node, None);
                 if let Some(trace_id) = self.trace_id.as_ref() {
@@ -3034,6 +3320,108 @@ nodes:
                 .and_then(|telemetry| telemetry.get("payload_mode"))
                 .and_then(Value::as_str),
             Some("redacted_payload")
+        );
+    }
+
+    #[test]
+    fn streamed_payload_parser_extracts_last_json_object() {
+        let raw = r#"{"state":"missing_scenario","reason":"ok"}
+
+extra reasoning text
+
+{"state":"ready","reason":"final"}"#;
+
+        let resolved = parse_streamed_structured_payload(raw, false)
+            .expect("parser should extract final JSON object");
+        assert_eq!(resolved.payload["state"], "ready");
+        assert!(resolved.heal_confidence.is_none());
+    }
+
+    #[test]
+    fn streamed_payload_parser_handles_unbalanced_reasoning_before_json() {
+        let raw = "reasoning text with unmatched { braces and thoughts\n{\"state\":\"ready\",\"reason\":\"final\"}";
+
+        let resolved = parse_streamed_structured_payload(raw, false)
+            .expect("parser should recover final structured JSON object");
+        assert_eq!(resolved.payload["state"], "ready");
+    }
+
+    #[test]
+    fn streamed_payload_parser_handles_markdown_with_heal() {
+        let raw = r#"Some preface
+```json
+{
+  "state": "missing_scenario",
+  "reason": "Need more details"
+}
+```
+Some trailing explanation"#;
+
+        let resolved = parse_streamed_structured_payload(raw, true)
+            .expect("heal path should parse JSON block");
+        assert_eq!(resolved.payload["state"], "missing_scenario");
+        assert!(resolved.heal_confidence.is_some());
+    }
+
+    #[test]
+    fn streamed_payload_parser_errors_when_no_json_candidate_exists() {
+        let raw = "No JSON in this streamed output";
+        let error = parse_streamed_structured_payload(raw, false)
+            .expect_err("strict stream parse should fail without JSON candidate");
+        assert!(error.contains("no JSON object candidate found"));
+    }
+
+    #[test]
+    fn include_raw_stream_debug_events_defaults_to_false() {
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+        assert!(!include_raw_stream_debug_events());
+    }
+
+    #[test]
+    fn include_raw_stream_debug_events_accepts_truthy_values() {
+        std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "true");
+        assert!(include_raw_stream_debug_events());
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+    }
+
+    #[test]
+    fn structured_json_delta_filter_strips_reasoning_prefix_and_suffix() {
+        let mut filter = StructuredJsonDeltaFilter::default();
+        let chunks = vec![
+            "I will think first... ",
+            "{\"state\":\"missing_scenario\",",
+            "\"reason\":\"Need more details\"}",
+            " additional commentary",
+        ];
+
+        let filtered = chunks
+            .into_iter()
+            .filter_map(|chunk| filter.split(chunk).0)
+            .collect::<String>();
+
+        assert_eq!(
+            filtered,
+            "{\"state\":\"missing_scenario\",\"reason\":\"Need more details\"}"
+        );
+    }
+
+    #[test]
+    fn structured_json_delta_filter_handles_braces_inside_strings() {
+        let mut filter = StructuredJsonDeltaFilter::default();
+        let chunks = vec![
+            "preface ",
+            "{\"reason\":\"brace } in text\",\"state\":\"ok\"}",
+            " trailing",
+        ];
+
+        let filtered = chunks
+            .into_iter()
+            .filter_map(|chunk| filter.split(chunk).0)
+            .collect::<String>();
+
+        assert_eq!(
+            filtered,
+            "{\"reason\":\"brace } in text\",\"state\":\"ok\"}"
         );
     }
 

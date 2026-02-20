@@ -63,3 +63,12 @@ flowchart TD
 - `cargo check -p simple-agents-napi`
 - `cargo check -p simple-agents-py`
 - `make test-go-bindings`
+
+## Streaming cleanup follow-up (2026-02-20)
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| S1 | Move stream sanitization to core runtime | Example-only filtering leaked model preamble/reasoning tokens to terminal callbacks | Core `node_stream_delta` events emit only JSON-object payload content | completed |
+| S2 | Remove stale stream fallback messaging in example chat | Legacy messaging referenced disabled streaming paths that no longer apply | Example output matches current runtime behavior and stays concise | completed |
+| S3 | Add regression tests for delta filtering | Prevent reintroduction of reasoning/preamble leak regressions | New tests cover prefix/suffix stripping and braces inside string handling | completed |
+| S4 | Add token attribution fields to stream events | Consumers need per-token routing and terminal-step attribution for observability and UI | Token events include `step_id`, `token_kind`, and `is_terminal_node_token` in core runtime events | completed |
