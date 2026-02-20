@@ -86,7 +86,18 @@ impl HttpClient {
 
 impl Default for HttpClient {
     fn default() -> Self {
-        Self::new().expect("Failed to create default HTTP client")
+        match Self::new() {
+            Ok(client) => client,
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    "Falling back to reqwest default client configuration"
+                );
+                Self {
+                    inner: Client::new(),
+                }
+            }
+        }
     }
 }
 

@@ -40,7 +40,10 @@ impl TraceRecorder {
         timestamp_unix_ms: u64,
         kind: TraceEventKind,
     ) -> Result<TraceEvent, TraceRecordError> {
-        let mut state = self.state.lock().expect("trace recorder mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if state.finalized {
             return Err(TraceRecordError::AlreadyFinalized);
@@ -112,13 +115,19 @@ impl TraceRecorder {
 
     /// Returns a snapshot of the current trace.
     pub fn snapshot(&self) -> WorkflowTrace {
-        let state = self.state.lock().expect("trace recorder mutex poisoned");
+        let state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.trace.clone()
     }
 
     /// Finalizes the recorder and returns the immutable trace.
     pub fn finalize(&self, finished_at_unix_ms: u64) -> Result<WorkflowTrace, TraceRecordError> {
-        let mut state = self.state.lock().expect("trace recorder mutex poisoned");
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
 
         if state.finalized {
             return Err(TraceRecordError::AlreadyFinalized);

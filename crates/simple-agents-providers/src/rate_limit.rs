@@ -36,10 +36,10 @@ impl RateLimiter {
     /// let limiter = RateLimiter::new(10, 20);
     /// ```
     pub fn new(requests_per_second: u32, burst_size: u32) -> Self {
-        let quota = Quota::per_second(
-            NonZeroU32::new(requests_per_second).expect("requests_per_second must be > 0"),
-        )
-        .allow_burst(NonZeroU32::new(burst_size).expect("burst_size must be > 0"));
+        let requests_per_second = NonZeroU32::new(requests_per_second).unwrap_or(NonZeroU32::MIN);
+        let burst_size = NonZeroU32::new(burst_size).unwrap_or(NonZeroU32::MIN);
+
+        let quota = Quota::per_second(requests_per_second).allow_burst(burst_size);
 
         Self {
             limiter: Arc::new(GovernorRateLimiter::direct(quota)),
@@ -84,14 +84,30 @@ impl SharedRateLimiters {
 
         // Try read lock first for fast path
         {
-            let limiters = self.limiters.read().unwrap();
+            let limiters = match self.limiters.read() {
+                Ok(limiters) => limiters,
+                Err(poisoned) => {
+                    tracing::warn!(
+                        "Rate limiter registry read lock poisoned; recovering with inner state"
+                    );
+                    poisoned.into_inner()
+                }
+            };
             if let Some(limiter) = limiters.get(&key) {
                 return limiter.clone();
             }
         }
 
         // Need to create a new limiter - acquire write lock
-        let mut limiters = self.limiters.write().unwrap();
+        let mut limiters = match self.limiters.write() {
+            Ok(limiters) => limiters,
+            Err(poisoned) => {
+                tracing::warn!(
+                    "Rate limiter registry write lock poisoned; recovering with inner state"
+                );
+                poisoned.into_inner()
+            }
+        };
 
         // Double-check after acquiring write lock (another thread may have created it)
         if let Some(limiter) = limiters.get(&key) {
@@ -120,6 +136,11 @@ impl MaybeRateLimiter {
     /// Create a rate limiter from configuration.
     pub fn from_config(config: &RateLimitConfig) -> Self {
         if !config.enabled {
+            return MaybeRateLimiter::None;
+        }
+
+        if let Err(message) = config.validate() {
+            tracing::warn!(%message, "Invalid rate limit config; rate limiting disabled");
             return MaybeRateLimiter::None;
         }
 
@@ -171,6 +192,9 @@ impl MaybeRateLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::panic::{self, AssertUnwindSafe};
+    use std::sync::Arc;
+    use std::thread;
     use std::time::Duration;
     use tokio::time::Instant;
 
@@ -267,5 +291,38 @@ mod tests {
         // Should allow burst for key2 (different limiter)
         assert!(maybe.check(Some("key2")));
         assert!(maybe.check(Some("key2")));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_config_is_disabled_instead_of_panicking() {
+        let config = RateLimitConfig::new(0, 0);
+        let maybe = MaybeRateLimiter::from_config(&config);
+
+        for _ in 0..16 {
+            assert!(maybe.check(None));
+        }
+    }
+
+    #[test]
+    fn test_shared_rate_limiters_recovers_from_poisoned_lock() {
+        let shared = Arc::new(SharedRateLimiters::new(RateLimitConfig::shared(10, 2)));
+        let shared_for_panic = Arc::clone(&shared);
+
+        let _ = thread::spawn(move || {
+            let _ = panic::catch_unwind(AssertUnwindSafe(|| {
+                let _guard = shared_for_panic
+                    .limiters
+                    .write()
+                    .expect("test should acquire write lock before poisoning");
+                panic!("intentional panic to poison lock");
+            }));
+        })
+        .join();
+
+        let limiter = shared.get_or_create("key-after-poison");
+        assert!(
+            limiter.check(),
+            "poison recovery should still return limiter"
+        );
     }
 }
