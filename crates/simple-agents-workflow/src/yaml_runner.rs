@@ -3200,6 +3200,52 @@ nodes:
     }
 
     #[tokio::test]
+    async fn wrapper_entrypoints_produce_equivalent_outputs() {
+        let yaml = r#"
+id: wrapper-equivalence
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let input = json!({"email_text":"hello"});
+
+        let a = run_workflow_yaml(&workflow, &input, &MockExecutor)
+            .await
+            .expect("base entrypoint should execute");
+        let b = run_workflow_yaml_with_custom_worker(&workflow, &input, &MockExecutor, None)
+            .await
+            .expect("custom worker wrapper should execute");
+        let c = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &input,
+            &MockExecutor,
+            None,
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("events/options wrapper should execute");
+
+        assert_eq!(a.workflow_id, b.workflow_id);
+        assert_eq!(a.workflow_id, c.workflow_id);
+        assert_eq!(a.terminal_node, b.terminal_node);
+        assert_eq!(a.terminal_node, c.terminal_node);
+        assert_eq!(a.outputs, b.outputs);
+        assert_eq!(a.outputs, c.outputs);
+        assert_eq!(a.total_tokens, b.total_tokens);
+        assert_eq!(a.total_tokens, c.total_tokens);
+    }
+
+    #[tokio::test]
     async fn rejects_invalid_messages_path_shape() {
         let yaml = r#"
 id: email-intake-classification
