@@ -1591,6 +1591,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
+    if let Some(output) =
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
+            .await?
+    {
+        return Ok(output);
+    }
+
     let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
     let (workflow_trace_context, mut workflow_span) = tracer.start_span(
@@ -1605,13 +1612,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     } else {
         None
     };
-
-    if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
-            .await?
-    {
-        return Ok(output);
-    }
 
     if workflow.nodes.is_empty() {
         return Err(YamlWorkflowRunError::EmptyNodes {
@@ -2929,7 +2929,12 @@ pub struct YamlEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{Mutex, OnceLock};
+
+    fn stream_debug_env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     struct MockExecutor;
 
@@ -3512,12 +3517,18 @@ Some trailing explanation"#;
 
     #[test]
     fn include_raw_stream_debug_events_defaults_to_false() {
+        let _guard = stream_debug_env_lock()
+            .lock()
+            .expect("stream debug env lock should not be poisoned");
         std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
         assert!(!include_raw_stream_debug_events());
     }
 
     #[test]
     fn include_raw_stream_debug_events_accepts_truthy_values() {
+        let _guard = stream_debug_env_lock()
+            .lock()
+            .expect("stream debug env lock should not be poisoned");
         std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "true");
         assert!(include_raw_stream_debug_events());
         std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");

@@ -219,7 +219,12 @@ impl WorkflowTracer for OtelWorkflowTracer {
             trace_id: Some(span_context.trace_id().to_string()),
             span_id: Some(span_context.span_id().to_string()),
             parent_span_id: parent.and_then(|value| value.span_id.clone()),
-            traceparent: parent.and_then(|value| value.traceparent.clone()),
+            traceparent: Some(format!(
+                "00-{}-{}-{:02x}",
+                span_context.trace_id(),
+                span_context.span_id(),
+                span_context.trace_flags().to_u8()
+            )),
             tracestate: parent.and_then(|value| value.tracestate.clone()),
             baggage: parent
                 .map(|value| value.baggage.clone())
