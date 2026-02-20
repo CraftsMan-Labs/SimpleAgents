@@ -79,6 +79,7 @@ node_type:
   llm_call:
     model: gpt-4.1
     stream: false
+    stream_json_as_text: false
     heal: true
     messages_path: input.messages
     append_prompt_as_user: true
@@ -94,6 +95,7 @@ Field behavior:
 - `messages_path`: optional path to chat messages (e.g. `input.messages`)
 - `append_prompt_as_user`: if true, appends resolved prompt as final user message
 - `stream`: request stream mode where applicable
+- `stream_json_as_text`: when `true`, streamed non-thinking JSON output tokens are emitted as text lines (`key: value`) once structured JSON is complete
 - `heal`: enables healing mode
 
 ### `switch`

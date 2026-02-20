@@ -194,6 +194,7 @@ Notes:
 
 - Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
 - Structured `node_stream_delta` content is sanitized to JSON object payload content, so reasoning/preamble/trailing chatter is not forwarded to callbacks.
+- If a YAML `llm_call` sets `stream_json_as_text: true`, non-thinking stream tokens are emitted as plain text lines (`key: value`) instead of raw JSON token chunks.
 - Token stream events include token attribution fields:
   - `step_id`: workflow step/node id for token attribution
   - `token_kind`: `output` or `thinking`
