@@ -1087,9 +1087,11 @@ impl<'a> WorkflowRuntime<'a> {
                 self.execute_llm_node(
                     step,
                     node,
-                    model,
-                    prompt,
-                    next,
+                    LlmNodeSpec {
+                        model,
+                        prompt,
+                        next,
+                    },
                     scope,
                     cancellation,
                     retry_events,
@@ -1100,9 +1102,7 @@ impl<'a> WorkflowRuntime<'a> {
                 self.execute_tool_node(
                     step,
                     node,
-                    tool,
-                    input,
-                    next,
+                    ToolNodeSpec { tool, input, next },
                     scope,
                     cancellation,
                     retry_events,
@@ -1116,9 +1116,11 @@ impl<'a> WorkflowRuntime<'a> {
             } => self.execute_condition_node(
                 step,
                 node,
-                expression,
-                on_true,
-                on_false,
+                ConditionNodeSpec {
+                    expression,
+                    on_true,
+                    on_false,
+                },
                 scope,
                 cancellation,
             ),
@@ -1681,10 +1683,12 @@ impl<'a> WorkflowRuntime<'a> {
                 self.execute_parallel_node(
                     step,
                     node,
-                    node_index,
-                    branches,
-                    next,
-                    *max_in_flight,
+                    ParallelNodeSpec {
+                        node_index,
+                        branches,
+                        next,
+                        max_in_flight: *max_in_flight,
+                    },
                     scope,
                     cancellation,
                     retry_events,
@@ -1696,7 +1700,17 @@ impl<'a> WorkflowRuntime<'a> {
                 policy,
                 quorum,
                 next,
-            } => self.execute_merge_node(step, node, sources, policy, *quorum, next, scope),
+            } => self.execute_merge_node(
+                step,
+                node,
+                MergeNodeSpec {
+                    sources,
+                    policy,
+                    quorum: *quorum,
+                    next,
+                },
+                scope,
+            ),
             NodeKind::Map {
                 tool,
                 items_path,
@@ -1706,10 +1720,12 @@ impl<'a> WorkflowRuntime<'a> {
                 self.execute_map_node(
                     step,
                     node,
-                    tool,
-                    items_path,
-                    next,
-                    *max_in_flight,
+                    MapNodeSpec {
+                        tool,
+                        items_path,
+                        next,
+                        max_in_flight: *max_in_flight,
+                    },
                     scope,
                     cancellation,
                     retry_events,
@@ -1814,21 +1830,20 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        model: &str,
-        prompt: &str,
-        next: &Option<String>,
+        spec: LlmNodeSpec<'_>,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
         retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
-        let next_node = next
+        let next_node = spec
+            .next
             .clone()
             .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
                 node_id: node.id.clone(),
             })?;
 
         let (output, llm_retries) = self
-            .execute_llm_with_policy(step, node, model, prompt, scope, cancellation)
+            .execute_llm_with_policy(step, node, spec.model, spec.prompt, scope, cancellation)
             .await?;
         retry_events.extend(llm_retries);
 
@@ -1843,7 +1858,7 @@ impl<'a> WorkflowRuntime<'a> {
             step,
             node_id: node.id.clone(),
             data: NodeExecutionData::Llm {
-                model: model.to_string(),
+                model: spec.model.to_string(),
                 output: output.content,
                 next: next_node,
             },
@@ -1854,14 +1869,13 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        tool: &str,
-        input: &Value,
-        next: &Option<String>,
+        spec: ToolNodeSpec<'_>,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
         retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
-        let next_node = next
+        let next_node = spec
+            .next
             .clone()
             .ok_or_else(|| WorkflowRuntimeError::MissingNextEdge {
                 node_id: node.id.clone(),
@@ -1884,8 +1898,8 @@ impl<'a> WorkflowRuntime<'a> {
             .execute_tool_with_policy_for_scope(ToolPolicyRequest {
                 step,
                 node,
-                tool,
-                input,
+                tool: spec.tool,
+                input: spec.input,
                 executor,
                 scoped_input,
                 cancellation,
@@ -1904,7 +1918,7 @@ impl<'a> WorkflowRuntime<'a> {
             step,
             node_id: node.id.clone(),
             data: NodeExecutionData::Tool {
-                tool: tool.to_string(),
+                tool: spec.tool.to_string(),
                 output: tool_output,
                 next: next_node,
             },
@@ -1915,9 +1929,7 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        expression: &str,
-        on_true: &str,
-        on_false: &str,
+        spec: ConditionNodeSpec<'_>,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
@@ -1935,17 +1947,17 @@ impl<'a> WorkflowRuntime<'a> {
             self.options.security_limits.max_expression_scope_bytes,
         )?;
         let evaluated =
-            expressions::evaluate_bool(expression, &scoped_input).map_err(|reason| {
+            expressions::evaluate_bool(spec.expression, &scoped_input).map_err(|reason| {
                 WorkflowRuntimeError::InvalidCondition {
                     node_id: node.id.clone(),
-                    expression: expression.to_string(),
+                    expression: spec.expression.to_string(),
                     reason: reason.to_string(),
                 }
             })?;
         let next = if evaluated {
-            on_true.to_string()
+            spec.on_true.to_string()
         } else {
-            on_false.to_string()
+            spec.on_false.to_string()
         };
 
         scope
@@ -1959,7 +1971,7 @@ impl<'a> WorkflowRuntime<'a> {
             step,
             node_id: node.id.clone(),
             data: NodeExecutionData::Condition {
-                expression: expression.to_string(),
+                expression: spec.expression.to_string(),
                 evaluated,
                 next,
             },
@@ -1970,19 +1982,16 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        node_index: &HashMap<&str, &Node>,
-        branches: &[String],
-        next: &str,
-        max_in_flight: Option<usize>,
+        spec: ParallelNodeSpec<'_>,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
         retry_events: &mut Vec<WorkflowRetryEvent>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
         check_cancelled(cancellation)?;
-        if branches.len() > self.options.security_limits.max_parallel_branches {
+        if spec.branches.len() > self.options.security_limits.max_parallel_branches {
             return Err(WorkflowRuntimeError::ParallelBranchLimitExceeded {
                 node_id: node.id.clone(),
-                actual_branches: branches.len(),
+                actual_branches: spec.branches.len(),
                 max_branches: self.options.security_limits.max_parallel_branches,
             });
         }
@@ -1992,16 +2001,18 @@ impl<'a> WorkflowRuntime<'a> {
                 node_id: node.id.clone(),
                 source,
             })?;
-        let scheduler =
-            DagScheduler::new(max_in_flight.unwrap_or(self.options.scheduler_max_in_flight));
+        let scheduler = DagScheduler::new(
+            spec.max_in_flight
+                .unwrap_or(self.options.scheduler_max_in_flight),
+        );
         let parallel_node_id = node.id.clone();
 
         let branch_outputs: Vec<(String, Value, Vec<WorkflowRetryEvent>)> = scheduler
-            .run_bounded(branches.iter().cloned(), |branch_id| {
+            .run_bounded(spec.branches.iter().cloned(), |branch_id| {
                 let parallel_node_id = parallel_node_id.clone();
                 let base_scope = base_scope.clone();
                 async move {
-                    let branch_node = node_index.get(branch_id.as_str()).ok_or_else(|| {
+                    let branch_node = spec.node_index.get(branch_id.as_str()).ok_or_else(|| {
                         WorkflowRuntimeError::NodeNotFound {
                             node_id: branch_id.clone(),
                         }
@@ -2050,9 +2061,9 @@ impl<'a> WorkflowRuntime<'a> {
             step,
             node_id: node.id.clone(),
             data: NodeExecutionData::Parallel {
-                branches: branches.to_vec(),
+                branches: spec.branches.to_vec(),
                 outputs,
-                next: next.to_string(),
+                next: spec.next.to_string(),
             },
         })
     }
@@ -2061,14 +2072,11 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        sources: &[String],
-        policy: &MergePolicy,
-        quorum: Option<usize>,
-        next: &str,
+        spec: MergeNodeSpec<'_>,
         scope: &mut RuntimeScope,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
-        let mut resolved = Vec::with_capacity(sources.len());
-        for source in sources {
+        let mut resolved = Vec::with_capacity(spec.sources.len());
+        for source in spec.sources {
             let Some(value) = scope.node_output(source).cloned() else {
                 return Err(WorkflowRuntimeError::MissingMergeSource {
                     node_id: node.id.clone(),
@@ -2078,7 +2086,7 @@ impl<'a> WorkflowRuntime<'a> {
             resolved.push((source.clone(), value));
         }
 
-        let output = match policy {
+        let output = match spec.policy {
             MergePolicy::First => resolved
                 .first()
                 .map(|(_, value)| value.clone())
@@ -2090,7 +2098,7 @@ impl<'a> WorkflowRuntime<'a> {
                     .collect::<Vec<_>>(),
             ),
             MergePolicy::Quorum => {
-                let required = quorum.unwrap_or_default();
+                let required = spec.quorum.unwrap_or_default();
                 let resolved_count = resolved.len();
                 if resolved_count < required {
                     return Err(WorkflowRuntimeError::MergeQuorumNotMet {
@@ -2120,10 +2128,10 @@ impl<'a> WorkflowRuntime<'a> {
             step,
             node_id: node.id.clone(),
             data: NodeExecutionData::Merge {
-                policy: policy.clone(),
-                sources: sources.to_vec(),
+                policy: spec.policy.clone(),
+                sources: spec.sources.to_vec(),
                 output,
-                next: next.to_string(),
+                next: spec.next.to_string(),
             },
         })
     }
@@ -2132,10 +2140,7 @@ impl<'a> WorkflowRuntime<'a> {
         &self,
         step: usize,
         node: &Node,
-        tool: &str,
-        items_path: &str,
-        next: &str,
-        max_in_flight: Option<usize>,
+        spec: MapNodeSpec<'_>,
         scope: &mut RuntimeScope,
         cancellation: Option<&dyn CancellationSignal>,
         retry_events: &mut Vec<WorkflowRetryEvent>,
@@ -2152,11 +2157,11 @@ impl<'a> WorkflowRuntime<'a> {
                 node_id: node.id.clone(),
                 source,
             })?;
-        let items = resolve_path(&scoped_input, items_path)
+        let items = resolve_path(&scoped_input, spec.items_path)
             .and_then(Value::as_array)
             .ok_or_else(|| WorkflowRuntimeError::MapItemsNotArray {
                 node_id: node.id.clone(),
-                items_path: items_path.to_string(),
+                items_path: spec.items_path.to_string(),
             })?
             .clone();
         if items.len() > self.options.security_limits.max_map_items {
@@ -2167,8 +2172,10 @@ impl<'a> WorkflowRuntime<'a> {
             });
         }
 
-        let scheduler =
-            DagScheduler::new(max_in_flight.unwrap_or(self.options.scheduler_max_in_flight));
+        let scheduler = DagScheduler::new(
+            spec.max_in_flight
+                .unwrap_or(self.options.scheduler_max_in_flight),
+        );
         let map_node = node.clone();
         let mapped: Vec<(Value, Vec<WorkflowRetryEvent>)> = scheduler
             .run_bounded(items.into_iter().enumerate(), |(index, item)| {
@@ -2180,7 +2187,7 @@ impl<'a> WorkflowRuntime<'a> {
                         .execute_tool_with_policy_for_scope(ToolPolicyRequest {
                             step,
                             node: &map_node,
-                            tool,
+                            tool: spec.tool,
                             input: &item,
                             executor,
                             scoped_input: item_scope,
@@ -2212,7 +2219,7 @@ impl<'a> WorkflowRuntime<'a> {
             data: NodeExecutionData::Map {
                 item_count: output.as_array().map_or(0, Vec::len),
                 output,
-                next: next.to_string(),
+                next: spec.next.to_string(),
             },
         })
     }
@@ -2641,6 +2648,45 @@ struct ToolPolicyRequest<'a> {
     executor: &'a dyn ToolExecutor,
     scoped_input: Value,
     cancellation: Option<&'a dyn CancellationSignal>,
+}
+
+struct LlmNodeSpec<'a> {
+    model: &'a str,
+    prompt: &'a str,
+    next: &'a Option<String>,
+}
+
+struct ToolNodeSpec<'a> {
+    tool: &'a str,
+    input: &'a Value,
+    next: &'a Option<String>,
+}
+
+struct ConditionNodeSpec<'a> {
+    expression: &'a str,
+    on_true: &'a str,
+    on_false: &'a str,
+}
+
+struct ParallelNodeSpec<'a> {
+    node_index: &'a HashMap<&'a str, &'a Node>,
+    branches: &'a [String],
+    next: &'a str,
+    max_in_flight: Option<usize>,
+}
+
+struct MergeNodeSpec<'a> {
+    sources: &'a [String],
+    policy: &'a MergePolicy,
+    quorum: Option<usize>,
+    next: &'a str,
+}
+
+struct MapNodeSpec<'a> {
+    tool: &'a str,
+    items_path: &'a str,
+    next: &'a str,
+    max_in_flight: Option<usize>,
 }
 
 impl RuntimeScope {
