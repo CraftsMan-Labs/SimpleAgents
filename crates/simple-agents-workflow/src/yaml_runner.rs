@@ -28,6 +28,27 @@ pub struct YamlStepTiming {
     pub node_id: String,
     pub node_kind: String,
     pub elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_second: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlLlmNodeMetrics {
+    pub elapsed_ms: u128,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking_tokens: Option<u32>,
+    pub tokens_per_second: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -40,7 +61,67 @@ pub struct YamlWorkflowRunOutput {
     pub terminal_node: String,
     pub terminal_output: Option<Value>,
     pub step_timings: Vec<YamlStepTiming>,
+    pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
     pub total_elapsed_ms: u128,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_thinking_tokens: Option<u64>,
+    pub tokens_per_second: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct YamlLlmTokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub thinking_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlLlmExecutionResult {
+    pub payload: Value,
+    pub usage: Option<YamlLlmTokenUsage>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct YamlTokenTotals {
+    input_tokens: u64,
+    output_tokens: u64,
+    total_tokens: u64,
+    thinking_tokens: Option<u64>,
+}
+
+impl YamlTokenTotals {
+    fn add_usage(&mut self, usage: &YamlLlmTokenUsage) {
+        self.input_tokens += u64::from(usage.prompt_tokens);
+        self.output_tokens += u64::from(usage.completion_tokens);
+        self.total_tokens += u64::from(usage.total_tokens);
+
+        if let Some(thinking_tokens) = usage.thinking_tokens {
+            let next = self.thinking_tokens.unwrap_or(0) + u64::from(thinking_tokens);
+            self.thinking_tokens = Some(next);
+        }
+    }
+
+    fn tokens_per_second(&self, elapsed_ms: u128) -> f64 {
+        if elapsed_ms == 0 {
+            return 0.0;
+        }
+        round_two_decimals((self.output_tokens as f64) * 1000.0 / (elapsed_ms as f64))
+    }
+}
+
+fn round_two_decimals(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64 {
+    if elapsed_ms == 0 {
+        return 0.0;
+    }
+    round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -198,7 +279,7 @@ fn yaml_workflow_to_mermaid_fallback(workflow: &YamlWorkflow) -> String {
     }
 
     let mut edges = emitted.into_iter().collect::<Vec<_>>();
-    edges.sort_by(|a, b| a.cmp(b));
+    edges.sort();
 
     for (from, label, to) in edges {
         if label.is_empty() {
@@ -443,7 +524,7 @@ pub trait YamlWorkflowLlmExecutor: Send + Sync {
         &self,
         request: YamlLlmExecutionRequest,
         event_sink: Option<&dyn YamlWorkflowEventSink>,
-    ) -> Result<Value, String>;
+    ) -> Result<YamlLlmExecutionResult, String>;
 }
 
 #[async_trait]
@@ -671,7 +752,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
             &self,
             request: YamlLlmExecutionRequest,
             event_sink: Option<&dyn YamlWorkflowEventSink>,
-        ) -> Result<Value, String> {
+        ) -> Result<YamlLlmExecutionResult, String> {
             let mut effective_stream = request.stream;
             if request.heal && request.stream {
                 effective_stream = false;
@@ -754,18 +835,33 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
                         }
                     }
 
-                    serde_json::from_str(aggregated.as_str()).map_err(|error| {
+                    let payload = serde_json::from_str(aggregated.as_str()).map_err(|error| {
                         format!(
                             "failed to parse streamed structured completion JSON: {error}; body={aggregated}"
                         )
+                    })?;
+
+                    Ok(YamlLlmExecutionResult {
+                        payload,
+                        usage: None,
                     })
                 }
                 CompletionOutcome::Response(response) => {
                     let content = response
                         .content()
                         .ok_or_else(|| "completion returned empty content".to_string())?;
-                    serde_json::from_str(content).map_err(|error| {
+                    let payload = serde_json::from_str(content).map_err(|error| {
                         format!("failed to parse structured completion JSON: {error}")
+                    })?;
+
+                    Ok(YamlLlmExecutionResult {
+                        payload,
+                        usage: Some(YamlLlmTokenUsage {
+                            prompt_tokens: response.usage.prompt_tokens,
+                            completion_tokens: response.usage.completion_tokens,
+                            total_tokens: response.usage.total_tokens,
+                            thinking_tokens: None,
+                        }),
                     })
                 }
                 CompletionOutcome::HealedJson(healed) => {
@@ -784,9 +880,25 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
                             metadata: None,
                         });
                     }
-                    Ok(healed.parsed.value)
+                    Ok(YamlLlmExecutionResult {
+                        payload: healed.parsed.value,
+                        usage: Some(YamlLlmTokenUsage {
+                            prompt_tokens: healed.response.usage.prompt_tokens,
+                            completion_tokens: healed.response.usage.completion_tokens,
+                            total_tokens: healed.response.usage.total_tokens,
+                            thinking_tokens: None,
+                        }),
+                    })
                 }
-                CompletionOutcome::CoercedSchema(coerced) => Ok(coerced.coerced.value),
+                CompletionOutcome::CoercedSchema(coerced) => Ok(YamlLlmExecutionResult {
+                    payload: coerced.coerced.value,
+                    usage: Some(YamlLlmTokenUsage {
+                        prompt_tokens: coerced.response.usage.prompt_tokens,
+                        completion_tokens: coerced.response.usage.completion_tokens,
+                        total_tokens: coerced.response.usage.total_tokens,
+                        thinking_tokens: None,
+                    }),
+                }),
             }
         }
     }
@@ -929,6 +1041,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
     let mut globals = serde_json::Map::new();
     let mut step_timings = Vec::new();
+    let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
+    let mut token_totals = YamlTokenTotals::default();
     let started = Instant::now();
 
     if let Some(sink) = event_sink {
@@ -978,6 +1092,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             });
         }
 
+        let mut node_usage: Option<YamlLlmTokenUsage> = None;
         let next = if let Some(llm) = &node.node_type.llm_call {
             let prompt_template = node
                 .config
@@ -1040,13 +1155,20 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                 });
             }
 
-            let payload = executor
+            let llm_result = executor
                 .complete_structured(request, event_sink)
                 .await
                 .map_err(|message| YamlWorkflowRunError::Llm {
                     node_id: node.id.clone(),
                     message,
                 })?;
+
+            if let Some(usage) = llm_result.usage.as_ref() {
+                token_totals.add_usage(usage);
+            }
+            node_usage = llm_result.usage;
+
+            let payload = llm_result.payload;
 
             if !payload.is_object() {
                 return Err(YamlWorkflowRunError::LlmPayloadNotObject {
@@ -1120,7 +1242,31 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             node_id: node.id.clone(),
             node_kind,
             elapsed_ms,
+            prompt_tokens: node_usage.as_ref().map(|usage| usage.prompt_tokens),
+            completion_tokens: node_usage.as_ref().map(|usage| usage.completion_tokens),
+            total_tokens: node_usage.as_ref().map(|usage| usage.total_tokens),
+            thinking_tokens: node_usage.as_ref().and_then(|usage| usage.thinking_tokens),
+            tokens_per_second: node_usage
+                .as_ref()
+                .map(|usage| completion_tokens_per_second(usage.completion_tokens, elapsed_ms)),
         });
+
+        if let Some(usage) = node_usage.as_ref() {
+            llm_node_metrics.insert(
+                node.id.clone(),
+                YamlLlmNodeMetrics {
+                    elapsed_ms,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    total_tokens: usage.total_tokens,
+                    thinking_tokens: usage.thinking_tokens,
+                    tokens_per_second: completion_tokens_per_second(
+                        usage.completion_tokens,
+                        elapsed_ms,
+                    ),
+                },
+            );
+        }
 
         if let Some(sink) = event_sink {
             sink.emit(&YamlWorkflowEvent {
@@ -1154,6 +1300,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         .and_then(|value| value.get("output"))
         .cloned();
 
+    let total_elapsed_ms = started.elapsed().as_millis();
     let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
@@ -1163,7 +1310,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         terminal_node,
         terminal_output,
         step_timings,
-        total_elapsed_ms: started.elapsed().as_millis(),
+        llm_node_metrics,
+        total_elapsed_ms,
+        total_input_tokens: token_totals.input_tokens,
+        total_output_tokens: token_totals.output_tokens,
+        total_tokens: token_totals.total_tokens,
+        total_thinking_tokens: token_totals.thinking_tokens,
+        tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
     };
 
     if let Some(sink) = event_sink {
@@ -1206,18 +1359,25 @@ async fn try_run_yaml_via_ir_runtime(
             &self,
             _input: LlmExecutionInput,
         ) -> Result<LlmExecutionOutput, LlmExecutionError> {
-            Err(LlmExecutionError::UnexpectedOutcome("yaml_ir_uses_tool_path"))
+            Err(LlmExecutionError::UnexpectedOutcome(
+                "yaml_ir_uses_tool_path",
+            ))
         }
     }
 
     struct YamlIrToolExecutor<'a> {
         llm_executor: &'a dyn YamlWorkflowLlmExecutor,
         custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+        token_totals: std::sync::Mutex<YamlTokenTotals>,
+        node_usage: std::sync::Mutex<BTreeMap<String, YamlLlmTokenUsage>>,
     }
 
     #[async_trait]
     impl ToolExecutor for YamlIrToolExecutor<'_> {
-        async fn execute_tool(&self, input: ToolExecutionInput) -> Result<Value, ToolExecutionError> {
+        async fn execute_tool(
+            &self,
+            input: ToolExecutionInput,
+        ) -> Result<Value, ToolExecutionError> {
             let context = build_yaml_context_from_ir_scope(&input.scoped_input);
 
             if input.tool == YAML_LLM_TOOL_ID {
@@ -1225,13 +1385,18 @@ async fn try_run_yaml_via_ir_runtime(
                     .input
                     .get("node_id")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::Failed("yaml llm call missing node_id".to_string()))?
+                    .ok_or_else(|| {
+                        ToolExecutionError::Failed("yaml llm call missing node_id".to_string())
+                    })?
                     .to_string();
+                let node_id_for_metrics = node_id.clone();
                 let model = input
                     .input
                     .get("model")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| ToolExecutionError::Failed("yaml llm call missing model".to_string()))?
+                    .ok_or_else(|| {
+                        ToolExecutionError::Failed("yaml llm call missing model".to_string())
+                    })?
                     .to_string();
                 let prompt_template = input
                     .input
@@ -1290,18 +1455,31 @@ async fn try_run_yaml_via_ir_runtime(
                     heal,
                 };
 
-                return self
+                let llm_result = self
                     .llm_executor
                     .complete_structured(request, None)
                     .await
                     .map_err(ToolExecutionError::Failed);
+
+                if let Ok(ref result) = llm_result {
+                    if let Some(usage) = result.usage.as_ref() {
+                        if let Ok(mut totals) = self.token_totals.lock() {
+                            totals.add_usage(usage);
+                        }
+                        if let Ok(mut usage_map) = self.node_usage.lock() {
+                            usage_map.insert(node_id_for_metrics, usage.clone());
+                        }
+                    }
+                }
+
+                return llm_result.map(|result| result.payload);
             }
 
-            let worker = self.custom_worker.ok_or_else(|| {
-                ToolExecutionError::NotFound {
+            let worker = self
+                .custom_worker
+                .ok_or_else(|| ToolExecutionError::NotFound {
                     tool: input.tool.clone(),
-                }
-            })?;
+                })?;
 
             let payload = input.input.clone();
             let email_text = context
@@ -1320,6 +1498,8 @@ async fn try_run_yaml_via_ir_runtime(
     let tool_executor = YamlIrToolExecutor {
         llm_executor: executor,
         custom_worker,
+        token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
+        node_usage: std::sync::Mutex::new(BTreeMap::new()),
     };
 
     let runtime = WorkflowRuntime::new(
@@ -1346,15 +1526,41 @@ async fn try_run_yaml_via_ir_runtime(
 
     let mut trace = Vec::new();
     let mut step_timings = Vec::new();
+    let node_usage_map = tool_executor
+        .node_usage
+        .lock()
+        .map(|usage| usage.clone())
+        .unwrap_or_default();
+    let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
     for execution in result.node_executions {
         if execution.node_id == YAML_START_NODE_ID {
             continue;
         }
         trace.push(execution.node_id.clone());
+        let usage = node_usage_map.get(&execution.node_id);
+        if let Some(usage) = usage {
+            llm_node_metrics.insert(
+                execution.node_id.clone(),
+                YamlLlmNodeMetrics {
+                    elapsed_ms: 0,
+                    prompt_tokens: usage.prompt_tokens,
+                    completion_tokens: usage.completion_tokens,
+                    total_tokens: usage.total_tokens,
+                    thinking_tokens: usage.thinking_tokens,
+                    tokens_per_second: completion_tokens_per_second(usage.completion_tokens, 0),
+                },
+            );
+        }
         step_timings.push(YamlStepTiming {
             node_id: execution.node_id,
             node_kind: "ir_runtime".to_string(),
             elapsed_ms: 0,
+            prompt_tokens: usage.map(|value| value.prompt_tokens),
+            completion_tokens: usage.map(|value| value.completion_tokens),
+            total_tokens: usage.map(|value| value.total_tokens),
+            thinking_tokens: usage.and_then(|value| value.thinking_tokens),
+            tokens_per_second: usage
+                .map(|value| completion_tokens_per_second(value.completion_tokens, 0)),
         });
     }
 
@@ -1370,6 +1576,12 @@ async fn try_run_yaml_via_ir_runtime(
         .unwrap_or_default()
         .to_string();
 
+    let token_totals = tool_executor
+        .token_totals
+        .lock()
+        .map(|totals| totals.clone())
+        .unwrap_or_default();
+
     Ok(Some(YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
@@ -1379,7 +1591,13 @@ async fn try_run_yaml_via_ir_runtime(
         terminal_node,
         terminal_output,
         step_timings,
+        llm_node_metrics,
         total_elapsed_ms,
+        total_input_tokens: token_totals.input_tokens,
+        total_output_tokens: token_totals.output_tokens,
+        total_tokens: token_totals.total_tokens,
+        total_thinking_tokens: token_totals.thinking_tokens,
+        tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
     }))
 }
 
@@ -1843,7 +2061,10 @@ fn mock_rag(topic: &str) -> Value {
     })
 }
 
-fn mock_custom_worker_output(handler: &str, payload: &Value) -> Result<Value, YamlWorkflowRunError> {
+fn mock_custom_worker_output(
+    handler: &str,
+    payload: &Value,
+) -> Result<Value, YamlWorkflowRunError> {
     if let Some(topic) = payload.get("topic").and_then(Value::as_str) {
         let mut value = mock_rag(topic);
         if let Value::Object(object) = &mut value {
@@ -1971,16 +2192,40 @@ mod tests {
             &self,
             request: YamlLlmExecutionRequest,
             _event_sink: Option<&dyn YamlWorkflowEventSink>,
-        ) -> Result<Value, String> {
+        ) -> Result<YamlLlmExecutionResult, String> {
             let prompt = request.prompt;
             if prompt.contains("exactly one category") {
-                return Ok(json!({"category":"termination","reason":"mock"}));
+                return Ok(YamlLlmExecutionResult {
+                    payload: json!({"category":"termination","reason":"mock"}),
+                    usage: Some(YamlLlmTokenUsage {
+                        prompt_tokens: 10,
+                        completion_tokens: 5,
+                        total_tokens: 15,
+                        thinking_tokens: None,
+                    }),
+                });
             }
             if prompt.contains("Determine termination subtype") {
-                return Ok(json!({"subtype":"repeated_offense","reason":"mock"}));
+                return Ok(YamlLlmExecutionResult {
+                    payload: json!({"subtype":"repeated_offense","reason":"mock"}),
+                    usage: Some(YamlLlmTokenUsage {
+                        prompt_tokens: 12,
+                        completion_tokens: 6,
+                        total_tokens: 18,
+                        thinking_tokens: None,
+                    }),
+                });
             }
             if prompt.contains("Determine supply chain subtype") {
-                return Ok(json!({"subtype":"order_replacement","reason":"mock"}));
+                return Ok(YamlLlmExecutionResult {
+                    payload: json!({"subtype":"order_replacement","reason":"mock"}),
+                    usage: Some(YamlLlmTokenUsage {
+                        prompt_tokens: 11,
+                        completion_tokens: 4,
+                        total_tokens: 15,
+                        thinking_tokens: None,
+                    }),
+                });
             }
             Err("unexpected prompt".to_string())
         }
@@ -2055,6 +2300,9 @@ edges:
         assert!(output
             .outputs
             .contains_key("rag_termination_repeated_offense"));
+        assert_eq!(output.total_input_tokens, 22);
+        assert_eq!(output.total_output_tokens, 11);
+        assert_eq!(output.total_tokens, 33);
     }
 
     #[tokio::test]
@@ -2138,14 +2386,22 @@ nodes:
             &self,
             request: YamlLlmExecutionRequest,
             _event_sink: Option<&dyn YamlWorkflowEventSink>,
-        ) -> Result<Value, String> {
+        ) -> Result<YamlLlmExecutionResult, String> {
             let messages = request
                 .messages
                 .ok_or_else(|| "expected messages in request".to_string())?;
             if messages.len() != 2 {
                 return Err(format!("expected 2 messages, got {}", messages.len()));
             }
-            Ok(json!({"category":"termination","reason":"history"}))
+            Ok(YamlLlmExecutionResult {
+                payload: json!({"category":"termination","reason":"history"}),
+                usage: Some(YamlLlmTokenUsage {
+                    prompt_tokens: 7,
+                    completion_tokens: 3,
+                    total_tokens: 10,
+                    thinking_tokens: None,
+                }),
+            })
         }
     }
 
@@ -2300,7 +2556,8 @@ nodes:
 "#;
 
         let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
-        let ir = yaml_workflow_to_ir(&workflow).expect("messages_path should convert to tool-based IR");
+        let ir =
+            yaml_workflow_to_ir(&workflow).expect("messages_path should convert to tool-based IR");
         assert!(ir.nodes.iter().any(|node| matches!(
             node.kind,
             crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
