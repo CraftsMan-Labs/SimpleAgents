@@ -72,3 +72,4 @@ flowchart TD
 | S2 | Remove stale stream fallback messaging in example chat | Legacy messaging referenced disabled streaming paths that no longer apply | Example output matches current runtime behavior and stays concise | completed |
 | S3 | Add regression tests for delta filtering | Prevent reintroduction of reasoning/preamble leak regressions | New tests cover prefix/suffix stripping and braces inside string handling | completed |
 | S4 | Add token attribution fields to stream events | Consumers need per-token routing and terminal-step attribution for observability and UI | Token events include `step_id`, `token_kind`, and `is_terminal_node_token` in core runtime events | completed |
+| S5 | Add YAML flag for streaming JSON as plain text | Chat clients need optional human-readable streaming without hardcoded key extraction | `llm_call.stream_json_as_text=true` emits non-thinking output as `key: value` lines from core runtime | completed |
