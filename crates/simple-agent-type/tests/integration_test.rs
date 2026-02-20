@@ -207,6 +207,7 @@ fn test_streaming_types() {
             delta: MessageDelta {
                 role: Some(Role::Assistant),
                 content: Some("Hello".to_string()),
+                reasoning_content: None,
             },
             finish_reason: None,
         }],
