@@ -252,6 +252,25 @@ impl Default for RateLimitConfig {
 }
 
 impl RateLimitConfig {
+    /// Validate rate-limit configuration invariants.
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+
+        if self.requests_per_second == 0 {
+            return Err(
+                "requests_per_second must be >= 1 when rate limiting is enabled".to_string(),
+            );
+        }
+
+        if self.burst_size == 0 {
+            return Err("burst_size must be >= 1 when rate limiting is enabled".to_string());
+        }
+
+        Ok(())
+    }
+
     /// Create a new rate limit configuration with given requests per second.
     ///
     /// # Example
@@ -453,6 +472,27 @@ mod tests {
         let parsed: ProviderConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config.name, parsed.name);
         assert_eq!(config.base_url, parsed.base_url);
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_enabled_requires_non_zero_values() {
+        let invalid_rps = RateLimitConfig::new(0, 10);
+        assert_eq!(
+            invalid_rps.validate().unwrap_err(),
+            "requests_per_second must be >= 1 when rate limiting is enabled"
+        );
+
+        let invalid_burst = RateLimitConfig::new(10, 0);
+        assert_eq!(
+            invalid_burst.validate().unwrap_err(),
+            "burst_size must be >= 1 when rate limiting is enabled"
+        );
+    }
+
+    #[test]
+    fn test_rate_limit_config_validate_disabled_allows_zero_values() {
+        let disabled = RateLimitConfig::disabled();
+        assert!(disabled.validate().is_ok());
     }
 
     #[test]

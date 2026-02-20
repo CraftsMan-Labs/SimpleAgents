@@ -139,7 +139,10 @@ impl LatencyRouter {
             ));
         }
 
-        let stats = self.stats.lock().expect("latency stats lock poisoned");
+        let stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut best_index: Option<usize> = None;
         let mut best_latency = f64::MAX;
         let mut has_samples = false;
@@ -179,7 +182,10 @@ impl LatencyRouter {
     }
 
     fn record_latency(&self, index: usize, latency: Duration) {
-        let mut stats = self.stats.lock().expect("latency stats lock poisoned");
+        let mut stats = self
+            .stats
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(stat) = stats.get_mut(index) {
             stat.record(latency, self.config.alpha, self.config.slow_threshold);
         }
