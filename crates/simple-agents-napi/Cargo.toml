@@ -6,6 +6,8 @@ license = "MIT OR Apache-2.0"
 
 [lib]
 crate-type = ["cdylib"]
+test = false
+doctest = false
 
 [dependencies]
 napi = { version = "2.16", features = ["napi4", "serde-json"] }
