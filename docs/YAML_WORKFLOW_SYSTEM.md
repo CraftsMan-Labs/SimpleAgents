@@ -230,6 +230,20 @@ Workflow outputs include:
 - `trace` (node order)
 - `step_timings` per node
 - `total_elapsed_ms`
+- `trace_id` (top-level correlation id)
+- `metadata.telemetry.trace_id` (nested telemetry correlation id)
+
+Runtime options can be provided by language bindings/FFI using a structured object:
+
+- `telemetry`
+  - `enabled` (default `true`)
+  - `sample_rate` (default `1.0`)
+  - `payload_mode` (`full_payload` by default, toggle-ready for `redacted_payload`)
+  - `retention_days` (default `30`)
+  - `multi_tenant` (default `true`)
+- `trace`
+  - `context` (`trace_id`, `span_id`, `parent_span_id`, optional raw `traceparent`/`tracestate`, `baggage`)
+  - `tenant` (`workspace_id`, `user_id`, `request_id`, `run_id`)
 
 In Python chat runner, per-turn records are persisted as JSONL trace files.
 

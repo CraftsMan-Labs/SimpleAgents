@@ -66,3 +66,4 @@ Use this page to jump directly to the right guide.
 - Workflow benchmark and profiling flow: [Workflow Performance](/WORKFLOW_PERFORMANCE)
 - Workflow hardening limits: [Workflow Security](/WORKFLOW_SECURITY)
 - YAML/code workflow conversion: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
+- Jaeger/PostHog trace correlation model: [Tracing Architecture](/TRACING_ARCHITECTURE)
