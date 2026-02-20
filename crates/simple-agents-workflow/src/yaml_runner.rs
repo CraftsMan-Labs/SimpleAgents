@@ -16,7 +16,8 @@ use thiserror::Error;
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
-    ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeOptions,
+    ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
+    WorkflowRuntimeOptions,
 };
 use crate::visualize::workflow_to_mermaid;
 
@@ -211,6 +212,8 @@ pub enum YamlWorkflowRunError {
     },
     #[error("invalid workflow input: {message}")]
     InvalidInput { message: String },
+    #[error("ir runtime execution failed: {message}")]
+    IrRuntime { message: String },
 }
 
 pub trait YamlWorkflowEventSink: Send + Sync {
@@ -471,9 +474,14 @@ fn single_next_for_node(
 }
 
 fn rewrite_yaml_condition_to_ir(expr: &str) -> String {
-    expr.replace("$.nodes.", "$.node_outputs.")
-        .replace(".output.", ".")
-        .replace(".output", "")
+    let rewritten = expr
+        .replace("$.nodes.", "$.node_outputs.")
+        .replace(".output.", ".");
+    if let Some(prefix) = rewritten.strip_suffix(".output") {
+        prefix.to_string()
+    } else {
+        rewritten
+    }
 }
 
 fn sanitize_mermaid_id(id: &str) -> String {
@@ -983,12 +991,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker).await?
-    {
-        return Ok(output);
-    }
-
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
             message: "workflow input must be a JSON object".to_string(),
@@ -1011,6 +1013,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             diagnostics_count: errors.len(),
             diagnostics: errors,
         });
+    }
+
+    if let Some(output) =
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker).await?
+    {
+        return Ok(output);
     }
 
     if workflow.nodes.is_empty() {
@@ -1512,7 +1520,12 @@ async fn try_run_yaml_via_ir_runtime(
     let started = Instant::now();
     let result = match runtime.execute(workflow_input.clone(), None).await {
         Ok(result) => result,
-        Err(_) => return Ok(None),
+        Err(WorkflowRuntimeError::Validation(_)) => return Ok(None),
+        Err(error) => {
+            return Err(YamlWorkflowRunError::IrRuntime {
+                message: error.to_string(),
+            });
+        }
     };
     let total_elapsed_ms = started.elapsed().as_millis();
 
@@ -2562,6 +2575,36 @@ nodes:
             node.kind,
             crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
         )));
+    }
+
+    #[test]
+    fn rewrite_yaml_condition_preserves_output_prefix_in_field_names() {
+        let expr = "$.nodes.classify.output.output_total == 1";
+        let rewritten = rewrite_yaml_condition_to_ir(expr);
+        assert_eq!(rewritten, "$.node_outputs.classify.output_total == 1");
+    }
+
+    #[tokio::test]
+    async fn validates_workflow_input_before_ir_runtime_path() {
+        let yaml = r#"
+id: chat-workflow
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        classify
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let err = run_workflow_yaml(&workflow, &json!("not-an-object"), &MockExecutor)
+            .await
+            .expect_err("non-object input should fail before execution");
+
+        assert!(matches!(err, YamlWorkflowRunError::InvalidInput { .. }));
     }
 
     #[test]
