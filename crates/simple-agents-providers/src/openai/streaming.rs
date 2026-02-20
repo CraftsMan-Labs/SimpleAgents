@@ -71,6 +71,7 @@ pub fn transform_openai_chunk(chunk: OpenAIStreamChunk) -> Result<CompletionChun
                 delta: MessageDelta {
                     role,
                     content: choice.delta.content,
+                    reasoning_content: choice.delta.reasoning_content,
                 },
                 finish_reason: choice.finish_reason.as_ref().map(|s| match s.as_str() {
                     "stop" => FinishReason::Stop,
@@ -212,6 +213,7 @@ mod tests {
                 delta: super::super::models::OpenAIDelta {
                     role: Some("assistant".to_string()),
                     content: Some("Hello".to_string()),
+                    reasoning_content: None,
                 },
                 finish_reason: None,
             }],
@@ -226,5 +228,32 @@ mod tests {
         assert_eq!(unified.model, "gpt-4");
         assert_eq!(unified.choices.len(), 1);
         assert_eq!(unified.choices[0].delta.content, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_transform_chunk_preserves_reasoning_content_separately() {
+        let chunk = OpenAIStreamChunk {
+            id: "chatcmpl-124".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1677652289,
+            model: "gpt-4".to_string(),
+            choices: vec![super::super::models::OpenAIStreamChoice {
+                index: 0,
+                delta: super::super::models::OpenAIDelta {
+                    role: Some("assistant".to_string()),
+                    content: None,
+                    reasoning_content: Some("thought token".to_string()),
+                },
+                finish_reason: None,
+            }],
+            system_fingerprint: None,
+        };
+
+        let unified = transform_openai_chunk(chunk).expect("chunk should transform");
+        assert_eq!(unified.choices[0].delta.content, None);
+        assert_eq!(
+            unified.choices[0].delta.reasoning_content,
+            Some("thought token".to_string())
+        );
     }
 }

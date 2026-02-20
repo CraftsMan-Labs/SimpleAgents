@@ -17,9 +17,13 @@ serde.workspace = true
 serde_json.workspace = true
 serde_yaml = "0.9"
 simple-agent-type.workspace = true
+simple-agents-healing.workspace = true
 simple-agents-core = { path = "../simple-agents-core", version = "0.2.6" }
 thiserror.workspace = true
 tokio.workspace = true
+opentelemetry = { version = "0.24", features = ["trace"] }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic"] }
 
 [dev-dependencies]
 proptest = "1.6"

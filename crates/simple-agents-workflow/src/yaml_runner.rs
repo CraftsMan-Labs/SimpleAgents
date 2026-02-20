@@ -11,9 +11,11 @@ use simple_agent_type::request::CompletionRequest;
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 };
+use simple_agents_healing::JsonishParser;
 use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
+use crate::observability::tracing::{workflow_tracer, SpanKind, TraceContext};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
@@ -23,6 +25,8 @@ use crate::visualize::workflow_to_mermaid;
 
 const YAML_START_NODE_ID: &str = "__yaml_start";
 const YAML_LLM_TOOL_ID: &str = "__yaml_llm_call";
+
+static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlStepTiming {
@@ -70,6 +74,88 @@ pub struct YamlWorkflowRunOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_thinking_tokens: Option<u64>,
     pub tokens_per_second: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowPayloadMode {
+    #[default]
+    FullPayload,
+    RedactedPayload,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceContextInput {
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub span_id: Option<String>,
+    #[serde(default)]
+    pub parent_span_id: Option<String>,
+    #[serde(default)]
+    pub traceparent: Option<String>,
+    #[serde(default)]
+    pub tracestate: Option<String>,
+    #[serde(default)]
+    pub baggage: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceTenantContext {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct YamlWorkflowTelemetryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f32,
+    #[serde(default)]
+    pub payload_mode: YamlWorkflowPayloadMode,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_true")]
+    pub multi_tenant: bool,
+}
+
+impl Default for YamlWorkflowTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sample_rate: 1.0,
+            payload_mode: YamlWorkflowPayloadMode::FullPayload,
+            retention_days: 30,
+            multi_tenant: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowTraceOptions {
+    #[serde(default)]
+    pub context: Option<YamlWorkflowTraceContextInput>,
+    #[serde(default)]
+    pub tenant: YamlWorkflowTraceTenantContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct YamlWorkflowRunOptions {
+    #[serde(default)]
+    pub telemetry: YamlWorkflowTelemetryConfig,
+    #[serde(default)]
+    pub trace: YamlWorkflowTraceOptions,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -125,14 +211,356 @@ fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64
     round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_sample_rate() -> f32 {
+    1.0
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+
+fn generate_trace_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let sequence = u128::from(TRACE_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+    format!("{:032x}", now_nanos ^ sequence)
+}
+
+fn resolve_trace_id(options: &YamlWorkflowRunOptions, span_context: &TraceContext) -> String {
+    options
+        .trace
+        .context
+        .as_ref()
+        .and_then(|context| context.trace_id.clone())
+        .or_else(|| span_context.trace_id.clone())
+        .unwrap_or_else(generate_trace_id)
+}
+
+fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str) -> Value {
+    json!({
+        "telemetry": {
+            "trace_id": trace_id,
+            "enabled": options.telemetry.enabled,
+            "sample_rate": options.telemetry.sample_rate,
+            "payload_mode": match options.telemetry.payload_mode {
+                YamlWorkflowPayloadMode::FullPayload => "full_payload",
+                YamlWorkflowPayloadMode::RedactedPayload => "redacted_payload",
+            },
+            "retention_days": options.telemetry.retention_days,
+            "multi_tenant": options.telemetry.multi_tenant,
+        }
+    })
+}
+
+fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -> String {
+    match mode {
+        YamlWorkflowPayloadMode::FullPayload => payload.to_string(),
+        YamlWorkflowPayloadMode::RedactedPayload => json!({
+            "redacted": true,
+            "value_type": match payload {
+                Value::Null => "null",
+                Value::Bool(_) => "bool",
+                Value::Number(_) => "number",
+                Value::String(_) => "string",
+                Value::Array(_) => "array",
+                Value::Object(_) => "object",
+            }
+        })
+        .to_string(),
+    }
+}
+
+fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceContext> {
+    options.trace.context.as_ref().map(|input| TraceContext {
+        trace_id: input.trace_id.clone(),
+        span_id: input.span_id.clone(),
+        parent_span_id: input.parent_span_id.clone(),
+        traceparent: input.traceparent.clone(),
+        tracestate: input.tracestate.clone(),
+        baggage: input.baggage.clone(),
+    })
+}
+
+fn include_raw_stream_debug_events() -> bool {
+    match std::env::var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") {
+        Ok(value) => {
+            let normalized = value.trim().to_ascii_lowercase();
+            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
+        }
+        Err(_) => false,
+    }
+}
+
+#[derive(Debug)]
+struct StreamedPayloadResolution {
+    payload: Value,
+    heal_confidence: Option<f32>,
+}
+
+#[derive(Debug, Default)]
+struct StreamJsonAsTextFormatter {
+    raw_json: String,
+    emitted: bool,
+}
+
+impl StreamJsonAsTextFormatter {
+    fn push(&mut self, chunk: &str) {
+        self.raw_json.push_str(chunk);
+    }
+
+    fn emit_if_ready(&mut self, complete: bool) -> Option<String> {
+        if self.emitted || !complete {
+            return None;
+        }
+        self.emitted = true;
+        Some(render_json_object_as_text(self.raw_json.as_str()))
+    }
+}
+
+fn render_json_object_as_text(raw_json: &str) -> String {
+    let value = match serde_json::from_str::<Value>(raw_json) {
+        Ok(value) => value,
+        Err(_) => return raw_json.to_string(),
+    };
+    let Some(object) = value.as_object() else {
+        return raw_json.to_string();
+    };
+
+    let mut lines = Vec::with_capacity(object.len());
+    for (key, value) in object {
+        let rendered = match value {
+            Value::String(text) => text.clone(),
+            _ => value.to_string(),
+        };
+        lines.push(format!("{key}: {rendered}"));
+    }
+    lines.join("\n")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowTokenKind {
+    Output,
+    Thinking,
+}
+
+#[derive(Debug, Default)]
+struct StructuredJsonDeltaFilter {
+    started: bool,
+    completed: bool,
+    depth: u32,
+    in_string: bool,
+    escape: bool,
+}
+
+impl StructuredJsonDeltaFilter {
+    fn split(&mut self, delta: &str) -> (Option<String>, Option<String>) {
+        if delta.is_empty() {
+            return (None, None);
+        }
+
+        let mut output = String::new();
+        let mut thinking = String::new();
+
+        for ch in delta.chars() {
+            if self.completed {
+                thinking.push(ch);
+                continue;
+            }
+
+            if !self.started {
+                if ch != '{' {
+                    thinking.push(ch);
+                    continue;
+                }
+                self.started = true;
+                self.depth = 1;
+                output.push(ch);
+                continue;
+            }
+
+            output.push(ch);
+            if self.in_string {
+                if self.escape {
+                    self.escape = false;
+                    continue;
+                }
+                if ch == '\\' {
+                    self.escape = true;
+                    continue;
+                }
+                if ch == '"' {
+                    self.in_string = false;
+                }
+                continue;
+            }
+
+            match ch {
+                '"' => self.in_string = true,
+                '{' => self.depth = self.depth.saturating_add(1),
+                '}' => {
+                    if self.depth > 0 {
+                        self.depth -= 1;
+                    }
+                    if self.depth == 0 {
+                        self.completed = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let output = if output.is_empty() {
+            None
+        } else {
+            Some(output)
+        };
+        let thinking = if thinking.is_empty() {
+            None
+        } else {
+            Some(thinking)
+        };
+
+        (output, thinking)
+    }
+
+    fn completed(&self) -> bool {
+        self.completed
+    }
+}
+
+fn extract_last_fenced_json_block(raw: &str) -> Option<&str> {
+    let start = raw.rfind("```json")?;
+    let remainder = &raw[start + "```json".len()..];
+    let end = remainder.find("```")?;
+    let candidate = remainder[..end].trim();
+    if candidate.is_empty() {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn extract_balanced_object_from(raw: &str, start_index: usize) -> Option<&str> {
+    let mut depth = 0u32;
+    let mut in_string = false;
+    let mut escape = false;
+
+    for (relative_index, ch) in raw[start_index..].char_indices() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' => in_string = true,
+            '{' => depth = depth.saturating_add(1),
+            '}' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let end_index = start_index + relative_index + ch.len_utf8();
+                    return Some(raw[start_index..end_index].trim());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+fn extract_last_parsable_object(raw: &str) -> Option<&str> {
+    let starts: Vec<usize> = raw
+        .char_indices()
+        .filter_map(|(index, ch)| if ch == '{' { Some(index) } else { None })
+        .collect();
+
+    for start in starts.into_iter().rev() {
+        let Some(candidate) = extract_balanced_object_from(raw, start) else {
+            continue;
+        };
+        if serde_json::from_str::<Value>(candidate).is_ok() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn resolve_structured_json_candidate(raw: &str) -> Option<&str> {
+    extract_last_fenced_json_block(raw).or_else(|| extract_last_parsable_object(raw))
+}
+
+fn parse_streamed_structured_payload(
+    raw: &str,
+    heal: bool,
+) -> Result<StreamedPayloadResolution, String> {
+    if !heal {
+        if let Ok(payload) = serde_json::from_str::<Value>(raw) {
+            return Ok(StreamedPayloadResolution {
+                payload,
+                heal_confidence: None,
+            });
+        }
+
+        let candidate = resolve_structured_json_candidate(raw).ok_or_else(|| {
+            "failed to parse streamed structured completion JSON: no JSON object candidate found"
+                .to_string()
+        })?;
+        let payload = serde_json::from_str::<Value>(candidate).map_err(|error| {
+            format!(
+                "failed to parse streamed structured completion JSON: {error}; candidate={candidate}"
+            )
+        })?;
+        return Ok(StreamedPayloadResolution {
+            payload,
+            heal_confidence: None,
+        });
+    }
+
+    let candidate = resolve_structured_json_candidate(raw).unwrap_or(raw);
+    let parser = JsonishParser::new();
+    let healed = parser
+        .parse(candidate)
+        .map_err(|error| format!("failed to heal streamed structured completion JSON: {error}"))?;
+
+    Ok(StreamedPayloadResolution {
+        payload: healed.value,
+        heal_confidence: Some(healed.confidence),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlWorkflowEvent {
     pub event_type: String,
     pub node_id: Option<String>,
+    pub step_id: Option<String>,
     pub node_kind: Option<String>,
     pub streamable: Option<bool>,
     pub message: Option<String>,
     pub delta: Option<String>,
+    pub token_kind: Option<YamlWorkflowTokenKind>,
+    pub is_terminal_node_token: Option<bool>,
     pub elapsed_ms: Option<u128>,
     pub metadata: Option<Value>,
 }
@@ -379,6 +807,7 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
                             .and_then(|c| c.prompt.clone())
                             .unwrap_or_default(),
                         "stream": llm.stream.unwrap_or(false),
+                        "stream_json_as_text": llm.stream_json_as_text.unwrap_or(false),
                         "heal": llm.heal.unwrap_or(false),
                         "messages_path": llm.messages_path,
                         "append_prompt_as_user": llm.append_prompt_as_user.unwrap_or(true),
@@ -515,6 +944,8 @@ fn escape_mermaid_label(label: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct YamlLlmExecutionRequest {
     pub node_id: String,
+    pub is_terminal_node: bool,
+    pub stream_json_as_text: bool,
     pub model: String,
     pub messages: Option<Vec<Message>>,
     pub append_prompt_as_user: bool,
@@ -671,6 +1102,25 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+        workflow_path,
+        workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+    workflow_path: &Path,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let contents =
         std::fs::read_to_string(workflow_path).map_err(|source| YamlWorkflowRunError::Read {
             path: workflow_path.display().to_string(),
@@ -683,12 +1133,13 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
             source,
         })?;
 
-    run_workflow_yaml_with_client_and_custom_worker_and_events(
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
         &workflow,
         workflow_input,
         client,
         custom_worker,
         event_sink,
+        options,
     )
     .await
 }
@@ -717,12 +1168,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker(
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_workflow_yaml_with_client_and_custom_worker_and_events(
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
         workflow,
         workflow_input,
         client,
         custom_worker,
         None,
+        &YamlWorkflowRunOptions::default(),
     )
     .await
 }
@@ -750,6 +1202,25 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
     }
@@ -761,26 +1232,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
             request: YamlLlmExecutionRequest,
             event_sink: Option<&dyn YamlWorkflowEventSink>,
         ) -> Result<YamlLlmExecutionResult, String> {
-            let mut effective_stream = request.stream;
-            if request.heal && request.stream {
-                effective_stream = false;
-                if let Some(sink) = event_sink {
-                    sink.emit(&YamlWorkflowEvent {
-                        event_type: "node_streaming_unavailable".to_string(),
-                        node_id: Some(request.node_id.clone()),
-                        node_kind: Some("llm_call".to_string()),
-                        streamable: Some(false),
-                        message: Some(
-                            "stream disabled because heal=true requires non-stream completion"
-                                .to_string(),
-                        ),
-                        delta: None,
-                        elapsed_ms: None,
-                        metadata: None,
-                    });
-                }
-            }
-
             let messages = if let Some(mut history) = request.messages.clone() {
                 if request.append_prompt_as_user && !request.prompt.trim().is_empty() {
                     history.push(Message::user(&request.prompt));
@@ -797,7 +1248,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
                 .model(&request.model)
                 .messages(messages);
 
-            if effective_stream {
+            if request.stream {
                 builder = builder.stream(true);
             }
 
@@ -805,7 +1256,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
                 .build()
                 .map_err(|error| format!("failed to build completion request: {error}"))?;
 
-            let completion_options = if request.heal {
+            let completion_options = if request.heal && !request.stream {
                 CompletionOptions {
                     mode: CompletionMode::HealedJson,
                 }
@@ -822,35 +1273,137 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
             match outcome {
                 CompletionOutcome::Stream(mut stream) => {
                     let mut aggregated = String::new();
+                    let mut delta_filter = StructuredJsonDeltaFilter::default();
+                    let include_raw_debug = include_raw_stream_debug_events();
+                    let mut json_text_formatter = if request.stream_json_as_text {
+                        Some(StreamJsonAsTextFormatter::default())
+                    } else {
+                        None
+                    };
                     while let Some(chunk_result) = stream.next().await {
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
+                            if include_raw_debug {
+                                if let Some(reasoning_delta) =
+                                    choice.delta.reasoning_content.as_ref()
+                                {
+                                    if let Some(sink) = event_sink {
+                                        sink.emit(&YamlWorkflowEvent {
+                                            event_type: "node_stream_raw_delta".to_string(),
+                                            node_id: Some(request.node_id.clone()),
+                                            step_id: Some(request.node_id.clone()),
+                                            node_kind: Some("llm_call".to_string()),
+                                            streamable: Some(true),
+                                            message: None,
+                                            delta: Some(reasoning_delta.clone()),
+                                            token_kind: Some(YamlWorkflowTokenKind::Thinking),
+                                            is_terminal_node_token: Some(request.is_terminal_node),
+                                            elapsed_ms: None,
+                                            metadata: None,
+                                        });
+                                    }
+                                }
+                            }
                             if let Some(delta) = choice.delta.content.clone() {
                                 aggregated.push_str(delta.as_str());
-                                if let Some(sink) = event_sink {
-                                    sink.emit(&YamlWorkflowEvent {
-                                        event_type: "node_stream_delta".to_string(),
-                                        node_id: Some(request.node_id.clone()),
-                                        node_kind: Some("llm_call".to_string()),
-                                        streamable: Some(true),
-                                        message: None,
-                                        delta: Some(delta),
-                                        elapsed_ms: None,
-                                        metadata: None,
-                                    });
+                                let (output_delta, thinking_delta) =
+                                    delta_filter.split(delta.as_str());
+                                let rendered_output_delta = if let Some(output_chunk) = output_delta
+                                {
+                                    if let Some(formatter) = json_text_formatter.as_mut() {
+                                        formatter.push(output_chunk.as_str());
+                                        formatter.emit_if_ready(delta_filter.completed())
+                                    } else {
+                                        Some(output_chunk)
+                                    }
+                                } else {
+                                    None
+                                };
+                                if include_raw_debug {
+                                    if let Some(sink) = event_sink {
+                                        if let Some(raw_thinking_delta) = thinking_delta.as_ref() {
+                                            sink.emit(&YamlWorkflowEvent {
+                                                event_type: "node_stream_raw_delta".to_string(),
+                                                node_id: Some(request.node_id.clone()),
+                                                step_id: Some(request.node_id.clone()),
+                                                node_kind: Some("llm_call".to_string()),
+                                                streamable: Some(true),
+                                                message: None,
+                                                delta: Some(raw_thinking_delta.clone()),
+                                                token_kind: Some(YamlWorkflowTokenKind::Thinking),
+                                                is_terminal_node_token: Some(
+                                                    request.is_terminal_node,
+                                                ),
+                                                elapsed_ms: None,
+                                                metadata: None,
+                                            });
+                                        }
+                                        if let Some(raw_output_delta) =
+                                            rendered_output_delta.as_ref()
+                                        {
+                                            sink.emit(&YamlWorkflowEvent {
+                                                event_type: "node_stream_raw_delta".to_string(),
+                                                node_id: Some(request.node_id.clone()),
+                                                step_id: Some(request.node_id.clone()),
+                                                node_kind: Some("llm_call".to_string()),
+                                                streamable: Some(true),
+                                                message: None,
+                                                delta: Some(raw_output_delta.clone()),
+                                                token_kind: Some(YamlWorkflowTokenKind::Output),
+                                                is_terminal_node_token: Some(
+                                                    request.is_terminal_node,
+                                                ),
+                                                elapsed_ms: None,
+                                                metadata: None,
+                                            });
+                                        }
+                                    }
+                                }
+                                if let Some(filtered_delta) = rendered_output_delta {
+                                    if let Some(sink) = event_sink {
+                                        sink.emit(&YamlWorkflowEvent {
+                                            event_type: "node_stream_delta".to_string(),
+                                            node_id: Some(request.node_id.clone()),
+                                            step_id: Some(request.node_id.clone()),
+                                            node_kind: Some("llm_call".to_string()),
+                                            streamable: Some(true),
+                                            message: None,
+                                            delta: Some(filtered_delta),
+                                            token_kind: Some(YamlWorkflowTokenKind::Output),
+                                            is_terminal_node_token: Some(request.is_terminal_node),
+                                            elapsed_ms: None,
+                                            metadata: None,
+                                        });
+                                    }
                                 }
                             }
                         }
                     }
 
-                    let payload = serde_json::from_str(aggregated.as_str()).map_err(|error| {
-                        format!(
-                            "failed to parse streamed structured completion JSON: {error}; body={aggregated}"
-                        )
-                    })?;
+                    let resolved =
+                        parse_streamed_structured_payload(aggregated.as_str(), request.heal)?;
+                    if let Some(confidence) = resolved.heal_confidence {
+                        if let Some(sink) = event_sink {
+                            sink.emit(&YamlWorkflowEvent {
+                                event_type: "node_healed".to_string(),
+                                node_id: Some(request.node_id.clone()),
+                                step_id: Some(request.node_id.clone()),
+                                node_kind: Some("llm_call".to_string()),
+                                streamable: Some(true),
+                                message: Some(format!(
+                                    "healed streamed structured response confidence={confidence}"
+                                )),
+                                delta: None,
+                                token_kind: None,
+                                is_terminal_node_token: None,
+                                elapsed_ms: None,
+                                metadata: None,
+                            });
+                        }
+                    }
 
                     Ok(YamlLlmExecutionResult {
-                        payload,
+                        payload: resolved.payload,
                         usage: None,
                     })
                 }
@@ -877,13 +1430,16 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
                         sink.emit(&YamlWorkflowEvent {
                             event_type: "node_healed".to_string(),
                             node_id: Some(request.node_id.clone()),
+                            step_id: Some(request.node_id.clone()),
                             node_kind: Some("llm_call".to_string()),
-                            streamable: Some(false),
+                            streamable: Some(request.stream),
                             message: Some(format!(
                                 "healed structured response confidence={}",
                                 healed.parsed.confidence
                             )),
                             delta: None,
+                            token_kind: None,
+                            is_terminal_node_token: None,
                             elapsed_ms: None,
                             metadata: None,
                         });
@@ -912,12 +1468,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     }
 
     let executor = BorrowedClientExecutor { client };
-    run_workflow_yaml_with_custom_worker_and_events(
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow,
         workflow_input,
         &executor,
         custom_worker,
         event_sink,
+        options,
     )
     .await
 }
@@ -991,6 +1548,25 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+}
+
+pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
             message: "workflow input must be a JSON object".to_string(),
@@ -1015,8 +1591,24 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         });
     }
 
+    let tracer = workflow_tracer();
+    let parent_trace_context = trace_context_from_options(options);
+    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
+        "workflow.run",
+        SpanKind::Workflow,
+        parent_trace_context.as_ref(),
+    );
+    let trace_id = if options.telemetry.enabled {
+        let value = resolve_trace_id(options, &workflow_trace_context);
+        workflow_span.set_attribute("trace_id", value.as_str());
+        Some(value)
+    } else {
+        None
+    };
+
     if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker).await?
+        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
+            .await?
     {
         return Ok(output);
     }
@@ -1057,10 +1649,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         sink.emit(&YamlWorkflowEvent {
             event_type: "workflow_started".to_string(),
             node_id: None,
+            step_id: None,
             node_kind: None,
             streamable: None,
             message: Some(format!("workflow_id={}", workflow.id)),
             delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
             elapsed_ms: Some(0),
             metadata: None,
         });
@@ -1077,6 +1672,20 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         trace.push(node.id.clone());
         let step_started = Instant::now();
 
+        let mut node_span = if options.telemetry.enabled {
+            let (_, mut span) = tracer.start_span(
+                "workflow.node.execute",
+                SpanKind::Node,
+                Some(&workflow_trace_context),
+            );
+            span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+            span.set_attribute("node_id", node.id.as_str());
+            span.set_attribute("node_kind", node.kind_name());
+            Some(span)
+        } else {
+            None
+        };
+
         let node_streamable = node
             .node_type
             .llm_call
@@ -1087,6 +1696,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             sink.emit(&YamlWorkflowEvent {
                 event_type: "node_started".to_string(),
                 node_id: Some(node.id.clone()),
+                step_id: Some(node.id.clone()),
                 node_kind: Some(node.kind_name().to_string()),
                 streamable: node_streamable,
                 message: if node_streamable == Some(false) {
@@ -1095,12 +1705,15 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                     None
                 },
                 delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
                 elapsed_ms: Some(started.elapsed().as_millis()),
                 metadata: None,
             });
         }
 
         let mut node_usage: Option<YamlLlmTokenUsage> = None;
+        let is_terminal_node = !edge_map.contains_key(node.id.as_str());
         let next = if let Some(llm) = &node.node_type.llm_call {
             let prompt_template = node
                 .config
@@ -1130,6 +1743,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
 
             let request = YamlLlmExecutionRequest {
                 node_id: node.id.clone(),
+                is_terminal_node,
+                stream_json_as_text: llm.stream_json_as_text.unwrap_or(false),
                 model: llm.model.clone(),
                 messages,
                 append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
@@ -1141,20 +1756,31 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                 heal: llm.heal.unwrap_or(false),
             };
 
+            if let Some(span) = node_span.as_mut() {
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(options.telemetry.payload_mode, &context).as_str(),
+                );
+            }
+
             if let Some(sink) = event_sink {
                 sink.emit(&YamlWorkflowEvent {
                     event_type: "node_llm_input_resolved".to_string(),
                     node_id: Some(node.id.clone()),
+                    step_id: Some(node.id.clone()),
                     node_kind: Some("llm_call".to_string()),
-                    streamable: Some(request.stream && !request.heal),
+                    streamable: Some(request.stream),
                     message: Some("resolved llm input for telemetry".to_string()),
                     delta: None,
+                    token_kind: None,
+                    is_terminal_node_token: None,
                     elapsed_ms: Some(started.elapsed().as_millis()),
                     metadata: Some(json!({
                         "model": request.model.clone(),
                         "stream_requested": request.stream,
+                        "stream_json_as_text": request.stream_json_as_text,
                         "heal_requested": request.heal,
-                        "effective_stream": request.stream && !request.heal,
+                        "effective_stream": request.stream,
                         "prompt_template": request.prompt_template.clone(),
                         "prompt": request.prompt.clone(),
                         "schema": request.schema.clone(),
@@ -1185,6 +1811,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             }
 
             outputs.insert(node.id.clone(), json!({ "output": payload }));
+            if let Some(span) = node_span.as_mut() {
+                if let Some(output_payload) = outputs.get(node.id.as_str()) {
+                    span.set_attribute(
+                        "node_output",
+                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
+                    );
+                }
+            }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
             apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
@@ -1220,19 +1854,54 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
                 "globals": Value::Object(globals.clone())
             });
 
-            let worker_output = if let Some(custom_worker_executor) = custom_worker {
+            if let Some(span) = node_span.as_mut() {
+                span.set_attribute("handler_name", custom.handler.as_str());
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(options.telemetry.payload_mode, &payload).as_str(),
+                );
+            }
+
+            let mut handler_span = if options.telemetry.enabled {
+                let (_, mut span) = tracer.start_span(
+                    "handler.invoke",
+                    SpanKind::Node,
+                    Some(&workflow_trace_context),
+                );
+                span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+                span.set_attribute("handler_name", custom.handler.as_str());
+                Some(span)
+            } else {
+                None
+            };
+
+            let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
                 custom_worker_executor
                     .execute(custom.handler.as_str(), &payload, email_text, &context)
                     .await
                     .map_err(|message| YamlWorkflowRunError::CustomWorker {
                         node_id: node.id.clone(),
                         message,
-                    })?
+                    })
             } else {
-                mock_custom_worker_output(custom.handler.as_str(), &payload)?
+                mock_custom_worker_output(custom.handler.as_str(), &payload)
             };
 
+            if let Some(span) = handler_span.take() {
+                span.end();
+            }
+
+            let worker_output = worker_output_result?;
+
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
+            if let Some(span) = node_span.as_mut() {
+                if let Some(output_payload) = outputs.get(node.id.as_str()) {
+                    span.set_attribute(
+                        "node_output",
+                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
+                    );
+                }
+            }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
             apply_update_globals(node, &outputs, workflow_input, &mut globals);
             edge_map
@@ -1276,14 +1945,23 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
             );
         }
 
+        if let Some(mut span) = node_span.take() {
+            span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
+            span.add_event("node_completed");
+            span.end();
+        }
+
         if let Some(sink) = event_sink {
             sink.emit(&YamlWorkflowEvent {
                 event_type: "node_completed".to_string(),
                 node_id: Some(node.id.clone()),
+                step_id: Some(node.id.clone()),
                 node_kind: Some(node.kind_name().to_string()),
                 streamable: node_streamable,
                 message: None,
                 delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
                 elapsed_ms: Some(elapsed_ms),
                 metadata: None,
             });
@@ -1325,20 +2003,33 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
+        trace_id: trace_id.clone(),
+        metadata: trace_id
+            .as_ref()
+            .map(|value| workflow_metadata_with_trace(options, value)),
     };
 
     if let Some(sink) = event_sink {
         sink.emit(&YamlWorkflowEvent {
             event_type: "workflow_completed".to_string(),
             node_id: None,
+            step_id: None,
             node_kind: None,
             streamable: None,
             message: Some(format!("terminal_node={}", output.terminal_node)),
             delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
             elapsed_ms: Some(output.total_elapsed_ms),
             metadata: None,
         });
     }
+
+    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
+    if let Some(trace_id_value) = trace_id.as_ref() {
+        workflow_span.set_attribute("trace_id", trace_id_value.as_str());
+    }
+    workflow_span.end();
 
     Ok(output)
 }
@@ -1348,6 +2039,7 @@ async fn try_run_yaml_via_ir_runtime(
     workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    options: &YamlWorkflowRunOptions,
 ) -> Result<Option<YamlWorkflowRunOutput>, YamlWorkflowRunError> {
     let ir = match yaml_workflow_to_ir(workflow) {
         Ok(def) => def,
@@ -1358,6 +2050,21 @@ async fn try_run_yaml_via_ir_runtime(
                 message: err.to_string(),
             });
         }
+    };
+
+    let tracer = workflow_tracer();
+    let parent_trace_context = trace_context_from_options(options);
+    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
+        "workflow.run",
+        SpanKind::Workflow,
+        parent_trace_context.as_ref(),
+    );
+    let trace_id = if options.telemetry.enabled {
+        let value = resolve_trace_id(options, &workflow_trace_context);
+        workflow_span.set_attribute("trace_id", value.as_str());
+        Some(value)
+    } else {
+        None
     };
 
     struct NoopLlm;
@@ -1378,6 +2085,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
         token_totals: std::sync::Mutex<YamlTokenTotals>,
         node_usage: std::sync::Mutex<BTreeMap<String, YamlLlmTokenUsage>>,
+        trace_id: Option<String>,
+        payload_mode: YamlWorkflowPayloadMode,
     }
 
     #[async_trait]
@@ -1452,6 +2161,12 @@ async fn try_run_yaml_via_ir_runtime(
 
                 let request = YamlLlmExecutionRequest {
                     node_id,
+                    is_terminal_node: false,
+                    stream_json_as_text: input
+                        .input
+                        .get("stream_json_as_text")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
                     model,
                     messages,
                     append_prompt_as_user,
@@ -1496,10 +2211,32 @@ async fn try_run_yaml_via_ir_runtime(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
 
-            worker
+            let tracer = workflow_tracer();
+            let mut handler_span = if self.trace_id.is_some() {
+                let (_, mut span) = tracer.start_span("handler.invoke", SpanKind::Node, None);
+                if let Some(trace_id) = self.trace_id.as_ref() {
+                    span.set_attribute("trace_id", trace_id.as_str());
+                }
+                span.set_attribute("handler_name", input.tool.as_str());
+                span.set_attribute(
+                    "node_input",
+                    payload_for_span(self.payload_mode, &payload).as_str(),
+                );
+                Some(span)
+            } else {
+                None
+            };
+
+            let output_result = worker
                 .execute(&input.tool, &payload, email_text, &context)
                 .await
-                .map_err(ToolExecutionError::Failed)
+                .map_err(ToolExecutionError::Failed);
+
+            if let Some(span) = handler_span.take() {
+                span.end();
+            }
+
+            output_result
         }
     }
 
@@ -1508,6 +2245,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker,
         token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
         node_usage: std::sync::Mutex::new(BTreeMap::new()),
+        trace_id: trace_id.clone(),
+        payload_mode: options.telemetry.payload_mode,
     };
 
     let runtime = WorkflowRuntime::new(
@@ -1595,6 +2334,9 @@ async fn try_run_yaml_via_ir_runtime(
         .map(|totals| totals.clone())
         .unwrap_or_default();
 
+    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
+    workflow_span.end();
+
     Ok(Some(YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
@@ -1611,6 +2353,10 @@ async fn try_run_yaml_via_ir_runtime(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
+        trace_id: trace_id.clone(),
+        metadata: trace_id
+            .as_ref()
+            .map(|value| workflow_metadata_with_trace(options, value)),
     }))
 }
 
@@ -2133,6 +2879,7 @@ pub struct YamlNodeType {
 pub struct YamlLlmCall {
     pub model: String,
     pub stream: Option<bool>,
+    pub stream_json_as_text: Option<bool>,
     pub heal: Option<bool>,
     pub messages_path: Option<String>,
     pub append_prompt_as_user: Option<bool>,
@@ -2453,6 +3200,52 @@ nodes:
     }
 
     #[tokio::test]
+    async fn wrapper_entrypoints_produce_equivalent_outputs() {
+        let yaml = r#"
+id: wrapper-equivalence
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let input = json!({"email_text":"hello"});
+
+        let a = run_workflow_yaml(&workflow, &input, &MockExecutor)
+            .await
+            .expect("base entrypoint should execute");
+        let b = run_workflow_yaml_with_custom_worker(&workflow, &input, &MockExecutor, None)
+            .await
+            .expect("custom worker wrapper should execute");
+        let c = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &input,
+            &MockExecutor,
+            None,
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("events/options wrapper should execute");
+
+        assert_eq!(a.workflow_id, b.workflow_id);
+        assert_eq!(a.workflow_id, c.workflow_id);
+        assert_eq!(a.terminal_node, b.terminal_node);
+        assert_eq!(a.terminal_node, c.terminal_node);
+        assert_eq!(a.outputs, b.outputs);
+        assert_eq!(a.outputs, c.outputs);
+        assert_eq!(a.total_tokens, b.total_tokens);
+        assert_eq!(a.total_tokens, c.total_tokens);
+    }
+
+    #[tokio::test]
     async fn rejects_invalid_messages_path_shape() {
         let yaml = r#"
 id: email-intake-classification
@@ -2575,6 +3368,224 @@ nodes:
             node.kind,
             crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
         )));
+    }
+
+    #[tokio::test]
+    async fn workflow_output_contains_trace_id_in_both_locations() {
+        let yaml = r#"
+id: trace-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let output = run_workflow_yaml(&workflow, &json!({"email_text":"hello"}), &MockExecutor)
+            .await
+            .expect("workflow should execute");
+
+        let trace_id = output
+            .trace_id
+            .as_deref()
+            .expect("trace_id should be present");
+        assert!(!trace_id.is_empty());
+        assert_eq!(
+            output.metadata.as_ref().and_then(|value| {
+                value
+                    .get("telemetry")
+                    .and_then(|telemetry| telemetry.get("trace_id"))
+                    .and_then(Value::as_str)
+            }),
+            Some(trace_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_use_explicit_trace_id_and_payload_mode() {
+        let yaml = r#"
+id: trace-options-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                payload_mode: YamlWorkflowPayloadMode::RedactedPayload,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-fixed-123".to_string()),
+                    traceparent: Some("00-trace-fixed-123-span-1-01".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                ..YamlWorkflowTraceOptions::default()
+            },
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.trace_id.as_deref(), Some("trace-fixed-123"));
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("payload_mode"))
+                .and_then(Value::as_str),
+            Some("redacted_payload")
+        );
+    }
+
+    #[test]
+    fn streamed_payload_parser_extracts_last_json_object() {
+        let raw = r#"{"state":"missing_scenario","reason":"ok"}
+
+extra reasoning text
+
+{"state":"ready","reason":"final"}"#;
+
+        let resolved = parse_streamed_structured_payload(raw, false)
+            .expect("parser should extract final JSON object");
+        assert_eq!(resolved.payload["state"], "ready");
+        assert!(resolved.heal_confidence.is_none());
+    }
+
+    #[test]
+    fn streamed_payload_parser_handles_unbalanced_reasoning_before_json() {
+        let raw = "reasoning text with unmatched { braces and thoughts\n{\"state\":\"ready\",\"reason\":\"final\"}";
+
+        let resolved = parse_streamed_structured_payload(raw, false)
+            .expect("parser should recover final structured JSON object");
+        assert_eq!(resolved.payload["state"], "ready");
+    }
+
+    #[test]
+    fn streamed_payload_parser_handles_markdown_with_heal() {
+        let raw = r#"Some preface
+```json
+{
+  "state": "missing_scenario",
+  "reason": "Need more details"
+}
+```
+Some trailing explanation"#;
+
+        let resolved = parse_streamed_structured_payload(raw, true)
+            .expect("heal path should parse JSON block");
+        assert_eq!(resolved.payload["state"], "missing_scenario");
+        assert!(resolved.heal_confidence.is_some());
+    }
+
+    #[test]
+    fn streamed_payload_parser_errors_when_no_json_candidate_exists() {
+        let raw = "No JSON in this streamed output";
+        let error = parse_streamed_structured_payload(raw, false)
+            .expect_err("strict stream parse should fail without JSON candidate");
+        assert!(error.contains("no JSON object candidate found"));
+    }
+
+    #[test]
+    fn include_raw_stream_debug_events_defaults_to_false() {
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+        assert!(!include_raw_stream_debug_events());
+    }
+
+    #[test]
+    fn include_raw_stream_debug_events_accepts_truthy_values() {
+        std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "true");
+        assert!(include_raw_stream_debug_events());
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+    }
+
+    #[test]
+    fn structured_json_delta_filter_strips_reasoning_prefix_and_suffix() {
+        let mut filter = StructuredJsonDeltaFilter::default();
+        let chunks = vec![
+            "I will think first... ",
+            "{\"state\":\"missing_scenario\",",
+            "\"reason\":\"Need more details\"}",
+            " additional commentary",
+        ];
+
+        let filtered = chunks
+            .into_iter()
+            .filter_map(|chunk| filter.split(chunk).0)
+            .collect::<String>();
+
+        assert_eq!(
+            filtered,
+            "{\"state\":\"missing_scenario\",\"reason\":\"Need more details\"}"
+        );
+    }
+
+    #[test]
+    fn structured_json_delta_filter_handles_braces_inside_strings() {
+        let mut filter = StructuredJsonDeltaFilter::default();
+        let chunks = vec![
+            "preface ",
+            "{\"reason\":\"brace } in text\",\"state\":\"ok\"}",
+            " trailing",
+        ];
+
+        let filtered = chunks
+            .into_iter()
+            .filter_map(|chunk| filter.split(chunk).0)
+            .collect::<String>();
+
+        assert_eq!(
+            filtered,
+            "{\"reason\":\"brace } in text\",\"state\":\"ok\"}"
+        );
+    }
+
+    #[test]
+    fn render_json_object_as_text_converts_top_level_fields() {
+        let rendered =
+            render_json_object_as_text(r#"{"question":"q","confidence":0.8,"nested":{"a":1}}"#);
+        let lines: std::collections::HashSet<&str> = rendered.lines().collect();
+
+        assert_eq!(lines.len(), 3);
+        assert!(lines.contains("question: q"));
+        assert!(lines.contains("confidence: 0.8"));
+        assert!(lines.contains("nested: {\"a\":1}"));
+    }
+
+    #[test]
+    fn stream_json_as_text_formatter_emits_once_when_complete() {
+        let mut formatter = StreamJsonAsTextFormatter::default();
+        formatter.push("{\"question\":\"hello\"}");
+
+        let first = formatter.emit_if_ready(true);
+        let second = formatter.emit_if_ready(true);
+
+        assert_eq!(first, Some("question: hello".to_string()));
+        assert_eq!(second, None);
     }
 
     #[test]

@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from dotenv import load_dotenv
 from simple_agents_py import Client
@@ -34,6 +35,21 @@ def parse_args() -> argparse.Namespace:
         "--trace-dir",
         default="examples/workflow_email/traces",
         help="Directory to persist per-turn workflow traces as JSONL",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream workflow node deltas live in terminal when YAML nodes have stream=true",
+    )
+    parser.add_argument(
+        "--show-thinking",
+        action="store_true",
+        help="Show raw model stream deltas (including thinking tokens) for debugging",
+    )
+    parser.add_argument(
+        "--show-step-json",
+        action="store_true",
+        help="Print per-step JSON summaries after execution",
     )
     return parser.parse_args()
 
@@ -85,41 +101,204 @@ def initial_messages() -> list[dict[str, str]]:
     ]
 
 
+def load_workflow_node_names(workflow_path: Path) -> dict[str, str]:
+    try:
+        import yaml  # type: ignore
+    except Exception:
+        return {}
+
+    try:
+        raw = workflow_path.read_text(encoding="utf-8")
+        parsed = yaml.safe_load(raw)
+    except Exception:
+        return {}
+
+    if not isinstance(parsed, dict):
+        return {}
+
+    nodes = parsed.get("nodes")
+    if not isinstance(nodes, list):
+        return {}
+
+    names: dict[str, str] = {}
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = node.get("id")
+        node_name = node.get("name")
+        if isinstance(node_id, str):
+            if isinstance(node_name, str) and node_name.strip():
+                names[node_id] = node_name.strip()
+            else:
+                names[node_id] = node_id.replace("_", " ").title()
+    return names
+
+
+def step_display_name(node_id: str | None, node_names: dict[str, str]) -> str:
+    if node_id is None:
+        return "Workflow"
+    return node_names.get(node_id, node_id.replace("_", " ").title())
+
+
 def render_assistant_reply(result: dict) -> str:
-    terminal = result.get("terminal_node")
-    terminal_output = result.get("terminal_output") or {}
+    terminal_output = result.get("terminal_output")
+    if terminal_output is None:
+        return ""
+    if isinstance(terminal_output, str):
+        return terminal_output
+    return json.dumps(terminal_output, indent=2, ensure_ascii=True)
 
-    if terminal == "explain_capabilities":
-        for key in ("question", "answer", "message"):
-            value = terminal_output.get(key)
-            if isinstance(value, str) and value.strip():
-                return value
-        return json.dumps(terminal_output, indent=2)
 
-    if terminal == "ask_for_scenario":
-        question = terminal_output.get("question")
-        if isinstance(question, str) and question.strip():
-            return question
-        return json.dumps(terminal_output, indent=2)
+def _print_stream_event(
+    event: dict[str, object],
+    show_thinking: bool,
+    stream_state: dict[str, object],
+    node_names: dict[str, str],
+) -> None:
+    event_type = event.get("event_type")
+    node_id = event.get("node_id")
+    step_id = event.get("step_id")
+    delta = event.get("delta")
+    token_kind = event.get("token_kind")
+    is_terminal_node_token = event.get("is_terminal_node_token")
+    expected_event_type = (
+        "node_stream_raw_delta" if show_thinking else "node_stream_delta"
+    )
 
-    if terminal == "generate_email_draft":
-        subject = terminal_output.get("subject", "Draft Email")
-        body = terminal_output.get("body", "")
-        if not isinstance(subject, str):
-            subject = "Draft Email"
-        if not isinstance(body, str):
-            body = ""
-        return f"Subject: {subject}\n\n{body}".strip()
+    if event_type == expected_event_type and isinstance(delta, str):
+        display_node_id = (
+            node_id
+            if isinstance(node_id, str)
+            else (step_id if isinstance(step_id, str) else None)
+        )
+        step_name = step_display_name(display_node_id, node_names)
+        current_node = stream_state.get("current_node")
+        line_open = bool(stream_state.get("line_open", False))
+        if current_node != display_node_id:
+            if line_open:
+                print()
+            print(f"\nStep: {step_name}")
+            print("Streaming:", end=" ", flush=True)
+            stream_state["current_node"] = display_node_id
+            stream_state["line_open"] = True
+            stream_state["last_token_label"] = None
 
-    return json.dumps(terminal_output, indent=2)
+        if show_thinking:
+            token_label_parts = []
+            if isinstance(token_kind, str) and token_kind.strip():
+                token_label_parts.append(token_kind.strip())
+            if is_terminal_node_token is True:
+                token_label_parts.append("terminal")
+            token_label = (
+                f"[{' '.join(token_label_parts)}] " if token_label_parts else ""
+            )
+            last_token_label = stream_state.get("last_token_label")
+            if token_label and token_label != last_token_label:
+                if line_open:
+                    print()
+                print(f"{token_label}{step_name}: ", end="", flush=True)
+                stream_state["last_token_label"] = token_label
+                stream_state["line_open"] = True
+            print(delta, end="", flush=True)
+        else:
+            print(delta, end="", flush=True)
+        return
+
+    if event_type in {
+        "workflow_started",
+        "workflow_completed",
+    }:
+        return
+
+    _ = show_thinking
+
+
+def _print_step_json_summary(
+    result: dict[str, Any], node_names: dict[str, str]
+) -> None:
+    trace = result.get("trace")
+    outputs = result.get("outputs")
+    if not isinstance(trace, list) or not isinstance(outputs, dict):
+        return
+
+    for node in trace:
+        if not isinstance(node, str):
+            continue
+        node_value = outputs.get(node)
+        if not isinstance(node_value, dict):
+            continue
+        payload = node_value.get("output")
+        if payload is None:
+            continue
+        print(f"\nStep: {step_display_name(node, node_names)}")
+        print("JSON")
+        print(json.dumps(payload, indent=2, ensure_ascii=True))
+
+    terminal_node = result.get("terminal_node")
+    terminal_output = result.get("terminal_output")
+    if isinstance(terminal_node, str) and terminal_output is not None:
+        print(f"\nTerminal Step: {step_display_name(terminal_node, node_names)}")
+        print("JSON")
+        print(json.dumps(terminal_output, indent=2, ensure_ascii=True))
+
+
+def _run_turn(
+    client: Client,
+    workflow_path: Path,
+    workflow_input: dict[str, object],
+    include_events: bool,
+    stream: bool,
+    show_thinking: bool,
+    node_names: dict[str, str],
+) -> tuple[dict[str, object], list[dict[str, object]]]:
+    if not stream:
+        result = client.run_workflow_yaml(
+            str(workflow_path),
+            workflow_input,
+            include_events=include_events,
+        )
+        events = result.get("events", []) if include_events else []
+        return result, events if isinstance(events, list) else []
+
+    streamed_events: list[dict[str, object]] = []
+    stream_state: dict[str, object] = {"current_node": None, "line_open": False}
+
+    def on_event(event: dict[str, object]) -> None:
+        streamed_events.append(event)
+        _print_stream_event(event, show_thinking, stream_state, node_names)
+
+    result = client.run_workflow_yaml_stream(
+        str(workflow_path),
+        workflow_input,
+        on_event=on_event,
+    )
+
+    if not any(
+        isinstance(event, dict) and event.get("event_type") == "node_stream_delta"
+        for event in streamed_events
+    ):
+        print(
+            "[stream] No node_stream_delta events observed. "
+            "Ensure llm_call nodes are configured with stream=true."
+        )
+    elif stream_state.get("line_open", False):
+        print()
+
+    return result, streamed_events
 
 
 def main() -> None:
     args = parse_args()
+    if args.show_thinking:
+        os.environ["SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW"] = "1"
+    else:
+        os.environ.pop("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", None)
+
     provider, api_base, api_key = load_config()
     client = Client(provider, api_base=api_base, api_key=api_key)
 
     workflow_path = resolve_workflow_path(args.workflow)
+    node_names = load_workflow_node_names(workflow_path)
     messages = initial_messages()
     trace_dir = Path(args.trace_dir)
     trace_dir.mkdir(parents=True, exist_ok=True)
@@ -153,11 +332,18 @@ def main() -> None:
             "messages": messages,
         }
 
-        result = client.run_workflow_yaml(
-            str(workflow_path),
+        result, streamed_events = _run_turn(
+            client,
+            workflow_path,
             workflow_input,
-            include_events=args.include_events,
+            args.include_events,
+            args.stream,
+            args.show_thinking,
+            node_names,
         )
+
+        if args.show_step_json:
+            _print_step_json_summary(result, node_names)
 
         trace_record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -170,7 +356,11 @@ def main() -> None:
             "total_elapsed_ms": result.get("total_elapsed_ms"),
             "user_input": user_input,
             "assistant_output": result.get("terminal_output"),
-            "events": result.get("events", []) if args.include_events else None,
+            "events": (
+                streamed_events
+                if args.stream
+                else (result.get("events", []) if args.include_events else None)
+            ),
         }
         with trace_file.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(trace_record, ensure_ascii=True) + "\n")
@@ -179,7 +369,10 @@ def main() -> None:
         print(f"\nAssistant: {reply}\n")
         messages.append({"role": "assistant", "content": reply})
 
-        terminal_output = result.get("terminal_output") or {}
+        terminal_output_raw = result.get("terminal_output")
+        terminal_output = (
+            terminal_output_raw if isinstance(terminal_output_raw, dict) else {}
+        )
         if (
             result.get("terminal_node") in {"terminate_candidate", "already_terminated"}
             or terminal_output.get("decision") == "terminated"
