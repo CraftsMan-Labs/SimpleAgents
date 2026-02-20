@@ -2191,6 +2191,171 @@ fn handler_to_python_function_name(handler: &str) -> String {
     out
 }
 
+fn workflow_handlers_path(workflow_path: &std::path::Path) -> std::path::PathBuf {
+    workflow_path
+        .parent()
+        .map(|parent| parent.join("handlers.py"))
+        .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"))
+}
+
+struct PythonCustomWorkerExecutor {
+    handlers_path: std::path::PathBuf,
+}
+
+#[async_trait::async_trait]
+impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
+    async fn execute(
+        &self,
+        handler: &str,
+        payload: &Value,
+        _email_text: &str,
+        context: &Value,
+    ) -> std::result::Result<Value, String> {
+        Python::with_gil(|py| {
+            if !self.handlers_path.exists() {
+                return Err(format!(
+                    "custom worker handlers file not found: {}",
+                    self.handlers_path.display()
+                ));
+            }
+
+            let importlib_util = py
+                .import_bound("importlib.util")
+                .map_err(|error| error.to_string())?;
+            let module_path = self.handlers_path.to_string_lossy().to_string();
+            let spec = importlib_util
+                .call_method1(
+                    "spec_from_file_location",
+                    ("simple_agents_workflow_handlers", module_path.as_str()),
+                )
+                .map_err(|error| error.to_string())?;
+            if spec.is_none() {
+                return Err(format!(
+                    "failed to load module spec from {}",
+                    self.handlers_path.display()
+                ));
+            }
+
+            let module = importlib_util
+                .call_method1("module_from_spec", (&spec,))
+                .map_err(|error| error.to_string())?;
+            let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
+            if loader.is_none() {
+                return Err("module loader is missing for handlers.py".to_string());
+            }
+            loader
+                .call_method1("exec_module", (&module,))
+                .map_err(|error| error.to_string())?;
+
+            let function_name = handler_to_python_function_name(handler);
+            let function = module
+                .getattr(function_name.as_str())
+                .map_err(|error| error.to_string())?;
+            let topic = payload
+                .get("topic")
+                .and_then(Value::as_str)
+                .unwrap_or("clarification");
+            let kwargs = PyDict::new_bound(py);
+            let context_obj =
+                pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
+            kwargs
+                .set_item(
+                    "email_text",
+                    context["input"]["email_text"].as_str().unwrap_or_default(),
+                )
+                .map_err(|error| error.to_string())?;
+            kwargs
+                .set_item("context", context_obj)
+                .map_err(|error| error.to_string())?;
+
+            let result = function
+                .call((topic,), Some(&kwargs))
+                .map_err(|error| error.to_string())?;
+            pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
+        })
+    }
+}
+
+struct RecordingWorkflowEventSink {
+    events: Mutex<Vec<YamlWorkflowEvent>>,
+}
+
+impl RecordingWorkflowEventSink {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn events_value(&self) -> PyResult<Value> {
+        let events = self
+            .events
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
+            .clone();
+        serde_json::to_value(events).map_err(|error| {
+            PyRuntimeError::new_err(format!("event serialization failed: {error}"))
+        })
+    }
+}
+
+impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(event.clone());
+        }
+    }
+}
+
+fn attach_workflow_events(
+    value: &mut Value,
+    event_sink: &RecordingWorkflowEventSink,
+) -> PyResult<()> {
+    let events_value = event_sink.events_value()?;
+    if let Value::Object(object) = value {
+        object.insert("events".to_string(), events_value);
+    }
+    Ok(())
+}
+
+struct PythonWorkflowEventSink {
+    callback: Option<Py<PyAny>>,
+}
+
+// Safe because callback interaction always happens under the Python GIL.
+unsafe impl Send for PythonWorkflowEventSink {}
+unsafe impl Sync for PythonWorkflowEventSink {}
+
+impl YamlWorkflowEventSink for PythonWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        let Some(callback) = self.callback.as_ref() else {
+            return;
+        };
+
+        Python::with_gil(|py| {
+            let event_value = match serde_json::to_value(event) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
+                    return;
+                }
+            };
+            let py_event = match pythonize::pythonize(py, &event_value) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!(
+                        "[simple-agents-py] failed to convert workflow event for callback: {error}"
+                    );
+                    return;
+                }
+            };
+            if let Err(error) = callback.bind(py).call1((py_event,)) {
+                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
+            }
+        });
+    }
+}
+
 fn parse_tools(tools: &Bound<'_, PyAny>) -> Result<Vec<ToolDefinition>> {
     pythonize::depythonize(tools).map_err(|_| {
         SimpleAgentsError::Config("tools must be a list of tool definitions".to_string())
@@ -2684,109 +2849,14 @@ impl Client {
         let workflow_input = json!({ "email_text": email_text });
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_path_buf
-            .parent()
-            .map(|parent| parent.join("handlers.py"))
-            .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"));
-
-        struct PythonCustomWorkerExecutor {
-            handlers_path: std::path::PathBuf,
-        }
-
-        #[async_trait::async_trait]
-        impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
-            async fn execute(
-                &self,
-                handler: &str,
-                payload: &Value,
-                _email_text: &str,
-                context: &Value,
-            ) -> std::result::Result<Value, String> {
-                Python::with_gil(|py| {
-                    if !self.handlers_path.exists() {
-                        return Err(format!(
-                            "custom worker handlers file not found: {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let importlib_util = py
-                        .import_bound("importlib.util")
-                        .map_err(|error| error.to_string())?;
-                    let module_path = self.handlers_path.to_string_lossy().to_string();
-                    let spec = importlib_util
-                        .call_method1(
-                            "spec_from_file_location",
-                            ("simple_agents_workflow_handlers", module_path.as_str()),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    if spec.is_none() {
-                        return Err(format!(
-                            "failed to load module spec from {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let module = importlib_util
-                        .call_method1("module_from_spec", (&spec,))
-                        .map_err(|error| error.to_string())?;
-                    let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
-                    if loader.is_none() {
-                        return Err("module loader is missing for handlers.py".to_string());
-                    }
-                    loader
-                        .call_method1("exec_module", (&module,))
-                        .map_err(|error| error.to_string())?;
-
-                    let function_name = handler_to_python_function_name(handler);
-                    let function = module
-                        .getattr(function_name.as_str())
-                        .map_err(|error| error.to_string())?;
-                    let topic = payload
-                        .get("topic")
-                        .and_then(Value::as_str)
-                        .unwrap_or("clarification");
-                    let kwargs = PyDict::new_bound(py);
-                    let context_obj =
-                        pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item(
-                            "email_text",
-                            context["input"]["email_text"].as_str().unwrap_or_default(),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item("context", context_obj)
-                        .map_err(|error| error.to_string())?;
-
-                    let result = function
-                        .call((topic,), Some(&kwargs))
-                        .map_err(|error| error.to_string())?;
-                    pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
-                })
-            }
-        }
-
-        struct RecordingWorkflowEventSink {
-            events: Mutex<Vec<YamlWorkflowEvent>>,
-        }
-
-        impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
-            fn emit(&self, event: &YamlWorkflowEvent) {
-                if let Ok(mut events) = self.events.lock() {
-                    events.push(event.clone());
-                }
-            }
-        }
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
-        let event_sink = RecordingWorkflowEventSink {
-            events: Mutex::new(Vec::new()),
-        };
+        let event_sink = RecordingWorkflowEventSink::new();
         let output = if include_events {
             runtime
                 .block_on(
@@ -2813,17 +2883,7 @@ impl Client {
         let mut value = serde_json::to_value(output)
             .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
         if include_events {
-            let events = event_sink
-                .events
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
-                .clone();
-            let events_value = serde_json::to_value(events).map_err(|error| {
-                PyRuntimeError::new_err(format!("event serialization failed: {error}"))
-            })?;
-            if let Value::Object(object) = &mut value {
-                object.insert("events".to_string(), events_value);
-            }
+            attach_workflow_events(&mut value, &event_sink)?;
         }
 
         let py_value = pythonize::pythonize(py, &value)
@@ -2854,109 +2914,14 @@ impl Client {
         }
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_path_buf
-            .parent()
-            .map(|parent| parent.join("handlers.py"))
-            .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"));
-
-        struct PythonCustomWorkerExecutor {
-            handlers_path: std::path::PathBuf,
-        }
-
-        #[async_trait::async_trait]
-        impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
-            async fn execute(
-                &self,
-                handler: &str,
-                payload: &Value,
-                _email_text: &str,
-                context: &Value,
-            ) -> std::result::Result<Value, String> {
-                Python::with_gil(|py| {
-                    if !self.handlers_path.exists() {
-                        return Err(format!(
-                            "custom worker handlers file not found: {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let importlib_util = py
-                        .import_bound("importlib.util")
-                        .map_err(|error| error.to_string())?;
-                    let module_path = self.handlers_path.to_string_lossy().to_string();
-                    let spec = importlib_util
-                        .call_method1(
-                            "spec_from_file_location",
-                            ("simple_agents_workflow_handlers", module_path.as_str()),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    if spec.is_none() {
-                        return Err(format!(
-                            "failed to load module spec from {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let module = importlib_util
-                        .call_method1("module_from_spec", (&spec,))
-                        .map_err(|error| error.to_string())?;
-                    let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
-                    if loader.is_none() {
-                        return Err("module loader is missing for handlers.py".to_string());
-                    }
-                    loader
-                        .call_method1("exec_module", (&module,))
-                        .map_err(|error| error.to_string())?;
-
-                    let function_name = handler_to_python_function_name(handler);
-                    let function = module
-                        .getattr(function_name.as_str())
-                        .map_err(|error| error.to_string())?;
-                    let topic = payload
-                        .get("topic")
-                        .and_then(Value::as_str)
-                        .unwrap_or("clarification");
-                    let kwargs = PyDict::new_bound(py);
-                    let context_obj =
-                        pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item(
-                            "email_text",
-                            context["input"]["email_text"].as_str().unwrap_or_default(),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item("context", context_obj)
-                        .map_err(|error| error.to_string())?;
-
-                    let result = function
-                        .call((topic,), Some(&kwargs))
-                        .map_err(|error| error.to_string())?;
-                    pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
-                })
-            }
-        }
-
-        struct RecordingWorkflowEventSink {
-            events: Mutex<Vec<YamlWorkflowEvent>>,
-        }
-
-        impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
-            fn emit(&self, event: &YamlWorkflowEvent) {
-                if let Ok(mut events) = self.events.lock() {
-                    events.push(event.clone());
-                }
-            }
-        }
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
-        let event_sink = RecordingWorkflowEventSink {
-            events: Mutex::new(Vec::new()),
-        };
+        let event_sink = RecordingWorkflowEventSink::new();
 
         let output = if include_events {
             runtime
@@ -2984,17 +2949,7 @@ impl Client {
         let mut value = serde_json::to_value(output)
             .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
         if include_events {
-            let events = event_sink
-                .events
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
-                .clone();
-            let events_value = serde_json::to_value(events).map_err(|error| {
-                PyRuntimeError::new_err(format!("event serialization failed: {error}"))
-            })?;
-            if let Value::Object(object) = &mut value {
-                object.insert("events".to_string(), events_value);
-            }
+            attach_workflow_events(&mut value, &event_sink)?;
         }
 
         let py_value = pythonize::pythonize(py, &value)
@@ -3024,116 +2979,7 @@ impl Client {
         let workflow_input = json!({ "email_text": email_text });
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_path_buf
-            .parent()
-            .map(|parent| parent.join("handlers.py"))
-            .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"));
-
-        struct PythonWorkflowEventSink {
-            callback: Option<Py<PyAny>>,
-        }
-
-        // Safe because callback interaction always happens under the Python GIL.
-        unsafe impl Send for PythonWorkflowEventSink {}
-        unsafe impl Sync for PythonWorkflowEventSink {}
-
-        impl YamlWorkflowEventSink for PythonWorkflowEventSink {
-            fn emit(&self, event: &YamlWorkflowEvent) {
-                let Some(callback) = self.callback.as_ref() else {
-                    return;
-                };
-
-                Python::with_gil(|py| {
-                    let event_value = match serde_json::to_value(event) {
-                        Ok(value) => value,
-                        Err(_) => return,
-                    };
-                    let py_event = match pythonize::pythonize(py, &event_value) {
-                        Ok(value) => value,
-                        Err(_) => return,
-                    };
-                    let _ = callback.bind(py).call1((py_event,));
-                });
-            }
-        }
-
-        struct PythonCustomWorkerExecutor {
-            handlers_path: std::path::PathBuf,
-        }
-
-        #[async_trait::async_trait]
-        impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
-            async fn execute(
-                &self,
-                handler: &str,
-                payload: &Value,
-                _email_text: &str,
-                context: &Value,
-            ) -> std::result::Result<Value, String> {
-                Python::with_gil(|py| {
-                    if !self.handlers_path.exists() {
-                        return Err(format!(
-                            "custom worker handlers file not found: {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let importlib_util = py
-                        .import_bound("importlib.util")
-                        .map_err(|error| error.to_string())?;
-                    let module_path = self.handlers_path.to_string_lossy().to_string();
-                    let spec = importlib_util
-                        .call_method1(
-                            "spec_from_file_location",
-                            ("simple_agents_workflow_handlers", module_path.as_str()),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    if spec.is_none() {
-                        return Err(format!(
-                            "failed to load module spec from {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let module = importlib_util
-                        .call_method1("module_from_spec", (&spec,))
-                        .map_err(|error| error.to_string())?;
-                    let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
-                    if loader.is_none() {
-                        return Err("module loader is missing for handlers.py".to_string());
-                    }
-                    loader
-                        .call_method1("exec_module", (&module,))
-                        .map_err(|error| error.to_string())?;
-
-                    let function_name = handler_to_python_function_name(handler);
-                    let function = module
-                        .getattr(function_name.as_str())
-                        .map_err(|error| error.to_string())?;
-                    let topic = payload
-                        .get("topic")
-                        .and_then(Value::as_str)
-                        .unwrap_or("clarification");
-                    let kwargs = PyDict::new_bound(py);
-                    let context_obj =
-                        pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item(
-                            "email_text",
-                            context["input"]["email_text"].as_str().unwrap_or_default(),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item("context", context_obj)
-                        .map_err(|error| error.to_string())?;
-
-                    let result = function
-                        .call((topic,), Some(&kwargs))
-                        .map_err(|error| error.to_string())?;
-                    pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
-                })
-            }
-        }
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
 
         let runtime = self
             .runtime
@@ -3183,115 +3029,7 @@ impl Client {
         }
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_path_buf
-            .parent()
-            .map(|parent| parent.join("handlers.py"))
-            .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"));
-
-        struct PythonWorkflowEventSink {
-            callback: Option<Py<PyAny>>,
-        }
-
-        unsafe impl Send for PythonWorkflowEventSink {}
-        unsafe impl Sync for PythonWorkflowEventSink {}
-
-        impl YamlWorkflowEventSink for PythonWorkflowEventSink {
-            fn emit(&self, event: &YamlWorkflowEvent) {
-                let Some(callback) = self.callback.as_ref() else {
-                    return;
-                };
-
-                Python::with_gil(|py| {
-                    let event_value = match serde_json::to_value(event) {
-                        Ok(value) => value,
-                        Err(_) => return,
-                    };
-                    let py_event = match pythonize::pythonize(py, &event_value) {
-                        Ok(value) => value,
-                        Err(_) => return,
-                    };
-                    let _ = callback.bind(py).call1((py_event,));
-                });
-            }
-        }
-
-        struct PythonCustomWorkerExecutor {
-            handlers_path: std::path::PathBuf,
-        }
-
-        #[async_trait::async_trait]
-        impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
-            async fn execute(
-                &self,
-                handler: &str,
-                payload: &Value,
-                _email_text: &str,
-                context: &Value,
-            ) -> std::result::Result<Value, String> {
-                Python::with_gil(|py| {
-                    if !self.handlers_path.exists() {
-                        return Err(format!(
-                            "custom worker handlers file not found: {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let importlib_util = py
-                        .import_bound("importlib.util")
-                        .map_err(|error| error.to_string())?;
-                    let module_path = self.handlers_path.to_string_lossy().to_string();
-                    let spec = importlib_util
-                        .call_method1(
-                            "spec_from_file_location",
-                            ("simple_agents_workflow_handlers", module_path.as_str()),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    if spec.is_none() {
-                        return Err(format!(
-                            "failed to load module spec from {}",
-                            self.handlers_path.display()
-                        ));
-                    }
-
-                    let module = importlib_util
-                        .call_method1("module_from_spec", (&spec,))
-                        .map_err(|error| error.to_string())?;
-                    let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
-                    if loader.is_none() {
-                        return Err("module loader is missing for handlers.py".to_string());
-                    }
-                    loader
-                        .call_method1("exec_module", (&module,))
-                        .map_err(|error| error.to_string())?;
-
-                    let function_name = handler_to_python_function_name(handler);
-                    let function = module
-                        .getattr(function_name.as_str())
-                        .map_err(|error| error.to_string())?;
-                    let topic = payload
-                        .get("topic")
-                        .and_then(Value::as_str)
-                        .unwrap_or("clarification");
-                    let kwargs = PyDict::new_bound(py);
-                    let context_obj =
-                        pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item(
-                            "email_text",
-                            context["input"]["email_text"].as_str().unwrap_or_default(),
-                        )
-                        .map_err(|error| error.to_string())?;
-                    kwargs
-                        .set_item("context", context_obj)
-                        .map_err(|error| error.to_string())?;
-
-                    let result = function
-                        .call((topic,), Some(&kwargs))
-                        .map_err(|error| error.to_string())?;
-                    pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
-                })
-            }
-        }
+        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
 
         let runtime = self
             .runtime

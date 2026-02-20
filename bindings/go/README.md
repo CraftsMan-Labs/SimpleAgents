@@ -86,6 +86,18 @@ See runnable example: `bindings/go/examples/client/main.go`.
 
 ## Test layers
 
+- Recommended (repo-root, reproducible env/linker setup): `make test-go-bindings`
+- Build-only check (repo-root): `make release-go`
+- Direct local invocation from `bindings/go/` (equivalent env wiring):
+
+```sh
+CGO_CFLAGS="-I$(pwd)/../../crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$(pwd)/../../target/release" \
+GOCACHE="$(pwd)/.gocache" \
+LD_LIBRARY_PATH="$(pwd)/../../target/release:${LD_LIBRARY_PATH}" \
+go test ./...
+```
+
 - Unit: `go test ./... -run 'TestValidate|TestCompleteMessagesUninitializedClient|TestCompleteWithContextUninitializedClient|TestStreamMessagesUninitializedClient'`
 - Contract: `go test ./... -run 'TestGoBindingsFollowSharedContractFixture|TestValidateCompleteOptionsGoldenCases'`
 - Live: `go test ./... -run 'TestLive'` (env-gated)
