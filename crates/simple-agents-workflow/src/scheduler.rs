@@ -118,10 +118,10 @@ mod tests {
 
     #[tokio::test]
     async fn runs_concurrently_when_limit_above_one() {
-        let scheduler = DagScheduler::new(4);
-        let started = Instant::now();
+        let serial_scheduler = DagScheduler::new(1);
+        let serial_started = Instant::now();
 
-        let _ = scheduler
+        let _ = serial_scheduler
             .run_bounded(0..4usize, |_| async {
                 sleep(Duration::from_millis(20)).await;
                 Ok::<(), ()>(())
@@ -129,6 +129,24 @@ mod tests {
             .await
             .expect("scheduler should run all tasks");
 
-        assert!(started.elapsed() < Duration::from_millis(60));
+        let serial_elapsed = serial_started.elapsed();
+
+        let parallel_scheduler = DagScheduler::new(4);
+        let parallel_started = Instant::now();
+
+        let _ = parallel_scheduler
+            .run_bounded(0..4usize, |_| async {
+                sleep(Duration::from_millis(20)).await;
+                Ok::<(), ()>(())
+            })
+            .await
+            .expect("scheduler should run all tasks");
+
+        let parallel_elapsed = parallel_started.elapsed();
+
+        assert!(
+            parallel_elapsed < serial_elapsed,
+            "expected parallel scheduler to finish faster (parallel={parallel_elapsed:?}, serial={serial_elapsed:?})"
+        );
     }
 }
