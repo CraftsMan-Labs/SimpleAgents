@@ -158,4 +158,36 @@ mod tests {
         let provider_error: ProviderError = anthropic_error.into();
         assert!(matches!(provider_error, ProviderError::InvalidApiKey));
     }
+
+    #[test]
+    fn test_status_matrix_mapping() {
+        let unauthorized = AnthropicError::from_response(401, "unauthorized", None);
+        assert!(matches!(unauthorized, AnthropicError::InvalidApiKey));
+
+        let rate = AnthropicError::from_response(429, "rate limit", Some(Duration::from_secs(9)));
+        assert!(matches!(
+            rate,
+            AnthropicError::RateLimitExceeded {
+                retry_after: Some(d)
+            } if d == Duration::from_secs(9)
+        ));
+
+        let bad_request = AnthropicError::from_response(400, "bad request", None);
+        assert!(matches!(bad_request, AnthropicError::InvalidRequest(_)));
+
+        let overloaded = AnthropicError::from_response(503, "overloaded", None);
+        assert!(matches!(overloaded, AnthropicError::Overloaded));
+
+        let forbidden = AnthropicError::from_response(403, "forbidden", None);
+        assert!(matches!(forbidden, AnthropicError::Unknown(_)));
+
+        let not_found = AnthropicError::from_response(404, "not found", None);
+        assert!(matches!(not_found, AnthropicError::Unknown(_)));
+
+        let timeout = AnthropicError::from_response(408, "timeout", None);
+        assert!(matches!(timeout, AnthropicError::Unknown(_)));
+
+        let internal = AnthropicError::from_response(500, "server", None);
+        assert!(matches!(internal, AnthropicError::Unknown(_)));
+    }
 }

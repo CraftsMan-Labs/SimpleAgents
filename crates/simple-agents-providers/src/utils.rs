@@ -5,12 +5,7 @@ use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
 /// Default timeout for HTTP requests
-#[allow(dead_code)]
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// Default maximum retries
-#[allow(dead_code)]
-pub const DEFAULT_MAX_RETRIES: u32 = 3;
 
 /// Build HTTP headers from key-value pairs (now optimized with Cow)
 pub fn build_headers(
@@ -28,7 +23,6 @@ pub fn build_headers(
 }
 
 /// Parse retry-after header (seconds or HTTP date)
-#[allow(dead_code)]
 pub fn parse_retry_after(header_value: &str) -> Option<Duration> {
     // Try parsing as integer seconds first
     if let Ok(seconds) = header_value.parse::<u64>() {
@@ -89,5 +83,47 @@ mod tests {
         let duration = parse_retry_after(&header).unwrap();
         assert!(duration.as_secs() <= 90);
         assert!(duration.as_secs() >= 80);
+    }
+
+    #[test]
+    fn test_parse_retry_after_negative_like_value_returns_none() {
+        assert!(parse_retry_after("-1").is_none());
+    }
+
+    #[test]
+    fn test_parse_retry_after_malformed_http_date_returns_none() {
+        assert!(parse_retry_after("Wed, 99 Foo 9999 99:99:99 GMT").is_none());
+    }
+
+    #[test]
+    fn test_parse_retry_after_past_http_date_clamps_to_zero() {
+        let past = SystemTime::now() - Duration::from_secs(30);
+        let header = httpdate::fmt_http_date(past);
+        let duration = parse_retry_after(&header).expect("past date should parse");
+        assert_eq!(duration, Duration::from_secs(0));
+    }
+
+    #[test]
+    fn test_parse_retry_after_large_numeric_value() {
+        let duration = parse_retry_after("18446744073709551615").expect("u64 max should parse");
+        assert_eq!(duration.as_secs(), u64::MAX);
+    }
+
+    #[test]
+    fn test_build_headers_invalid_name_returns_error() {
+        let result = build_headers(vec![(
+            Cow::Borrowed("Invalid Header"),
+            Cow::Borrowed("value"),
+        )]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_build_headers_invalid_value_returns_error() {
+        let result = build_headers(vec![(
+            Cow::Borrowed("x-test"),
+            Cow::Borrowed("value\nwith-newline"),
+        )]);
+        assert!(result.is_err());
     }
 }
