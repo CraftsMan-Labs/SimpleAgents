@@ -141,7 +141,7 @@ edges:
 
   const client = new Client(PROVIDER);
   const eventCounts = new Map();
-  await client.runWorkflowYamlStream(
+  const result = await client.runWorkflowYamlStream(
     workflowPath,
     {
       messages: [
@@ -167,6 +167,8 @@ edges:
     },
   );
 
+  assert.ok(result && typeof result === 'object', 'stream call should resolve structured output object');
+  assert.strictEqual(typeof result.terminal_node, 'string', 'result should include terminal_node');
   assert.ok((eventCounts.get('node_stream_delta') || 0) > 0, 'expected node_stream_delta events');
   assert.ok((eventCounts.get('node_stream_output_delta') || 0) > 0, 'expected node_stream_output_delta events');
   assert.strictEqual(eventCounts.get('node_stream_raw_delta') || 0, 0, 'deprecated node_stream_raw_delta must not be emitted');
