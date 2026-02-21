@@ -127,6 +127,28 @@ Run the dedicated interactive chat-history example:
 uv run --directory examples python workflow_email/run_with_chat_history.py
 ```
 
+Node equivalent:
+
+```bash
+node examples/workflow_email/node/run_with_chat_history.js \
+  --workflow examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Optional parity flags: --include-events --stream --show-thinking --show-step-json
+```
+
+Go equivalent:
+
+```bash
+cargo build -p simple-agents-ffi --release
+CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$PWD/target/release" \
+LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
+go run ./bindings/go/examples/workflow_chat_history \
+  --workflow examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Optional parity flags: --include-events --stream --show-thinking --show-step-json
+```
+
 Run the separate unified system:
 
 ```bash
