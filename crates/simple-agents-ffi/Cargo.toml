@@ -20,8 +20,8 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
 
-simple-agents-core = { path = "../simple-agents-core", version = "0.2.15" }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.15" }
-simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.15" }
-simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.15" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.2.16" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.16" }
+simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.16" }
+simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.16" }
 simple-agent-type = { workspace = true }
