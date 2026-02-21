@@ -161,12 +161,12 @@ def _print_stream_event(
     delta = event.get("delta")
     token_kind = event.get("token_kind")
     is_terminal_node_token = event.get("is_terminal_node_token")
-    raw_seen = bool(stream_state.get("raw_seen", False))
     is_displayed_stream_event = event_type == "node_stream_delta"
     if show_thinking:
-        is_displayed_stream_event = event_type == "node_stream_raw_delta" or (
-            event_type == "node_stream_delta" and not raw_seen
-        )
+        is_displayed_stream_event = event_type in {
+            "node_stream_thinking_delta",
+            "node_stream_output_delta",
+        }
 
     if is_displayed_stream_event and isinstance(delta, str):
         display_node_id = (
@@ -181,29 +181,30 @@ def _print_stream_event(
             if line_open:
                 print()
             print(f"\nStep: {step_name}")
-            print("Streaming:", flush=True)
+            print("Streaming:", end=" ", flush=True)
             stream_state["current_node"] = display_node_id
             stream_state["line_open"] = True
+            stream_state["last_token_label"] = None
 
-        token_id = event.get("token_id")
-        if not isinstance(token_id, int) or token_id < 0:
-            token_seq_raw = stream_state.get("token_seq", 0)
-            token_seq = (token_seq_raw if isinstance(token_seq_raw, int) else 0) + 1
-            stream_state["token_seq"] = token_seq
-            token_id = token_seq
-        token_kind_value = (
-            token_kind.strip().lower()
-            if isinstance(token_kind, str) and token_kind.strip()
-            else "output"
-        )
-        terminal_flag = "true" if is_terminal_node_token is True else "false"
-        print(
-            f"[token_id={token_id} step={step_name} kind={token_kind_value} terminal={terminal_flag}] {delta}",
-            end="",
-            flush=True,
-        )
-        if show_thinking and event_type == "node_stream_raw_delta":
-            stream_state["raw_seen"] = True
+        if show_thinking:
+            token_label_parts = []
+            if isinstance(token_kind, str) and token_kind.strip():
+                token_label_parts.append(token_kind.strip())
+            if is_terminal_node_token is True:
+                token_label_parts.append("terminal")
+            token_label = (
+                f"[{' '.join(token_label_parts)}] " if token_label_parts else ""
+            )
+            last_token_label = stream_state.get("last_token_label")
+            if token_label and token_label != last_token_label:
+                if line_open:
+                    print()
+                print(f"{token_label}{step_name}: ", end="", flush=True)
+                stream_state["last_token_label"] = token_label
+                stream_state["line_open"] = True
+            print(delta, end="", flush=True)
+        else:
+            print(delta, end="", flush=True)
         return
 
     if event_type in {
@@ -263,12 +264,7 @@ def _run_turn(
         return result, events if isinstance(events, list) else []
 
     streamed_events: list[dict[str, object]] = []
-    stream_state: dict[str, object] = {
-        "current_node": None,
-        "line_open": False,
-        "token_seq": 0,
-        "raw_seen": False,
-    }
+    stream_state: dict[str, object] = {"current_node": None, "line_open": False}
 
     def on_event(event: dict[str, object]) -> None:
         streamed_events.append(event)
@@ -280,23 +276,18 @@ def _run_turn(
         on_event=on_event,
     )
 
-    saw_raw_event = any(
-        isinstance(event, dict) and event.get("event_type") == "node_stream_raw_delta"
-        for event in streamed_events
+    expected_types = (
+        {"node_stream_thinking_delta", "node_stream_output_delta"}
+        if show_thinking
+        else {"node_stream_delta"}
     )
-    saw_delta_event = any(
-        isinstance(event, dict) and event.get("event_type") == "node_stream_delta"
+    if not any(
+        isinstance(event, dict) and event.get("event_type") in expected_types
         for event in streamed_events
-    )
-    if not saw_raw_event and not saw_delta_event:
+    ):
         print(
-            "[stream] No node stream token events observed. "
-            "Ensure llm_call nodes are configured with stream=true and your provider/model supports this stream mode."
-        )
-    elif show_thinking and not saw_raw_event:
-        print(
-            "[stream] show-thinking enabled, but no node_stream_raw_delta tokens were emitted; "
-            "falling back to node_stream_delta output tokens."
+            f"[stream] No {', '.join(sorted(expected_types))} events observed. "
+            "Ensure llm_call nodes are configured with stream=true."
         )
     elif stream_state.get("line_open", False):
         print()
