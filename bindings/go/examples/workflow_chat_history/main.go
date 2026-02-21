@@ -45,6 +45,8 @@ func loadDotEnv(filePath string) {
 func loadConfig() (string, string, string, error) {
 	loadDotEnv(filepath.Clean("examples/.env"))
 	loadDotEnv(filepath.Clean(".env"))
+	loadDotEnv(filepath.Clean("../../examples/.env"))
+	loadDotEnv(filepath.Clean("../../.env"))
 
 	provider := os.Getenv("WORKFLOW_PROVIDER")
 	if provider == "" {
