@@ -20,16 +20,16 @@ go run ./bindings/go/examples/workflow_email \
 Interactive chat-history workflow runner (equivalent to Python `run_with_chat_history.py`):
 
 ```bash
-cargo build -p simple-agents-ffi --release
-cd bindings/go
 WORKFLOW_PROVIDER=openai \
 WORKFLOW_API_BASE=https://api.openai.com/v1 \
 WORKFLOW_API_KEY=your_key_here \
-CGO_CFLAGS="-I$PWD/../../crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/../../target/release" \
-LD_LIBRARY_PATH="$PWD/../../target/release:${LD_LIBRARY_PATH:-}" \
-go run ./examples/workflow_chat_history \
-  --workflow ../../examples/workflow_email/email-chat-draft-or-clarify.yaml
+make run-go-chat-history
+
+# Run a different YAML file:
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
+
+# Pass extra runner flags:
+make run-go-chat-history GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
 
 # Optional flags for Python parity:
 # --include-events
