@@ -24,6 +24,10 @@ class WorkflowInput(TypedDict, total=False):
     email_text: str
     messages: list[WorkflowMessage]
 
+class WorkflowRunOptions(TypedDict, total=False):
+    telemetry: Mapping[str, Any]
+    trace: Mapping[str, Any]
+
 class ParseResult:
     value: Any
     confidence: float
@@ -327,6 +331,7 @@ class Client:
         workflow_path: str,
         email_text: str,
         on_event: Callable[[dict[str, Any]], object] | None = None,
+        workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def run_workflow_yaml(
         self,
@@ -339,6 +344,7 @@ class Client:
         workflow_path: str,
         workflow_input: WorkflowInput | Mapping[str, Any],
         on_event: Callable[[dict[str, Any]], object] | None = None,
+        workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]: ...
 
 class ProviderConfig:

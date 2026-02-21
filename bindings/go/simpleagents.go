@@ -290,6 +290,7 @@ type WorkflowYAMLOutput struct {
 	StepTimings         []WorkflowStepTiming              `json:"step_timings"`
 	LlmNodeMetrics      map[string]WorkflowLlmNodeMetrics `json:"llm_node_metrics"`
 	TotalElapsedMS      uint64                            `json:"total_elapsed_ms"`
+	TTFTMS              *uint64                           `json:"ttft_ms,omitempty"`
 	TotalInputTokens    uint64                            `json:"total_input_tokens"`
 	TotalOutputTokens   uint64                            `json:"total_output_tokens"`
 	TotalTokens         uint64                            `json:"total_tokens"`

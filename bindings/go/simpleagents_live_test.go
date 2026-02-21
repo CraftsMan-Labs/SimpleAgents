@@ -179,8 +179,18 @@ edges:
 	}
 
 	eventTypes := map[string]int{}
-	_, err = client.RunWorkflowYAMLStream(ctx, workflowFile.Name(), workflowInput, func(event WorkflowEvent) {
+	var completionNerdstats map[string]any
+	_, err = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowFile.Name(), workflowInput, map[string]any{
+		"telemetry": map[string]any{"nerdstats": true},
+	}, func(event WorkflowEvent) {
 		eventTypes[event.EventType]++
+		if event.EventType == "workflow_completed" && event.Metadata != nil {
+			if raw, ok := event.Metadata["nerdstats"]; ok {
+				if nerdstats, ok := raw.(map[string]any); ok {
+					completionNerdstats = nerdstats
+				}
+			}
+		}
 	})
 	if err != nil {
 		t.Fatalf("run workflow stream: %v", err)
@@ -194,5 +204,14 @@ edges:
 	}
 	if eventTypes["node_stream_raw_delta"] > 0 {
 		t.Fatalf("deprecated node_stream_raw_delta should not be emitted: %d", eventTypes["node_stream_raw_delta"])
+	}
+	if completionNerdstats == nil {
+		t.Fatal("expected workflow_completed metadata.nerdstats")
+	}
+	if _, ok := completionNerdstats["total_elapsed_ms"]; !ok {
+		t.Fatal("expected nerdstats.total_elapsed_ms")
+	}
+	if _, ok := completionNerdstats["token_metrics_available"]; !ok {
+		t.Fatal("expected nerdstats.token_metrics_available")
 	}
 }
