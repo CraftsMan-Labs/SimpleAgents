@@ -1,10 +1,10 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
 	version-get version-sync version-patch version-minor version-major version-set \
-	tag-release version-next-patch version-next-minor version-next-major
+	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-readme-version
 
 EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
@@ -16,12 +16,18 @@ NAPI_CRATE ?= simple-agents-napi
 NAPI_PROJECT_DIR ?= crates/simple-agents-napi
 NAPI_PACKAGE_JSON ?= $(NAPI_PROJECT_DIR)/package.json
 ENV_FILE ?= $(CURDIR)/.env
+EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
 	simple-agents-core simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
+WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
+GO_CHAT_FLAGS ?= --show-thinking
+PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
+NODE_CHAT_FLAGS ?= --stream --show-thinking
+JS_RUNTIME ?= node
 
 help:
 	@echo "Testing & Quality:"
@@ -36,6 +42,9 @@ help:
 	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
 	@echo "  make example-full-api      - Run examples/full_api_example.rs"
 	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
+	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
+	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
+	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
@@ -108,6 +117,35 @@ example-node: build-node
 	node examples/node_client.js
 
 examples: example-providers example-full-api example-node
+
+run-go-chat-history: release-ffi
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cd $(GO_BINDINGS_DIR) && \
+	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
+	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	GOCACHE="$(GO_CACHE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+	go run ./examples/workflow_chat_history --workflow ../../$(WORKFLOW_YAML) $(GO_CHAT_FLAGS)
+
+run-python-chat-history:
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --directory examples python workflow_email/run_with_chat_history.py --workflow $(WORKFLOW_YAML) $(PY_CHAT_FLAGS)
+
+run-node-chat-history: build-node
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	case " $(NODE_CHAT_FLAGS) " in \
+	  *" --show-thinking "*) SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW=1 $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
+	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
+	esac
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
@@ -248,10 +286,32 @@ version-get:
 
 version-sync:
 	@./scripts/sync-versions.sh
-	@version=$$($(MAKE) --no-print-directory version-get); \
+	@$(MAKE) --no-print-directory sync-napi-version
+	@$(MAKE) --no-print-directory sync-readme-version
+
+sync-napi-version:
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: sync-napi-version cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
 		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
 		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
+	else \
+		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
+		exit 1; \
+	fi
+
+sync-readme-version:
+	@version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	if [ -f "README.md" ]; then \
+		sed -i.bak 's/^\*\*Current Version\*\*:\s*.*/**Current Version**: '$$version'/' README.md; \
+		rm -f README.md.bak; \
+		echo "✓ README version updated (README.md -> $$version)"; \
+	else \
+		echo "⚠ README.md not found"; \
+		exit 1; \
 	fi
 
 version-next-patch:
@@ -273,8 +333,14 @@ version-next-major:
 	echo "$$major.0.0"
 
 version-patch:
-	@current=$$($(MAKE) --no-print-directory version-get); \
-	new=$$($(MAKE) --no-print-directory version-next-patch); \
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: version-patch cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	patch=$$((patch + 1)); \
+	new="$$major.$$minor.$$patch"; \
 	echo "Bumping version: $$current -> $$new"; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
 	rm -f $(WORKSPACE_CARGO).bak; \
@@ -285,18 +351,21 @@ version-patch:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	echo "Version bumped to $$new"; \
-	echo ""; \
-	echo "Next steps:"; \
-	echo "  1. Review changes: git diff"; \
-	echo "  2. Run checks: make check-publish"; \
-	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
-	echo "  4. Tag: make tag-release"; \
-	echo "  5. Push: git push origin main --tags"
+	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git commit -m "chore(release): bump version to $$new"; \
+	git tag -a "v$$new" -m "Release version $$new"; \
+	git push origin HEAD --follow-tags; \
+	echo "Version bumped, committed, tagged, and pushed: $$new"
 
 version-minor:
-	@current=$$($(MAKE) --no-print-directory version-get); \
-	new=$$($(MAKE) --no-print-directory version-next-minor); \
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: version-minor cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	minor=$$((minor + 1)); \
+	new="$$major.$$minor.0"; \
 	echo "Bumping version: $$current -> $$new"; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
 	rm -f $(WORKSPACE_CARGO).bak; \
@@ -307,18 +376,21 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	echo "Version bumped to $$new"; \
-	echo ""; \
-	echo "Next steps:"; \
-	echo "  1. Review changes: git diff"; \
-	echo "  2. Run checks: make check-publish"; \
-	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
-	echo "  4. Tag: make tag-release"; \
-	echo "  5. Push: git push origin main --tags"
+	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git commit -m "chore(release): bump version to $$new"; \
+	git tag -a "v$$new" -m "Release version $$new"; \
+	git push origin HEAD --follow-tags; \
+	echo "Version bumped, committed, tagged, and pushed: $$new"
 
 version-major:
-	@current=$$($(MAKE) --no-print-directory version-get); \
-	new=$$($(MAKE) --no-print-directory version-next-major); \
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: version-major cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	IFS='.' read -r major minor patch <<< "$$current"; \
+	major=$$((major + 1)); \
+	new="$$major.0.0"; \
 	echo "Bumping version: $$current -> $$new"; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' $(WORKSPACE_CARGO); \
 	rm -f $(WORKSPACE_CARGO).bak; \
@@ -329,22 +401,23 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	echo "Version bumped to $$new"; \
-	echo ""; \
-	echo "Next steps:"; \
-	echo "  1. Review changes: git diff"; \
-	echo "  2. Run checks: make check-publish"; \
-	echo "  3. Commit: git commit -am 'chore(release): bump version to $$new'"; \
-	echo "  4. Tag: make tag-release"; \
-	echo "  5. Push: git push origin main --tags"
+	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git commit -m "chore(release): bump version to $$new"; \
+	git tag -a "v$$new" -m "Release version $$new"; \
+	git push origin HEAD --follow-tags; \
+	echo "Version bumped, committed, tagged, and pushed: $$new"
 
 version-set:
-	@if [ -z "$(VERSION)" ]; then \
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: version-set cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION not specified"; \
 		echo "Usage: make version-set VERSION=0.2.0"; \
 		exit 1; \
 	fi; \
-	current=$$($(MAKE) --no-print-directory version-get); \
+	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	echo "Setting version: $$current -> $(VERSION)"; \
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' $(WORKSPACE_CARGO); \
 	rm -f $(WORKSPACE_CARGO).bak; \
@@ -354,15 +427,20 @@ version-set:
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
-	$(MAKE) --no-print-directory version-sync; \
-	echo "Version set to $(VERSION)"; \
-	echo ""; \
-	echo "Next steps:"; \
-	echo "  1. Review changes: git diff"; \
-	echo "  2. Run checks: make check-publish"; \
-	echo "  3. Commit: git commit -am 'chore(release): bump version to $(VERSION)'"; \
-	echo "  4. Tag: make tag-release"; \
-	echo "  5. Push: git push origin main --tags"
+	./scripts/sync-versions.sh; \
+	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
+		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
+		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
+	else \
+		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
+		exit 1; \
+	fi; \
+	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git commit -m "chore(release): bump version to $(VERSION)"; \
+	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
+	git push origin HEAD --follow-tags; \
+	echo "Version bumped, committed, tagged, and pushed: $(VERSION)"
 
 tag-release:
 	@version=$$($(MAKE) --no-print-directory version-get); \

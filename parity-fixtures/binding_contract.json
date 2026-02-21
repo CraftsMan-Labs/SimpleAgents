@@ -23,6 +23,8 @@
     "required_c_symbols": [
       "sa_complete_messages_json(",
       "sa_stream_messages(",
+      "sa_run_workflow_yaml_with_events(",
+      "sa_run_workflow_yaml_stream_events(",
       "sa_last_error_message(void)",
       "typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);"
     ]
@@ -32,6 +34,8 @@
       "type CompletionResult struct",
       "func (c *Client) CompleteMessages(",
       "func (c *Client) StreamMessages(",
+      "func (c *Client) RunWorkflowYAMLWithEvents(",
+      "func (c *Client) RunWorkflowYAMLStream(",
       "type StreamEvent struct"
     ]
   },
@@ -41,7 +45,10 @@
       "export interface CompletionResult",
       "export interface StreamEvent",
       "eventType: string",
-      "streamEvents("
+      "streamEvents(",
+      "runWorkflowYamlWithEvents(",
+      "runWorkflowYamlStream(",
+      "onEvent: (err: unknown, eventJson: string) => void"
     ],
     "required_runtime_exports": [
       "Client"

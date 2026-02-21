@@ -1,4 +1,7 @@
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 
 const { Client } = require('..');
@@ -74,4 +77,99 @@ test('healed_json mode parses JSON', async (t) => {
     res.healed.value.status || res.healed.value?.value?.status || 'ok',
     'ok',
   );
+});
+
+test('workflow stream emits explicit stream event types', async (t) => {
+  if (!hasEnv) {
+    t.skip(REQUIRED_ENV_MESSAGE);
+    return;
+  }
+  assertRequiredEnv();
+  process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW = '1';
+  t.after(() => {
+    delete process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW;
+  });
+
+  const workflowPath = path.join(os.tmpdir(), `live-workflow-stream-${Date.now()}.yaml`);
+  const workflowYaml = `id: live-workflow-stream-test
+version: 1.0.0
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: ${MODEL}
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: true
+        heal: false
+    config:
+      prompt: |
+        Return JSON only:
+        {
+          "state": "capabilities_query",
+          "reason": "short"
+        }
+  - id: explain
+    node_type:
+      llm_call:
+        model: ${MODEL}
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: true
+        heal: false
+    config:
+      prompt: |
+        Return JSON only:
+        {
+          "question": "one short sentence"
+        }
+edges:
+  - from: classify
+    to: explain
+`;
+  fs.writeFileSync(workflowPath, workflowYaml, 'utf8');
+  t.after(() => {
+    try {
+      fs.unlinkSync(workflowPath);
+    } catch (_err) {
+      // no-op
+    }
+  });
+
+  const client = new Client(PROVIDER);
+  const eventCounts = new Map();
+  const result = await client.runWorkflowYamlStream(
+    workflowPath,
+    {
+      messages: [
+        { role: 'user', content: 'Hi' },
+      ],
+    },
+    (errOrEventJson, maybeEventJson) => {
+      const eventJson = typeof maybeEventJson === 'string'
+        ? maybeEventJson
+        : typeof errOrEventJson === 'string'
+          ? errOrEventJson
+          : null;
+      if (eventJson === null) return;
+      let event;
+      try {
+        event = JSON.parse(eventJson);
+      } catch (_err) {
+        return;
+      }
+      const eventType = event?.event_type;
+      if (typeof eventType !== 'string') return;
+      eventCounts.set(eventType, (eventCounts.get(eventType) || 0) + 1);
+    },
+  );
+
+  assert.ok(result && typeof result === 'object', 'stream call should resolve structured output object');
+  assert.strictEqual(typeof result.terminal_node, 'string', 'result should include terminal_node');
+  assert.ok((eventCounts.get('node_stream_delta') || 0) > 0, 'expected node_stream_delta events');
+  assert.ok((eventCounts.get('node_stream_output_delta') || 0) > 0, 'expected node_stream_output_delta events');
+  assert.strictEqual(eventCounts.get('node_stream_raw_delta') || 0, 0, 'deprecated node_stream_raw_delta must not be emitted');
 });
