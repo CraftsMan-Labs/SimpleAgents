@@ -623,12 +623,12 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 		out:     make(chan WorkflowEventResult, 16),
 	}
 	handle := cgo.NewHandle(bridge)
-	defer handle.Delete()
 
 	resultCh := make(chan workflowRunResult, 1)
 	go func() {
 		defer c.endCall()
 		defer close(bridge.out)
+		defer handle.Delete()
 
 		cWorkflowPath := C.CString(workflowPath)
 		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
