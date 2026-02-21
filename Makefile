@@ -351,6 +351,7 @@ version-patch:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
+	sleep 1; \
 	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
