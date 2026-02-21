@@ -589,6 +589,15 @@ pub struct StreamEventsTask {
     on_event: ThreadsafeFunction<StreamEvent>,
 }
 
+pub struct WorkflowStreamTask {
+    runtime: Arc<Runtime>,
+    client: Arc<SimpleAgentsClient>,
+    workflow_path: String,
+    workflow_input: JsonValue,
+    workflow_options: YamlWorkflowRunOptions,
+    on_event: ThreadsafeFunction<String>,
+}
+
 struct RecordingWorkflowEventSink {
     events: Mutex<Vec<YamlWorkflowEvent>>,
 }
@@ -634,7 +643,7 @@ impl YamlWorkflowEventSink for NodeWorkflowEventSink {
             Err(_) => return,
         };
         self.callback
-            .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
     }
 }
 
@@ -841,6 +850,38 @@ impl Task for StreamEventsTask {
             healed: None,
             coerced: None,
         })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
+}
+
+impl Task for WorkflowStreamTask {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let event_sink = NodeWorkflowEventSink {
+            callback: self.on_event.clone(),
+        };
+
+        let output = self
+            .runtime
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                    std::path::Path::new(self.workflow_path.as_str()),
+                    &self.workflow_input,
+                    &self.client,
+                    None,
+                    Some(&event_sink),
+                    &self.workflow_options,
+                ),
+            )
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+
+        serde_json::to_string(&output)
+            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -1057,8 +1098,8 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "any"
+        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_return_type = "Promise<any>"
     )]
     pub fn run_workflow_yaml_stream(
         &self,
@@ -1066,7 +1107,7 @@ impl Client {
         workflow_input: JsonValue,
         on_event: JsFunction,
         workflow_options: Option<JsonValue>,
-    ) -> Result<JsonValue> {
+    ) -> Result<AsyncTask<WorkflowStreamTask>> {
         if workflow_path.trim().is_empty() {
             return Err(Error::from_reason(
                 "workflow_path cannot be empty".to_string(),
@@ -1087,33 +1128,27 @@ impl Client {
             .transpose()?
             .unwrap_or_default();
 
-        let tsfn: ThreadsafeFunction<String> = on_event
-            .create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-                ctx.env.to_js_value(&ctx.value).map(|v| vec![v])
+        let tsfn: ThreadsafeFunction<String> =
+            on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
+                let js_value = ctx.env.create_string_from_std(ctx.value)?;
+                Ok(vec![js_value.into_unknown()])
             })?;
-        let event_sink = NodeWorkflowEventSink { callback: tsfn };
 
-        let output = self
-            .runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    std::path::Path::new(workflow_path.as_str()),
-                    &workflow_input,
-                    &self.client,
-                    None,
-                    Some(&event_sink),
-                    &options,
-                ),
-            )
-            .map_err(|error| Error::from_reason(error.to_string()))?;
+        let task = WorkflowStreamTask {
+            runtime: self.runtime.clone(),
+            client: self.client.clone(),
+            workflow_path,
+            workflow_input,
+            workflow_options: options,
+            on_event: tsfn,
+        };
 
-        serde_json::to_value(output)
-            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
+        Ok(AsyncTask::new(task))
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, emailText: string, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "any"
+        ts_args_type = "workflowPath: string, emailText: string, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_return_type = "Promise<any>"
     )]
     pub fn run_email_workflow_yaml_stream(
         &self,
@@ -1121,7 +1156,7 @@ impl Client {
         email_text: String,
         on_event: JsFunction,
         workflow_options: Option<JsonValue>,
-    ) -> Result<JsonValue> {
+    ) -> Result<AsyncTask<WorkflowStreamTask>> {
         self.run_workflow_yaml_stream(
             workflow_path,
             serde_json::json!({"email_text": email_text}),
