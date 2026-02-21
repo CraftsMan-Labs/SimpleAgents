@@ -83,6 +83,8 @@ new Client(provider: string)
 client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
 client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
 client.runEmailWorkflowYaml(workflowPath: string, emailText: string)
+client.runWorkflowYamlWithEvents(workflowPath: string, workflowInput, workflowOptions?)
+client.runWorkflowYamlStream(workflowPath: string, workflowInput, onEvent, workflowOptions?)
 ```
 
 `CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
@@ -104,3 +106,8 @@ console.log(result.total_elapsed_ms)
 ```
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
+
+Workflow events parity with Python is also available:
+
+- `runWorkflowYamlWithEvents(...)` returns output with `events` attached.
+- `runWorkflowYamlStream(...)` emits live workflow events via callback as JSON strings and returns final output.

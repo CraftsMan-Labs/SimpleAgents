@@ -73,3 +73,35 @@ flowchart TD
 | S3 | Add regression tests for delta filtering | Prevent reintroduction of reasoning/preamble leak regressions | New tests cover prefix/suffix stripping and braces inside string handling | completed |
 | S4 | Add token attribution fields to stream events | Consumers need per-token routing and terminal-step attribution for observability and UI | Token events include `step_id`, `token_kind`, and `is_terminal_node_token` in core runtime events | completed |
 | S5 | Add YAML flag for streaming JSON as plain text | Chat clients need optional human-readable streaming without hardcoded key extraction | `llm_call.stream_json_as_text=true` emits non-thinking output as `key: value` lines from core runtime | completed |
+
+## Chat-history cross-language examples (2026-02-21)
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| C1 | Add Node interactive chat-history runner | Users need parity with Python `run_with_chat_history.py` in JS environments | `examples/workflow_email/node/run_with_chat_history.js` supports multi-turn `messages` workflow input and trace JSONL logging | completed |
+| C2 | Add Go interactive chat-history runner | Users need parity with Python `run_with_chat_history.py` in Go environments | `bindings/go/examples/workflow_chat_history/main.go` supports multi-turn `messages` workflow input and trace JSONL logging | completed |
+| C3 | Update docs and run instructions | New examples should be discoverable from existing workflow docs | Updated `examples/workflow_email/*` and `docs/EXAMPLES.md` to include Node/Go chat-history commands | completed |
+
+## Python-to-Bindings parity plan (2026-02-21)
+
+Scope: close feature gaps where Python binding supports capabilities not yet exposed in Go and Node/TS.
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| P1 | Freeze parity matrix and acceptance criteria | Work needs one source-of-truth so parity is testable and reviewable | Matrix mapping Python APIs/features to Node/Go status with explicit P0/P1 priorities and acceptance checks | pending |
+| P2 | Add workflow event APIs in FFI | Go binding depends on FFI; no FFI event API means no Go parity for workflow streaming/events | New FFI surfaces for workflow run with recorded events and callback stream events, with backward compatibility | completed |
+| P3 | Add Node workflow event parity APIs | Node currently lacks Python-equivalent workflow stream/event surfaces | `runWorkflowYaml*` Node APIs support include-events and live callback streaming with typed event payloads | completed |
+| P4 | Add Go workflow event parity APIs | Go currently lacks Python-equivalent workflow stream/event surfaces | Go `Client` adds include-events and channel/callback-style workflow event streaming APIs | completed |
+| P5 | Align workflow output contracts across bindings | Go currently exposes a narrower workflow output shape than Rust/Python | Node type defs + Go structs include token totals, LLM node metrics, tps, and optional events consistently | completed |
+| P6 | Upgrade chat-history examples to full parity | Example scripts should prove parity in real usage, not only API signatures | Node/Go chat-history runners support `--include-events`, `--stream`, `--show-thinking`, `--show-step-json` | completed |
+| P7 | Expand parity fixtures and contract tests | Prevent regressions and enforce parity expectations in CI | Updated `parity-fixtures` + Node/Go/Python contract tests for workflow event methods and payload shape | completed |
+| P8 | Documentation and verification gates | Users need clear usage docs and maintainers need reproducible quality gates | Updated binding/example docs and successful runs of `make test-node`, `make test-go-bindings`, `make test-binding-contracts`, `make test-binding-layers` | completed |
+
+Verification commands executed for parity batch:
+
+- `cargo check -p simple-agents-ffi`
+- `cargo check -p simple-agents-napi`
+- `make test-go-bindings`
+- `make test-node`
+- `make test-binding-contracts`
+- `make test-binding-layers`
