@@ -8,6 +8,14 @@ uv run --directory examples python workflow_email/run_with_python_package.py \
   --email "Termination request, second warning already issued"
 ```
 
+Interactive chat-history workflow runner (equivalent to Python `run_with_chat_history.py`):
+
+```bash
+make run-python-chat-history \
+  WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml \
+  PY_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
+```
+
 Custom handler implementation:
 
 - `examples/workflow_email/handlers.py` (`get_rag_data`)

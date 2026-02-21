@@ -81,6 +81,7 @@ flowchart TD
 | C1 | Add Node interactive chat-history runner | Users need parity with Python `run_with_chat_history.py` in JS environments | `examples/workflow_email/node/run_with_chat_history.js` supports multi-turn `messages` workflow input and trace JSONL logging | completed |
 | C2 | Add Go interactive chat-history runner | Users need parity with Python `run_with_chat_history.py` in Go environments | `bindings/go/examples/workflow_chat_history/main.go` supports multi-turn `messages` workflow input and trace JSONL logging | completed |
 | C3 | Update docs and run instructions | New examples should be discoverable from existing workflow docs | Updated `examples/workflow_email/*` and `docs/EXAMPLES.md` to include Node/Go chat-history commands | completed |
+| C5 | Add Python make target for chat-history runs | Developers need one consistent command style across Python and Go for shared YAML testing | `make run-python-chat-history WORKFLOW_YAML=... PY_CHAT_FLAGS=...` runs Python chat-history workflow with shared flags | completed |
 
 ## Python-to-Bindings parity plan (2026-02-21)
 
