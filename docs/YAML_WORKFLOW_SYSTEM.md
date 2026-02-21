@@ -120,6 +120,13 @@ config:
     topic: termination
 ```
 
+When a custom worker runs, the runtime automatically injects trace correlation into the worker `context` argument under `context.trace`:
+
+- `context.trace.context`: `trace_id`, `span_id`, `parent_span_id`, `traceparent`, `tracestate`, `baggage`
+- `context.trace.tenant`: `workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`
+
+This lets external code continue or correlate telemetry without parsing workflow internals.
+
 ## 4) Output Schema (Important)
 
 Use `config.output_schema` for every `llm_call` node.
@@ -245,7 +252,9 @@ Runtime options can be provided by language bindings/FFI using a structured obje
   - `multi_tenant` (default `true`)
 - `trace`
   - `context` (`trace_id`, `span_id`, `parent_span_id`, optional raw `traceparent`/`tracestate`, `baggage`)
-  - `tenant` (`workspace_id`, `user_id`, `request_id`, `run_id`)
+  - `tenant` (`workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`)
+
+`conversation_id` is recommended for multi-turn chat sessions. Keep per-turn traces and group by `conversation_id` in Jaeger/logs.
 
 In Python chat runner, per-turn records are persisted as JSONL trace files.
 
