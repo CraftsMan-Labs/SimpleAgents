@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -26,6 +26,8 @@ VERSION ?= 0.1.0
 WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
 GO_CHAT_FLAGS ?=
 PY_CHAT_FLAGS ?=
+NODE_CHAT_FLAGS ?=
+JS_RUNTIME ?= node
 
 help:
 	@echo "Testing & Quality:"
@@ -42,6 +44,7 @@ help:
 	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
 	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
 	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
+	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
@@ -133,6 +136,13 @@ run-python-chat-history:
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
 	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --directory examples python workflow_email/run_with_chat_history.py --workflow $(WORKFLOW_YAML) $(PY_CHAT_FLAGS)
+
+run-node-chat-history: build-node
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	$(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS)
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
