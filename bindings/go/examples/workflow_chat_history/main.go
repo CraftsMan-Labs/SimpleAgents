@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -182,6 +183,23 @@ func extractNerdstatsFromEvents(events []simpleagents.WorkflowEvent) map[string]
 	return nil
 }
 
+func randomConversationID() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%d", time.Now().UTC().UnixNano())
+	}
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf(
+		"%08x-%04x-%04x-%04x-%012x",
+		b[0:4],
+		b[4:6],
+		b[6:8],
+		b[8:10],
+		b[10:16],
+	)
+}
+
 func main() {
 	workflowFlag := flag.String("workflow", "workflow_email/email-chat-draft-or-clarify.yaml", "Path to workflow YAML file")
 	includeEventsFlag := flag.Bool("include-events", false, "Include workflow events in each turn response")
@@ -189,6 +207,7 @@ func main() {
 	streamFlag := flag.Bool("stream", true, "Stream workflow node deltas live in terminal when YAML nodes have stream=true")
 	showThinkingFlag := flag.Bool("show-thinking", false, "Show raw model stream deltas including thinking tokens")
 	traceDirFlag := flag.String("trace-dir", "examples/workflow_email/traces", "Directory to persist per-turn workflow traces as JSONL")
+	conversationIDFlag := flag.String("conversation-id", "", "Conversation UUID used for trace correlation (auto-generated if omitted)")
 	showStepJSONFlag := flag.Bool("show-step-json", false, "Print per-step JSON summaries after execution")
 	nerdstatsFlag := flag.Bool("nerdstats", true, "Show end-of-stream nerdstats payload")
 	flag.Parse()
@@ -223,13 +242,18 @@ func main() {
 		panic(err)
 	}
 	sessionID := time.Now().UTC().Format("20060102T150405Z")
-	traceFile := filepath.Join(traceDir, fmt.Sprintf("chat-session-%s.jsonl", sessionID))
+	conversationID := *conversationIDFlag
+	if conversationID == "" {
+		conversationID = randomConversationID()
+	}
+	traceFile := filepath.Join(traceDir, fmt.Sprintf("chat-session-%s-%s.jsonl", sessionID, conversationID))
 
 	messages := initialMessages()
 	interviewClosed := false
 
 	fmt.Println("Chat Email Assistant")
 	fmt.Println("Type your request. Type 'exit' to quit.")
+	fmt.Printf("Conversation ID: %s\n", conversationID)
 	fmt.Printf("Trace log: %s\n\n", traceFile)
 
 	reader := bufio.NewReader(os.Stdin)
@@ -278,7 +302,10 @@ func main() {
 		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
 		lineOpen := false
 		out, runErr := simpleagents.WorkflowYAMLOutput{}, error(nil)
-		workflowOptions := map[string]any{"telemetry": map[string]any{"nerdstats": *nerdstatsFlag}}
+		workflowOptions := map[string]any{
+			"telemetry": map[string]any{"nerdstats": *nerdstatsFlag},
+			"trace":     map[string]any{"tenant": map[string]any{"conversation_id": conversationID}},
+		}
 		switch {
 		case *streamFlag:
 			currentNode := ""
@@ -388,6 +415,7 @@ func main() {
 		traceRecord := map[string]any{
 			"timestamp":        time.Now().UTC().Format(time.RFC3339Nano),
 			"turn":             turn,
+			"conversation_id":  conversationID,
 			"workflow_path":    workflowPath,
 			"workflow_id":      out.WorkflowID,
 			"terminal_node":    out.TerminalNode,
