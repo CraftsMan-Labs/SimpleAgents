@@ -12,6 +12,7 @@ function parseArgs(argv) {
     showThinking: false,
     traceDir: 'examples/workflow_email/traces',
     showStepJson: false,
+    nerdstats: true,
   }
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -48,6 +49,14 @@ function parseArgs(argv) {
     }
     if (arg === '--show-step-json') {
       options.showStepJson = true
+      continue
+    }
+    if (arg === '--nerdstats') {
+      options.nerdstats = true
+      continue
+    }
+    if (arg === '--no-nerdstats') {
+      options.nerdstats = false
       continue
     }
   }
@@ -224,6 +233,18 @@ function parseResultJson(resultJson) {
   }
 }
 
+function extractNerdstatsFromEvents(events) {
+  if (!Array.isArray(events)) return null
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (!event || event.event_type !== 'workflow_completed') continue
+    if (!event.metadata || typeof event.metadata !== 'object') continue
+    const nerdstats = event.metadata.nerdstats
+    if (nerdstats && typeof nerdstats === 'object') return nerdstats
+  }
+  return null
+}
+
 function timestampSession() {
   return new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
 }
@@ -280,6 +301,7 @@ async function main() {
 
       const streamedEvents = []
       const streamState = { currentNode: null, lineOpen: false, lastTokenLabel: null }
+      const workflowOptions = { telemetry: { nerdstats: args.nerdstats } }
       const result = args.stream
         ? parseResultJson(
             await client.runWorkflowYamlStream(
@@ -293,10 +315,11 @@ async function main() {
               streamedEvents.push(event)
               printStreamEvent(event, args.showThinking, streamState)
             },
+            workflowOptions,
           ))
         : args.includeEvents
-          ? client.runWorkflowYamlWithEvents(workflowPath, workflowInput)
-          : client.runWorkflowYaml(workflowPath, workflowInput)
+          ? client.runWorkflowYamlWithEvents(workflowPath, workflowInput, workflowOptions)
+          : client.runWorkflowYamlWithOptions(workflowPath, workflowInput, workflowOptions)
 
       if (args.stream) {
         if (streamState.lineOpen) {
@@ -310,6 +333,13 @@ async function main() {
         )
         if (!hasVisibleStreamEvents) {
           console.log(`[stream] No ${Array.from(expectedEventTypes).join(', ')} events observed. Ensure llm_call nodes are configured with stream=true.`)
+        }
+
+        if (args.nerdstats) {
+          const nerdstats = extractNerdstatsFromEvents(streamedEvents)
+          if (nerdstats !== null) {
+            console.log(`Nerdstats: ${JSON.stringify(nerdstats)}`)
+          }
         }
       }
 

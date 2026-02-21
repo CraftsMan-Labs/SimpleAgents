@@ -141,6 +141,7 @@ edges:
 
   const client = new Client(PROVIDER);
   const eventCounts = new Map();
+  let completionNerdstats = null;
   const result = await client.runWorkflowYamlStream(
     workflowPath,
     {
@@ -164,7 +165,14 @@ edges:
       const eventType = event?.event_type;
       if (typeof eventType !== 'string') return;
       eventCounts.set(eventType, (eventCounts.get(eventType) || 0) + 1);
+      if (eventType === 'workflow_completed' && event?.metadata && typeof event.metadata === 'object') {
+        const nerdstats = event.metadata.nerdstats;
+        if (nerdstats && typeof nerdstats === 'object') {
+          completionNerdstats = nerdstats;
+        }
+      }
     },
+    { telemetry: { nerdstats: true } },
   );
 
   assert.ok(result && typeof result === 'object', 'stream call should resolve structured output object');
@@ -172,4 +180,11 @@ edges:
   assert.ok((eventCounts.get('node_stream_delta') || 0) > 0, 'expected node_stream_delta events');
   assert.ok((eventCounts.get('node_stream_output_delta') || 0) > 0, 'expected node_stream_output_delta events');
   assert.strictEqual(eventCounts.get('node_stream_raw_delta') || 0, 0, 'deprecated node_stream_raw_delta must not be emitted');
+  assert.ok(completionNerdstats && typeof completionNerdstats === 'object', 'workflow_completed should include nerdstats metadata');
+  assert.strictEqual(typeof completionNerdstats.total_elapsed_ms, 'number', 'nerdstats should include total_elapsed_ms');
+  assert.strictEqual(typeof completionNerdstats.token_metrics_available, 'boolean', 'nerdstats should include token_metrics_available');
+  assert.ok(
+    completionNerdstats.ttft_ms === null || Number.isFinite(completionNerdstats.ttft_ms),
+    'nerdstats.ttft_ms should be null or a number',
+  );
 });

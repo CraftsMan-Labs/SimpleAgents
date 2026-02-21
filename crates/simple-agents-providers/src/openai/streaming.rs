@@ -89,6 +89,11 @@ pub fn transform_openai_chunk(chunk: OpenAIStreamChunk) -> Result<CompletionChun
         model: chunk.model,
         choices,
         created: Some(chunk.created as i64),
+        usage: chunk.usage.map(|usage| Usage {
+            prompt_tokens: usage.prompt_tokens,
+            completion_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+        }),
     })
 }
 
@@ -218,6 +223,7 @@ mod tests {
                 finish_reason: None,
             }],
             system_fingerprint: None,
+            usage: None,
         };
 
         let result = transform_openai_chunk(chunk);
@@ -247,6 +253,7 @@ mod tests {
                 finish_reason: None,
             }],
             system_fingerprint: None,
+            usage: None,
         };
 
         let unified = transform_openai_chunk(chunk).expect("chunk should transform");
@@ -254,6 +261,41 @@ mod tests {
         assert_eq!(
             unified.choices[0].delta.reasoning_content,
             Some("thought token".to_string())
+        );
+    }
+
+    #[test]
+    fn test_transform_chunk_preserves_usage_when_present() {
+        let chunk = OpenAIStreamChunk {
+            id: "chatcmpl-125".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1677652290,
+            model: "gpt-4".to_string(),
+            choices: vec![super::super::models::OpenAIStreamChoice {
+                index: 0,
+                delta: super::super::models::OpenAIDelta {
+                    role: None,
+                    content: None,
+                    reasoning_content: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            system_fingerprint: None,
+            usage: Some(super::super::models::OpenAIUsage {
+                prompt_tokens: 21,
+                completion_tokens: 669,
+                total_tokens: 690,
+            }),
+        };
+
+        let unified = transform_openai_chunk(chunk).expect("chunk should transform");
+        assert_eq!(
+            unified.usage,
+            Some(Usage {
+                prompt_tokens: 21,
+                completion_tokens: 669,
+                total_tokens: 690,
+            })
         );
     }
 }

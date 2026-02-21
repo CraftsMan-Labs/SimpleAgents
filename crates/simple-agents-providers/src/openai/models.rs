@@ -36,6 +36,10 @@ pub struct OpenAICompletionRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
 
+    /// Additional stream controls for OpenAI-compatible providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_options: Option<OpenAIStreamOptions>,
+
     /// Stop sequences (borrowed when possible)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<&'a Vec<String>>,
@@ -49,6 +53,13 @@ pub struct OpenAICompletionRequest<'a> {
     /// Tool choice configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'a ToolChoice>,
+}
+
+/// OpenAI stream options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIStreamOptions {
+    /// Include aggregate token usage in the final streaming chunk.
+    pub include_usage: bool,
 }
 
 /// OpenAI chat completion response
@@ -150,6 +161,10 @@ pub struct OpenAIStreamChunk {
     /// System fingerprint
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_fingerprint: Option<String>,
+
+    /// Token usage (often present on final chunk only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<OpenAIUsage>,
 }
 
 /// A single streaming choice
@@ -210,6 +225,7 @@ mod tests {
             top_p: None,
             n: None,
             stream: Some(false),
+            stream_options: None,
             stop: None,
             response_format: None,
             tools: None,

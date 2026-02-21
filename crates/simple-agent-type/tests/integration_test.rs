@@ -212,6 +212,7 @@ fn test_streaming_types() {
             finish_reason: None,
         }],
         created: Some(1234567890),
+        usage: None,
     };
 
     // Serialize and deserialize
