@@ -133,10 +133,16 @@ make run-python-chat-history
 Node equivalent:
 
 ```bash
-node examples/workflow_email/node/run_with_chat_history.js \
-  --workflow examples/workflow_email/email-chat-draft-or-clarify.yaml
+make run-node-chat-history
+
+# Optional: run with bun runtime
+make run-node-chat-history JS_RUNTIME=bun
+
+# Optional: pick a workflow YAML
+make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
 
 # Optional parity flags: --include-events --stream --show-thinking --show-step-json
+make run-node-chat-history NODE_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
 ```
 
 Go equivalent:

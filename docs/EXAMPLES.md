@@ -199,3 +199,10 @@ Convenience command for Python chat-history workflow runs:
 ```bash
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
 ```
+
+Convenience command for Node/Bun chat-history workflow runs:
+
+```bash
+make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
