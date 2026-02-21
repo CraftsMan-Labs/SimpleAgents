@@ -135,7 +135,7 @@ run-python-chat-history:
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --directory examples python workflow_email/run_with_chat_history.py --workflow $(WORKFLOW_YAML) $(PY_CHAT_FLAGS)
+	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --reinstall --refresh-package simple-agents-py --directory examples python workflow_email/run_with_chat_history.py --workflow $(WORKFLOW_YAML) $(PY_CHAT_FLAGS)
 
 run-node-chat-history: build-node
 	@set -a; \

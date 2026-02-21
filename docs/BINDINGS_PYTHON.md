@@ -187,6 +187,7 @@ result = client.run_email_workflow_yaml_stream(
     "examples/workflow_email/email-intake-classification.yaml",
     "Termination request, second warning already issued",
     on_event=on_event,
+    workflow_options={"telemetry": {"nerdstats": True}},
 )
 ```
 
@@ -203,3 +204,7 @@ Notes:
   - resolved `prompt` and `prompt_template`
   - selected `model`, `schema`, and effective stream/heal flags
   - `bindings[]` entries that map each template expression to its source path and resolved value
+- `workflow_completed` includes `metadata.nerdstats` by default (`telemetry.nerdstats=true`), with end-of-run timing/token metrics for turn-level summaries.
+- When available for streamed runs, nerdstats includes `ttft_ms` (time-to-first-token in milliseconds).
+- For providers that do not emit token usage on streaming responses, nerdstats includes `token_metrics_available=false`, `token_metrics_source="provider_stream_usage_unavailable"`, and `llm_nodes_without_usage`.
+- Disable nerdstats emission for streaming callbacks with `workflow_options={"telemetry": {"nerdstats": False}}`.

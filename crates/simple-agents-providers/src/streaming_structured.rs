@@ -244,6 +244,7 @@ mod tests {
                     finish_reason: None,
                 }],
                 created: None,
+                usage: None,
             }),
             Ok(CompletionChunk {
                 id: "2".to_string(),
@@ -258,6 +259,7 @@ mod tests {
                     finish_reason: Some(simple_agent_type::response::FinishReason::Stop),
                 }],
                 created: None,
+                usage: None,
             }),
         ];
 

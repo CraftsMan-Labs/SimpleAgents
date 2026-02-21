@@ -164,6 +164,24 @@ func printStepJSONSummary(out simpleagents.WorkflowYAMLOutput) {
 	}
 }
 
+func extractNerdstatsFromEvents(events []simpleagents.WorkflowEvent) map[string]any {
+	for i := len(events) - 1; i >= 0; i-- {
+		event := events[i]
+		if event.EventType != "workflow_completed" || event.Metadata == nil {
+			continue
+		}
+		nerdstatsRaw, ok := event.Metadata["nerdstats"]
+		if !ok {
+			continue
+		}
+		nerdstats, ok := nerdstatsRaw.(map[string]any)
+		if ok {
+			return nerdstats
+		}
+	}
+	return nil
+}
+
 func main() {
 	workflowFlag := flag.String("workflow", "workflow_email/email-chat-draft-or-clarify.yaml", "Path to workflow YAML file")
 	includeEventsFlag := flag.Bool("include-events", false, "Include workflow events in each turn response")
@@ -172,6 +190,7 @@ func main() {
 	showThinkingFlag := flag.Bool("show-thinking", false, "Show raw model stream deltas including thinking tokens")
 	traceDirFlag := flag.String("trace-dir", "examples/workflow_email/traces", "Directory to persist per-turn workflow traces as JSONL")
 	showStepJSONFlag := flag.Bool("show-step-json", false, "Print per-step JSON summaries after execution")
+	nerdstatsFlag := flag.Bool("nerdstats", true, "Show end-of-stream nerdstats payload")
 	flag.Parse()
 
 	if *showThinkingFlag {
@@ -259,11 +278,12 @@ func main() {
 		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
 		lineOpen := false
 		out, runErr := simpleagents.WorkflowYAMLOutput{}, error(nil)
+		workflowOptions := map[string]any{"telemetry": map[string]any{"nerdstats": *nerdstatsFlag}}
 		switch {
 		case *streamFlag:
 			currentNode := ""
 			lastTokenLabel := ""
-			out, runErr = client.RunWorkflowYAMLStream(ctx, workflowPath, workflowInput, func(event simpleagents.WorkflowEvent) {
+			out, runErr = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, func(event simpleagents.WorkflowEvent) {
 				streamedEvents = append(streamedEvents, event)
 				isDisplayedStreamEvent := event.EventType == "node_stream_delta"
 				if *showThinkingFlag {
@@ -315,9 +335,9 @@ func main() {
 				lineOpen = true
 			})
 		case *includeEventsFlag:
-			out, runErr = client.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, nil)
+			out, runErr = client.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, workflowOptions)
 		default:
-			out, runErr = client.RunWorkflowYAML(ctx, workflowPath, workflowInput)
+			out, runErr = client.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
 		}
 		cancel()
 		if runErr != nil {
@@ -342,6 +362,15 @@ func main() {
 				}
 			} else if lineOpen {
 				fmt.Println()
+			}
+
+			if *nerdstatsFlag {
+				if nerdstats := extractNerdstatsFromEvents(streamedEvents); nerdstats != nil {
+					encoded, err := json.Marshal(nerdstats)
+					if err == nil {
+						fmt.Printf("Nerdstats: %s\n", string(encoded))
+					}
+				}
 			}
 		}
 

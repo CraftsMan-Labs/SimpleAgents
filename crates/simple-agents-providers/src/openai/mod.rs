@@ -261,6 +261,15 @@ impl Provider for OpenAIProvider {
             top_p: req.top_p,
             n: req.n,
             stream: req.stream,
+            stream_options: req.stream.and_then(|streaming| {
+                if streaming {
+                    Some(OpenAIStreamOptions {
+                        include_usage: true,
+                    })
+                } else {
+                    None
+                }
+            }),
             stop: req.stop.as_ref(),
             response_format: req.response_format.as_ref(),
             tools: req.tools.as_ref(),
@@ -797,6 +806,10 @@ mod tests {
         let provider_request = provider.transform_request(&request).unwrap();
 
         assert_eq!(provider_request.body["stream"], true);
+        assert_eq!(
+            provider_request.body["stream_options"]["include_usage"],
+            true
+        );
     }
 
     #[tokio::test]
