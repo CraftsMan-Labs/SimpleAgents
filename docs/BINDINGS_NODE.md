@@ -110,4 +110,4 @@ This method delegates to Rust `simple-agents-workflow` as the source of truth.
 Workflow events parity with Python is also available:
 
 - `runWorkflowYamlWithEvents(...)` returns output with `events` attached.
-- `runWorkflowYamlStream(...)` emits live workflow events via callback as JSON strings and returns final output.
+- `runWorkflowYamlStream(...)` emits live workflow events via `onEvent(eventJson)` as JSON strings and returns the final structured output object.

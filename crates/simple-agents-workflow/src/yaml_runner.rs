@@ -642,16 +642,30 @@ pub enum YamlWorkflowRunError {
     InvalidInput { message: String },
     #[error("ir runtime execution failed: {message}")]
     IrRuntime { message: String },
+    #[error("workflow event stream cancelled: {message}")]
+    EventSinkCancelled { message: String },
 }
 
 pub trait YamlWorkflowEventSink: Send + Sync {
     fn emit(&self, event: &YamlWorkflowEvent);
+
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 pub struct NoopYamlWorkflowEventSink;
 
 impl YamlWorkflowEventSink for NoopYamlWorkflowEventSink {
     fn emit(&self, _event: &YamlWorkflowEvent) {}
+}
+
+fn workflow_event_sink_cancelled_message() -> &'static str {
+    "workflow event callback cancelled"
+}
+
+fn event_sink_is_cancelled(event_sink: Option<&dyn YamlWorkflowEventSink>) -> bool {
+    event_sink.map(|sink| sink.is_cancelled()).unwrap_or(false)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -1281,6 +1295,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         None
                     };
                     while let Some(chunk_result) = stream.next().await {
+                        if event_sink_is_cancelled(event_sink) {
+                            return Err(workflow_event_sink_cancelled_message().to_string());
+                        }
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
                         if let Some(choice) = chunk.choices.first() {
                             if include_raw_debug {
@@ -1378,6 +1395,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     }
                                 }
                             }
+                        }
+
+                        if event_sink_is_cancelled(event_sink) {
+                            return Err(workflow_event_sink_cancelled_message().to_string());
                         }
                     }
 
@@ -1662,7 +1683,19 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
+
     loop {
+        if event_sink_is_cancelled(event_sink) {
+            return Err(YamlWorkflowRunError::EventSinkCancelled {
+                message: workflow_event_sink_cancelled_message().to_string(),
+            });
+        }
+
         let node =
             *node_map
                 .get(current.as_str())
@@ -1710,6 +1743,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 is_terminal_node_token: None,
                 elapsed_ms: Some(started.elapsed().as_millis()),
                 metadata: None,
+            });
+        }
+
+        if event_sink_is_cancelled(event_sink) {
+            return Err(YamlWorkflowRunError::EventSinkCancelled {
+                message: workflow_event_sink_cancelled_message().to_string(),
             });
         }
 
@@ -1787,6 +1826,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                         "schema": request.schema.clone(),
                         "bindings": request.prompt_bindings.clone(),
                     })),
+                });
+            }
+
+            if event_sink_is_cancelled(event_sink) {
+                return Err(YamlWorkflowRunError::EventSinkCancelled {
+                    message: workflow_event_sink_cancelled_message().to_string(),
                 });
             }
 
@@ -1968,6 +2013,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             });
         }
 
+        if event_sink_is_cancelled(event_sink) {
+            return Err(YamlWorkflowRunError::EventSinkCancelled {
+                message: workflow_event_sink_cancelled_message().to_string(),
+            });
+        }
+
         if let Some(next) = next {
             current = next;
             continue;
@@ -2023,6 +2074,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             is_terminal_node_token: None,
             elapsed_ms: Some(output.total_elapsed_ms),
             metadata: None,
+        });
+    }
+
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
         });
     }
 
@@ -2930,6 +2987,7 @@ pub struct YamlEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex, OnceLock};
 
     fn stream_debug_env_lock() -> &'static Mutex<()> {
@@ -2941,6 +2999,39 @@ mod tests {
 
     struct RecordingSink {
         events: Mutex<Vec<YamlWorkflowEvent>>,
+    }
+
+    struct CancelAfterFirstEventSink {
+        cancelled: AtomicBool,
+    }
+
+    impl YamlWorkflowEventSink for CancelAfterFirstEventSink {
+        fn emit(&self, _event: &YamlWorkflowEvent) {
+            self.cancelled.store(true, Ordering::SeqCst);
+        }
+
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
+        }
+    }
+
+    struct CountingExecutor {
+        call_count: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl YamlWorkflowLlmExecutor for CountingExecutor {
+        async fn complete_structured(
+            &self,
+            _request: YamlLlmExecutionRequest,
+            _event_sink: Option<&dyn YamlWorkflowEventSink>,
+        ) -> Result<YamlLlmExecutionResult, String> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Ok(YamlLlmExecutionResult {
+                payload: json!({"state":"ok"}),
+                usage: None,
+            })
+        }
     }
 
     impl YamlWorkflowEventSink for RecordingSink {
@@ -3249,6 +3340,48 @@ nodes:
         assert_eq!(a.outputs, c.outputs);
         assert_eq!(a.total_tokens, b.total_tokens);
         assert_eq!(a.total_tokens, c.total_tokens);
+    }
+
+    #[tokio::test]
+    async fn event_sink_cancellation_stops_workflow_before_llm_execution() {
+        let yaml = r#"
+id: cancellation-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let executor = CountingExecutor {
+            call_count: AtomicUsize::new(0),
+        };
+        let sink = CancelAfterFirstEventSink {
+            cancelled: AtomicBool::new(false),
+        };
+
+        let err = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &executor,
+            None,
+            Some(&sink),
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect_err("workflow should stop when sink signals cancellation");
+
+        assert!(matches!(
+            err,
+            YamlWorkflowRunError::EventSinkCancelled { .. }
+        ));
+        assert_eq!(executor.call_count.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]

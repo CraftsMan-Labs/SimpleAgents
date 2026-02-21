@@ -858,8 +858,8 @@ impl Task for StreamEventsTask {
 }
 
 impl Task for WorkflowStreamTask {
-    type Output = String;
-    type JsValue = String;
+    type Output = JsonValue;
+    type JsValue = napi::JsUnknown;
 
     fn compute(&mut self) -> Result<Self::Output> {
         let event_sink = NodeWorkflowEventSink {
@@ -880,12 +880,12 @@ impl Task for WorkflowStreamTask {
             )
             .map_err(|error| Error::from_reason(error.to_string()))?;
 
-        serde_json::to_string(&output)
+        serde_json::to_value(output)
             .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
     }
 
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        env.to_js_value(&output)
     }
 }
 
@@ -1098,7 +1098,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
         ts_return_type = "Promise<any>"
     )]
     pub fn run_workflow_yaml_stream(
@@ -1147,7 +1147,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, emailText: string, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, emailText: string, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
         ts_return_type = "Promise<any>"
     )]
     pub fn run_email_workflow_yaml_stream(
