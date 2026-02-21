@@ -2,6 +2,7 @@ package simpleagents
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -98,5 +99,100 @@ func TestLiveStreamMessages(t *testing.T) {
 
 	if chunkCount == 0 {
 		t.Fatal("expected at least one stream chunk")
+	}
+}
+
+func TestLiveWorkflowStreamExplicitEventTypes(t *testing.T) {
+	provider, model := requireLiveEnv(t)
+
+	client, err := NewClientFromEnv(provider)
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer client.Close()
+
+	if err := os.Setenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1"); err != nil {
+		t.Fatalf("set stream raw env: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Unsetenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") })
+
+	workflowFile, err := os.CreateTemp("", "live-workflow-stream-*.yaml")
+	if err != nil {
+		t.Fatalf("create temp workflow: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Remove(workflowFile.Name()) })
+
+	workflow := fmt.Sprintf(`id: live-workflow-stream-test
+version: 1.0.0
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: %s
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: true
+        heal: false
+    config:
+      prompt: |
+        Return JSON only:
+        {
+          "state": "capabilities_query",
+          "reason": "short"
+        }
+  - id: explain
+    node_type:
+      llm_call:
+        model: %s
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: true
+        heal: false
+    config:
+      prompt: |
+        Return JSON only:
+        {
+          "question": "one short sentence"
+        }
+edges:
+  - from: classify
+    to: explain
+`, model, model)
+	if _, err := workflowFile.WriteString(workflow); err != nil {
+		t.Fatalf("write temp workflow: %v", err)
+	}
+	if err := workflowFile.Close(); err != nil {
+		t.Fatalf("close temp workflow: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	workflowInput := map[string]any{
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": "Hi",
+		}},
+	}
+
+	eventTypes := map[string]int{}
+	_, err = client.RunWorkflowYAMLStream(ctx, workflowFile.Name(), workflowInput, func(event WorkflowEvent) {
+		eventTypes[event.EventType]++
+	})
+	if err != nil {
+		t.Fatalf("run workflow stream: %v", err)
+	}
+
+	if eventTypes["node_stream_delta"] == 0 {
+		t.Fatal("expected node_stream_delta events")
+	}
+	if eventTypes["node_stream_output_delta"] == 0 {
+		t.Fatal("expected node_stream_output_delta events")
+	}
+	if eventTypes["node_stream_raw_delta"] > 0 {
+		t.Fatalf("deprecated node_stream_raw_delta should not be emitted: %d", eventTypes["node_stream_raw_delta"])
 	}
 }
