@@ -26,7 +26,24 @@ char *sa_run_workflow_yaml_with_options(
     const char *workflow_options_json
 );
 
+char *sa_run_workflow_yaml_with_events(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+);
+
+char *sa_run_workflow_yaml_stream_events(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json,
+    int32_t (*callback)(const char *event_json, void *user_data),
+    void *user_data
+);
+
 extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
+extern int32_t sa_go_workflow_event_callback_export(char *event_json, void *user_data);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
     return sa_go_stream_callback_export((char *)event_json, user_data);
@@ -74,6 +91,41 @@ static char *sa_run_workflow_yaml_with_options_go(
         workflow_path,
         workflow_input_json,
         workflow_options_json
+    );
+}
+
+static char *sa_run_workflow_yaml_with_events_go(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+) {
+    return sa_run_workflow_yaml_with_events(
+        client,
+        workflow_path,
+        workflow_input_json,
+        workflow_options_json
+    );
+}
+
+static int32_t sa_go_workflow_event_callback_bridge(const char *event_json, void *user_data) {
+    return sa_go_workflow_event_callback_export((char *)event_json, user_data);
+}
+
+static char *sa_run_workflow_yaml_stream_events_go(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json,
+    void *user_data
+) {
+    return sa_run_workflow_yaml_stream_events(
+        client,
+        workflow_path,
+        workflow_input_json,
+        workflow_options_json,
+        sa_go_workflow_event_callback_bridge,
+        user_data
     );
 }
 
@@ -194,23 +246,58 @@ type StreamResult struct {
 }
 
 type WorkflowStepTiming struct {
-	NodeID    string `json:"node_id"`
-	NodeKind  string `json:"node_kind"`
-	ElapsedMS uint64 `json:"elapsed_ms"`
+	NodeID           string   `json:"node_id"`
+	NodeKind         string   `json:"node_kind"`
+	ElapsedMS        uint64   `json:"elapsed_ms"`
+	PromptTokens     *uint32  `json:"prompt_tokens,omitempty"`
+	CompletionTokens *uint32  `json:"completion_tokens,omitempty"`
+	TotalTokens      *uint32  `json:"total_tokens,omitempty"`
+	ThinkingTokens   *uint32  `json:"thinking_tokens,omitempty"`
+	TokensPerSecond  *float64 `json:"tokens_per_second,omitempty"`
+}
+
+type WorkflowLlmNodeMetrics struct {
+	ElapsedMS        uint64  `json:"elapsed_ms"`
+	PromptTokens     uint32  `json:"prompt_tokens"`
+	CompletionTokens uint32  `json:"completion_tokens"`
+	TotalTokens      uint32  `json:"total_tokens"`
+	ThinkingTokens   *uint32 `json:"thinking_tokens,omitempty"`
+	TokensPerSecond  float64 `json:"tokens_per_second"`
+}
+
+type WorkflowEvent struct {
+	EventType           string         `json:"event_type"`
+	NodeID              *string        `json:"node_id,omitempty"`
+	StepID              *string        `json:"step_id,omitempty"`
+	NodeKind            *string        `json:"node_kind,omitempty"`
+	Streamable          *bool          `json:"streamable,omitempty"`
+	Message             *string        `json:"message,omitempty"`
+	Delta               *string        `json:"delta,omitempty"`
+	TokenKind           *string        `json:"token_kind,omitempty"`
+	IsTerminalNodeToken *bool          `json:"is_terminal_node_token,omitempty"`
+	ElapsedMS           *uint64        `json:"elapsed_ms,omitempty"`
+	Metadata            map[string]any `json:"metadata,omitempty"`
 }
 
 type WorkflowYAMLOutput struct {
-	WorkflowID     string                    `json:"workflow_id"`
-	EntryNode      string                    `json:"entry_node"`
-	EmailText      string                    `json:"email_text"`
-	Trace          []string                  `json:"trace"`
-	Outputs        map[string]map[string]any `json:"outputs"`
-	TerminalNode   string                    `json:"terminal_node"`
-	TerminalOutput any                       `json:"terminal_output"`
-	StepTimings    []WorkflowStepTiming      `json:"step_timings"`
-	TotalElapsedMS uint64                    `json:"total_elapsed_ms"`
-	TraceID        string                    `json:"trace_id,omitempty"`
-	Metadata       map[string]any            `json:"metadata,omitempty"`
+	WorkflowID          string                            `json:"workflow_id"`
+	EntryNode           string                            `json:"entry_node"`
+	EmailText           string                            `json:"email_text"`
+	Trace               []string                          `json:"trace"`
+	Outputs             map[string]map[string]any         `json:"outputs"`
+	TerminalNode        string                            `json:"terminal_node"`
+	TerminalOutput      any                               `json:"terminal_output"`
+	StepTimings         []WorkflowStepTiming              `json:"step_timings"`
+	LlmNodeMetrics      map[string]WorkflowLlmNodeMetrics `json:"llm_node_metrics"`
+	TotalElapsedMS      uint64                            `json:"total_elapsed_ms"`
+	TotalInputTokens    uint64                            `json:"total_input_tokens"`
+	TotalOutputTokens   uint64                            `json:"total_output_tokens"`
+	TotalTokens         uint64                            `json:"total_tokens"`
+	TotalThinkingTokens *uint64                           `json:"total_thinking_tokens,omitempty"`
+	TokensPerSecond     float64                           `json:"tokens_per_second"`
+	TraceID             string                            `json:"trace_id,omitempty"`
+	Metadata            map[string]any                    `json:"metadata,omitempty"`
+	Events              []WorkflowEvent                   `json:"events,omitempty"`
 }
 
 type WorkflowRunOptions struct {
@@ -223,11 +310,22 @@ type streamBridge struct {
 	out chan StreamResult
 }
 
+type workflowEventBridge struct {
+	ctx     context.Context
+	onEvent func(WorkflowEvent)
+	out     chan WorkflowEventResult
+}
+
 type Client struct {
 	mu       sync.Mutex
 	ptr      *C.SAClient
 	closed   bool
 	inFlight sync.WaitGroup
+}
+
+type WorkflowEventResult struct {
+	Event WorkflowEvent
+	Err   error
 }
 
 func NewClientFromEnv(provider string) (*Client, error) {
@@ -391,6 +489,194 @@ func (c *Client) RunWorkflowYAMLWithOptions(
 			return WorkflowYAMLOutput{}, result.err
 		}
 		return result.value, nil
+	}
+}
+
+// RunWorkflowYAMLWithEvents executes workflow YAML and includes recorded runtime events in output.events.
+func (c *Client) RunWorkflowYAMLWithEvents(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options map[string]any,
+) (WorkflowYAMLOutput, error) {
+	if workflowPath == "" {
+		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
+	}
+	if workflowInput == nil {
+		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	workflowInputJSON, err := json.Marshal(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
+	}
+
+	workflowOptionsJSON := ""
+	if options != nil {
+		encoded, marshalErr := json.Marshal(options)
+		if marshalErr != nil {
+			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
+		}
+		workflowOptionsJSON = string(encoded)
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	resultCh := make(chan workflowRunResult, 1)
+	go func() {
+		defer c.endCall()
+		cWorkflowPath := C.CString(workflowPath)
+		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
+		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
+		defer C.free(unsafe.Pointer(cWorkflowPath))
+		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
+		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
+
+		response := C.sa_run_workflow_yaml_with_events_go(
+			ptr,
+			cWorkflowPath,
+			cWorkflowInputJSON,
+			cWorkflowOptionsJSON,
+		)
+		if response == nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
+			return
+		}
+		defer C.sa_string_free(response)
+
+		var output WorkflowYAMLOutput
+		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
+			return
+		}
+
+		sendIfWaiting(resultCh, workflowRunResult{output, nil})
+	}()
+
+	select {
+	case <-ctx.Done():
+		return WorkflowYAMLOutput{}, ctx.Err()
+	case result := <-resultCh:
+		if result.err != nil {
+			return WorkflowYAMLOutput{}, result.err
+		}
+		return result.value, nil
+	}
+}
+
+// RunWorkflowYAMLStream emits live workflow events to onEvent while returning final workflow output.
+func (c *Client) RunWorkflowYAMLStream(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	onEvent func(WorkflowEvent),
+) (WorkflowYAMLOutput, error) {
+	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, nil, onEvent)
+}
+
+// RunWorkflowYAMLStreamWithOptions emits live workflow events to onEvent with workflow options.
+func (c *Client) RunWorkflowYAMLStreamWithOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options map[string]any,
+	onEvent func(WorkflowEvent),
+) (WorkflowYAMLOutput, error) {
+	if workflowPath == "" {
+		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
+	}
+	if workflowInput == nil {
+		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	workflowInputJSON, err := json.Marshal(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
+	}
+
+	workflowOptionsJSON := ""
+	if options != nil {
+		encoded, marshalErr := json.Marshal(options)
+		if marshalErr != nil {
+			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
+		}
+		workflowOptionsJSON = string(encoded)
+	}
+
+	ptr, err := c.beginCall()
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	bridge := &workflowEventBridge{
+		ctx:     ctx,
+		onEvent: onEvent,
+		out:     make(chan WorkflowEventResult, 16),
+	}
+	handle := cgo.NewHandle(bridge)
+	defer handle.Delete()
+
+	resultCh := make(chan workflowRunResult, 1)
+	go func() {
+		defer c.endCall()
+		defer close(bridge.out)
+
+		cWorkflowPath := C.CString(workflowPath)
+		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
+		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
+		defer C.free(unsafe.Pointer(cWorkflowPath))
+		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
+		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
+
+		response := C.sa_run_workflow_yaml_stream_events_go(
+			ptr,
+			cWorkflowPath,
+			cWorkflowInputJSON,
+			cWorkflowOptionsJSON,
+			unsafe.Pointer(uintptr(handle)),
+		)
+		if response == nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
+			return
+		}
+		defer C.sa_string_free(response)
+
+		var output WorkflowYAMLOutput
+		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
+			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
+			return
+		}
+
+		sendIfWaiting(resultCh, workflowRunResult{output, nil})
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return WorkflowYAMLOutput{}, ctx.Err()
+		case ev, ok := <-bridge.out:
+			if !ok {
+				bridge.out = nil
+				continue
+			}
+			if ev.Err != nil {
+				return WorkflowYAMLOutput{}, ev.Err
+			}
+		case result := <-resultCh:
+			if result.err != nil {
+				return WorkflowYAMLOutput{}, result.err
+			}
+			return result.value, nil
+		}
 	}
 }
 
@@ -723,6 +1009,34 @@ func sa_go_stream_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.
 	case <-bridge.ctx.Done():
 		return 1
 	}
+}
+
+//export sa_go_workflow_event_callback_export
+func sa_go_workflow_event_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.int32_t {
+	handle := cgo.Handle(uintptr(userData))
+	bridge, ok := handle.Value().(*workflowEventBridge)
+	if !ok || bridge == nil {
+		return 1
+	}
+
+	select {
+	case <-bridge.ctx.Done():
+		return 1
+	default:
+	}
+
+	var event WorkflowEvent
+	if err := json.Unmarshal([]byte(C.GoString(eventJSON)), &event); err != nil {
+		sendIfWaiting(bridge.out, WorkflowEventResult{Err: fmt.Errorf("unmarshal workflow event: %w", err)})
+		return 1
+	}
+
+	if bridge.onEvent != nil {
+		bridge.onEvent(event)
+	}
+
+	sendIfWaiting(bridge.out, WorkflowEventResult{Event: event})
+	return 0
 }
 
 func validatePromptInput(model, prompt string) error {
