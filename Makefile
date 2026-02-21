@@ -350,15 +350,7 @@ version-patch:
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
-	./scripts/sync-versions.sh; \
-	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
-	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
-		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
-		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
-	else \
-		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
-		exit 1; \
-	fi; \
+	$(MAKE) --no-print-directory version-sync; \
 	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
@@ -383,15 +375,7 @@ version-minor:
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
-	./scripts/sync-versions.sh; \
-	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
-	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
-		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
-		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
-	else \
-		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
-		exit 1; \
-	fi; \
+	$(MAKE) --no-print-directory version-sync; \
 	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
@@ -416,15 +400,7 @@ version-major:
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
-	./scripts/sync-versions.sh; \
-	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
-	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
-		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
-		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
-	else \
-		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
-		exit 1; \
-	fi; \
+	$(MAKE) --no-print-directory version-sync; \
 	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
