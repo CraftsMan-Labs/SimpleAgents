@@ -48,7 +48,7 @@
       "streamEvents(",
       "runWorkflowYamlWithEvents(",
       "runWorkflowYamlStream(",
-      "onEvent: (eventJson: string) => void"
+      "onEvent: (err: unknown, eventJson: string) => void"
     ],
     "required_runtime_exports": [
       "Client"
