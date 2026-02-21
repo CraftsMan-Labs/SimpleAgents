@@ -140,11 +140,15 @@ Go equivalent:
 
 ```bash
 cargo build -p simple-agents-ffi --release
-CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/target/release" \
-LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
-go run ./bindings/go/examples/workflow_chat_history \
-  --workflow examples/workflow_email/email-chat-draft-or-clarify.yaml
+cd bindings/go
+WORKFLOW_PROVIDER=openai \
+WORKFLOW_API_BASE=https://api.openai.com/v1 \
+WORKFLOW_API_KEY=your_key_here \
+CGO_CFLAGS="-I$PWD/../../crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$PWD/../../target/release" \
+LD_LIBRARY_PATH="$PWD/../../target/release:${LD_LIBRARY_PATH:-}" \
+go run ./examples/workflow_chat_history \
+  --workflow ../../examples/workflow_email/email-chat-draft-or-clarify.yaml
 
 # Optional parity flags: --include-events --stream --show-thinking --show-step-json
 ```
