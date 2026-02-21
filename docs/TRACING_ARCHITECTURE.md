@@ -17,6 +17,7 @@ Required attributes across spans/events:
 - `span_id`
 - `workspace_id`
 - `user_id`
+- `conversation_id`
 - `request_id`
 - `workflow_id`
 - `run_id`
@@ -35,7 +36,7 @@ Workflow execution accepts a structured options object (`YamlWorkflowRunOptions`
   - `multi_tenant` (`true` by default)
 - `trace`
   - `context`: `trace_id`, `span_id`, `parent_span_id`, `traceparent`, `tracestate`, `baggage`
-  - `tenant`: `workspace_id`, `user_id`, `request_id`, `run_id`
+  - `tenant`: `workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`
 
 ## Output contract
 
@@ -43,6 +44,94 @@ Workflow results include correlation IDs in both locations:
 
 - top-level `trace_id`
 - `metadata.telemetry.trace_id`
+- `metadata.trace.tenant.*` (including `conversation_id` when provided)
+
+## Programmatic Correlation In External Code
+
+### What is possible
+
+- Reuse the same `trace_id` across multiple turns/runs.
+- Pass `conversation_id` (UUID) for chat/session grouping.
+- Correlate external handler telemetry with workflow telemetry using shared IDs.
+- Custom worker `context` now includes an injected `trace` block automatically.
+
+Important: traces are append-only. You do not mutate old emitted spans; each run adds new spans/events.
+
+### Python example (streaming)
+
+```python
+result = client.run_workflow_yaml_stream(
+    "examples/workflow_email/email-chat-draft-or-clarify.yaml",
+    workflow_input,
+    on_event=on_event,
+    workflow_options={
+        "telemetry": {"enabled": True, "nerdstats": True},
+        "trace": {
+            "context": {
+                "trace_id": "4f6f4a0e7b6e4f7a85fd5ec3e3de31a9",
+            },
+            "tenant": {
+                "conversation_id": "6e6d3125-b9f1-4af2-af1f-7cca024a2c42",
+                "request_id": "turn-12",
+                "run_id": "chat-turn-12",
+            },
+        },
+    },
+)
+```
+
+### YAML custom worker payload forwarding example
+
+If your external handler emits its own logs/metrics/spans, forward IDs in payload/context:
+
+```yaml
+- id: rag_lookup
+  node_type:
+    custom_worker:
+      handler: GetRagData
+  config:
+    payload:
+      topic: termination_repeated_offense
+      trace_id: "{{ input.trace_id }}"
+      conversation_id: "{{ input.conversation_id }}"
+```
+
+### Automatic trace context in custom worker context
+
+`YamlWorkflowCustomWorkerExecutor.execute(..., context)` receives this shape:
+
+```json
+{
+  "input": { "...": "..." },
+  "nodes": { "...": "..." },
+  "globals": { "...": "..." },
+  "trace": {
+    "context": {
+      "trace_id": "...",
+      "span_id": "...",
+      "parent_span_id": "...",
+      "traceparent": "00-...-...-01",
+      "tracestate": "...",
+      "baggage": { "...": "..." }
+    },
+    "tenant": {
+      "workspace_id": "...",
+      "user_id": "...",
+      "conversation_id": "...",
+      "request_id": "...",
+      "run_id": "..."
+    }
+  }
+}
+```
+
+Use `context.trace.context.traceparent` (or `trace_id`) when starting external spans, and carry `context.trace.tenant.conversation_id` as a span attribute for chat-level grouping.
+
+### Handler-side guidance
+
+- Include `trace_id` and `conversation_id` in every handler log/event.
+- If you have an OTel tracer in external code, set these as span attributes.
+- Keep one trace per turn/request as the default operational model; use `conversation_id` to stitch multi-turn chats.
 
 ## Data flow
 

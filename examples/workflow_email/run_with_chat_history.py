@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,11 @@ def parse_args() -> argparse.Namespace:
         "--trace-dir",
         default="examples/workflow_email/traces",
         help="Directory to persist per-turn workflow traces as JSONL",
+    )
+    parser.add_argument(
+        "--conversation-id",
+        default=None,
+        help="Conversation UUID used for trace correlation (auto-generated if omitted)",
     )
     parser.add_argument(
         "--stream",
@@ -333,9 +339,13 @@ def _run_turn(
     stream: bool,
     show_thinking: bool,
     nerdstats: bool,
+    conversation_id: str,
     node_names: dict[str, str],
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
-    workflow_options = {"telemetry": {"nerdstats": nerdstats}}
+    workflow_options = {
+        "telemetry": {"nerdstats": nerdstats},
+        "trace": {"tenant": {"conversation_id": conversation_id}},
+    }
     client_any: Any = client
     if not stream:
         result = client_any.run_workflow_yaml(
@@ -402,11 +412,13 @@ def main() -> None:
     messages = initial_messages()
     trace_dir = Path(args.trace_dir)
     trace_dir.mkdir(parents=True, exist_ok=True)
+    conversation_id = args.conversation_id or str(uuid.uuid4())
     session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    trace_file = trace_dir / f"chat-session-{session_id}.jsonl"
+    trace_file = trace_dir / f"chat-session-{session_id}-{conversation_id}.jsonl"
 
     print("Chat Email Assistant")
     print("Type your request. Type 'exit' to quit.\n")
+    print(f"Conversation ID: {conversation_id}")
     print(f"Trace log: {trace_file}\n")
 
     interview_closed = False
@@ -440,6 +452,7 @@ def main() -> None:
             args.stream,
             args.show_thinking,
             args.nerdstats,
+            conversation_id,
             node_names,
         )
 
@@ -449,6 +462,7 @@ def main() -> None:
         trace_record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "turn": turn,
+            "conversation_id": conversation_id,
             "workflow_path": str(workflow_path),
             "workflow_id": result.get("workflow_id"),
             "terminal_node": result.get("terminal_node"),
