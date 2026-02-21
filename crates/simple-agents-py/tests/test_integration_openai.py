@@ -114,14 +114,22 @@ nodes:
         append_prompt_as_user: true
         stream: true
         stream_json_as_text: true
-        heal: false
+        heal: true
     config:
       prompt: |
-        Return JSON only:
+        Return only this JSON object with no extra text:
         {{
           \"state\": \"capabilities_query\",
           \"reason\": \"short\"
         }}
+      output_schema:
+        type: object
+        required: [state, reason]
+        properties:
+          state:
+            type: string
+          reason:
+            type: string
 """,
         encoding="utf-8",
     )
