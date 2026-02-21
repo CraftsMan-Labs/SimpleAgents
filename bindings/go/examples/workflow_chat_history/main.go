@@ -262,13 +262,15 @@ func main() {
 		case *streamFlag:
 			currentNode := ""
 			lineOpen := false
+			tokenSeq := uint64(0)
+			rawSeen := false
 			out, runErr = client.RunWorkflowYAMLStream(ctx, workflowPath, workflowInput, func(event simpleagents.WorkflowEvent) {
 				streamedEvents = append(streamedEvents, event)
-				expectedEventType := "node_stream_delta"
+				isDisplayedStreamEvent := event.EventType == "node_stream_delta"
 				if *showThinkingFlag {
-					expectedEventType = "node_stream_raw_delta"
+					isDisplayedStreamEvent = event.EventType == "node_stream_raw_delta" || (event.EventType == "node_stream_delta" && !rawSeen)
 				}
-				if event.EventType != expectedEventType || event.Delta == nil {
+				if !isDisplayedStreamEvent || event.Delta == nil {
 					return
 				}
 				displayNode := "Workflow"
@@ -282,11 +284,29 @@ func main() {
 						fmt.Println()
 					}
 					fmt.Printf("\nStep: %s\n", displayNode)
-					fmt.Print("Streaming: ")
+					fmt.Println("Streaming:")
 					currentNode = displayNode
 					lineOpen = true
 				}
-				fmt.Print(*event.Delta)
+				tokenID := uint64(0)
+				if event.TokenID != nil {
+					tokenID = *event.TokenID
+				} else {
+					tokenSeq += 1
+					tokenID = tokenSeq
+				}
+				tokenKind := "output"
+				if event.TokenKind != nil {
+					tokenKind = strings.ToLower(strings.TrimSpace(*event.TokenKind))
+				}
+				terminalFlag := "false"
+				if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
+					terminalFlag = "true"
+				}
+				fmt.Printf("[token_id=%d step=%s kind=%s terminal=%s] %s", tokenID, displayNode, tokenKind, terminalFlag, *event.Delta)
+				if *showThinkingFlag && event.EventType == "node_stream_raw_delta" {
+					rawSeen = true
+				}
 			})
 		case *includeEventsFlag:
 			out, runErr = client.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, nil)
@@ -298,6 +318,25 @@ func main() {
 			panic(runErr)
 		}
 		if *streamFlag && len(streamedEvents) > 0 {
+			hasVisibleEvents := false
+			sawRawEvents := false
+			sawDeltaEvents := false
+			for _, event := range streamedEvents {
+				if event.EventType == "node_stream_raw_delta" || event.EventType == "node_stream_delta" {
+					hasVisibleEvents = true
+				}
+				if event.EventType == "node_stream_raw_delta" {
+					sawRawEvents = true
+				}
+				if event.EventType == "node_stream_delta" {
+					sawDeltaEvents = true
+				}
+			}
+			if !hasVisibleEvents {
+				fmt.Println("[stream] No node stream token events observed. Ensure llm_call nodes use stream=true and your provider/model supports this stream mode.")
+			} else if *showThinkingFlag && !sawRawEvents && sawDeltaEvents {
+				fmt.Println("[stream] show-thinking enabled, but no node_stream_raw_delta tokens were emitted; falling back to node_stream_delta output tokens.")
+			}
 			fmt.Println()
 		}
 
