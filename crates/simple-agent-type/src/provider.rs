@@ -282,6 +282,7 @@ pub trait Provider: Send + Sync {
             model: response.model,
             choices,
             created: response.created,
+            usage: Some(response.usage),
         };
 
         Ok(Box::new(SingleChunkStream {

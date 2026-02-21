@@ -175,6 +175,7 @@ fn transform_stream_event(
                             finish_reason: None,
                         }],
                         created: None,
+                        usage: None,
                     }))
                 }
                 StreamDelta::InputJsonDelta { .. } => {
@@ -210,6 +211,7 @@ fn transform_stream_event(
                         finish_reason: state.finish_reason,
                     }],
                     created: None,
+                    usage: None,
                 }))
             } else {
                 None

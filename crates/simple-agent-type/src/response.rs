@@ -251,6 +251,9 @@ pub struct CompletionChunk {
     /// Unix timestamp of creation
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created: Option<i64>,
+    /// Optional token usage for this chunk (typically on final chunk)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<Usage>,
 }
 
 /// A delta in a streaming choice.
@@ -382,6 +385,7 @@ mod tests {
                 finish_reason: None,
             }],
             created: Some(1234567890),
+            usage: None,
         };
 
         let json = serde_json::to_string(&chunk).unwrap();

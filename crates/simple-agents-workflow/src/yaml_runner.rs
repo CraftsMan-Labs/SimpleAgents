@@ -68,6 +68,8 @@ pub struct YamlWorkflowRunOutput {
     pub step_timings: Vec<YamlStepTiming>,
     pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
     pub total_elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u128>,
     pub total_input_tokens: u64,
     pub total_output_tokens: u64,
     pub total_tokens: u64,
@@ -120,6 +122,8 @@ pub struct YamlWorkflowTraceTenantContext {
 pub struct YamlWorkflowTelemetryConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub nerdstats: bool,
     #[serde(default = "default_sample_rate")]
     pub sample_rate: f32,
     #[serde(default)]
@@ -134,6 +138,7 @@ impl Default for YamlWorkflowTelemetryConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            nerdstats: true,
             sample_rate: 1.0,
             payload_mode: YamlWorkflowPayloadMode::FullPayload,
             retention_days: 30,
@@ -170,6 +175,7 @@ pub struct YamlLlmTokenUsage {
 pub struct YamlLlmExecutionResult {
     pub payload: Value,
     pub usage: Option<YamlLlmTokenUsage>,
+    pub ttft_ms: Option<u128>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -249,6 +255,7 @@ fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str
         "telemetry": {
             "trace_id": trace_id,
             "enabled": options.telemetry.enabled,
+            "nerdstats": options.telemetry.nerdstats,
             "sample_rate": options.telemetry.sample_rate,
             "payload_mode": match options.telemetry.payload_mode {
                 YamlWorkflowPayloadMode::FullPayload => "full_payload",
@@ -257,6 +264,64 @@ fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str
             "retention_days": options.telemetry.retention_days,
             "multi_tenant": options.telemetry.multi_tenant,
         }
+    })
+}
+
+fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
+    let llm_nodes_without_usage: Vec<String> = output
+        .step_timings
+        .iter()
+        .filter(|step| step.node_kind == "llm_call" && step.total_tokens.is_none())
+        .map(|step| step.node_id.clone())
+        .collect();
+    let token_metrics_available = llm_nodes_without_usage.is_empty();
+    let token_metrics_source = if token_metrics_available {
+        "provider_usage"
+    } else {
+        "provider_stream_usage_unavailable"
+    };
+    let total_input_tokens = if token_metrics_available {
+        json!(output.total_input_tokens)
+    } else {
+        Value::Null
+    };
+    let total_output_tokens = if token_metrics_available {
+        json!(output.total_output_tokens)
+    } else {
+        Value::Null
+    };
+    let total_tokens = if token_metrics_available {
+        json!(output.total_tokens)
+    } else {
+        Value::Null
+    };
+    let total_thinking_tokens = if token_metrics_available {
+        json!(output.total_thinking_tokens)
+    } else {
+        Value::Null
+    };
+    let tokens_per_second = if token_metrics_available {
+        json!(output.tokens_per_second)
+    } else {
+        Value::Null
+    };
+
+    json!({
+        "workflow_id": output.workflow_id,
+        "terminal_node": output.terminal_node,
+        "total_elapsed_ms": output.total_elapsed_ms,
+        "ttft_ms": output.ttft_ms,
+        "step_timings": output.step_timings,
+        "llm_node_metrics": output.llm_node_metrics,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_tokens,
+        "total_thinking_tokens": total_thinking_tokens,
+        "tokens_per_second": tokens_per_second,
+        "trace_id": output.trace_id,
+        "token_metrics_available": token_metrics_available,
+        "token_metrics_source": token_metrics_source,
+        "llm_nodes_without_usage": llm_nodes_without_usage,
     })
 }
 
@@ -1287,6 +1352,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
             match outcome {
                 CompletionOutcome::Stream(mut stream) => {
                     let mut aggregated = String::new();
+                    let mut final_stream_usage: Option<simple_agent_type::response::Usage> = None;
+                    let stream_started = Instant::now();
+                    let mut ttft_ms: Option<u128> = None;
                     let mut delta_filter = StructuredJsonDeltaFilter::default();
                     let include_raw_debug = include_raw_stream_debug_events();
                     let mut json_text_formatter = if request.stream_json_as_text {
@@ -1299,7 +1367,24 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             return Err(workflow_event_sink_cancelled_message().to_string());
                         }
                         let chunk = chunk_result.map_err(|error| error.to_string())?;
+                        if let Some(usage) = chunk.usage {
+                            final_stream_usage = Some(usage);
+                        }
                         if let Some(choice) = chunk.choices.first() {
+                            if ttft_ms.is_none()
+                                && (choice
+                                    .delta
+                                    .content
+                                    .as_ref()
+                                    .is_some_and(|delta| !delta.is_empty())
+                                    || choice
+                                        .delta
+                                        .reasoning_content
+                                        .as_ref()
+                                        .is_some_and(|delta| !delta.is_empty()))
+                            {
+                                ttft_ms = Some(stream_started.elapsed().as_millis());
+                            }
                             if include_raw_debug {
                                 if let Some(reasoning_delta) =
                                     choice.delta.reasoning_content.as_ref()
@@ -1426,7 +1511,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
 
                     Ok(YamlLlmExecutionResult {
                         payload: resolved.payload,
-                        usage: None,
+                        usage: final_stream_usage.map(|usage| YamlLlmTokenUsage {
+                            prompt_tokens: usage.prompt_tokens,
+                            completion_tokens: usage.completion_tokens,
+                            total_tokens: usage.total_tokens,
+                            thinking_tokens: None,
+                        }),
+                        ttft_ms,
                     })
                 }
                 CompletionOutcome::Response(response) => {
@@ -1445,6 +1536,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             total_tokens: response.usage.total_tokens,
                             thinking_tokens: None,
                         }),
+                        ttft_ms: None,
                     })
                 }
                 CompletionOutcome::HealedJson(healed) => {
@@ -1474,6 +1566,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             total_tokens: healed.response.usage.total_tokens,
                             thinking_tokens: None,
                         }),
+                        ttft_ms: None,
                     })
                 }
                 CompletionOutcome::CoercedSchema(coerced) => Ok(YamlLlmExecutionResult {
@@ -1484,6 +1577,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         total_tokens: coerced.response.usage.total_tokens,
                         thinking_tokens: None,
                     }),
+                    ttft_ms: None,
                 }),
             }
         }
@@ -1665,6 +1759,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     let mut step_timings = Vec::new();
     let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
     let mut token_totals = YamlTokenTotals::default();
+    let mut workflow_ttft_ms: Option<u128> = None;
     let started = Instant::now();
 
     if let Some(sink) = event_sink {
@@ -1725,6 +1820,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             .llm_call
             .as_ref()
             .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
+        let workflow_elapsed_before_node_ms = started.elapsed().as_millis();
 
         if let Some(sink) = event_sink {
             sink.emit(&YamlWorkflowEvent {
@@ -1741,7 +1837,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 delta: None,
                 token_kind: None,
                 is_terminal_node_token: None,
-                elapsed_ms: Some(started.elapsed().as_millis()),
+                elapsed_ms: Some(workflow_elapsed_before_node_ms),
                 metadata: None,
             });
         }
@@ -1845,6 +1941,11 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
             if let Some(usage) = llm_result.usage.as_ref() {
                 token_totals.add_usage(usage);
+            }
+            if workflow_ttft_ms.is_none() {
+                workflow_ttft_ms = llm_result
+                    .ttft_ms
+                    .map(|node_ttft_ms| workflow_elapsed_before_node_ms + node_ttft_ms);
             }
             node_usage = llm_result.usage;
 
@@ -2050,6 +2151,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         step_timings,
         llm_node_metrics,
         total_elapsed_ms,
+        ttft_ms: workflow_ttft_ms,
         total_input_tokens: token_totals.input_tokens,
         total_output_tokens: token_totals.output_tokens,
         total_tokens: token_totals.total_tokens,
@@ -2062,6 +2164,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     };
 
     if let Some(sink) = event_sink {
+        let event_metadata = if options.telemetry.nerdstats {
+            Some(json!({
+                "nerdstats": workflow_nerdstats(&output),
+            }))
+        } else {
+            None
+        };
         sink.emit(&YamlWorkflowEvent {
             event_type: "workflow_completed".to_string(),
             node_id: None,
@@ -2073,7 +2182,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             token_kind: None,
             is_terminal_node_token: None,
             elapsed_ms: Some(output.total_elapsed_ms),
-            metadata: None,
+            metadata: event_metadata,
         });
     }
 
@@ -2406,6 +2515,7 @@ async fn try_run_yaml_via_ir_runtime(
         step_timings,
         llm_node_metrics,
         total_elapsed_ms,
+        ttft_ms: None,
         total_input_tokens: token_totals.input_tokens,
         total_output_tokens: token_totals.output_tokens,
         total_tokens: token_totals.total_tokens,
@@ -3030,6 +3140,7 @@ mod tests {
             Ok(YamlLlmExecutionResult {
                 payload: json!({"state":"ok"}),
                 usage: None,
+                ttft_ms: None,
             })
         }
     }
@@ -3060,6 +3171,7 @@ mod tests {
                         total_tokens: 15,
                         thinking_tokens: None,
                     }),
+                    ttft_ms: None,
                 });
             }
             if prompt.contains("Determine termination subtype") {
@@ -3071,6 +3183,7 @@ mod tests {
                         total_tokens: 18,
                         thinking_tokens: None,
                     }),
+                    ttft_ms: None,
                 });
             }
             if prompt.contains("Determine supply chain subtype") {
@@ -3082,6 +3195,7 @@ mod tests {
                         total_tokens: 15,
                         thinking_tokens: None,
                     }),
+                    ttft_ms: None,
                 });
             }
             Err("unexpected prompt".to_string())
@@ -3235,6 +3349,275 @@ nodes:
         );
     }
 
+    #[tokio::test]
+    async fn workflow_completed_event_includes_nerdstats_by_default() {
+        let yaml = r#"
+id: nerdstats-default
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let sink = RecordingSink {
+            events: Mutex::new(Vec::new()),
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            Some(&sink),
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        let events = sink
+            .events
+            .lock()
+            .expect("recording sink lock should not be poisoned");
+        let completed = events
+            .iter()
+            .find(|event| event.event_type == "workflow_completed")
+            .expect("expected workflow_completed event");
+        let metadata = completed
+            .metadata
+            .as_ref()
+            .expect("workflow_completed should include metadata by default");
+        let nerdstats = metadata
+            .get("nerdstats")
+            .expect("nerdstats should be present by default");
+
+        assert_eq!(nerdstats["workflow_id"], Value::String(output.workflow_id));
+        assert_eq!(
+            nerdstats["terminal_node"],
+            Value::String(output.terminal_node)
+        );
+        assert_eq!(
+            nerdstats["total_tokens"],
+            Value::Number(output.total_tokens.into())
+        );
+        assert_eq!(nerdstats["token_metrics_available"], Value::Bool(true));
+        assert_eq!(
+            nerdstats["token_metrics_source"],
+            Value::String("provider_usage".to_string())
+        );
+        assert_eq!(nerdstats["ttft_ms"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn workflow_completed_event_omits_nerdstats_when_disabled() {
+        let yaml = r#"
+id: nerdstats-disabled
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let sink = RecordingSink {
+            events: Mutex::new(Vec::new()),
+        };
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                nerdstats: false,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            ..YamlWorkflowRunOptions::default()
+        };
+
+        run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            Some(&sink),
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        let events = sink
+            .events
+            .lock()
+            .expect("recording sink lock should not be poisoned");
+        let completed = events
+            .iter()
+            .find(|event| event.event_type == "workflow_completed")
+            .expect("expected workflow_completed event");
+        assert!(completed.metadata.is_none());
+    }
+
+    struct StreamAwareMockExecutor;
+
+    #[async_trait]
+    impl YamlWorkflowLlmExecutor for StreamAwareMockExecutor {
+        async fn complete_structured(
+            &self,
+            request: YamlLlmExecutionRequest,
+            _event_sink: Option<&dyn YamlWorkflowEventSink>,
+        ) -> Result<YamlLlmExecutionResult, String> {
+            Ok(YamlLlmExecutionResult {
+                payload: json!({"state":"ok"}),
+                usage: Some(YamlLlmTokenUsage {
+                    prompt_tokens: 20,
+                    completion_tokens: 10,
+                    total_tokens: 30,
+                    thinking_tokens: None,
+                }),
+                ttft_ms: if request.stream { Some(12) } else { None },
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_completed_event_includes_nerdstats_for_streaming_nodes() {
+        let yaml = r#"
+id: nerdstats-streaming
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        stream: true
+    config:
+      prompt: |
+        Return JSON only:
+        {"state":"ok"}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let sink = RecordingSink {
+            events: Mutex::new(Vec::new()),
+        };
+
+        run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &StreamAwareMockExecutor,
+            None,
+            Some(&sink),
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        let events = sink
+            .events
+            .lock()
+            .expect("recording sink lock should not be poisoned");
+        let completed = events
+            .iter()
+            .find(|event| event.event_type == "workflow_completed")
+            .expect("expected workflow_completed event");
+        let metadata = completed
+            .metadata
+            .as_ref()
+            .expect("workflow_completed should include metadata by default");
+        let nerdstats = metadata
+            .get("nerdstats")
+            .expect("nerdstats should be present by default");
+
+        assert_eq!(nerdstats["token_metrics_available"], Value::Bool(true));
+        assert_eq!(nerdstats["total_tokens"], Value::Number(30u64.into()));
+        assert_eq!(nerdstats["ttft_ms"], Value::Number(12u64.into()));
+    }
+
+    #[test]
+    fn workflow_nerdstats_marks_stream_token_metrics_unavailable() {
+        let output = YamlWorkflowRunOutput {
+            workflow_id: "workflow".to_string(),
+            entry_node: "start".to_string(),
+            email_text: "hello".to_string(),
+            trace: vec!["llm_node".to_string()],
+            outputs: BTreeMap::new(),
+            terminal_node: "llm_node".to_string(),
+            terminal_output: None,
+            step_timings: vec![YamlStepTiming {
+                node_id: "llm_node".to_string(),
+                node_kind: "llm_call".to_string(),
+                elapsed_ms: 100,
+                prompt_tokens: None,
+                completion_tokens: None,
+                total_tokens: None,
+                thinking_tokens: None,
+                tokens_per_second: None,
+            }],
+            llm_node_metrics: BTreeMap::new(),
+            total_elapsed_ms: 100,
+            ttft_ms: None,
+            total_input_tokens: 0,
+            total_output_tokens: 0,
+            total_tokens: 0,
+            total_thinking_tokens: None,
+            tokens_per_second: 0.0,
+            trace_id: Some("trace-1".to_string()),
+            metadata: None,
+        };
+
+        let nerdstats = workflow_nerdstats(&output);
+        assert_eq!(nerdstats["token_metrics_available"], Value::Bool(false));
+        assert_eq!(
+            nerdstats["token_metrics_source"],
+            Value::String("provider_stream_usage_unavailable".to_string())
+        );
+        assert_eq!(nerdstats["total_tokens"], Value::Null);
+        assert_eq!(nerdstats["ttft_ms"], Value::Null);
+    }
+
+    #[test]
+    fn workflow_nerdstats_includes_ttft_when_available() {
+        let output = YamlWorkflowRunOutput {
+            workflow_id: "workflow".to_string(),
+            entry_node: "start".to_string(),
+            email_text: "hello".to_string(),
+            trace: vec!["llm_node".to_string()],
+            outputs: BTreeMap::new(),
+            terminal_node: "llm_node".to_string(),
+            terminal_output: None,
+            step_timings: vec![YamlStepTiming {
+                node_id: "llm_node".to_string(),
+                node_kind: "llm_call".to_string(),
+                elapsed_ms: 100,
+                prompt_tokens: Some(10),
+                completion_tokens: Some(15),
+                total_tokens: Some(25),
+                thinking_tokens: None,
+                tokens_per_second: Some(150.0),
+            }],
+            llm_node_metrics: BTreeMap::new(),
+            total_elapsed_ms: 100,
+            ttft_ms: Some(42),
+            total_input_tokens: 10,
+            total_output_tokens: 15,
+            total_tokens: 25,
+            total_thinking_tokens: None,
+            tokens_per_second: 150.0,
+            trace_id: Some("trace-2".to_string()),
+            metadata: None,
+        };
+
+        let nerdstats = workflow_nerdstats(&output);
+        assert_eq!(nerdstats["ttft_ms"], Value::Number(42u64.into()));
+    }
+
     struct MessageHistoryExecutor;
 
     #[async_trait]
@@ -3258,6 +3641,7 @@ nodes:
                     total_tokens: 10,
                     thinking_tokens: None,
                 }),
+                ttft_ms: None,
             })
         }
     }
