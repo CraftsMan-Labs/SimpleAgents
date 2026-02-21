@@ -18,8 +18,8 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
     run_email_workflow_yaml_file_with_client,
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowRunOptions,
+    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options, YamlWorkflowEvent,
+    YamlWorkflowEventSink, YamlWorkflowRunOptions,
 };
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -91,6 +91,104 @@ struct FfiCompletionResult {
 
 type SAStreamCallback =
     Option<extern "C" fn(event_json: *const c_char, user_data: *mut c_void) -> i32>;
+
+type SAWorkflowEventCallback =
+    Option<extern "C" fn(event_json: *const c_char, user_data: *mut c_void) -> i32>;
+
+struct RecordingWorkflowEventSink {
+    events: Mutex<Vec<YamlWorkflowEvent>>,
+}
+
+impl RecordingWorkflowEventSink {
+    fn new() -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn attach_to_output(&self, output: &mut JsonValue) -> Result<()> {
+        let events = self
+            .events
+            .lock()
+            .map_err(|_| {
+                SimpleAgentsError::Config("workflow event sink lock poisoned".to_string())
+            })?
+            .clone();
+        let events_value = serde_json::to_value(events)
+            .map_err(|e| SimpleAgentsError::Config(format!("serialize workflow events: {e}")))?;
+        if let JsonValue::Object(object) = output {
+            object.insert("events".to_string(), events_value);
+        }
+        Ok(())
+    }
+}
+
+impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(event.clone());
+        }
+    }
+}
+
+struct CallbackWorkflowEventSink {
+    callback: extern "C" fn(event_json: *const c_char, user_data: *mut c_void) -> i32,
+    user_data: *mut c_void,
+    callback_failed: Mutex<bool>,
+}
+
+impl CallbackWorkflowEventSink {
+    fn new(
+        callback: extern "C" fn(event_json: *const c_char, user_data: *mut c_void) -> i32,
+        user_data: *mut c_void,
+    ) -> Self {
+        Self {
+            callback,
+            user_data,
+            callback_failed: Mutex::new(false),
+        }
+    }
+
+    fn callback_failed(&self) -> bool {
+        self.callback_failed
+            .lock()
+            .map(|flag| *flag)
+            .unwrap_or(true)
+    }
+}
+
+// Safe because callback/user_data ownership belongs to the caller; this sink only forwards events.
+unsafe impl Send for CallbackWorkflowEventSink {}
+unsafe impl Sync for CallbackWorkflowEventSink {}
+
+impl YamlWorkflowEventSink for CallbackWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        let payload = match serde_json::to_string(event) {
+            Ok(value) => value,
+            Err(_) => {
+                if let Ok(mut failed) = self.callback_failed.lock() {
+                    *failed = true;
+                }
+                return;
+            }
+        };
+        let payload = match CString::new(payload) {
+            Ok(value) => value,
+            Err(_) => {
+                if let Ok(mut failed) = self.callback_failed.lock() {
+                    *failed = true;
+                }
+                return;
+            }
+        };
+        let status = (self.callback)(payload.as_ptr(), self.user_data);
+        if status != 0 {
+            if let Ok(mut failed) = self.callback_failed.lock() {
+                *failed = true;
+            }
+        }
+    }
+}
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -973,6 +1071,152 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_with_options(
             .map_err(|error| {
                 SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
             })?;
+
+        serde_json::to_string(&output)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
+    })
+}
+
+/// Execute workflow YAML and include collected workflow events in the JSON output under `events`.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env` and remain valid for the call.
+/// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
+/// - `workflow_input_json` must decode to a JSON object.
+/// - `workflow_options_json` may be null.
+/// - Returned string must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_run_workflow_yaml_with_events(
+    client: *mut SAClient,
+    workflow_path: *const c_char,
+    workflow_input_json: *const c_char,
+    workflow_options_json: *const c_char,
+) -> *mut c_char {
+    if client.is_null() {
+        set_last_error("client cannot be null".to_string());
+        return std::ptr::null_mut();
+    }
+
+    ffi_guard(|| {
+        let workflow_path = cstr_to_string(workflow_path, "workflow_path")?;
+        let workflow_input_json = cstr_to_string(workflow_input_json, "workflow_input_json")?;
+        let workflow_options_json =
+            cstr_to_optional_string(workflow_options_json, "workflow_options_json")?;
+        let workflow_input: JsonValue =
+            serde_json::from_str(&workflow_input_json).map_err(|e| {
+                SimpleAgentsError::Config(format!("workflow_input_json must be valid JSON: {e}"))
+            })?;
+        if !workflow_input.is_object() {
+            return Err(SimpleAgentsError::Config(
+                "workflow_input_json must decode to a JSON object".to_string(),
+            ));
+        }
+        let workflow_options = parse_workflow_run_options(workflow_options_json)?;
+
+        let client = &(*client).inner;
+        let runtime = client
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        let event_sink = RecordingWorkflowEventSink::new();
+        let output = runtime
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                    std::path::Path::new(workflow_path.as_str()),
+                    &workflow_input,
+                    &client.client,
+                    None,
+                    Some(&event_sink),
+                    &workflow_options,
+                ),
+            )
+            .map_err(|error| {
+                SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
+            })?;
+
+        let mut output_value = serde_json::to_value(output)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))?;
+        event_sink.attach_to_output(&mut output_value)?;
+        serde_json::to_string(&output_value)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
+    })
+}
+
+/// Execute workflow YAML and emit live workflow events to a callback while returning final output.
+///
+/// # Safety
+///
+/// - `client` must be a pointer returned by `sa_client_new_from_env` and remain valid for the call.
+/// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
+/// - `workflow_input_json` must decode to a JSON object.
+/// - `workflow_options_json` may be null.
+/// - `callback` must be non-null for the duration of the call.
+/// - Returned string must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_run_workflow_yaml_stream_events(
+    client: *mut SAClient,
+    workflow_path: *const c_char,
+    workflow_input_json: *const c_char,
+    workflow_options_json: *const c_char,
+    callback: SAWorkflowEventCallback,
+    user_data: *mut c_void,
+) -> *mut c_char {
+    if client.is_null() {
+        set_last_error("client cannot be null".to_string());
+        return std::ptr::null_mut();
+    }
+
+    let Some(callback) = callback else {
+        set_last_error("callback cannot be null".to_string());
+        return std::ptr::null_mut();
+    };
+
+    ffi_guard(|| {
+        let workflow_path = cstr_to_string(workflow_path, "workflow_path")?;
+        let workflow_input_json = cstr_to_string(workflow_input_json, "workflow_input_json")?;
+        let workflow_options_json =
+            cstr_to_optional_string(workflow_options_json, "workflow_options_json")?;
+        let workflow_input: JsonValue =
+            serde_json::from_str(&workflow_input_json).map_err(|e| {
+                SimpleAgentsError::Config(format!("workflow_input_json must be valid JSON: {e}"))
+            })?;
+        if !workflow_input.is_object() {
+            return Err(SimpleAgentsError::Config(
+                "workflow_input_json must decode to a JSON object".to_string(),
+            ));
+        }
+        let workflow_options = parse_workflow_run_options(workflow_options_json)?;
+
+        let client = &(*client).inner;
+        let runtime = client
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        let event_sink = CallbackWorkflowEventSink::new(callback, user_data);
+        let output = runtime
+            .block_on(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                    std::path::Path::new(workflow_path.as_str()),
+                    &workflow_input,
+                    &client.client,
+                    None,
+                    Some(&event_sink),
+                    &workflow_options,
+                ),
+            )
+            .map_err(|error| {
+                SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
+            })?;
+
+        if event_sink.callback_failed() {
+            return Err(SimpleAgentsError::Config(
+                "workflow event callback returned non-zero status or failed to serialize payload"
+                    .to_string(),
+            ));
+        }
 
         serde_json::to_string(&output)
             .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
