@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 const readline = require('node:readline/promises')
+const crypto = require('node:crypto')
 const { stdin, stdout } = require('node:process')
 
 function parseArgs(argv) {
@@ -11,6 +12,7 @@ function parseArgs(argv) {
     stream: false,
     showThinking: false,
     traceDir: 'examples/workflow_email/traces',
+    conversationId: null,
     showStepJson: false,
     nerdstats: true,
   }
@@ -44,6 +46,11 @@ function parseArgs(argv) {
     }
     if (arg === '--trace-dir' && argv[i + 1]) {
       options.traceDir = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg === '--conversation-id' && argv[i + 1]) {
+      options.conversationId = argv[i + 1]
       i += 1
       continue
     }
@@ -266,10 +273,12 @@ async function main() {
   const messages = initialMessages()
   const traceDir = path.resolve(process.cwd(), args.traceDir)
   fs.mkdirSync(traceDir, { recursive: true })
-  const traceFile = path.join(traceDir, `chat-session-${timestampSession()}.jsonl`)
+  const conversationId = args.conversationId || crypto.randomUUID()
+  const traceFile = path.join(traceDir, `chat-session-${timestampSession()}-${conversationId}.jsonl`)
 
   console.log('Chat Email Assistant')
   console.log("Type your request. Type 'exit' to quit.\n")
+  console.log(`Conversation ID: ${conversationId}`)
   console.log(`Trace log: ${traceFile}\n`)
 
   const rl = readline.createInterface({ input: stdin, output: stdout })
@@ -301,7 +310,10 @@ async function main() {
 
       const streamedEvents = []
       const streamState = { currentNode: null, lineOpen: false, lastTokenLabel: null }
-      const workflowOptions = { telemetry: { nerdstats: args.nerdstats } }
+      const workflowOptions = {
+        telemetry: { nerdstats: args.nerdstats },
+        trace: { tenant: { conversation_id: conversationId } },
+      }
       const result = args.stream
         ? parseResultJson(
             await client.runWorkflowYamlStream(
@@ -350,6 +362,7 @@ async function main() {
       const traceRecord = {
         timestamp: new Date().toISOString(),
         turn,
+        conversation_id: conversationId,
         workflow_path: workflowPath,
         workflow_id: result.workflow_id,
         terminal_node: result.terminal_node,
