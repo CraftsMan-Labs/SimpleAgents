@@ -561,6 +561,7 @@ pub struct YamlWorkflowEvent {
     pub delta: Option<String>,
     pub token_kind: Option<YamlWorkflowTokenKind>,
     pub is_terminal_node_token: Option<bool>,
+    pub token_id: Option<u64>,
     pub elapsed_ms: Option<u128>,
     pub metadata: Option<Value>,
 }
@@ -1275,6 +1276,12 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     let mut aggregated = String::new();
                     let mut delta_filter = StructuredJsonDeltaFilter::default();
                     let include_raw_debug = include_raw_stream_debug_events();
+                    let mut next_token_id: u64 = 1;
+                    let mut allocate_token_id = || {
+                        let token_id = next_token_id;
+                        next_token_id = next_token_id.saturating_add(1);
+                        token_id
+                    };
                     let mut json_text_formatter = if request.stream_json_as_text {
                         Some(StreamJsonAsTextFormatter::default())
                     } else {
@@ -1298,6 +1305,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                             delta: Some(reasoning_delta.clone()),
                                             token_kind: Some(YamlWorkflowTokenKind::Thinking),
                                             is_terminal_node_token: Some(request.is_terminal_node),
+                                            token_id: Some(allocate_token_id()),
                                             elapsed_ms: None,
                                             metadata: None,
                                         });
@@ -1334,6 +1342,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                                 is_terminal_node_token: Some(
                                                     request.is_terminal_node,
                                                 ),
+                                                token_id: Some(allocate_token_id()),
                                                 elapsed_ms: None,
                                                 metadata: None,
                                             });
@@ -1353,6 +1362,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                                 is_terminal_node_token: Some(
                                                     request.is_terminal_node,
                                                 ),
+                                                token_id: Some(allocate_token_id()),
                                                 elapsed_ms: None,
                                                 metadata: None,
                                             });
@@ -1371,6 +1381,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                             delta: Some(filtered_delta),
                                             token_kind: Some(YamlWorkflowTokenKind::Output),
                                             is_terminal_node_token: Some(request.is_terminal_node),
+                                            token_id: Some(allocate_token_id()),
                                             elapsed_ms: None,
                                             metadata: None,
                                         });
@@ -1396,6 +1407,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 delta: None,
                                 token_kind: None,
                                 is_terminal_node_token: None,
+                                token_id: None,
                                 elapsed_ms: None,
                                 metadata: None,
                             });
@@ -1440,6 +1452,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             delta: None,
                             token_kind: None,
                             is_terminal_node_token: None,
+                            token_id: None,
                             elapsed_ms: None,
                             metadata: None,
                         });
@@ -1656,6 +1669,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             delta: None,
             token_kind: None,
             is_terminal_node_token: None,
+            token_id: None,
             elapsed_ms: Some(0),
             metadata: None,
         });
@@ -1707,6 +1721,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 delta: None,
                 token_kind: None,
                 is_terminal_node_token: None,
+                token_id: None,
                 elapsed_ms: Some(started.elapsed().as_millis()),
                 metadata: None,
             });
@@ -1774,6 +1789,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     delta: None,
                     token_kind: None,
                     is_terminal_node_token: None,
+                    token_id: None,
                     elapsed_ms: Some(started.elapsed().as_millis()),
                     metadata: Some(json!({
                         "model": request.model.clone(),
@@ -1962,6 +1978,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 delta: None,
                 token_kind: None,
                 is_terminal_node_token: None,
+                token_id: None,
                 elapsed_ms: Some(elapsed_ms),
                 metadata: None,
             });
@@ -2020,6 +2037,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             delta: None,
             token_kind: None,
             is_terminal_node_token: None,
+            token_id: None,
             elapsed_ms: Some(output.total_elapsed_ms),
             metadata: None,
         });
