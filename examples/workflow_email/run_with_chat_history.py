@@ -161,11 +161,14 @@ def _print_stream_event(
     delta = event.get("delta")
     token_kind = event.get("token_kind")
     is_terminal_node_token = event.get("is_terminal_node_token")
-    expected_event_type = (
-        "node_stream_raw_delta" if show_thinking else "node_stream_delta"
-    )
+    is_displayed_stream_event = event_type == "node_stream_delta"
+    if show_thinking:
+        is_displayed_stream_event = event_type in {
+            "node_stream_thinking_delta",
+            "node_stream_output_delta",
+        }
 
-    if event_type == expected_event_type and isinstance(delta, str):
+    if is_displayed_stream_event and isinstance(delta, str):
         display_node_id = (
             node_id
             if isinstance(node_id, str)
@@ -273,12 +276,17 @@ def _run_turn(
         on_event=on_event,
     )
 
+    expected_types = (
+        {"node_stream_thinking_delta", "node_stream_output_delta"}
+        if show_thinking
+        else {"node_stream_delta"}
+    )
     if not any(
-        isinstance(event, dict) and event.get("event_type") == "node_stream_delta"
+        isinstance(event, dict) and event.get("event_type") in expected_types
         for event in streamed_events
     ):
         print(
-            "[stream] No node_stream_delta events observed. "
+            f"[stream] No {', '.join(sorted(expected_types))} events observed. "
             "Ensure llm_call nodes are configured with stream=true."
         )
     elif stream_state.get("line_open", False):
