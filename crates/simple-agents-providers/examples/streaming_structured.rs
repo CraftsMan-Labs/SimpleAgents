@@ -54,6 +54,7 @@ async fn main() {
                 finish_reason: None,
             }],
             created: None,
+            usage: None,
         }),
         Ok(CompletionChunk {
             id: "chunk_2".to_string(),
@@ -68,6 +69,7 @@ async fn main() {
                 finish_reason: None,
             }],
             created: None,
+            usage: None,
         }),
         Ok(CompletionChunk {
             id: "chunk_3".to_string(),
@@ -82,6 +84,7 @@ async fn main() {
                 finish_reason: None,
             }],
             created: None,
+            usage: None,
         }),
         Ok(CompletionChunk {
             id: "chunk_4".to_string(),
@@ -96,6 +99,7 @@ async fn main() {
                 finish_reason: Some(FinishReason::Stop),
             }],
             created: None,
+            usage: None,
         }),
     ];
 
