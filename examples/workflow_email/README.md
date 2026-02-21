@@ -125,6 +125,9 @@ Run the dedicated interactive chat-history example:
 
 ```bash
 uv run --directory examples python workflow_email/run_with_chat_history.py
+
+# Make target equivalent:
+make run-python-chat-history
 ```
 
 Node equivalent:
@@ -149,6 +152,18 @@ make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun
 
 # Optional parity flags: --include-events --stream --show-thinking --show-step-json
 make run-go-chat-history GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
+```
+
+Cross-language parity check (same YAML, same flags):
+
+```bash
+make run-python-chat-history \
+  WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml \
+  PY_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
+
+make run-go-chat-history \
+  WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml \
+  GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
 ```
 
 Run the separate unified system:
