@@ -275,7 +275,6 @@ type WorkflowEvent struct {
 	Delta               *string        `json:"delta,omitempty"`
 	TokenKind           *string        `json:"token_kind,omitempty"`
 	IsTerminalNodeToken *bool          `json:"is_terminal_node_token,omitempty"`
-	TokenID             *uint64        `json:"token_id,omitempty"`
 	ElapsedMS           *uint64        `json:"elapsed_ms,omitempty"`
 	Metadata            map[string]any `json:"metadata,omitempty"`
 }
