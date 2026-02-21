@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Tuple
 
 import pytest  # type: ignore[reportMissingImports]
@@ -58,11 +59,7 @@ def test_local_proxy_connection():
 def test_local_proxy_multiple_requests():
     client, model = _client()
     # Use simple, safe prompts to avoid triggering content filters
-    prompts = [
-        "List three colors.",
-        "Name a programming language.",
-        "Say hello world."
-    ]
+    prompts = ["List three colors.", "Name a programming language.", "Say hello world."]
     for prompt in prompts:
         response = _expect_response(
             client.complete(model, prompt, max_tokens=50, temperature=0.7)
@@ -98,3 +95,60 @@ def test_local_proxy_conversation():
         client.complete(model, messages, max_tokens=30, temperature=0.2)
     )
     assert response.content
+
+
+def test_local_proxy_workflow_stream_includes_nerdstats(tmp_path: Path) -> None:
+    client, model = _client()
+
+    workflow_path = tmp_path / "live-workflow-stream-nerdstats.yaml"
+    workflow_path.write_text(
+        f"""id: live-workflow-stream-nerdstats-test
+version: 1.0.0
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: {model}
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: true
+        heal: false
+    config:
+      prompt: |
+        Return JSON only:
+        {{
+          \"state\": \"capabilities_query\",
+          \"reason\": \"short\"
+        }}
+""",
+        encoding="utf-8",
+    )
+
+    events: list[dict[str, object]] = []
+
+    def on_event(event: dict[str, object]) -> None:
+        events.append(event)
+
+    result = client.run_workflow_yaml_stream(
+        str(workflow_path),
+        {"messages": [{"role": "user", "content": "Hi"}]},
+        on_event=on_event,
+        workflow_options={"telemetry": {"nerdstats": True}},
+    )
+
+    assert isinstance(result, dict)
+    assert isinstance(result.get("terminal_node"), str)
+
+    completed_events = [
+        event for event in events if event.get("event_type") == "workflow_completed"
+    ]
+    assert completed_events, "expected workflow_completed event"
+    metadata = completed_events[-1].get("metadata")
+    assert isinstance(metadata, dict)
+    nerdstats = metadata.get("nerdstats")
+    assert isinstance(nerdstats, dict)
+    assert "total_elapsed_ms" in nerdstats
+    assert "token_metrics_available" in nerdstats
+    assert nerdstats.get("ttft_ms") is None or isinstance(nerdstats.get("ttft_ms"), int)
