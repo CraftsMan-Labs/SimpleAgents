@@ -108,3 +108,31 @@ Verification commands executed for parity batch:
 - `make test-node`
 - `make test-binding-contracts`
 - `make test-binding-layers`
+
+## Cross-binding deterministic scenario routing fix (2026-02-21)
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| D1 | Eliminate Go/Node first-turn routing drift for shared chat-history workflow | Same YAML + same prompt produced different terminal paths, which looks like binding/core inconsistency and breaks parity expectations | Workflow routing is stable across Go and Node runs for the same prompt, and stream display behavior is aligned for `--show-thinking` | completed |
+
+Verification commands executed for D1:
+
+- `printf 'Yo\n' | make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --include-events --stream --show-thinking --show-step-json'`
+- `printf 'Yo\n' | make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml NODE_CHAT_FLAGS='--max-turns 1 --include-events --stream --show-thinking --show-step-json'`
+- `cargo build -p simple-agents-ffi --release && CGO_CFLAGS='-I/home/rishub/Desktop/projects/rishub/SimpleAgents/crates/simple-agents-ffi/include' CGO_LDFLAGS='-L/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release' LD_LIBRARY_PATH='/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release:$LD_LIBRARY_PATH' GOCACHE='/home/rishub/Desktop/projects/rishub/SimpleAgents/.go-cache' go test ./...` (from `bindings/go`)
+- `npm test` (from `crates/simple-agents-napi`)
+
+## Cross-language stream token parity hardening (2026-02-21)
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| D2 | Align Python/Go/Node stream token metadata and fallback behavior | Users need identical token-level debugging semantics across bindings when `--stream --show-thinking` is enabled | Stream output includes token identifiers plus step/kind/terminal metadata in all runners; workflow events expose `token_id`; runners fall back to `node_stream_delta` when raw-thinking tokens are absent | completed |
+
+Verification commands executed for D2:
+
+- `cargo test -p simple-agents-workflow --lib --tests`
+- `cargo build -p simple-agents-ffi --release && CGO_CFLAGS='-I/home/rishub/Desktop/projects/rishub/SimpleAgents/crates/simple-agents-ffi/include' CGO_LDFLAGS='-L/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release' LD_LIBRARY_PATH='/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release:$LD_LIBRARY_PATH' GOCACHE='/home/rishub/Desktop/projects/rishub/SimpleAgents/.go-cache' go test ./...` (from `bindings/go`)
+- `npm test` (from `crates/simple-agents-napi`)
+- `printf 'Hi\n' | make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml PY_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json --trace-dir workflow_email/traces'`
+- `printf 'Hi\n' | make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json'`
+- `printf 'Hi\n' | make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml NODE_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json'`
