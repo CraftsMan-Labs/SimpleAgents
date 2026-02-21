@@ -4241,7 +4241,6 @@ nodes:
                     conversation_id: Some("6e6d3125-b9f1-4af2-af1f-7cca024a2c42".to_string()),
                     ..YamlWorkflowTraceTenantContext::default()
                 },
-                ..YamlWorkflowTraceOptions::default()
             },
         };
 
