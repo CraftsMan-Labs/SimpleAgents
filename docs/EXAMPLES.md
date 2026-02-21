@@ -183,5 +183,7 @@ Cross-language runnable examples:
 
 - Python: `examples/workflow_email/run_with_python_package.py`
 - Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
+- Node (chat history input): `examples/workflow_email/node/run_with_chat_history.js`
 - Node: `examples/workflow_email/run_with_node_package.js`
 - Go: `bindings/go/examples/workflow_yaml/main.go`
+- Go (chat history input): `bindings/go/examples/workflow_chat_history/main.go`
