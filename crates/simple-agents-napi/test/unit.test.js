@@ -7,3 +7,15 @@ test('runtime exports include Client', () => {
   assert.ok('Client' in binding);
   assert.strictEqual(typeof binding.Client, 'function');
 });
+
+test('Client prototype includes workflow parity methods', () => {
+  const methods = [
+    'runWorkflowYamlWithEvents',
+    'runEmailWorkflowYamlWithEvents',
+    'runWorkflowYamlStream',
+    'runEmailWorkflowYamlStream',
+  ];
+  for (const method of methods) {
+    assert.strictEqual(typeof binding.Client.prototype[method], 'function');
+  }
+});
