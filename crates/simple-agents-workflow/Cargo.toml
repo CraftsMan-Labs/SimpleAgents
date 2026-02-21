@@ -18,7 +18,7 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 simple-agent-type.workspace = true
 simple-agents-healing.workspace = true
-simple-agents-core = { path = "../simple-agents-core", version = "0.2.7" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.2.8" }
 thiserror.workspace = true
 tokio.workspace = true
 opentelemetry = { version = "0.24", features = ["trace"] }
