@@ -33,7 +33,6 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
 use simple_agents_workflow::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
     YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
     YamlWorkflowRunOptions,
@@ -3003,13 +3002,14 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, email_text, on_event=None))]
+    #[pyo3(signature = (workflow_path, email_text, on_event=None, workflow_options=None))]
     fn run_email_workflow_yaml_stream(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         email_text: &str,
         on_event: Option<Py<PyAny>>,
+        workflow_options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
             return Err(PyRuntimeError::new_err(
@@ -3026,6 +3026,14 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+        let run_options = workflow_options
+            .map(|value| {
+                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let runtime = self
             .runtime
@@ -3035,12 +3043,13 @@ impl Client {
         let event_sink = PythonWorkflowEventSink { callback: on_event };
         let output = runtime
             .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                     workflow_path_buf.as_path(),
                     &workflow_input,
                     &self.client,
                     Some(&custom_executor),
                     Some(&event_sink),
+                    &run_options,
                 ),
             )
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
@@ -3052,13 +3061,14 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, workflow_input, on_event=None))]
+    #[pyo3(signature = (workflow_path, workflow_input, on_event=None, workflow_options=None))]
     fn run_workflow_yaml_stream(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         workflow_input: &Bound<'_, PyAny>,
         on_event: Option<Py<PyAny>>,
+        workflow_options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
             return Err(PyRuntimeError::new_err(
@@ -3076,6 +3086,14 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
+        let run_options = workflow_options
+            .map(|value| {
+                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
 
         let runtime = self
             .runtime
@@ -3085,12 +3103,13 @@ impl Client {
         let event_sink = PythonWorkflowEventSink { callback: on_event };
         let output = runtime
             .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events(
+                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                     workflow_path_buf.as_path(),
                     &workflow_input_value,
                     &self.client,
                     Some(&custom_executor),
                     Some(&event_sink),
+                    &run_options,
                 ),
             )
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
