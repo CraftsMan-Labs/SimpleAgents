@@ -188,6 +188,10 @@ impl YamlWorkflowEventSink for CallbackWorkflowEventSink {
             }
         }
     }
+
+    fn is_cancelled(&self) -> bool {
+        self.callback_failed()
+    }
 }
 
 #[derive(Serialize)]
