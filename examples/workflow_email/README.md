@@ -139,18 +139,16 @@ node examples/workflow_email/node/run_with_chat_history.js \
 Go equivalent:
 
 ```bash
-cargo build -p simple-agents-ffi --release
-cd bindings/go
 WORKFLOW_PROVIDER=openai \
 WORKFLOW_API_BASE=https://api.openai.com/v1 \
 WORKFLOW_API_KEY=your_key_here \
-CGO_CFLAGS="-I$PWD/../../crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/../../target/release" \
-LD_LIBRARY_PATH="$PWD/../../target/release:${LD_LIBRARY_PATH:-}" \
-go run ./examples/workflow_chat_history \
-  --workflow ../../examples/workflow_email/email-chat-draft-or-clarify.yaml
+make run-go-chat-history
+
+# Optional: pick a workflow YAML
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
 
 # Optional parity flags: --include-events --stream --show-thinking --show-step-json
+make run-go-chat-history GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
 ```
 
 Run the separate unified system:

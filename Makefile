@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-crates publish-python publish-all \
@@ -16,12 +16,15 @@ NAPI_CRATE ?= simple-agents-napi
 NAPI_PROJECT_DIR ?= crates/simple-agents-napi
 NAPI_PACKAGE_JSON ?= $(NAPI_PROJECT_DIR)/package.json
 ENV_FILE ?= $(CURDIR)/.env
+EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
 	simple-agents-core simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
+WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
+GO_CHAT_FLAGS ?=
 
 help:
 	@echo "Testing & Quality:"
@@ -36,6 +39,7 @@ help:
 	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
 	@echo "  make example-full-api      - Run examples/full_api_example.rs"
 	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
+	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
@@ -108,6 +112,18 @@ example-node: build-node
 	node examples/node_client.js
 
 examples: example-providers example-full-api example-node
+
+run-go-chat-history: release-ffi
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cd $(GO_BINDINGS_DIR) && \
+	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
+	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	GOCACHE="$(GO_CACHE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+	go run ./examples/workflow_chat_history --workflow ../../$(WORKFLOW_YAML) $(GO_CHAT_FLAGS)
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
