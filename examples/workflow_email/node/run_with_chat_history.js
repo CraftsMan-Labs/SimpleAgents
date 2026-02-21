@@ -165,8 +165,11 @@ function printStepJsonSummary(result) {
 function printStreamEvent(event, showThinking, streamState) {
   if (!event || typeof event !== 'object') return
   const eventType = event.event_type
-  const expectedEventType = showThinking ? 'node_stream_raw_delta' : 'node_stream_delta'
-  if (eventType === expectedEventType && typeof event.delta === 'string') {
+  const isDisplayedStreamEvent =
+    eventType === 'node_stream_delta' ||
+    (showThinking && eventType === 'node_stream_raw_delta')
+
+  if (isDisplayedStreamEvent && typeof event.delta === 'string') {
     const displayNode = typeof event.node_id === 'string' ? event.node_id : typeof event.step_id === 'string' ? event.step_id : 'workflow'
     if (streamState.currentNode !== displayNode) {
       if (streamState.lineOpen) process.stdout.write('\n')
@@ -186,6 +189,21 @@ function parseEventJson(eventJson) {
     return JSON.parse(eventJson)
   } catch {
     return null
+  }
+}
+
+function extractEventJson(firstArg, secondArg) {
+  if (typeof secondArg === 'string') return secondArg
+  if (typeof firstArg === 'string') return firstArg
+  return null
+}
+
+function parseResultJson(resultJson) {
+  if (typeof resultJson !== 'string') return resultJson
+  try {
+    return JSON.parse(resultJson)
+  } catch {
+    return {}
   }
 }
 
@@ -246,22 +264,34 @@ async function main() {
       const streamedEvents = []
       const streamState = { currentNode: null, lineOpen: false }
       const result = args.stream
-        ? client.runWorkflowYamlStream(
+        ? parseResultJson(
+            await client.runWorkflowYamlStream(
             workflowPath,
             workflowInput,
-            (eventJson) => {
+            (errOrEventJson, maybeEventJson) => {
+              const eventJson = extractEventJson(errOrEventJson, maybeEventJson)
+              if (eventJson === null) return
               const event = parseEventJson(eventJson)
               if (event === null) return
               streamedEvents.push(event)
               printStreamEvent(event, args.showThinking, streamState)
             },
-          )
+          ))
         : args.includeEvents
           ? client.runWorkflowYamlWithEvents(workflowPath, workflowInput)
           : client.runWorkflowYaml(workflowPath, workflowInput)
 
       if (args.stream && streamState.lineOpen) {
         process.stdout.write('\n')
+      }
+
+      if (args.stream) {
+        const hasVisibleStreamEvents = streamedEvents.some(
+          (event) => event && (event.event_type === 'node_stream_delta' || event.event_type === 'node_stream_raw_delta'),
+        )
+        if (!hasVisibleStreamEvents) {
+          console.log('[stream] No node stream delta events observed. Ensure llm_call nodes are configured with stream=true and your provider/model supports streaming.')
+        }
       }
 
       if (args.showStepJson) {
