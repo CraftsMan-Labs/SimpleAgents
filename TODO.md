@@ -126,7 +126,7 @@ Verification commands executed for D1:
 
 | ID | Task | Why this is needed | Expected outcome | Status |
 |---|---|---|---|---|
-| D2 | Align Python/Go/Node stream token metadata and fallback behavior | Users need identical token-level debugging semantics across bindings when `--stream --show-thinking` is enabled | Stream output includes token identifiers plus step/kind/terminal metadata in all runners; workflow events expose `token_id`; runners fall back to `node_stream_delta` when raw-thinking tokens are absent | completed |
+| D2 | Align Python/Go/Node stream token metadata and fallback behavior | Users need identical token-level debugging semantics across bindings when `--stream --show-thinking` is enabled | Stream output includes token identifiers plus step/kind/terminal metadata in all runners; runners fall back to `node_stream_delta` when raw-thinking tokens are absent | completed |
 
 Verification commands executed for D2:
 
@@ -136,3 +136,15 @@ Verification commands executed for D2:
 - `printf 'Hi\n' | make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml PY_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json --trace-dir workflow_email/traces'`
 - `printf 'Hi\n' | make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json'`
 - `printf 'Hi\n' | make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml NODE_CHAT_FLAGS='--max-turns 1 --stream --show-thinking --show-step-json'`
+
+## Live streaming regression guards (2026-02-21)
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| D3 | Add live binding tests for explicit workflow stream event types | Streaming regressions should be caught against real provider behavior before release | Go and Node live suites assert explicit stream event contract (`node_stream_thinking_delta`, `node_stream_output_delta`, no legacy `node_stream_raw_delta`) | completed |
+
+Verification commands executed for D3:
+
+- `cargo test -p simple-agents-workflow --lib --tests`
+- `cargo build -p simple-agents-ffi --release && CGO_CFLAGS='-I/home/rishub/Desktop/projects/rishub/SimpleAgents/crates/simple-agents-ffi/include' CGO_LDFLAGS='-L/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release' LD_LIBRARY_PATH='/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release:$LD_LIBRARY_PATH' GOCACHE='/home/rishub/Desktop/projects/rishub/SimpleAgents/.go-cache' go test ./...` (from `bindings/go`)
+- `npm --prefix crates/simple-agents-napi run test:live` (env-gated)
