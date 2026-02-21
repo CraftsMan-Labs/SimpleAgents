@@ -25,7 +25,7 @@ WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
 WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
 GO_CHAT_FLAGS ?=
-PY_CHAT_FLAGS ?=
+PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
 NODE_CHAT_FLAGS ?=
 JS_RUNTIME ?= node
 
@@ -142,7 +142,10 @@ run-node-chat-history: build-node
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	$(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS)
+	case " $(NODE_CHAT_FLAGS) " in \
+	  *" --show-thinking "*) SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW=1 $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
+	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
+	esac
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
