@@ -165,20 +165,32 @@ function printStepJsonSummary(result) {
 function printStreamEvent(event, showThinking, streamState) {
   if (!event || typeof event !== 'object') return
   const eventType = event.event_type
-  const isDisplayedStreamEvent =
-    eventType === 'node_stream_delta' ||
-    (showThinking && eventType === 'node_stream_raw_delta')
+  const isDisplayedStreamEvent = showThinking
+    ? eventType === 'node_stream_raw_delta' || (eventType === 'node_stream_delta' && !streamState.rawSeen)
+    : eventType === 'node_stream_delta'
 
   if (isDisplayedStreamEvent && typeof event.delta === 'string') {
     const displayNode = typeof event.node_id === 'string' ? event.node_id : typeof event.step_id === 'string' ? event.step_id : 'workflow'
     if (streamState.currentNode !== displayNode) {
       if (streamState.lineOpen) process.stdout.write('\n')
       process.stdout.write(`\nStep: ${displayNode}\n`)
-      process.stdout.write('Streaming: ')
+      process.stdout.write('Streaming:\n')
       streamState.currentNode = displayNode
       streamState.lineOpen = true
     }
-    process.stdout.write(event.delta)
+    let tokenId = typeof event.token_id === 'number' ? event.token_id : null
+    if (tokenId === null) {
+      streamState.tokenSeq += 1
+      tokenId = streamState.tokenSeq
+    }
+    const tokenKind = typeof event.token_kind === 'string' && event.token_kind.trim() !== ''
+      ? event.token_kind.trim().toLowerCase()
+      : 'output'
+    const terminalFlag = event.is_terminal_node_token === true ? 'true' : 'false'
+    process.stdout.write(`[token_id=${tokenId} step=${displayNode} kind=${tokenKind} terminal=${terminalFlag}] ${event.delta}`)
+    if (showThinking && eventType === 'node_stream_raw_delta') {
+      streamState.rawSeen = true
+    }
     return
   }
 }
@@ -262,7 +274,7 @@ async function main() {
       }
 
       const streamedEvents = []
-      const streamState = { currentNode: null, lineOpen: false }
+      const streamState = { currentNode: null, lineOpen: false, tokenSeq: 0, rawSeen: false }
       const result = args.stream
         ? parseResultJson(
             await client.runWorkflowYamlStream(
@@ -286,11 +298,19 @@ async function main() {
       }
 
       if (args.stream) {
+        const sawRawEvent = streamedEvents.some(
+          (event) => event && event.event_type === 'node_stream_raw_delta',
+        )
+        const sawDeltaEvent = streamedEvents.some(
+          (event) => event && event.event_type === 'node_stream_delta',
+        )
         const hasVisibleStreamEvents = streamedEvents.some(
           (event) => event && (event.event_type === 'node_stream_delta' || event.event_type === 'node_stream_raw_delta'),
         )
         if (!hasVisibleStreamEvents) {
-          console.log('[stream] No node stream delta events observed. Ensure llm_call nodes are configured with stream=true and your provider/model supports streaming.')
+          console.log('[stream] No node stream token events observed. Ensure llm_call nodes are configured with stream=true and your provider/model supports this stream mode.')
+        } else if (args.showThinking && !sawRawEvent && sawDeltaEvent) {
+          console.log('[stream] show-thinking enabled, but no node_stream_raw_delta tokens were emitted; falling back to node_stream_delta output tokens.')
         }
       }
 
