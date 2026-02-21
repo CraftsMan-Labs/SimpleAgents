@@ -95,7 +95,7 @@ export declare class Client {
   runWorkflowYaml(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }): any
   runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
   runEmailWorkflowYamlWithEvents(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
-  runWorkflowYamlStream(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): Promise<any>
-  runEmailWorkflowYamlStream(workflowPath: string, emailText: string, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): Promise<any>
+  runWorkflowYamlStream(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): Promise<any>
+  runEmailWorkflowYamlStream(workflowPath: string, emailText: string, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): Promise<any>
   runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
 }
