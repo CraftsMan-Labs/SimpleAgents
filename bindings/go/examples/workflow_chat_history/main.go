@@ -168,7 +168,7 @@ func main() {
 	workflowFlag := flag.String("workflow", "workflow_email/email-chat-draft-or-clarify.yaml", "Path to workflow YAML file")
 	includeEventsFlag := flag.Bool("include-events", false, "Include workflow events in each turn response")
 	maxTurnsFlag := flag.Int("max-turns", 8, "Maximum chat turns before exiting")
-	streamFlag := flag.Bool("stream", false, "Stream workflow node deltas live in terminal when YAML nodes have stream=true")
+	streamFlag := flag.Bool("stream", true, "Stream workflow node deltas live in terminal when YAML nodes have stream=true")
 	showThinkingFlag := flag.Bool("show-thinking", false, "Show raw model stream deltas including thinking tokens")
 	traceDirFlag := flag.String("trace-dir", "examples/workflow_email/traces", "Directory to persist per-turn workflow traces as JSONL")
 	showStepJSONFlag := flag.Bool("show-step-json", false, "Print per-step JSON summaries after execution")
