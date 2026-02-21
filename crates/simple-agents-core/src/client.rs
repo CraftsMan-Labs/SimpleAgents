@@ -687,6 +687,7 @@ mod tests {
                     finish_reason: None,
                 }],
                 created: None,
+                usage: None,
             }
         }
     }

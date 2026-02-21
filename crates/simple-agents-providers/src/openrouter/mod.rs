@@ -41,7 +41,7 @@ use reqwest::Client;
 use simple_agent_type::prelude::*;
 use std::time::Duration;
 
-use crate::openai::{OpenAICompletionRequest, OpenAICompletionResponse};
+use crate::openai::{OpenAICompletionRequest, OpenAICompletionResponse, OpenAIStreamOptions};
 use crate::utils::DEFAULT_TIMEOUT;
 
 /// OpenRouter API provider.
@@ -177,6 +177,15 @@ impl Provider for OpenRouterProvider {
             top_p: req.top_p,
             n: req.n,
             stream: req.stream,
+            stream_options: req.stream.and_then(|streaming| {
+                if streaming {
+                    Some(OpenAIStreamOptions {
+                        include_usage: true,
+                    })
+                } else {
+                    None
+                }
+            }),
             stop: req.stop.as_ref(),
             response_format: req.response_format.as_ref(),
             tools: req.tools.as_ref(),

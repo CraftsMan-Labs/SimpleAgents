@@ -51,6 +51,19 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Print per-step JSON summaries after execution",
     )
+    parser.add_argument(
+        "--nerdstats",
+        dest="nerdstats",
+        action="store_true",
+        default=True,
+        help="Show end-of-stream nerdstats payload (enabled by default)",
+    )
+    parser.add_argument(
+        "--no-nerdstats",
+        dest="nerdstats",
+        action="store_false",
+        help="Disable end-of-stream nerdstats payload",
+    )
     return parser.parse_args()
 
 
@@ -245,6 +258,73 @@ def _print_step_json_summary(
         print(json.dumps(terminal_output, indent=2, ensure_ascii=True))
 
 
+def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
+    step_timings = result.get("step_timings", [])
+    llm_nodes_without_usage: list[str] = []
+    if isinstance(step_timings, list):
+        for step in step_timings:
+            if not isinstance(step, dict):
+                continue
+            if step.get("node_kind") != "llm_call":
+                continue
+            if step.get("total_tokens") is None and isinstance(
+                step.get("node_id"), str
+            ):
+                llm_nodes_without_usage.append(step["node_id"])
+
+    token_metrics_available = len(llm_nodes_without_usage) == 0
+    total_input_tokens = (
+        result.get("total_input_tokens") if token_metrics_available else None
+    )
+    total_output_tokens = (
+        result.get("total_output_tokens") if token_metrics_available else None
+    )
+    total_tokens = result.get("total_tokens") if token_metrics_available else None
+    total_thinking_tokens = (
+        result.get("total_thinking_tokens") if token_metrics_available else None
+    )
+    tokens_per_second = (
+        result.get("tokens_per_second") if token_metrics_available else None
+    )
+
+    return {
+        "workflow_id": result.get("workflow_id"),
+        "terminal_node": result.get("terminal_node"),
+        "total_elapsed_ms": result.get("total_elapsed_ms"),
+        "ttft_ms": result.get("ttft_ms"),
+        "step_timings": step_timings,
+        "llm_node_metrics": result.get("llm_node_metrics", {}),
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "total_tokens": total_tokens,
+        "total_thinking_tokens": total_thinking_tokens,
+        "tokens_per_second": tokens_per_second,
+        "trace_id": result.get("trace_id"),
+        "token_metrics_available": token_metrics_available,
+        "token_metrics_source": (
+            "provider_usage"
+            if token_metrics_available
+            else "provider_stream_usage_unavailable"
+        ),
+        "llm_nodes_without_usage": llm_nodes_without_usage,
+    }
+
+
+def _extract_nerdstats_from_events(
+    streamed_events: list[dict[str, object]],
+) -> dict[str, object] | None:
+    for event in reversed(streamed_events):
+        if event.get("event_type") != "workflow_completed":
+            continue
+        metadata = event.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        nerdstats = metadata.get("nerdstats")
+        if isinstance(nerdstats, dict):
+            return nerdstats
+    return None
+
+
 def _run_turn(
     client: Client,
     workflow_path: Path,
@@ -252,16 +332,20 @@ def _run_turn(
     include_events: bool,
     stream: bool,
     show_thinking: bool,
+    nerdstats: bool,
     node_names: dict[str, str],
-) -> tuple[dict[str, object], list[dict[str, object]]]:
+) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
+    workflow_options = {"telemetry": {"nerdstats": nerdstats}}
+    client_any: Any = client
     if not stream:
-        result = client.run_workflow_yaml(
+        result = client_any.run_workflow_yaml(
             str(workflow_path),
             workflow_input,
             include_events=include_events,
+            workflow_options=workflow_options,
         )
         events = result.get("events", []) if include_events else []
-        return result, events if isinstance(events, list) else []
+        return result, events if isinstance(events, list) else [], None
 
     streamed_events: list[dict[str, object]] = []
     stream_state: dict[str, object] = {"current_node": None, "line_open": False}
@@ -270,10 +354,11 @@ def _run_turn(
         streamed_events.append(event)
         _print_stream_event(event, show_thinking, stream_state, node_names)
 
-    result = client.run_workflow_yaml_stream(
+    result = client_any.run_workflow_yaml_stream(
         str(workflow_path),
         workflow_input,
         on_event=on_event,
+        workflow_options=workflow_options,
     )
 
     expected_types = (
@@ -292,7 +377,14 @@ def _run_turn(
     elif stream_state.get("line_open", False):
         print()
 
-    return result, streamed_events
+    nerdstats_payload: dict[str, object] | None = None
+    if nerdstats:
+        nerdstats_payload = _extract_nerdstats_from_events(streamed_events)
+        if nerdstats_payload is None:
+            nerdstats_payload = _fallback_nerdstats(result)
+        print(f"Nerdstats: {json.dumps(nerdstats_payload, ensure_ascii=True)}")
+
+    return result, streamed_events, nerdstats_payload
 
 
 def main() -> None:
@@ -340,13 +432,14 @@ def main() -> None:
             "messages": messages,
         }
 
-        result, streamed_events = _run_turn(
+        result, streamed_events, nerdstats_payload = _run_turn(
             client,
             workflow_path,
             workflow_input,
             args.include_events,
             args.stream,
             args.show_thinking,
+            args.nerdstats,
             node_names,
         )
 
@@ -364,6 +457,7 @@ def main() -> None:
             "total_elapsed_ms": result.get("total_elapsed_ms"),
             "user_input": user_input,
             "assistant_output": result.get("terminal_output"),
+            "nerdstats": nerdstats_payload,
             "events": (
                 streamed_events
                 if args.stream
