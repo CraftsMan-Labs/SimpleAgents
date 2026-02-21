@@ -26,7 +26,7 @@ VERSION ?= 0.1.0
 WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
 GO_CHAT_FLAGS ?= --show-thinking
 PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
-NODE_CHAT_FLAGS ?=
+NODE_CHAT_FLAGS ?= --stream --show-thinking
 JS_RUNTIME ?= node
 
 help:
