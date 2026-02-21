@@ -257,18 +257,17 @@ func main() {
 		}
 
 		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
+		lineOpen := false
 		out, runErr := simpleagents.WorkflowYAMLOutput{}, error(nil)
 		switch {
 		case *streamFlag:
 			currentNode := ""
-			lineOpen := false
-			tokenSeq := uint64(0)
-			rawSeen := false
+			lastTokenLabel := ""
 			out, runErr = client.RunWorkflowYAMLStream(ctx, workflowPath, workflowInput, func(event simpleagents.WorkflowEvent) {
 				streamedEvents = append(streamedEvents, event)
 				isDisplayedStreamEvent := event.EventType == "node_stream_delta"
 				if *showThinkingFlag {
-					isDisplayedStreamEvent = event.EventType == "node_stream_raw_delta" || (event.EventType == "node_stream_delta" && !rawSeen)
+					isDisplayedStreamEvent = event.EventType == "node_stream_thinking_delta" || event.EventType == "node_stream_output_delta"
 				}
 				if !isDisplayedStreamEvent || event.Delta == nil {
 					return
@@ -284,29 +283,36 @@ func main() {
 						fmt.Println()
 					}
 					fmt.Printf("\nStep: %s\n", displayNode)
-					fmt.Println("Streaming:")
+					fmt.Print("Streaming: ")
 					currentNode = displayNode
 					lineOpen = true
 				}
-				tokenID := uint64(0)
-				if event.TokenID != nil {
-					tokenID = *event.TokenID
-				} else {
-					tokenSeq += 1
-					tokenID = tokenSeq
+				if *showThinkingFlag {
+					tokenLabelParts := make([]string, 0, 2)
+					if event.TokenKind != nil {
+						trimmed := strings.TrimSpace(*event.TokenKind)
+						if trimmed != "" {
+							tokenLabelParts = append(tokenLabelParts, trimmed)
+						}
+					}
+					if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
+						tokenLabelParts = append(tokenLabelParts, "terminal")
+					}
+					tokenLabel := ""
+					if len(tokenLabelParts) > 0 {
+						tokenLabel = "[" + strings.Join(tokenLabelParts, " ") + "] "
+					}
+					if tokenLabel != "" && tokenLabel != lastTokenLabel {
+						if lineOpen {
+							fmt.Println()
+						}
+						fmt.Printf("%s%s: ", tokenLabel, displayNode)
+						lastTokenLabel = tokenLabel
+						lineOpen = true
+					}
 				}
-				tokenKind := "output"
-				if event.TokenKind != nil {
-					tokenKind = strings.ToLower(strings.TrimSpace(*event.TokenKind))
-				}
-				terminalFlag := "false"
-				if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
-					terminalFlag = "true"
-				}
-				fmt.Printf("[token_id=%d step=%s kind=%s terminal=%s] %s", tokenID, displayNode, tokenKind, terminalFlag, *event.Delta)
-				if *showThinkingFlag && event.EventType == "node_stream_raw_delta" {
-					rawSeen = true
-				}
+				fmt.Print(*event.Delta)
+				lineOpen = true
 			})
 		case *includeEventsFlag:
 			out, runErr = client.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, nil)
@@ -319,25 +325,24 @@ func main() {
 		}
 		if *streamFlag && len(streamedEvents) > 0 {
 			hasVisibleEvents := false
-			sawRawEvents := false
-			sawDeltaEvents := false
+			expectedEventTypes := map[string]bool{"node_stream_delta": true}
+			if *showThinkingFlag {
+				expectedEventTypes = map[string]bool{"node_stream_thinking_delta": true, "node_stream_output_delta": true}
+			}
 			for _, event := range streamedEvents {
-				if event.EventType == "node_stream_raw_delta" || event.EventType == "node_stream_delta" {
+				if expectedEventTypes[event.EventType] {
 					hasVisibleEvents = true
-				}
-				if event.EventType == "node_stream_raw_delta" {
-					sawRawEvents = true
-				}
-				if event.EventType == "node_stream_delta" {
-					sawDeltaEvents = true
 				}
 			}
 			if !hasVisibleEvents {
-				fmt.Println("[stream] No node stream token events observed. Ensure llm_call nodes use stream=true and your provider/model supports this stream mode.")
-			} else if *showThinkingFlag && !sawRawEvents && sawDeltaEvents {
-				fmt.Println("[stream] show-thinking enabled, but no node_stream_raw_delta tokens were emitted; falling back to node_stream_delta output tokens.")
+				if *showThinkingFlag {
+					fmt.Println("[stream] No node_stream_thinking_delta, node_stream_output_delta events observed. Ensure llm_call nodes use stream=true.")
+				} else {
+					fmt.Println("[stream] No node_stream_delta events observed. Ensure llm_call nodes use stream=true.")
+				}
+			} else if lineOpen {
+				fmt.Println()
 			}
-			fmt.Println()
 		}
 
 		if *showStepJSONFlag {
