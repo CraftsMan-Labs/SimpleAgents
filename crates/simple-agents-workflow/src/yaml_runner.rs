@@ -15,7 +15,7 @@ use simple_agents_healing::JsonishParser;
 use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
-use crate::observability::tracing::{workflow_tracer, SpanKind, TraceContext};
+use crate::observability::tracing::{workflow_tracer, SpanKind, TraceContext, WorkflowSpan};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
@@ -112,6 +112,8 @@ pub struct YamlWorkflowTraceTenantContext {
     pub workspace_id: Option<String>,
     #[serde(default)]
     pub user_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
     #[serde(default)]
     pub request_id: Option<String>,
     #[serde(default)]
@@ -263,8 +265,35 @@ fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str
             },
             "retention_days": options.telemetry.retention_days,
             "multi_tenant": options.telemetry.multi_tenant,
-        }
+        },
+        "trace": {
+            "tenant": {
+                "workspace_id": options.trace.tenant.workspace_id,
+                "user_id": options.trace.tenant.user_id,
+                "conversation_id": options.trace.tenant.conversation_id,
+                "request_id": options.trace.tenant.request_id,
+                "run_id": options.trace.tenant.run_id,
+            }
+        },
     })
+}
+
+fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
+    if let Some(workspace_id) = options.trace.tenant.workspace_id.as_deref() {
+        span.set_attribute("tenant.workspace_id", workspace_id);
+    }
+    if let Some(user_id) = options.trace.tenant.user_id.as_deref() {
+        span.set_attribute("tenant.user_id", user_id);
+    }
+    if let Some(conversation_id) = options.trace.tenant.conversation_id.as_deref() {
+        span.set_attribute("tenant.conversation_id", conversation_id);
+    }
+    if let Some(request_id) = options.trace.tenant.request_id.as_deref() {
+        span.set_attribute("tenant.request_id", request_id);
+    }
+    if let Some(run_id) = options.trace.tenant.run_id.as_deref() {
+        span.set_attribute("tenant.run_id", run_id);
+    }
 }
 
 fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
@@ -352,6 +381,81 @@ fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceC
         tracestate: input.tracestate.clone(),
         baggage: input.baggage.clone(),
     })
+}
+
+fn merged_trace_context_for_worker(
+    span_context: Option<&TraceContext>,
+    resolved_trace_id: Option<&str>,
+    options: &YamlWorkflowRunOptions,
+) -> TraceContext {
+    let input_context = options.trace.context.as_ref();
+    let baggage = if let Some(context) = span_context {
+        if !context.baggage.is_empty() {
+            context.baggage.clone()
+        } else {
+            input_context
+                .map(|value| value.baggage.clone())
+                .unwrap_or_default()
+        }
+    } else {
+        input_context
+            .map(|value| value.baggage.clone())
+            .unwrap_or_default()
+    };
+
+    TraceContext {
+        trace_id: span_context
+            .and_then(|context| context.trace_id.clone())
+            .or_else(|| resolved_trace_id.map(|value| value.to_string()))
+            .or_else(|| input_context.and_then(|context| context.trace_id.clone())),
+        span_id: span_context
+            .and_then(|context| context.span_id.clone())
+            .or_else(|| input_context.and_then(|context| context.span_id.clone())),
+        parent_span_id: span_context
+            .and_then(|context| context.parent_span_id.clone())
+            .or_else(|| input_context.and_then(|context| context.parent_span_id.clone())),
+        traceparent: span_context
+            .and_then(|context| context.traceparent.clone())
+            .or_else(|| input_context.and_then(|context| context.traceparent.clone())),
+        tracestate: span_context
+            .and_then(|context| context.tracestate.clone())
+            .or_else(|| input_context.and_then(|context| context.tracestate.clone())),
+        baggage,
+    }
+}
+
+fn custom_worker_context_with_trace(
+    context: &Value,
+    trace_context: &TraceContext,
+    tenant_context: &YamlWorkflowTraceTenantContext,
+) -> Value {
+    let mut context_with_trace = context.clone();
+    let Some(root) = context_with_trace.as_object_mut() else {
+        return context_with_trace;
+    };
+
+    root.insert(
+        "trace".to_string(),
+        json!({
+            "context": {
+                "trace_id": trace_context.trace_id,
+                "span_id": trace_context.span_id,
+                "parent_span_id": trace_context.parent_span_id,
+                "traceparent": trace_context.traceparent,
+                "tracestate": trace_context.tracestate,
+                "baggage": trace_context.baggage,
+            },
+            "tenant": {
+                "workspace_id": tenant_context.workspace_id,
+                "user_id": tenant_context.user_id,
+                "conversation_id": tenant_context.conversation_id,
+                "request_id": tenant_context.request_id,
+                "run_id": tenant_context.run_id,
+            }
+        }),
+    );
+
+    context_with_trace
 }
 
 fn include_raw_stream_debug_events() -> bool {
@@ -1724,6 +1828,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     let trace_id = if options.telemetry.enabled {
         let value = resolve_trace_id(options, &workflow_trace_context);
         workflow_span.set_attribute("trace_id", value.as_str());
+        apply_trace_tenant_attributes(workflow_span.as_mut(), options);
         Some(value)
     } else {
         None
@@ -2009,22 +2114,41 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 );
             }
 
+            let mut handler_span_context: Option<TraceContext> = None;
             let mut handler_span = if options.telemetry.enabled {
-                let (_, mut span) = tracer.start_span(
+                let (span_context, mut span) = tracer.start_span(
                     "handler.invoke",
                     SpanKind::Node,
                     Some(&workflow_trace_context),
                 );
+                handler_span_context = Some(span_context);
                 span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
                 span.set_attribute("handler_name", custom.handler.as_str());
+                apply_trace_tenant_attributes(span.as_mut(), options);
                 Some(span)
             } else {
                 None
             };
 
+            let worker_trace_context = merged_trace_context_for_worker(
+                handler_span_context.as_ref(),
+                trace_id.as_deref(),
+                options,
+            );
+            let worker_context = custom_worker_context_with_trace(
+                &context,
+                &worker_trace_context,
+                &options.trace.tenant,
+            );
+
             let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
                 custom_worker_executor
-                    .execute(custom.handler.as_str(), &payload, email_text, &context)
+                    .execute(
+                        custom.handler.as_str(),
+                        &payload,
+                        email_text,
+                        &worker_context,
+                    )
                     .await
                     .map_err(|message| YamlWorkflowRunError::CustomWorker {
                         node_id: node.id.clone(),
@@ -2229,6 +2353,7 @@ async fn try_run_yaml_via_ir_runtime(
     let trace_id = if options.telemetry.enabled {
         let value = resolve_trace_id(options, &workflow_trace_context);
         workflow_span.set_attribute("trace_id", value.as_str());
+        apply_trace_tenant_attributes(workflow_span.as_mut(), options);
         Some(value)
     } else {
         None
@@ -2253,6 +2378,9 @@ async fn try_run_yaml_via_ir_runtime(
         token_totals: std::sync::Mutex<YamlTokenTotals>,
         node_usage: std::sync::Mutex<BTreeMap<String, YamlLlmTokenUsage>>,
         trace_id: Option<String>,
+        trace_context: Option<TraceContext>,
+        trace_input_context: Option<YamlWorkflowTraceContextInput>,
+        tenant_context: YamlWorkflowTraceTenantContext,
         payload_mode: YamlWorkflowPayloadMode,
     }
 
@@ -2379,12 +2507,33 @@ async fn try_run_yaml_via_ir_runtime(
                 .unwrap_or_default();
 
             let tracer = workflow_tracer();
+            let mut handler_span_context: Option<TraceContext> = None;
             let mut handler_span = if self.trace_id.is_some() {
-                let (_, mut span) = tracer.start_span("handler.invoke", SpanKind::Node, None);
+                let (span_context, mut span) = tracer.start_span(
+                    "handler.invoke",
+                    SpanKind::Node,
+                    self.trace_context.as_ref(),
+                );
+                handler_span_context = Some(span_context);
                 if let Some(trace_id) = self.trace_id.as_ref() {
                     span.set_attribute("trace_id", trace_id.as_str());
                 }
                 span.set_attribute("handler_name", input.tool.as_str());
+                if let Some(workspace_id) = self.tenant_context.workspace_id.as_deref() {
+                    span.set_attribute("tenant.workspace_id", workspace_id);
+                }
+                if let Some(user_id) = self.tenant_context.user_id.as_deref() {
+                    span.set_attribute("tenant.user_id", user_id);
+                }
+                if let Some(conversation_id) = self.tenant_context.conversation_id.as_deref() {
+                    span.set_attribute("tenant.conversation_id", conversation_id);
+                }
+                if let Some(request_id) = self.tenant_context.request_id.as_deref() {
+                    span.set_attribute("tenant.request_id", request_id);
+                }
+                if let Some(run_id) = self.tenant_context.run_id.as_deref() {
+                    span.set_attribute("tenant.run_id", run_id);
+                }
                 span.set_attribute(
                     "node_input",
                     payload_for_span(self.payload_mode, &payload).as_str(),
@@ -2394,10 +2543,36 @@ async fn try_run_yaml_via_ir_runtime(
                 None
             };
 
+            let trace_options = YamlWorkflowRunOptions {
+                telemetry: YamlWorkflowTelemetryConfig::default(),
+                trace: YamlWorkflowTraceOptions {
+                    context: self.trace_input_context.clone(),
+                    tenant: self.tenant_context.clone(),
+                },
+            };
+            let worker_trace_context = merged_trace_context_for_worker(
+                handler_span_context.as_ref(),
+                self.trace_id.as_deref(),
+                &trace_options,
+            );
+            let worker_context = custom_worker_context_with_trace(
+                &context,
+                &worker_trace_context,
+                &self.tenant_context,
+            );
+
             let output_result = worker
-                .execute(&input.tool, &payload, email_text, &context)
+                .execute(&input.tool, &payload, email_text, &worker_context)
                 .await
                 .map_err(ToolExecutionError::Failed);
+
+            if let Some(span) = handler_span.as_mut() {
+                if output_result.is_ok() {
+                    span.add_event("handler.success");
+                } else {
+                    span.add_event("handler.error");
+                }
+            }
 
             if let Some(span) = handler_span.take() {
                 span.end();
@@ -2413,6 +2588,9 @@ async fn try_run_yaml_via_ir_runtime(
         token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
         node_usage: std::sync::Mutex::new(BTreeMap::new()),
         trace_id: trace_id.clone(),
+        trace_context: trace_id.as_ref().map(|_| workflow_trace_context.clone()),
+        trace_input_context: options.trace.context.clone(),
+        tenant_context: options.trace.tenant.clone(),
         payload_mode: options.telemetry.payload_mode,
     };
 
@@ -3129,6 +3307,10 @@ mod tests {
         call_count: AtomicUsize,
     }
 
+    struct CapturingWorker {
+        context: Mutex<Option<Value>>,
+    }
+
     #[async_trait]
     impl YamlWorkflowLlmExecutor for CountingExecutor {
         async fn complete_structured(
@@ -3151,6 +3333,24 @@ mod tests {
                 .lock()
                 .expect("recording sink lock should not be poisoned")
                 .push(event.clone());
+        }
+    }
+
+    #[async_trait]
+    impl YamlWorkflowCustomWorkerExecutor for CapturingWorker {
+        async fn execute(
+            &self,
+            _handler: &str,
+            _payload: &Value,
+            _email_text: &str,
+            context: &Value,
+        ) -> Result<Value, String> {
+            let mut guard = self
+                .context
+                .lock()
+                .map_err(|_| "capturing worker lock should not be poisoned".to_string())?;
+            *guard = Some(context.clone());
+            Ok(json!({"ok": true}))
         }
     }
 
@@ -3727,6 +3927,85 @@ nodes:
     }
 
     #[tokio::test]
+    async fn custom_worker_receives_trace_context_block() {
+        let yaml = r#"
+id: custom-worker-trace-context
+entry_node: lookup
+nodes:
+  - id: lookup
+    node_type:
+      custom_worker:
+        handler: GetRagData
+    config:
+      payload:
+        topic: demo
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let worker = CapturingWorker {
+            context: Mutex::new(None),
+        };
+        let options = YamlWorkflowRunOptions {
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-fixed-ctx".to_string()),
+                    traceparent: Some("00-trace-fixed-ctx-span-fixed-01".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                tenant: YamlWorkflowTraceTenantContext {
+                    conversation_id: Some("7fd67af3-c67d-46cb-95af-08f8ed7b06a5".to_string()),
+                    request_id: Some("turn-7".to_string()),
+                    ..YamlWorkflowTraceTenantContext::default()
+                },
+            },
+            ..YamlWorkflowRunOptions::default()
+        };
+
+        run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            Some(&worker),
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        let captured_context = worker
+            .context
+            .lock()
+            .expect("capturing worker lock should not be poisoned")
+            .clone()
+            .expect("custom worker should receive context");
+
+        assert_eq!(
+            captured_context
+                .get("trace")
+                .and_then(|trace| trace.get("context"))
+                .and_then(|context| context.get("trace_id"))
+                .and_then(Value::as_str),
+            Some("trace-fixed-ctx")
+        );
+        assert_eq!(
+            captured_context
+                .get("trace")
+                .and_then(|trace| trace.get("context"))
+                .and_then(|context| context.get("traceparent"))
+                .and_then(Value::as_str),
+            Some("00-trace-fixed-ctx-span-fixed-01")
+        );
+        assert_eq!(
+            captured_context
+                .get("trace")
+                .and_then(|trace| trace.get("tenant"))
+                .and_then(|tenant| tenant.get("conversation_id"))
+                .and_then(Value::as_str),
+            Some("7fd67af3-c67d-46cb-95af-08f8ed7b06a5")
+        );
+    }
+
+    #[tokio::test]
     async fn event_sink_cancellation_stops_workflow_before_llm_execution() {
         let yaml = r#"
 id: cancellation-test
@@ -3958,6 +4237,10 @@ nodes:
                     traceparent: Some("00-trace-fixed-123-span-1-01".to_string()),
                     ..YamlWorkflowTraceContextInput::default()
                 }),
+                tenant: YamlWorkflowTraceTenantContext {
+                    conversation_id: Some("6e6d3125-b9f1-4af2-af1f-7cca024a2c42".to_string()),
+                    ..YamlWorkflowTraceTenantContext::default()
+                },
                 ..YamlWorkflowTraceOptions::default()
             },
         };
@@ -3982,6 +4265,16 @@ nodes:
                 .and_then(|telemetry| telemetry.get("payload_mode"))
                 .and_then(Value::as_str),
             Some("redacted_payload")
+        );
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("trace"))
+                .and_then(|trace| trace.get("tenant"))
+                .and_then(|tenant| tenant.get("conversation_id"))
+                .and_then(Value::as_str),
+            Some("6e6d3125-b9f1-4af2-af1f-7cca024a2c42")
         );
     }
 
