@@ -18,6 +18,7 @@ typedef struct {
 } SAMessage;
 
 typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);
+typedef int32_t (*SAWorkflowEventCallback)(const char *event_json, void *user_data);
 
 SAClient *sa_client_new_from_env(const char *provider_name);
 void sa_client_free(SAClient *client);
@@ -71,6 +72,22 @@ char *sa_run_workflow_yaml_with_options(
     const char *workflow_path,
     const char *workflow_input_json,
     const char *workflow_options_json
+);
+
+char *sa_run_workflow_yaml_with_events(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json
+);
+
+char *sa_run_workflow_yaml_stream_events(
+    SAClient *client,
+    const char *workflow_path,
+    const char *workflow_input_json,
+    const char *workflow_options_json,
+    SAWorkflowEventCallback callback,
+    void *user_data
 );
 
 char *sa_last_error_message(void);
