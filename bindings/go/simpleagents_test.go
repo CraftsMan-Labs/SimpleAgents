@@ -137,3 +137,35 @@ func TestRunWorkflowYAMLWithOptionsUninitializedClient(t *testing.T) {
 		t.Fatal("expected uninitialized client error")
 	}
 }
+
+func TestRunWorkflowYAMLWithEventsValidation(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLWithEvents(context.Background(), "workflow.yaml", nil, nil)
+	if err == nil {
+		t.Fatal("expected workflowInput validation error")
+	}
+}
+
+func TestRunWorkflowYAMLWithEventsUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLWithEvents(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"}, nil)
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
+func TestRunWorkflowYAMLStreamValidation(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLStream(context.Background(), "workflow.yaml", nil, nil)
+	if err == nil {
+		t.Fatal("expected workflowInput validation error")
+	}
+}
+
+func TestRunWorkflowYAMLStreamUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLStream(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"}, nil)
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}

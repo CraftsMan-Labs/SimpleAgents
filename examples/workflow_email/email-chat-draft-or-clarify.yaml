@@ -18,6 +18,7 @@ nodes:
     node_type:
       llm_call:
         model: ollama-lfm2.5-thinking
+        temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
@@ -56,6 +57,7 @@ nodes:
     node_type:
       llm_call:
         model: ollama-lfm2.5-thinking
+        temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
@@ -77,6 +79,7 @@ nodes:
     node_type:
       llm_call:
         model: ollama-lfm2.5-thinking
+        temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
@@ -96,6 +99,7 @@ nodes:
     node_type:
       llm_call:
         model: ollama-lfm2.5-thinking
+        temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true

@@ -14,3 +14,24 @@ If you also want the custom-worker handler bridge demo, run:
 ```bash
 node examples/workflow_email/run_with_node_package.js
 ```
+
+Interactive chat-history workflow runner (equivalent to Python `run_with_chat_history.py`):
+
+```bash
+make run-node-chat-history
+
+# Use bun runtime:
+make run-node-chat-history JS_RUNTIME=bun
+
+# Run a different YAML file:
+make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
+
+# Pass extra runner flags:
+make run-node-chat-history NODE_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
+
+# Optional flags for Python parity:
+# --include-events
+# --stream
+# --show-thinking
+# --show-step-json
+```

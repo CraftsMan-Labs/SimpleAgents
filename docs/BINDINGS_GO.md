@@ -85,3 +85,8 @@ fmt.Println(out.TotalElapsedMS)
 ```
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
+
+Workflow event parity with Python is available via:
+
+- `RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, options)` for collected events in output.
+- `RunWorkflowYAMLStream(ctx, workflowPath, workflowInput, onEvent)` for live callbacks plus final output.
