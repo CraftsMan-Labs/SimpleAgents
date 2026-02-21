@@ -86,10 +86,6 @@ export interface StreamEvent {
   delta?: StreamDelta
   error?: StreamErrorEvent
 }
-export interface WorkflowRunOptions {
-  telemetry?: Record<string, unknown>
-  trace?: Record<string, unknown>
-}
 export declare class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
@@ -97,5 +93,9 @@ export declare class Client {
   streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
   runEmailWorkflowYaml(workflowPath: string, emailText: string): any
   runWorkflowYaml(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }): any
-  runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: WorkflowRunOptions): any
+  runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
+  runEmailWorkflowYamlWithEvents(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
+  runWorkflowYamlStream(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
+  runEmailWorkflowYamlStream(workflowPath: string, emailText: string, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
+  runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
 }
