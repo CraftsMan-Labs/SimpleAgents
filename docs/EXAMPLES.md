@@ -187,3 +187,9 @@ Cross-language runnable examples:
 - Node: `examples/workflow_email/run_with_node_package.js`
 - Go: `bindings/go/examples/workflow_yaml/main.go`
 - Go (chat history input): `bindings/go/examples/workflow_chat_history/main.go`
+
+Convenience command for Go chat-history workflow runs:
+
+```bash
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
