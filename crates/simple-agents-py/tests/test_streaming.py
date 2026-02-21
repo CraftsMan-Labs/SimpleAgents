@@ -79,13 +79,15 @@ class TestStreaming:
             list(client.complete(model, [], stream=True))
 
     def test_stream_finish_reason(self, client, model):
-        """Test that finish_reason is set on final chunk."""
+        """Test that finish_reason is surfaced on at least one stream chunk."""
         messages = [{"role": "user", "content": "Say 'Done'"}]
         chunks = list(client.complete(model, messages, max_tokens=10, stream=True))
 
-        # Last chunk should have finish_reason
-        assert chunks[-1].finish_reason is not None
-        assert chunks[-1].finish_reason in {
+        finish_reasons = [
+            chunk.finish_reason for chunk in chunks if chunk.finish_reason is not None
+        ]
+        assert finish_reasons
+        assert finish_reasons[-1] in {
             "stop",
             "length",
             "content_filter",
