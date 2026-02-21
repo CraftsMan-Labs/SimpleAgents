@@ -193,3 +193,9 @@ Convenience command for Go chat-history workflow runs:
 ```bash
 make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
 ```
+
+Convenience command for Python chat-history workflow runs:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
