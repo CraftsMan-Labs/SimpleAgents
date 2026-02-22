@@ -148,3 +148,31 @@ Verification commands executed for D3:
 - `cargo test -p simple-agents-workflow --lib --tests`
 - `cargo build -p simple-agents-ffi --release && CGO_CFLAGS='-I/home/rishub/Desktop/projects/rishub/SimpleAgents/crates/simple-agents-ffi/include' CGO_LDFLAGS='-L/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release' LD_LIBRARY_PATH='/home/rishub/Desktop/projects/rishub/SimpleAgents/target/release:$LD_LIBRARY_PATH' GOCACHE='/home/rishub/Desktop/projects/rishub/SimpleAgents/.go-cache' go test ./...` (from `bindings/go`)
 - `npm --prefix crates/simple-agents-napi run test:live` (env-gated)
+
+## YAML native tool-calling rollout plan (2026-02-22)
+
+Scope: Add out-of-the-box tool calling for YAML `llm_call` nodes with strict per-node tool format, rich tracing, schema validation, and opt-in global storage while preserving backward compatibility.
+
+Decisions locked:
+- `tools_format` is strict per node (`openai` or `simplified`), default `openai`
+- Tool result `output_schema` mismatches hard-fail the node
+- Tool trace to globals is opt-in via YAML key only (no default global key)
+- Anthropic remains disabled for tool-calling in this batch; provider update follows separately
+- Tool trace mode is toggleable (`full`, `redacted`, `off`), default `full`
+
+| ID | Task | What is being done | How it will be done | Draft code/context | Expected outcome | Status |
+|---|---|---|---|---|---|---|
+| YT1 | Extend YAML schema for tool-calling | Add additive `llm_call` fields: `tools_format`, `tools`, `tool_choice`, `max_tool_roundtrips`, `tool_calls_global_key` and telemetry toggle `tool_trace_mode` | Update `YamlLlmCall`, run options/config structs, serde defaults, and preserve existing behavior when tools are absent | Primary file: `crates/simple-agents-workflow/src/yaml_runner.rs`; tool structs reuse `simple-agent-type` models where possible | Existing YAML workflows remain valid; new fields parse with safe defaults | completed |
+| YT2 | Add strict validation rules | Enforce tool format matching, tool name uniqueness, schema presence/shape checks, and bounded roundtrips at validation time | Extend `verify_yaml_workflow(...)` diagnostics with precise node/tool error codes and messages | Validation surface: `yaml_runner.rs` diagnostics table and parse checks | Validation fails early for malformed tool specs and passes unchanged workflows | completed |
+| YT3 | Canonicalize tool declarations + request wiring | Normalize configured tool declarations into internal tool config for execution requests | Add normalization helpers for openai/simplified input and map into execution request fields | Wire through `YamlLlmExecutionRequest` and YAML->IR payload mapping so direct and IR paths align | One internal execution path regardless of authoring style | completed |
+| YT4 | Implement runtime tool loop | Execute tool roundtrips in `llm_call` execution with default one roundtrip and configurable cap | In `BorrowedClientExecutor.complete_structured`, send tools to model, execute returned tool calls via custom worker handler name, append tool messages, continue until final answer or cap | Keep anthropic behavior unchanged by relying on provider errors for unsupported tool calling | Native YAML tool calling works for compatible providers; legacy behavior unchanged when no tools configured | completed |
+| YT5 | Add tool I/O tracing + optional globals capture | Trace tool request/response payloads and status; optionally persist traces to globals via YAML key | Emit `node_tool_call_requested/completed/failed/roundtrip_completed` events using `tool_trace_mode`; persist per-node `tool_calls` and optional global key | Event schema: `YamlWorkflowEvent.metadata`; global write path via existing `set_globals/update_globals` context flow and explicit key setter | High-fidelity observability with configurable verbosity and optional global persistence | completed |
+| YT6 | Enforce tool output schema at runtime | Validate tool outputs against optional per-tool `output_schema` before passing back to model and before global capture | Compile/validate JSON schema and hard-fail node on mismatch with actionable error payload/event | Add lightweight schema validation utility in workflow crate; test both pass/fail paths | Tool outputs are contract-safe and predictable for downstream prompts/globals | completed |
+| YT7 | Add/expand tests (no stubs) | Add regression and feature tests for parser, validator, runtime loop, tracing, globals, IR parity, and compatibility | Extend existing `yaml_runner.rs` tests with real assertions and deterministic fixtures; run Rust test suite targets | Tests include openai+simplified modes, mismatch diagnostics, schema failure hard-fail, trace mode toggles, global key behavior | New feature is fully covered and existing behavior remains stable | completed |
+| YT8 | Update docs and examples | Document new YAML contract, trace toggles, and non-breaking rollout details; add example snippets | Update `docs/YAML_WORKFLOW_SYSTEM.md` and workflow examples under `examples/workflow_email/` with `output_schema` and tool-calling snippets | Keep Anthropic caveat explicit in docs for this batch | Users can adopt tool-calling safely with clear migration/usage guidance | completed |
+| YT9 | Verification gates and readiness notes | Run relevant checks and record outcomes with exact commands run | Execute focused and full test commands; capture any follow-up fixes before done | Primary checks: `cargo test -p simple-agents-workflow --lib --tests` plus formatting/lint/build checks as needed | Feature batch is releasable without regressions | completed |
+
+Verification commands executed for YT batch:
+
+- `cargo test -p simple-agents-workflow --lib --tests`
+- `cargo fmt`
