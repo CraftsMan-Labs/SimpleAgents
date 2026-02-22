@@ -8,6 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use simple_agent_type::message::{Message, Role};
 use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::response::FinishReason;
+use simple_agent_type::tool::{
+    ToolCall, ToolChoice, ToolChoiceFunction, ToolChoiceMode, ToolChoiceTool, ToolDefinition,
+    ToolFunction, ToolType,
+};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 };
@@ -90,6 +95,15 @@ pub enum YamlWorkflowPayloadMode {
     RedactedPayload,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlToolTraceMode {
+    #[default]
+    Full,
+    Redacted,
+    Off,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct YamlWorkflowTraceContextInput {
     #[serde(default)]
@@ -134,6 +148,8 @@ pub struct YamlWorkflowTelemetryConfig {
     pub retention_days: u32,
     #[serde(default = "default_true")]
     pub multi_tenant: bool,
+    #[serde(default)]
+    pub tool_trace_mode: YamlToolTraceMode,
 }
 
 impl Default for YamlWorkflowTelemetryConfig {
@@ -145,6 +161,7 @@ impl Default for YamlWorkflowTelemetryConfig {
             payload_mode: YamlWorkflowPayloadMode::FullPayload,
             retention_days: 30,
             multi_tenant: true,
+            tool_trace_mode: YamlToolTraceMode::Full,
         }
     }
 }
@@ -178,6 +195,18 @@ pub struct YamlLlmExecutionResult {
     pub payload: Value,
     pub usage: Option<YamlLlmTokenUsage>,
     pub ttft_ms: Option<u128>,
+    pub tool_calls: Vec<YamlToolCallTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlToolCallTrace {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    pub output: Option<Value>,
+    pub status: String,
+    pub elapsed_ms: u128,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -265,6 +294,11 @@ fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str
             },
             "retention_days": options.telemetry.retention_days,
             "multi_tenant": options.telemetry.multi_tenant,
+            "tool_trace_mode": match options.telemetry.tool_trace_mode {
+                YamlToolTraceMode::Full => "full",
+                YamlToolTraceMode::Redacted => "redacted",
+                YamlToolTraceMode::Off => "off",
+            },
         },
         "trace": {
             "tenant": {
@@ -370,6 +404,37 @@ fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -> String {
         })
         .to_string(),
     }
+}
+
+fn payload_for_tool_trace(mode: YamlToolTraceMode, payload: &Value) -> Value {
+    match mode {
+        YamlToolTraceMode::Full => payload.clone(),
+        YamlToolTraceMode::Redacted => json!({
+            "redacted": true,
+            "value_type": json_type_name(payload),
+        }),
+        YamlToolTraceMode::Off => Value::Null,
+    }
+}
+
+fn validate_json_schema(schema: &Value) -> Result<(), String> {
+    jsonschema::JSONSchema::compile(schema)
+        .map(|_| ())
+        .map_err(|error| format!("invalid JSON schema: {error}"))
+}
+
+fn validate_schema_instance(schema: &Value, instance: &Value) -> Result<(), String> {
+    let validator = jsonschema::JSONSchema::compile(schema)
+        .map_err(|error| format!("invalid JSON schema: {error}"))?;
+    if let Err(errors) = validator.validate(instance) {
+        let message = errors
+            .into_iter()
+            .next()
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "unknown schema validation error".to_string());
+        return Err(format!("schema validation failed: {message}"));
+    }
+    Ok(())
 }
 
 fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceContext> {
@@ -976,6 +1041,14 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
                 });
             }
 
+            if !llm.tools.is_empty() {
+                return Err(YamlToIrError::UnsupportedNode {
+                    node_id: node.id.clone(),
+                    reason: "llm_call.tools are not represented in canonical IR llm nodes yet"
+                        .to_string(),
+                });
+            }
+
             let next = single_next_for_node(&outgoing, &node.id)?;
             nodes.push(Node {
                 id: node.id.clone(),
@@ -1138,6 +1211,19 @@ pub struct YamlLlmExecutionRequest {
     pub schema: Value,
     pub stream: bool,
     pub heal: bool,
+    pub tools: Vec<YamlResolvedTool>,
+    pub tool_choice: Option<ToolChoice>,
+    pub max_tool_roundtrips: u8,
+    pub tool_calls_global_key: Option<String>,
+    pub tool_trace_mode: YamlToolTraceMode,
+    pub execution_context: Value,
+    pub email_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct YamlResolvedTool {
+    pub definition: ToolDefinition,
+    pub output_schema: Option<Value>,
 }
 
 #[async_trait]
@@ -1406,6 +1492,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
+        custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     }
 
     #[async_trait]
@@ -1426,6 +1513,280 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     Message::user(&request.prompt),
                 ]
             };
+
+            if !request.tools.is_empty() {
+                if request.stream {
+                    return Err(
+                        "llm_call.stream=true is not supported when llm_call.tools are configured"
+                            .to_string(),
+                    );
+                }
+
+                let mut tool_traces: Vec<YamlToolCallTrace> = Vec::new();
+                let mut conversation = messages;
+                let mut usage_total: Option<YamlLlmTokenUsage> = None;
+
+                for roundtrip in 0..=request.max_tool_roundtrips {
+                    let mut builder = CompletionRequest::builder()
+                        .model(&request.model)
+                        .messages(conversation.clone())
+                        .tools(request.tools.iter().map(|t| t.definition.clone()).collect());
+
+                    if let Some(choice) = request.tool_choice.clone() {
+                        builder = builder.tool_choice(choice);
+                    }
+
+                    let completion_request = builder
+                        .build()
+                        .map_err(|error| format!("failed to build completion request: {error}"))?;
+
+                    let outcome = self
+                        .client
+                        .complete(&completion_request, CompletionOptions::default())
+                        .await
+                        .map_err(|error| error.to_string())?;
+
+                    let response = match outcome {
+                        CompletionOutcome::Response(response) => response,
+                        CompletionOutcome::HealedJson(healed) => healed.response,
+                        CompletionOutcome::CoercedSchema(coerced) => coerced.response,
+                        CompletionOutcome::Stream(_) => {
+                            return Err(
+                                "streaming outcome is unsupported for tool-enabled llm_call"
+                                    .to_string(),
+                            )
+                        }
+                    };
+
+                    if let Some(usage) = usage_total.as_mut() {
+                        usage.prompt_tokens += response.usage.prompt_tokens;
+                        usage.completion_tokens += response.usage.completion_tokens;
+                        usage.total_tokens += response.usage.total_tokens;
+                    } else {
+                        usage_total = Some(YamlLlmTokenUsage {
+                            prompt_tokens: response.usage.prompt_tokens,
+                            completion_tokens: response.usage.completion_tokens,
+                            total_tokens: response.usage.total_tokens,
+                            thinking_tokens: None,
+                        });
+                    }
+
+                    let choice = response
+                        .choices
+                        .first()
+                        .ok_or_else(|| "completion returned no choices".to_string())?;
+
+                    if choice.finish_reason != FinishReason::ToolCalls {
+                        let content = response.content().ok_or_else(|| {
+                            "completion returned empty content for structured payload".to_string()
+                        })?;
+                        let payload: Value = serde_json::from_str(content).map_err(|error| {
+                            format!("failed to parse structured completion JSON: {error}")
+                        })?;
+                        return Ok(YamlLlmExecutionResult {
+                            payload,
+                            usage: usage_total,
+                            ttft_ms: None,
+                            tool_calls: tool_traces,
+                        });
+                    }
+
+                    if roundtrip >= request.max_tool_roundtrips {
+                        return Err(format!(
+                            "tool call roundtrip limit reached for node '{}' (max={})",
+                            request.node_id, request.max_tool_roundtrips
+                        ));
+                    }
+
+                    let tool_calls: Vec<ToolCall> =
+                        choice.message.tool_calls.clone().ok_or_else(|| {
+                            "finish_reason=tool_calls but no tool calls found".to_string()
+                        })?;
+
+                    conversation.push(choice.message.clone());
+
+                    for tool_call in tool_calls {
+                        let tool_call_id = tool_call.id.clone();
+                        let tool_name = tool_call.function.name.clone();
+                        let tool_started = Instant::now();
+                        let arguments: Value = serde_json::from_str(&tool_call.function.arguments)
+                            .map_err(|error| {
+                                format!(
+                                    "tool '{}' arguments must be valid JSON: {}",
+                                    tool_name, error
+                                )
+                            })?;
+
+                        if request.tool_trace_mode != YamlToolTraceMode::Off {
+                            if let Some(sink) = event_sink {
+                                sink.emit(&YamlWorkflowEvent {
+                                    event_type: "node_tool_call_requested".to_string(),
+                                    node_id: Some(request.node_id.clone()),
+                                    step_id: Some(request.node_id.clone()),
+                                    node_kind: Some("llm_call".to_string()),
+                                    streamable: Some(false),
+                                    message: Some(format!(
+                                        "tool call requested: {}",
+                                        tool_name
+                                    )),
+                                    delta: None,
+                                    token_kind: None,
+                                    is_terminal_node_token: None,
+                                    elapsed_ms: None,
+                                    metadata: Some(json!({
+                                        "tool_call_id": tool_call_id.clone(),
+                                        "tool_name": tool_name.clone(),
+                                        "arguments": payload_for_tool_trace(request.tool_trace_mode, &arguments),
+                                    })),
+                                });
+                            }
+                        }
+
+                        let tool_output_result = if let Some(custom_worker) = self.custom_worker {
+                            custom_worker
+                                .execute(
+                                    tool_name.as_str(),
+                                    &arguments,
+                                    request.email_text.as_str(),
+                                    &request.execution_context,
+                                )
+                                .await
+                        } else {
+                            mock_custom_worker_output(tool_name.as_str(), &arguments)
+                                .map_err(|error| error.to_string())
+                        };
+
+                        let Some(tool_config) = request
+                            .tools
+                            .iter()
+                            .find(|tool| tool.definition.function.name == tool_name)
+                        else {
+                            return Err(format!("model requested unknown tool '{}'", tool_name));
+                        };
+
+                        let tool_output = match tool_output_result {
+                            Ok(output) => output,
+                            Err(message) => {
+                                let elapsed_ms = tool_started.elapsed().as_millis();
+                                if request.tool_trace_mode != YamlToolTraceMode::Off {
+                                    if let Some(sink) = event_sink {
+                                        sink.emit(&YamlWorkflowEvent {
+                                            event_type: "node_tool_call_failed".to_string(),
+                                            node_id: Some(request.node_id.clone()),
+                                            step_id: Some(request.node_id.clone()),
+                                            node_kind: Some("llm_call".to_string()),
+                                            streamable: Some(false),
+                                            message: Some(message.clone()),
+                                            delta: None,
+                                            token_kind: None,
+                                            is_terminal_node_token: None,
+                                            elapsed_ms: Some(elapsed_ms),
+                                            metadata: Some(json!({
+                                                "tool_call_id": tool_call_id.clone(),
+                                                "tool_name": tool_name.clone(),
+                                            })),
+                                        });
+                                    }
+                                }
+                                tool_traces.push(YamlToolCallTrace {
+                                    id: tool_call_id.clone(),
+                                    name: tool_name.clone(),
+                                    arguments,
+                                    output: None,
+                                    status: "error".to_string(),
+                                    elapsed_ms,
+                                    error: Some(message.clone()),
+                                });
+                                return Err(format!("tool '{}' failed: {}", tool_name, message));
+                            }
+                        };
+
+                        if let Some(output_schema) = tool_config.output_schema.as_ref() {
+                            validate_schema_instance(output_schema, &tool_output).map_err(
+                                |message| {
+                                    format!(
+                                        "tool '{}' output failed schema validation: {}",
+                                        tool_name, message
+                                    )
+                                },
+                            )?;
+                        }
+
+                        let elapsed_ms = tool_started.elapsed().as_millis();
+                        if request.tool_trace_mode != YamlToolTraceMode::Off {
+                            if let Some(sink) = event_sink {
+                                sink.emit(&YamlWorkflowEvent {
+                                    event_type: "node_tool_call_completed".to_string(),
+                                    node_id: Some(request.node_id.clone()),
+                                    step_id: Some(request.node_id.clone()),
+                                    node_kind: Some("llm_call".to_string()),
+                                    streamable: Some(false),
+                                    message: Some(format!(
+                                        "tool call completed: {}",
+                                        tool_name
+                                    )),
+                                    delta: None,
+                                    token_kind: None,
+                                    is_terminal_node_token: None,
+                                    elapsed_ms: Some(elapsed_ms),
+                                    metadata: Some(json!({
+                                        "tool_call_id": tool_call_id.clone(),
+                                        "tool_name": tool_name.clone(),
+                                        "arguments": payload_for_tool_trace(request.tool_trace_mode, &arguments),
+                                        "output": payload_for_tool_trace(request.tool_trace_mode, &tool_output),
+                                    })),
+                                });
+                            }
+                        }
+
+                        tool_traces.push(YamlToolCallTrace {
+                            id: tool_call_id.clone(),
+                            name: tool_name.clone(),
+                            arguments: arguments.clone(),
+                            output: Some(tool_output.clone()),
+                            status: "ok".to_string(),
+                            elapsed_ms,
+                            error: None,
+                        });
+
+                        conversation.push(Message::tool(
+                            serde_json::to_string(&tool_output).map_err(|error| {
+                                format!("failed to serialize tool output: {error}")
+                            })?,
+                            tool_call_id,
+                        ));
+                    }
+
+                    if request.tool_trace_mode != YamlToolTraceMode::Off {
+                        if let Some(sink) = event_sink {
+                            sink.emit(&YamlWorkflowEvent {
+                                event_type: "node_tool_roundtrip_completed".to_string(),
+                                node_id: Some(request.node_id.clone()),
+                                step_id: Some(request.node_id.clone()),
+                                node_kind: Some("llm_call".to_string()),
+                                streamable: Some(false),
+                                message: Some(format!(
+                                    "tool roundtrip {} completed",
+                                    roundtrip + 1
+                                )),
+                                delta: None,
+                                token_kind: None,
+                                is_terminal_node_token: None,
+                                elapsed_ms: None,
+                                metadata: Some(json!({
+                                    "roundtrip": roundtrip + 1,
+                                    "max_tool_roundtrips": request.max_tool_roundtrips,
+                                })),
+                            });
+                        }
+                    }
+                }
+
+                return Err(format!(
+                    "tool-enabled llm_call '{}' exhausted loop without final payload",
+                    request.node_id
+                ));
+            }
 
             let mut builder = CompletionRequest::builder()
                 .model(&request.model)
@@ -1622,6 +1983,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             thinking_tokens: None,
                         }),
                         ttft_ms,
+                        tool_calls: Vec::new(),
                     })
                 }
                 CompletionOutcome::Response(response) => {
@@ -1641,6 +2003,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             thinking_tokens: None,
                         }),
                         ttft_ms: None,
+                        tool_calls: Vec::new(),
                     })
                 }
                 CompletionOutcome::HealedJson(healed) => {
@@ -1671,6 +2034,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             thinking_tokens: None,
                         }),
                         ttft_ms: None,
+                        tool_calls: Vec::new(),
                     })
                 }
                 CompletionOutcome::CoercedSchema(coerced) => Ok(YamlLlmExecutionResult {
@@ -1682,12 +2046,16 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         thinking_tokens: None,
                     }),
                     ttft_ms: None,
+                    tool_calls: Vec::new(),
                 }),
             }
         }
     }
 
-    let executor = BorrowedClientExecutor { client };
+    let executor = BorrowedClientExecutor {
+        client,
+        custom_worker,
+    };
     run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow,
         workflow_input,
@@ -1995,6 +2363,21 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 schema,
                 stream: llm.stream.unwrap_or(false),
                 heal: llm.heal.unwrap_or(false),
+                tools: normalize_llm_tools(llm).map_err(|message| YamlWorkflowRunError::Llm {
+                    node_id: node.id.clone(),
+                    message,
+                })?,
+                tool_choice: normalize_tool_choice(llm.tool_choice.clone()).map_err(|message| {
+                    YamlWorkflowRunError::Llm {
+                        node_id: node.id.clone(),
+                        message,
+                    }
+                })?,
+                max_tool_roundtrips: llm.max_tool_roundtrips.unwrap_or(1),
+                tool_calls_global_key: llm.tool_calls_global_key.clone(),
+                tool_trace_mode: options.telemetry.tool_trace_mode,
+                execution_context: context.clone(),
+                email_text: email_text.to_string(),
             };
 
             if let Some(span) = node_span.as_mut() {
@@ -2026,6 +2409,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                         "prompt": request.prompt.clone(),
                         "schema": request.schema.clone(),
                         "bindings": request.prompt_bindings.clone(),
+                        "tools_count": request.tools.len(),
+                        "max_tool_roundtrips": request.max_tool_roundtrips,
                     })),
                 });
             }
@@ -2055,6 +2440,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             node_usage = llm_result.usage;
 
             let payload = llm_result.payload;
+            let tool_calls = llm_result.tool_calls;
 
             if !payload.is_object() {
                 return Err(YamlWorkflowRunError::LlmPayloadNotObject {
@@ -2062,7 +2448,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 });
             }
 
-            outputs.insert(node.id.clone(), json!({ "output": payload }));
+            let mut node_output = json!({ "output": payload });
+            if !tool_calls.is_empty() {
+                if let Some(output_obj) = node_output.as_object_mut() {
+                    output_obj.insert("tool_calls".to_string(), json!(tool_calls));
+                }
+            }
+            outputs.insert(node.id.clone(), node_output);
             if let Some(span) = node_span.as_mut() {
                 if let Some(output_payload) = outputs.get(node.id.as_str()) {
                     span.set_attribute(
@@ -2073,6 +2465,15 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
             apply_update_globals(node, &outputs, workflow_input, &mut globals);
+            if let Some(global_key) = llm.tool_calls_global_key.as_ref() {
+                if let Some(node_tool_calls) = outputs
+                    .get(node.id.as_str())
+                    .and_then(|value| value.get("tool_calls"))
+                    .cloned()
+                {
+                    globals.insert(global_key.clone(), node_tool_calls);
+                }
+            }
             edge_map
                 .get(node.id.as_str())
                 .map(|value| value.to_string())
@@ -2448,6 +2849,11 @@ async fn try_run_yaml_via_ir_runtime(
 
                 let prompt_bindings = collect_template_bindings(&prompt_template, &context);
                 let prompt = interpolate_template(&prompt_template, &context);
+                let email_text = context
+                    .get("input")
+                    .and_then(|v| v.get("email_text"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 let schema = input
                     .input
                     .get("output_schema")
@@ -2471,6 +2877,13 @@ async fn try_run_yaml_via_ir_runtime(
                     schema,
                     stream,
                     heal,
+                    tools: Vec::new(),
+                    tool_choice: None,
+                    max_tool_roundtrips: 1,
+                    tool_calls_global_key: None,
+                    tool_trace_mode: YamlToolTraceMode::Off,
+                    execution_context: context.clone(),
+                    email_text: email_text.to_string(),
                 };
 
                 let llm_result = self
@@ -2854,6 +3267,140 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
                             .to_string(),
                 });
             }
+
+            if llm.max_tool_roundtrips.unwrap_or(1) == 0 {
+                diagnostics.push(YamlWorkflowDiagnostic {
+                    node_id: Some(node.id.clone()),
+                    code: "invalid_max_tool_roundtrips".to_string(),
+                    severity: YamlWorkflowDiagnosticSeverity::Error,
+                    message: "llm_call.max_tool_roundtrips must be >= 1".to_string(),
+                });
+            }
+
+            if let Some(global_key) = llm.tool_calls_global_key.as_ref() {
+                if global_key.trim().is_empty() {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "empty_tool_calls_global_key".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: "llm_call.tool_calls_global_key must not be empty".to_string(),
+                    });
+                }
+            }
+
+            match normalize_tool_choice(llm.tool_choice.clone()) {
+                Ok(choice) => {
+                    if let Some(ToolChoice::Tool(choice_tool)) = choice.as_ref() {
+                        if !llm.tools.iter().any(|tool| match (llm.tools_format, tool) {
+                            (YamlToolFormat::Openai, YamlToolDeclaration::OpenAi(openai)) => {
+                                openai.function.name == choice_tool.function.name
+                            }
+                            (
+                                YamlToolFormat::Simplified,
+                                YamlToolDeclaration::Simplified(simple),
+                            ) => simple.name == choice_tool.function.name,
+                            _ => false,
+                        }) {
+                            diagnostics.push(YamlWorkflowDiagnostic {
+                                node_id: Some(node.id.clone()),
+                                code: "unknown_tool_choice_function".to_string(),
+                                severity: YamlWorkflowDiagnosticSeverity::Error,
+                                message: format!(
+                                    "llm_call.tool_choice references unknown function '{}'",
+                                    choice_tool.function.name
+                                ),
+                            });
+                        }
+                    }
+                }
+                Err(message) => {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "invalid_tool_choice".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message,
+                    });
+                }
+            }
+
+            let normalized_tools = match normalize_llm_tools(llm) {
+                Ok(tools) => tools,
+                Err(message) => {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "invalid_tools_format".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message,
+                    });
+                    Vec::new()
+                }
+            };
+
+            let mut seen_tool_names = HashSet::new();
+            for tool in &normalized_tools {
+                let name = tool.definition.function.name.trim();
+                if name.is_empty() {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "empty_tool_name".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: "tool function name must not be empty".to_string(),
+                    });
+                }
+                if !seen_tool_names.insert(tool.definition.function.name.clone()) {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "duplicate_tool_name".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: format!(
+                            "duplicate tool function name '{}' in node",
+                            tool.definition.function.name
+                        ),
+                    });
+                }
+
+                let schema = tool
+                    .definition
+                    .function
+                    .parameters
+                    .clone()
+                    .unwrap_or(Value::Null);
+                if schema.is_null() {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "missing_tool_input_schema".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: format!(
+                            "tool '{}' is missing input schema",
+                            tool.definition.function.name
+                        ),
+                    });
+                } else if let Err(message) = validate_json_schema(&schema) {
+                    diagnostics.push(YamlWorkflowDiagnostic {
+                        node_id: Some(node.id.clone()),
+                        code: "invalid_tool_input_schema".to_string(),
+                        severity: YamlWorkflowDiagnosticSeverity::Error,
+                        message: format!(
+                            "tool '{}' has invalid input schema: {}",
+                            tool.definition.function.name, message
+                        ),
+                    });
+                }
+
+                if let Some(output_schema) = tool.output_schema.as_ref() {
+                    if let Err(message) = validate_json_schema(output_schema) {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "invalid_tool_output_schema".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message: format!(
+                                "tool '{}' has invalid output schema: {}",
+                                tool.definition.function.name, message
+                            ),
+                        });
+                    }
+                }
+            }
         }
 
         if let Some(switch) = &node.node_type.switch {
@@ -2916,7 +3463,12 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
 fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
     path.split('.')
         .filter(|segment| !segment.is_empty())
-        .try_fold(value, |current, segment| current.get(segment))
+        .try_fold(value, |current, segment| {
+            if let Ok(index) = segment.parse::<usize>() {
+                return current.get(index);
+            }
+            current.get(segment)
+        })
 }
 
 fn interpolate_template(template: &str, context: &Value) -> String {
@@ -3121,6 +3673,67 @@ fn llm_output_schema_for_node(node: &YamlNode) -> Value {
     default_llm_output_schema()
 }
 
+fn normalize_tool_choice(
+    config: Option<YamlToolChoiceConfig>,
+) -> Result<Option<ToolChoice>, String> {
+    let Some(config) = config else {
+        return Ok(None);
+    };
+
+    let choice = match config {
+        YamlToolChoiceConfig::Mode(mode) => ToolChoice::Mode(mode),
+        YamlToolChoiceConfig::Function { function } => ToolChoice::Tool(ToolChoiceTool {
+            tool_type: ToolType::Function,
+            function: ToolChoiceFunction { name: function },
+        }),
+        YamlToolChoiceConfig::OpenAi(tool) => ToolChoice::Tool(tool),
+    };
+
+    Ok(Some(choice))
+}
+
+fn normalize_llm_tools(llm: &YamlLlmCall) -> Result<Vec<YamlResolvedTool>, String> {
+    llm.tools
+        .iter()
+        .map(|tool| match (llm.tools_format, tool) {
+            (YamlToolFormat::Openai, YamlToolDeclaration::OpenAi(openai)) => {
+                let definition = ToolDefinition {
+                    tool_type: openai.tool_type.unwrap_or(ToolType::Function),
+                    function: ToolFunction {
+                        name: openai.function.name.clone(),
+                        description: openai.function.description.clone(),
+                        parameters: openai.function.parameters.clone(),
+                    },
+                };
+                Ok(YamlResolvedTool {
+                    definition,
+                    output_schema: openai.function.output_schema.clone(),
+                })
+            }
+            (YamlToolFormat::Simplified, YamlToolDeclaration::Simplified(simple)) => {
+                let definition = ToolDefinition {
+                    tool_type: ToolType::Function,
+                    function: ToolFunction {
+                        name: simple.name.clone(),
+                        description: simple.description.clone(),
+                        parameters: Some(simple.input_schema.clone()),
+                    },
+                };
+                Ok(YamlResolvedTool {
+                    definition,
+                    output_schema: simple.output_schema.clone(),
+                })
+            }
+            (YamlToolFormat::Openai, _) => {
+                Err("tools_format=openai requires OpenAI-style tool declarations".to_string())
+            }
+            (YamlToolFormat::Simplified, _) => {
+                Err("tools_format=simplified requires simplified tool declarations".to_string())
+            }
+        })
+        .collect()
+}
+
 fn default_llm_output_schema() -> Value {
     json!({
         "type": "object",
@@ -3229,6 +3842,59 @@ pub struct YamlLlmCall {
     pub heal: Option<bool>,
     pub messages_path: Option<String>,
     pub append_prompt_as_user: Option<bool>,
+    #[serde(default)]
+    pub tools_format: YamlToolFormat,
+    #[serde(default)]
+    pub tools: Vec<YamlToolDeclaration>,
+    pub tool_choice: Option<YamlToolChoiceConfig>,
+    pub max_tool_roundtrips: Option<u8>,
+    pub tool_calls_global_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlToolFormat {
+    #[default]
+    Openai,
+    Simplified,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum YamlToolDeclaration {
+    OpenAi(YamlOpenAiToolDeclaration),
+    Simplified(YamlSimplifiedToolDeclaration),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct YamlOpenAiToolDeclaration {
+    #[serde(rename = "type")]
+    pub tool_type: Option<ToolType>,
+    pub function: YamlOpenAiToolFunction,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct YamlOpenAiToolFunction {
+    pub name: String,
+    pub description: Option<String>,
+    pub parameters: Option<Value>,
+    pub output_schema: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct YamlSimplifiedToolDeclaration {
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Value,
+    pub output_schema: Option<Value>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum YamlToolChoiceConfig {
+    Mode(ToolChoiceMode),
+    Function { function: String },
+    OpenAi(ToolChoiceTool),
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3275,8 +3941,13 @@ pub struct YamlEdge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
+    use simple_agent_type::response::{CompletionChoice, CompletionResponse, Usage};
+    use simple_agent_type::tool::{ToolCallFunction, ToolType};
+    use simple_agent_type::{Result as SaResult, SimpleAgentsError};
+    use simple_agents_core::SimpleAgentsClientBuilder;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
 
     fn stream_debug_env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -3311,6 +3982,121 @@ mod tests {
         context: Mutex<Option<Value>>,
     }
 
+    struct ToolLoopProvider;
+
+    #[async_trait]
+    impl Provider for ToolLoopProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn transform_request(&self, req: &CompletionRequest) -> SaResult<ProviderRequest> {
+            let body = serde_json::to_value(req).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderRequest::new("mock://tool-loop").with_body(body))
+        }
+
+        async fn execute(&self, req: ProviderRequest) -> SaResult<ProviderResponse> {
+            let request: CompletionRequest =
+                serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
+
+            let has_tools = request
+                .tools
+                .as_ref()
+                .is_some_and(|tools| !tools.is_empty());
+            let has_tool_result = request.messages.iter().any(|m| m.role == Role::Tool);
+
+            let response = if has_tools && !has_tool_result {
+                CompletionResponse {
+                    id: "resp_tool_1".to_string(),
+                    model: request.model.clone(),
+                    choices: vec![CompletionChoice {
+                        index: 0,
+                        message: Message::assistant("").with_tool_calls(vec![ToolCall {
+                            id: "call_get_context".to_string(),
+                            tool_type: ToolType::Function,
+                            function: ToolCallFunction {
+                                name: "get_customer_context".to_string(),
+                                arguments: "{\"order_id\":\"123\"}".to_string(),
+                            },
+                        }]),
+                        finish_reason: FinishReason::ToolCalls,
+                        logprobs: None,
+                    }],
+                    usage: Usage::new(10, 5),
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                }
+            } else if has_tools && has_tool_result {
+                CompletionResponse {
+                    id: "resp_tool_2".to_string(),
+                    model: request.model.clone(),
+                    choices: vec![CompletionChoice {
+                        index: 0,
+                        message: Message::assistant("{\"state\":\"done\"}"),
+                        finish_reason: FinishReason::Stop,
+                        logprobs: None,
+                    }],
+                    usage: Usage::new(12, 6),
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                }
+            } else {
+                let prompt = request
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::User)
+                    .map(|m| m.content.clone())
+                    .unwrap_or_default();
+                let payload = json!({
+                    "subject": "ok",
+                    "body": prompt,
+                })
+                .to_string();
+                CompletionResponse {
+                    id: "resp_final".to_string(),
+                    model: request.model.clone(),
+                    choices: vec![CompletionChoice {
+                        index: 0,
+                        message: Message::assistant(payload),
+                        finish_reason: FinishReason::Stop,
+                        logprobs: None,
+                    }],
+                    usage: Usage::new(8, 4),
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                }
+            };
+
+            let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderResponse::new(200, body))
+        }
+
+        fn transform_response(&self, resp: ProviderResponse) -> SaResult<CompletionResponse> {
+            serde_json::from_value(resp.body).map_err(SimpleAgentsError::from)
+        }
+    }
+
+    struct FixedToolWorker {
+        payload: Value,
+    }
+
+    #[async_trait]
+    impl YamlWorkflowCustomWorkerExecutor for FixedToolWorker {
+        async fn execute(
+            &self,
+            _handler: &str,
+            _payload: &Value,
+            _email_text: &str,
+            _context: &Value,
+        ) -> Result<Value, String> {
+            Ok(self.payload.clone())
+        }
+    }
+
     #[async_trait]
     impl YamlWorkflowLlmExecutor for CountingExecutor {
         async fn complete_structured(
@@ -3323,6 +4109,7 @@ mod tests {
                 payload: json!({"state":"ok"}),
                 usage: None,
                 ttft_ms: None,
+                tool_calls: Vec::new(),
             })
         }
     }
@@ -3372,6 +4159,7 @@ mod tests {
                         thinking_tokens: None,
                     }),
                     ttft_ms: None,
+                    tool_calls: Vec::new(),
                 });
             }
             if prompt.contains("Determine termination subtype") {
@@ -3384,6 +4172,7 @@ mod tests {
                         thinking_tokens: None,
                     }),
                     ttft_ms: None,
+                    tool_calls: Vec::new(),
                 });
             }
             if prompt.contains("Determine supply chain subtype") {
@@ -3396,6 +4185,7 @@ mod tests {
                         thinking_tokens: None,
                     }),
                     ttft_ms: None,
+                    tool_calls: Vec::new(),
                 });
             }
             Err("unexpected prompt".to_string())
@@ -3682,6 +4472,7 @@ nodes:
                     thinking_tokens: None,
                 }),
                 ttft_ms: if request.stream { Some(12) } else { None },
+                tool_calls: Vec::new(),
             })
         }
     }
@@ -3842,6 +4633,7 @@ nodes:
                     thinking_tokens: None,
                 }),
                 ttft_ms: None,
+                tool_calls: Vec::new(),
             })
         }
     }
@@ -3924,6 +4716,178 @@ nodes:
         assert_eq!(a.outputs, c.outputs);
         assert_eq!(a.total_tokens, b.total_tokens);
         assert_eq!(a.total_tokens, c.total_tokens);
+    }
+
+    #[tokio::test]
+    async fn yaml_llm_tool_calling_captures_traces_and_supports_globals_reference() {
+        let yaml = r#"
+id: tool-calling-workflow
+entry_node: generate_with_tool
+nodes:
+  - id: generate_with_tool
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        tools_format: simplified
+        max_tool_roundtrips: 1
+        tool_calls_global_key: audit
+        tools:
+          - name: get_customer_context
+            description: Fetch customer context
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties:
+                customer_name: { type: string }
+              required: [customer_name]
+              additionalProperties: false
+    config:
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+        required: [state]
+  - id: personalize
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Write an email greeting for {{ globals.audit.0.output.customer_name }}.
+      output_schema:
+        type: object
+        properties:
+          subject: { type: string }
+          body: { type: string }
+        required: [subject, body]
+edges:
+  - from: generate_with_tool
+    to: personalize
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(Arc::new(ToolLoopProvider))
+            .build()
+            .expect("client should build");
+        let worker = FixedToolWorker {
+            payload: json!({"customer_name": "Ava"}),
+        };
+
+        let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &client,
+            Some(&worker),
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.trace, vec!["generate_with_tool", "personalize"]);
+        assert_eq!(
+            output.outputs["generate_with_tool"]["tool_calls"][0]["output"]["customer_name"],
+            Value::String("Ava".to_string())
+        );
+        let body = output.outputs["personalize"]["output"]["body"]
+            .as_str()
+            .expect("body should be string");
+        assert!(body.contains("Ava"));
+    }
+
+    #[tokio::test]
+    async fn yaml_llm_tool_output_schema_mismatch_hard_fails_node() {
+        let yaml = r#"
+id: tool-calling-schema-fail
+entry_node: generate_with_tool
+nodes:
+  - id: generate_with_tool
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        tools_format: simplified
+        max_tool_roundtrips: 1
+        tools:
+          - name: get_customer_context
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties:
+                customer_name: { type: string }
+              required: [customer_name]
+              additionalProperties: false
+    config:
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+        required: [state]
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(Arc::new(ToolLoopProvider))
+            .build()
+            .expect("client should build");
+        let worker = FixedToolWorker {
+            payload: json!({"unexpected": "shape"}),
+        };
+
+        let error = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &client,
+            Some(&worker),
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect_err("workflow should hard-fail on schema mismatch");
+
+        match error {
+            YamlWorkflowRunError::Llm { message, .. } => {
+                assert!(message.contains("output failed schema validation"));
+            }
+            other => panic!("expected llm error, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validates_tools_format_mismatch() {
+        let yaml = r#"
+id: mismatch
+entry_node: generate
+nodes:
+  - id: generate
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        tools_format: openai
+        tools:
+          - name: get_customer_context
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let diagnostics = verify_yaml_workflow(&workflow);
+        assert!(diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.code == "invalid_tools_format"));
     }
 
     #[tokio::test]
