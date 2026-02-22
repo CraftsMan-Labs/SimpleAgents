@@ -116,31 +116,38 @@ def terminate_interview(
     }
 
 
-def get_customer_context(
+def get_employee_record(
     topic: str,
     *,
     email_text: str,
     context: dict[str, Any],
     payload: dict[str, Any] | None = None,
 ) -> dict[str, str]:
-    """Tool handler for YAML llm_call tool-calling examples."""
+    """Tool handler that resolves employee id and location by name."""
     _ = topic
+    _ = email_text
     _ = context
-    order_id = "unknown"
-    if payload is not None:
-        payload_order_id = payload.get("order_id")
-        if isinstance(payload_order_id, str) and payload_order_id.strip():
-            order_id = payload_order_id.strip()
 
-    if "refund" in email_text.lower():
-        status = "refund_in_review"
-    elif "replace" in email_text.lower() or "replacement" in email_text.lower():
-        status = "replacement_processing"
-    else:
-        status = "investigating"
+    requested_name = "Unknown Employee"
+    if payload is not None:
+        raw_name = payload.get("employee_name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            requested_name = raw_name.strip()
+
+    directory = {
+        "alex johnson": {"employee_id": "EMP-2041", "location": "Austin"},
+        "priya sharma": {"employee_id": "EMP-3378", "location": "Bengaluru"},
+        "marcus lee": {"employee_id": "EMP-1196", "location": "Singapore"},
+        "sarah chen": {"employee_id": "EMP-4450", "location": "Toronto"},
+    }
+
+    profile = directory.get(
+        requested_name.lower(),
+        {"employee_id": "EMP-0000", "location": "Unassigned"},
+    )
 
     return {
-        "customer_name": "Alex",
-        "order_id": order_id,
-        "order_status": status,
+        "employee_name": requested_name,
+        "employee_id": profile["employee_id"],
+        "location": profile["location"],
     }

@@ -106,6 +106,18 @@ def resolve_workflow_path(workflow: str) -> Path:
     raise FileNotFoundError(f"workflow file not found: {workflow}")
 
 
+def default_workflow_registry(workflow_path: Path) -> dict[str, str]:
+    candidates = {
+        "hr_warning_email_subgraph": workflow_path.parent
+        / "hr-warning-email-subgraph.yaml",
+    }
+    registry: dict[str, str] = {}
+    for workflow_id, path in candidates.items():
+        if path.exists():
+            registry[workflow_id] = str(path.resolve())
+    return registry
+
+
 def initial_messages() -> list[dict[str, str]]:
     return [
         {
@@ -408,6 +420,7 @@ def main() -> None:
     client = Client(provider, api_base=api_base, api_key=api_key)
 
     workflow_path = resolve_workflow_path(args.workflow)
+    workflow_registry = default_workflow_registry(workflow_path)
     node_names = load_workflow_node_names(workflow_path)
     messages = initial_messages()
     trace_dir = Path(args.trace_dir)
@@ -442,6 +455,7 @@ def main() -> None:
         workflow_input = {
             "email_text": user_input,
             "messages": messages,
+            "workflow_registry": workflow_registry,
         }
 
         result, streamed_events, nerdstats_payload = _run_turn(
