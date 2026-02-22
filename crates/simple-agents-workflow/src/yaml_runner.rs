@@ -952,7 +952,11 @@ fn yaml_workflow_to_mermaid_fallback(workflow: &YamlWorkflow) -> String {
                     tool_id,
                     escape_mermaid_label(format!("tool: {tool_name}").as_str())
                 ));
-                lines.push(format!("  {} -.-> {}", sanitize_mermaid_id(&node.id), tool_id));
+                lines.push(format!(
+                    "  {} -.-> {}",
+                    sanitize_mermaid_id(&node.id),
+                    tool_id
+                ));
                 tool_node_ids.push(tool_id);
             }
         }
@@ -1206,9 +1210,7 @@ fn discover_referenced_subgraphs(
             continue;
         }
 
-        if let Some((_, subworkflow)) = sibling_workflows
-            .iter()
-            .find(|(key, _)| key == &normalized)
+        if let Some((_, subworkflow)) = sibling_workflows.iter().find(|(key, _)| key == &normalized)
         {
             discovered.push(MermaidSubgraphWorkflow {
                 alias: workflow_id.clone(),
@@ -1245,10 +1247,11 @@ fn load_yaml_sibling_workflows(
             continue;
         }
 
-        let contents = std::fs::read_to_string(&path).map_err(|source| YamlWorkflowRunError::Read {
-            path: path.display().to_string(),
-            source,
-        })?;
+        let contents =
+            std::fs::read_to_string(&path).map_err(|source| YamlWorkflowRunError::Read {
+                path: path.display().to_string(),
+                source,
+            })?;
         let subworkflow: YamlWorkflow =
             serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
                 path: path.display().to_string(),
@@ -1258,10 +1261,7 @@ fn load_yaml_sibling_workflows(
         if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
             results.push((normalize_workflow_lookup_key(stem), subworkflow.clone()));
         }
-        results.push((
-            normalize_workflow_lookup_key(&subworkflow.id),
-            subworkflow,
-        ));
+        results.push((normalize_workflow_lookup_key(&subworkflow.id), subworkflow));
     }
 
     Ok(results)
@@ -1272,7 +1272,10 @@ fn referenced_workflow_ids(workflow: &YamlWorkflow) -> Vec<String> {
     let mut seen = HashSet::new();
 
     for node in &workflow.nodes {
-        let prompt = node.config.as_ref().and_then(|config| config.prompt.as_deref());
+        let prompt = node
+            .config
+            .as_ref()
+            .and_then(|config| config.prompt.as_deref());
 
         if let Some(llm) = node.node_type.llm_call.as_ref() {
             for tool in &llm.tools {
@@ -1908,10 +1911,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 ]
             };
 
-                if !request.tools.is_empty() {
-                    let mut tool_traces: Vec<YamlToolCallTrace> = Vec::new();
-                    let mut conversation = messages;
-                    let mut usage_total: Option<YamlLlmTokenUsage> = None;
+            if !request.tools.is_empty() {
+                let mut tool_traces: Vec<YamlToolCallTrace> = Vec::new();
+                let mut conversation = messages;
+                let mut usage_total: Option<YamlLlmTokenUsage> = None;
 
                 for roundtrip in 0..=request.max_tool_roundtrips {
                     let mut builder = CompletionRequest::builder()
@@ -2047,8 +2050,8 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                         {
                                             if let Some(sink) = event_sink {
                                                 sink.emit(&YamlWorkflowEvent {
-                                                    event_type:
-                                                        "node_stream_thinking_delta".to_string(),
+                                                    event_type: "node_stream_thinking_delta"
+                                                        .to_string(),
                                                     node_id: Some(request.node_id.clone()),
                                                     step_id: Some(request.node_id.clone()),
                                                     node_kind: Some("llm_call".to_string()),
@@ -2075,27 +2078,27 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                         } else {
                                             (Some(delta.clone()), None)
                                         };
-                                        let rendered_output_delta =
-                                            if let Some(output_chunk) = output_delta {
-                                                if let Some(formatter) = json_text_formatter.as_mut()
-                                                {
-                                                    formatter.push(output_chunk.as_str());
-                                                    formatter.emit_if_ready(delta_filter.completed())
-                                                } else {
-                                                    Some(output_chunk)
-                                                }
+                                        let rendered_output_delta = if let Some(output_chunk) =
+                                            output_delta
+                                        {
+                                            if let Some(formatter) = json_text_formatter.as_mut() {
+                                                formatter.push(output_chunk.as_str());
+                                                formatter.emit_if_ready(delta_filter.completed())
                                             } else {
-                                                None
-                                            };
+                                                Some(output_chunk)
+                                            }
+                                        } else {
+                                            None
+                                        };
 
                                         if include_raw_debug {
                                             if let Some(sink) = event_sink {
-                                                if let Some(raw_thinking_delta) = thinking_delta.as_ref()
+                                                if let Some(raw_thinking_delta) =
+                                                    thinking_delta.as_ref()
                                                 {
                                                     sink.emit(&YamlWorkflowEvent {
-                                                        event_type:
-                                                            "node_stream_thinking_delta"
-                                                                .to_string(),
+                                                        event_type: "node_stream_thinking_delta"
+                                                            .to_string(),
                                                         node_id: Some(request.node_id.clone()),
                                                         step_id: Some(request.node_id.clone()),
                                                         node_kind: Some("llm_call".to_string()),
@@ -2116,8 +2119,8 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                                     rendered_output_delta.as_ref()
                                                 {
                                                     sink.emit(&YamlWorkflowEvent {
-                                                        event_type:
-                                                            "node_stream_output_delta".to_string(),
+                                                        event_type: "node_stream_output_delta"
+                                                            .to_string(),
                                                         node_id: Some(request.node_id.clone()),
                                                         step_id: Some(request.node_id.clone()),
                                                         node_kind: Some("llm_call".to_string()),
@@ -2158,22 +2161,26 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                         }
                                     }
 
-                                    if let Some(tool_call_deltas) = choice.delta.tool_calls.as_ref() {
+                                    if let Some(tool_call_deltas) = choice.delta.tool_calls.as_ref()
+                                    {
                                         for tool_call_delta in tool_call_deltas {
                                             let entry = tool_calls_by_index
                                                 .entry(tool_call_delta.index)
                                                 .or_insert_with(|| ToolCall {
-                                                    id: tool_call_delta.id.clone().unwrap_or_else(|| {
-                                                        format!(
-                                                            "tool_call_{}",
-                                                            tool_call_delta.index
-                                                        )
-                                                    }),
+                                                    id: tool_call_delta.id.clone().unwrap_or_else(
+                                                        || {
+                                                            format!(
+                                                                "tool_call_{}",
+                                                                tool_call_delta.index
+                                                            )
+                                                        },
+                                                    ),
                                                     tool_type: ToolType::Function,
-                                                    function: simple_agent_type::tool::ToolCallFunction {
-                                                        name: String::new(),
-                                                        arguments: String::new(),
-                                                    },
+                                                    function:
+                                                        simple_agent_type::tool::ToolCallFunction {
+                                                            name: String::new(),
+                                                            arguments: String::new(),
+                                                        },
                                                 });
 
                                             if let Some(id) = tool_call_delta.id.as_ref() {
@@ -2380,7 +2387,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     span.add_event("workflow.tool.execute.error");
                                     span.set_attribute("tool_status", "error");
                                     span.set_attribute("tool_error", message.as_str());
-                                    span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
+                                    span.set_attribute(
+                                        "elapsed_ms",
+                                        elapsed_ms.to_string().as_str(),
+                                    );
                                 }
                                 if request.tool_trace_mode != YamlToolTraceMode::Off {
                                     if let Some(sink) = event_sink {
@@ -2753,8 +2763,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 }
                 CompletionOutcome::HealedJson(healed) => {
                     if !expects_object {
-                        return Err("healed json outcome is unsupported for non-object schema"
-                            .to_string());
+                        return Err(
+                            "healed json outcome is unsupported for non-object schema".to_string()
+                        );
                     }
                     if let Some(sink) = event_sink {
                         sink.emit(&YamlWorkflowEvent {
@@ -2789,7 +2800,8 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 CompletionOutcome::CoercedSchema(coerced) => {
                     if !expects_object {
                         return Err(
-                            "coerced schema outcome is unsupported for non-object schema".to_string()
+                            "coerced schema outcome is unsupported for non-object schema"
+                                .to_string(),
                         );
                     }
                     Ok(YamlLlmExecutionResult {
@@ -4625,17 +4637,18 @@ async fn execute_subworkflow_tool_call(
 
     let mut subworkflow_options = YamlWorkflowRunOptions::default();
     if parent_trace_context.is_some() || resolved_trace_id.is_some() {
-        let mut trace_context = YamlWorkflowTraceContextInput::default();
-        trace_context.trace_id = resolved_trace_id
-            .map(|value| value.to_string())
-            .or_else(|| parent_trace_context.and_then(|ctx| ctx.trace_id.clone()));
-        trace_context.span_id = parent_trace_context.and_then(|ctx| ctx.span_id.clone());
-        trace_context.parent_span_id = parent_trace_context.and_then(|ctx| ctx.parent_span_id.clone());
-        trace_context.traceparent = parent_trace_context.and_then(|ctx| ctx.traceparent.clone());
-        trace_context.tracestate = parent_trace_context.and_then(|ctx| ctx.tracestate.clone());
-        trace_context.baggage = parent_trace_context
-            .map(|ctx| ctx.baggage.clone())
-            .unwrap_or_default();
+        let trace_context = YamlWorkflowTraceContextInput {
+            trace_id: resolved_trace_id
+                .map(|value| value.to_string())
+                .or_else(|| parent_trace_context.and_then(|ctx| ctx.trace_id.clone())),
+            span_id: parent_trace_context.and_then(|ctx| ctx.span_id.clone()),
+            parent_span_id: parent_trace_context.and_then(|ctx| ctx.parent_span_id.clone()),
+            traceparent: parent_trace_context.and_then(|ctx| ctx.traceparent.clone()),
+            tracestate: parent_trace_context.and_then(|ctx| ctx.tracestate.clone()),
+            baggage: parent_trace_context
+                .map(|ctx| ctx.baggage.clone())
+                .unwrap_or_default(),
+        };
         subworkflow_options.trace.context = Some(trace_context);
     }
 
