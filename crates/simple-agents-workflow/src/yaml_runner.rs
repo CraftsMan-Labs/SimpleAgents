@@ -2338,6 +2338,14 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             }
                         }
 
+                        let Some(tool_config) = request
+                            .tools
+                            .iter()
+                            .find(|tool| tool.definition.function.name == tool_name)
+                        else {
+                            return Err(format!("model requested unknown tool '{}'", tool_name));
+                        };
+
                         let tool_output_result = if tool_name == "run_workflow_graph" {
                             execute_subworkflow_tool_call(
                                 &arguments,
@@ -2362,14 +2370,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 "tool '{}' requested but no custom worker executor is configured",
                                 tool_name
                             ))
-                        };
-
-                        let Some(tool_config) = request
-                            .tools
-                            .iter()
-                            .find(|tool| tool.definition.function.name == tool_name)
-                        else {
-                            return Err(format!("model requested unknown tool '{}'", tool_name));
                         };
 
                         let tool_output = match tool_output_result {
@@ -4892,6 +4892,8 @@ mod tests {
 
     struct ToolLoopProvider;
 
+    struct UnknownToolProvider;
+
     #[async_trait]
     impl Provider for ToolLoopProvider {
         fn name(&self) -> &str {
@@ -4988,8 +4990,58 @@ mod tests {
         }
     }
 
+    #[async_trait]
+    impl Provider for UnknownToolProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn transform_request(&self, req: &CompletionRequest) -> SaResult<ProviderRequest> {
+            let body = serde_json::to_value(req).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderRequest::new("mock://unknown-tool").with_body(body))
+        }
+
+        async fn execute(&self, req: ProviderRequest) -> SaResult<ProviderResponse> {
+            let request: CompletionRequest =
+                serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
+
+            let response = CompletionResponse {
+                id: "resp_unknown_tool".to_string(),
+                model: request.model,
+                choices: vec![CompletionChoice {
+                    index: 0,
+                    message: Message::assistant("").with_tool_calls(vec![ToolCall {
+                        id: "call_unknown".to_string(),
+                        tool_type: ToolType::Function,
+                        function: ToolCallFunction {
+                            name: "unknown_tool".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                    }]),
+                    finish_reason: FinishReason::ToolCalls,
+                    logprobs: None,
+                }],
+                usage: Usage::new(5, 2),
+                created: None,
+                provider: Some(self.name().to_string()),
+                healing_metadata: None,
+            };
+
+            let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderResponse::new(200, body))
+        }
+
+        fn transform_response(&self, resp: ProviderResponse) -> SaResult<CompletionResponse> {
+            serde_json::from_value(resp.body).map_err(SimpleAgentsError::from)
+        }
+    }
+
     struct FixedToolWorker {
         payload: Value,
+    }
+
+    struct CountingToolWorker {
+        execute_calls: AtomicUsize,
     }
 
     #[async_trait]
@@ -5002,6 +5054,20 @@ mod tests {
             _context: &Value,
         ) -> Result<Value, String> {
             Ok(self.payload.clone())
+        }
+    }
+
+    #[async_trait]
+    impl YamlWorkflowCustomWorkerExecutor for CountingToolWorker {
+        async fn execute(
+            &self,
+            _handler: &str,
+            _payload: &Value,
+            _email_text: &str,
+            _context: &Value,
+        ) -> Result<Value, String> {
+            self.execute_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(json!({"ok": true}))
         }
     }
 
@@ -5769,6 +5835,63 @@ nodes:
             }
             other => panic!("expected llm error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn yaml_llm_unknown_tool_is_rejected_before_custom_worker_execution() {
+        let yaml = r#"
+id: unknown-tool-rejected
+entry_node: generate_with_tool
+nodes:
+  - id: generate_with_tool
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        tools_format: simplified
+        max_tool_roundtrips: 1
+        tools:
+          - name: get_customer_context
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+    config:
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+        required: [state]
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(Arc::new(UnknownToolProvider))
+            .build()
+            .expect("client should build");
+        let worker = CountingToolWorker {
+            execute_calls: AtomicUsize::new(0),
+        };
+
+        let error = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &client,
+            Some(&worker),
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect_err("workflow should reject unknown tool before executing worker");
+
+        match error {
+            YamlWorkflowRunError::Llm { message, .. } => {
+                assert!(message.contains("model requested unknown tool 'unknown_tool'"));
+            }
+            other => panic!("expected llm error, got {other:?}"),
+        }
+
+        assert_eq!(worker.execute_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
