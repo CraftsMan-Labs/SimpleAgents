@@ -164,6 +164,16 @@ Runtime behavior notes:
 - `tool_calls_global_key` is opt-in; no default global key is written.
 - Anthropic tool-calling remains disabled in the current provider rollout batch.
 
+Built-in graph-calling tool (current behavior):
+
+- Tool name: `run_workflow_graph`
+- Payload shape:
+  - `workflow_id` (required)
+  - `input` (optional object)
+- Resolver source: `input.workflow_registry` map (`workflow_id -> yaml_path`)
+- The runtime automatically forwards parent `input.messages` and `input.email_text` to the subgraph when missing in `input`.
+- Recursion guard: `input.__subgraph_max_depth` (default `3`), with current depth tracked in `input.__subgraph_depth`.
+
 Runnable example:
 
 ```bash
