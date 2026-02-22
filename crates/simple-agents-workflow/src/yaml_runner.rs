@@ -20,7 +20,9 @@ use simple_agents_healing::JsonishParser;
 use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
-use crate::observability::tracing::{workflow_tracer, SpanKind, TraceContext, WorkflowSpan};
+use crate::observability::tracing::{
+    flush_workflow_tracer, workflow_tracer, SpanKind, TraceContext, WorkflowSpan,
+};
 use crate::runtime::{
     LlmExecutionError, LlmExecutionInput, LlmExecutionOutput, LlmExecutor, ToolExecutionError,
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
@@ -1607,6 +1609,8 @@ pub struct YamlLlmExecutionRequest {
     pub tool_trace_mode: YamlToolTraceMode,
     pub execution_context: Value,
     pub email_text: String,
+    pub trace_id: Option<String>,
+    pub trace_context: Option<TraceContext>,
 }
 
 #[derive(Debug, Clone)]
@@ -1904,17 +1908,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 ]
             };
 
-            if !request.tools.is_empty() {
-                if request.stream {
-                    return Err(
-                        "llm_call.stream=true is not supported when llm_call.tools are configured"
-                            .to_string(),
-                    );
-                }
-
-                let mut tool_traces: Vec<YamlToolCallTrace> = Vec::new();
-                let mut conversation = messages;
-                let mut usage_total: Option<YamlLlmTokenUsage> = None;
+                if !request.tools.is_empty() {
+                    let mut tool_traces: Vec<YamlToolCallTrace> = Vec::new();
+                    let mut conversation = messages;
+                    let mut usage_total: Option<YamlLlmTokenUsage> = None;
 
                 for roundtrip in 0..=request.max_tool_roundtrips {
                     let mut builder = CompletionRequest::builder()
@@ -1930,6 +1927,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         builder = builder.tool_choice(choice);
                     }
 
+                    if request.stream {
+                        builder = builder.stream(true);
+                    }
+
                     let completion_request = builder
                         .build()
                         .map_err(|error| format!("failed to build completion request: {error}"))?;
@@ -1940,46 +1941,312 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         .await
                         .map_err(|error| error.to_string())?;
 
-                    let response = match outcome {
-                        CompletionOutcome::Response(response) => response,
-                        CompletionOutcome::HealedJson(healed) => healed.response,
-                        CompletionOutcome::CoercedSchema(coerced) => coerced.response,
-                        CompletionOutcome::Stream(_) => {
-                            return Err(
-                                "streaming outcome is unsupported for tool-enabled llm_call"
-                                    .to_string(),
-                            )
-                        }
-                    };
+                    let mut streamed_tool_calls: Option<Vec<ToolCall>> = None;
+                    let mut streamed_content = String::new();
+                    let mut finish_reason = FinishReason::Stop;
 
-                    if let Some(usage) = usage_total.as_mut() {
-                        usage.prompt_tokens += response.usage.prompt_tokens;
-                        usage.completion_tokens += response.usage.completion_tokens;
-                        usage.total_tokens += response.usage.total_tokens;
-                    } else {
-                        usage_total = Some(YamlLlmTokenUsage {
-                            prompt_tokens: response.usage.prompt_tokens,
-                            completion_tokens: response.usage.completion_tokens,
-                            total_tokens: response.usage.total_tokens,
-                            thinking_tokens: None,
-                        });
+                    match outcome {
+                        CompletionOutcome::Response(response) => {
+                            if let Some(usage) = usage_total.as_mut() {
+                                usage.prompt_tokens += response.usage.prompt_tokens;
+                                usage.completion_tokens += response.usage.completion_tokens;
+                                usage.total_tokens += response.usage.total_tokens;
+                            } else {
+                                usage_total = Some(YamlLlmTokenUsage {
+                                    prompt_tokens: response.usage.prompt_tokens,
+                                    completion_tokens: response.usage.completion_tokens,
+                                    total_tokens: response.usage.total_tokens,
+                                    thinking_tokens: None,
+                                });
+                            }
+
+                            let choice = response
+                                .choices
+                                .first()
+                                .ok_or_else(|| "completion returned no choices".to_string())?;
+                            streamed_content = choice.message.content.clone();
+                            streamed_tool_calls = choice.message.tool_calls.clone();
+                            finish_reason = choice.finish_reason;
+                        }
+                        CompletionOutcome::HealedJson(healed) => {
+                            let response = healed.response;
+                            if let Some(usage) = usage_total.as_mut() {
+                                usage.prompt_tokens += response.usage.prompt_tokens;
+                                usage.completion_tokens += response.usage.completion_tokens;
+                                usage.total_tokens += response.usage.total_tokens;
+                            } else {
+                                usage_total = Some(YamlLlmTokenUsage {
+                                    prompt_tokens: response.usage.prompt_tokens,
+                                    completion_tokens: response.usage.completion_tokens,
+                                    total_tokens: response.usage.total_tokens,
+                                    thinking_tokens: None,
+                                });
+                            }
+
+                            let choice = response
+                                .choices
+                                .first()
+                                .ok_or_else(|| "completion returned no choices".to_string())?;
+                            streamed_content = choice.message.content.clone();
+                            streamed_tool_calls = choice.message.tool_calls.clone();
+                            finish_reason = choice.finish_reason;
+                        }
+                        CompletionOutcome::CoercedSchema(coerced) => {
+                            let response = coerced.response;
+                            if let Some(usage) = usage_total.as_mut() {
+                                usage.prompt_tokens += response.usage.prompt_tokens;
+                                usage.completion_tokens += response.usage.completion_tokens;
+                                usage.total_tokens += response.usage.total_tokens;
+                            } else {
+                                usage_total = Some(YamlLlmTokenUsage {
+                                    prompt_tokens: response.usage.prompt_tokens,
+                                    completion_tokens: response.usage.completion_tokens,
+                                    total_tokens: response.usage.total_tokens,
+                                    thinking_tokens: None,
+                                });
+                            }
+
+                            let choice = response
+                                .choices
+                                .first()
+                                .ok_or_else(|| "completion returned no choices".to_string())?;
+                            streamed_content = choice.message.content.clone();
+                            streamed_tool_calls = choice.message.tool_calls.clone();
+                            finish_reason = choice.finish_reason;
+                        }
+                        CompletionOutcome::Stream(mut stream) => {
+                            let mut final_stream_usage: Option<simple_agent_type::response::Usage> =
+                                None;
+                            let mut delta_filter = StructuredJsonDeltaFilter::default();
+                            let include_raw_debug = include_raw_stream_debug_events();
+                            let mut json_text_formatter = if request.stream_json_as_text {
+                                Some(StreamJsonAsTextFormatter::default())
+                            } else {
+                                None
+                            };
+                            let mut tool_calls_by_index: HashMap<u32, ToolCall> = HashMap::new();
+
+                            while let Some(chunk_result) = stream.next().await {
+                                if event_sink_is_cancelled(event_sink) {
+                                    return Err(workflow_event_sink_cancelled_message().to_string());
+                                }
+
+                                let chunk = chunk_result.map_err(|error| error.to_string())?;
+                                if let Some(usage) = chunk.usage {
+                                    final_stream_usage = Some(usage);
+                                }
+
+                                if let Some(choice) = chunk.choices.first() {
+                                    if let Some(chunk_finish_reason) = choice.finish_reason {
+                                        finish_reason = chunk_finish_reason;
+                                    }
+
+                                    if include_raw_debug {
+                                        if let Some(reasoning_delta) =
+                                            choice.delta.reasoning_content.as_ref()
+                                        {
+                                            if let Some(sink) = event_sink {
+                                                sink.emit(&YamlWorkflowEvent {
+                                                    event_type:
+                                                        "node_stream_thinking_delta".to_string(),
+                                                    node_id: Some(request.node_id.clone()),
+                                                    step_id: Some(request.node_id.clone()),
+                                                    node_kind: Some("llm_call".to_string()),
+                                                    streamable: Some(true),
+                                                    message: None,
+                                                    delta: Some(reasoning_delta.clone()),
+                                                    token_kind: Some(
+                                                        YamlWorkflowTokenKind::Thinking,
+                                                    ),
+                                                    is_terminal_node_token: Some(
+                                                        request.is_terminal_node,
+                                                    ),
+                                                    elapsed_ms: None,
+                                                    metadata: None,
+                                                });
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(delta) = choice.delta.content.clone() {
+                                        streamed_content.push_str(delta.as_str());
+                                        let (output_delta, thinking_delta) = if expects_object {
+                                            delta_filter.split(delta.as_str())
+                                        } else {
+                                            (Some(delta.clone()), None)
+                                        };
+                                        let rendered_output_delta =
+                                            if let Some(output_chunk) = output_delta {
+                                                if let Some(formatter) = json_text_formatter.as_mut()
+                                                {
+                                                    formatter.push(output_chunk.as_str());
+                                                    formatter.emit_if_ready(delta_filter.completed())
+                                                } else {
+                                                    Some(output_chunk)
+                                                }
+                                            } else {
+                                                None
+                                            };
+
+                                        if include_raw_debug {
+                                            if let Some(sink) = event_sink {
+                                                if let Some(raw_thinking_delta) = thinking_delta.as_ref()
+                                                {
+                                                    sink.emit(&YamlWorkflowEvent {
+                                                        event_type:
+                                                            "node_stream_thinking_delta"
+                                                                .to_string(),
+                                                        node_id: Some(request.node_id.clone()),
+                                                        step_id: Some(request.node_id.clone()),
+                                                        node_kind: Some("llm_call".to_string()),
+                                                        streamable: Some(true),
+                                                        message: None,
+                                                        delta: Some(raw_thinking_delta.clone()),
+                                                        token_kind: Some(
+                                                            YamlWorkflowTokenKind::Thinking,
+                                                        ),
+                                                        is_terminal_node_token: Some(
+                                                            request.is_terminal_node,
+                                                        ),
+                                                        elapsed_ms: None,
+                                                        metadata: None,
+                                                    });
+                                                }
+                                                if let Some(raw_output_delta) =
+                                                    rendered_output_delta.as_ref()
+                                                {
+                                                    sink.emit(&YamlWorkflowEvent {
+                                                        event_type:
+                                                            "node_stream_output_delta".to_string(),
+                                                        node_id: Some(request.node_id.clone()),
+                                                        step_id: Some(request.node_id.clone()),
+                                                        node_kind: Some("llm_call".to_string()),
+                                                        streamable: Some(true),
+                                                        message: None,
+                                                        delta: Some(raw_output_delta.clone()),
+                                                        token_kind: Some(
+                                                            YamlWorkflowTokenKind::Output,
+                                                        ),
+                                                        is_terminal_node_token: Some(
+                                                            request.is_terminal_node,
+                                                        ),
+                                                        elapsed_ms: None,
+                                                        metadata: None,
+                                                    });
+                                                }
+                                            }
+                                        }
+
+                                        if let Some(filtered_delta) = rendered_output_delta {
+                                            if let Some(sink) = event_sink {
+                                                sink.emit(&YamlWorkflowEvent {
+                                                    event_type: "node_stream_delta".to_string(),
+                                                    node_id: Some(request.node_id.clone()),
+                                                    step_id: Some(request.node_id.clone()),
+                                                    node_kind: Some("llm_call".to_string()),
+                                                    streamable: Some(true),
+                                                    message: None,
+                                                    delta: Some(filtered_delta),
+                                                    token_kind: Some(YamlWorkflowTokenKind::Output),
+                                                    is_terminal_node_token: Some(
+                                                        request.is_terminal_node,
+                                                    ),
+                                                    elapsed_ms: None,
+                                                    metadata: None,
+                                                });
+                                            }
+                                        }
+                                    }
+
+                                    if let Some(tool_call_deltas) = choice.delta.tool_calls.as_ref() {
+                                        for tool_call_delta in tool_call_deltas {
+                                            let entry = tool_calls_by_index
+                                                .entry(tool_call_delta.index)
+                                                .or_insert_with(|| ToolCall {
+                                                    id: tool_call_delta.id.clone().unwrap_or_else(|| {
+                                                        format!(
+                                                            "tool_call_{}",
+                                                            tool_call_delta.index
+                                                        )
+                                                    }),
+                                                    tool_type: ToolType::Function,
+                                                    function: simple_agent_type::tool::ToolCallFunction {
+                                                        name: String::new(),
+                                                        arguments: String::new(),
+                                                    },
+                                                });
+
+                                            if let Some(id) = tool_call_delta.id.as_ref() {
+                                                entry.id = id.clone();
+                                            }
+                                            if let Some(tool_type) = tool_call_delta.tool_type {
+                                                entry.tool_type = tool_type;
+                                            }
+                                            if let Some(function_delta) =
+                                                tool_call_delta.function.as_ref()
+                                            {
+                                                if let Some(name) = function_delta.name.as_ref() {
+                                                    entry.function.name = name.clone();
+                                                }
+                                                if let Some(arguments) =
+                                                    function_delta.arguments.as_ref()
+                                                {
+                                                    entry.function.arguments.push_str(arguments);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if event_sink_is_cancelled(event_sink) {
+                                    return Err(workflow_event_sink_cancelled_message().to_string());
+                                }
+                            }
+
+                            if let Some(usage) = final_stream_usage {
+                                if let Some(total) = usage_total.as_mut() {
+                                    total.prompt_tokens += usage.prompt_tokens;
+                                    total.completion_tokens += usage.completion_tokens;
+                                    total.total_tokens += usage.total_tokens;
+                                } else {
+                                    usage_total = Some(YamlLlmTokenUsage {
+                                        prompt_tokens: usage.prompt_tokens,
+                                        completion_tokens: usage.completion_tokens,
+                                        total_tokens: usage.total_tokens,
+                                        thinking_tokens: None,
+                                    });
+                                }
+                            }
+
+                            let mut ordered_tool_calls =
+                                tool_calls_by_index.into_iter().collect::<Vec<_>>();
+                            ordered_tool_calls.sort_by_key(|(index, _)| *index);
+                            if !ordered_tool_calls.is_empty() {
+                                streamed_tool_calls = Some(
+                                    ordered_tool_calls
+                                        .into_iter()
+                                        .map(|(_, tool_call)| tool_call)
+                                        .collect::<Vec<_>>(),
+                                );
+                            }
+                        }
                     }
 
-                    let choice = response
-                        .choices
-                        .first()
-                        .ok_or_else(|| "completion returned no choices".to_string())?;
-
-                    if choice.finish_reason != FinishReason::ToolCalls {
-                        let content = response.content().unwrap_or_default();
+                    let has_tool_calls = streamed_tool_calls
+                        .as_ref()
+                        .is_some_and(|calls| !calls.is_empty());
+                    if finish_reason != FinishReason::ToolCalls && !has_tool_calls {
                         let payload = if expects_object {
-                            parse_streamed_structured_payload(content, request.heal)
-                                .map_err(|error| {
-                                    format!("failed to parse structured completion JSON: {error}")
-                                })?
-                                .payload
+                            parse_streamed_structured_payload(
+                                streamed_content.as_str(),
+                                request.heal,
+                            )
+                            .map_err(|error| {
+                                format!("failed to parse structured completion JSON: {error}")
+                            })?
+                            .payload
                         } else {
-                            Value::String(content.to_string())
+                            Value::String(streamed_content.clone())
                         };
                         return Ok(YamlLlmExecutionResult {
                             payload,
@@ -1996,12 +2263,19 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         ));
                     }
 
-                    let tool_calls: Vec<ToolCall> =
-                        choice.message.tool_calls.clone().ok_or_else(|| {
-                            "finish_reason=tool_calls but no tool calls found".to_string()
-                        })?;
+                    let tool_calls: Vec<ToolCall> = streamed_tool_calls.ok_or_else(|| {
+                        "finish_reason=tool_calls but no tool calls found".to_string()
+                    })?;
+                    if tool_calls
+                        .iter()
+                        .any(|tool_call| tool_call.function.name.trim().is_empty())
+                    {
+                        return Err("streamed tool call missing function name".to_string());
+                    }
 
-                    conversation.push(choice.message.clone());
+                    let assistant_tool_message =
+                        Message::assistant(&streamed_content).with_tool_calls(tool_calls.clone());
+                    conversation.push(assistant_tool_message);
 
                     for tool_call in tool_calls {
                         let tool_call_id = tool_call.id.clone();
@@ -2014,6 +2288,30 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     tool_name, error
                                 )
                             })?;
+                        let mut tool_span_context: Option<TraceContext> = None;
+                        let mut tool_span = if request.trace_id.is_some() {
+                            let (span_context, mut span) = workflow_tracer().start_span(
+                                "workflow.tool.execute",
+                                SpanKind::Node,
+                                request.trace_context.as_ref(),
+                            );
+                            tool_span_context = Some(span_context);
+                            span.set_attribute(
+                                "trace_id",
+                                request.trace_id.as_deref().unwrap_or_default(),
+                            );
+                            span.set_attribute("node_id", request.node_id.as_str());
+                            span.set_attribute("node_kind", "llm_call");
+                            span.set_attribute("tool_name", tool_name.as_str());
+                            span.set_attribute("tool_call_id", tool_call_id.as_str());
+                            let args_for_span =
+                                payload_for_tool_trace(request.tool_trace_mode, &arguments)
+                                    .to_string();
+                            span.set_attribute("tool_arguments", args_for_span.as_str());
+                            Some(span)
+                        } else {
+                            None
+                        };
 
                         if request.tool_trace_mode != YamlToolTraceMode::Off {
                             if let Some(sink) = event_sink {
@@ -2046,6 +2344,8 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 &request.execution_context,
                                 self.client,
                                 self.custom_worker,
+                                tool_span_context.as_ref(),
+                                request.trace_id.as_deref(),
                             )
                             .await
                         } else if let Some(custom_worker) = self.custom_worker {
@@ -2058,8 +2358,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 )
                                 .await
                         } else {
-                            mock_custom_worker_output(tool_name.as_str(), &arguments)
-                                .map_err(|error| error.to_string())
+                            Err(format!(
+                                "tool '{}' requested but no custom worker executor is configured",
+                                tool_name
+                            ))
                         };
 
                         let Some(tool_config) = request
@@ -2074,6 +2376,12 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             Ok(output) => output,
                             Err(message) => {
                                 let elapsed_ms = tool_started.elapsed().as_millis();
+                                if let Some(span) = tool_span.as_mut() {
+                                    span.add_event("workflow.tool.execute.error");
+                                    span.set_attribute("tool_status", "error");
+                                    span.set_attribute("tool_error", message.as_str());
+                                    span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
+                                }
                                 if request.tool_trace_mode != YamlToolTraceMode::Off {
                                     if let Some(sink) = event_sink {
                                         sink.emit(&YamlWorkflowEvent {
@@ -2103,6 +2411,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     elapsed_ms,
                                     error: Some(message.clone()),
                                 });
+                                if let Some(span) = tool_span.take() {
+                                    span.end();
+                                }
                                 return Err(format!("tool '{}' failed: {}", tool_name, message));
                             }
                         };
@@ -2119,6 +2430,15 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         }
 
                         let elapsed_ms = tool_started.elapsed().as_millis();
+                        if let Some(span) = tool_span.as_mut() {
+                            span.add_event("workflow.tool.execute.completed");
+                            span.set_attribute("tool_status", "ok");
+                            span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
+                            let output_for_span =
+                                payload_for_tool_trace(request.tool_trace_mode, &tool_output)
+                                    .to_string();
+                            span.set_attribute("tool_output", output_for_span.as_str());
+                        }
                         if request.tool_trace_mode != YamlToolTraceMode::Off {
                             if let Some(sink) = event_sink {
                                 sink.emit(&YamlWorkflowEvent {
@@ -2161,6 +2481,9 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             })?,
                             tool_call_id,
                         ));
+                        if let Some(span) = tool_span.take() {
+                            span.end();
+                        }
                     }
 
                     if request.tool_trace_mode != YamlToolTraceMode::Off {
@@ -2283,8 +2606,11 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             }
                             if let Some(delta) = choice.delta.content.clone() {
                                 aggregated.push_str(delta.as_str());
-                                let (output_delta, thinking_delta) =
-                                    delta_filter.split(delta.as_str());
+                                let (output_delta, thinking_delta) = if expects_object {
+                                    delta_filter.split(delta.as_str())
+                                } else {
+                                    (Some(delta.clone()), None)
+                                };
                                 let rendered_output_delta = if let Some(output_chunk) = output_delta
                                 {
                                     if let Some(formatter) = json_text_formatter.as_mut() {
@@ -2704,12 +3030,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         trace.push(node.id.clone());
         let step_started = Instant::now();
 
+        let mut node_span_context: Option<TraceContext> = None;
         let mut node_span = if options.telemetry.enabled {
-            let (_, mut span) = tracer.start_span(
+            let (span_context, mut span) = tracer.start_span(
                 "workflow.node.execute",
                 SpanKind::Node,
                 Some(&workflow_trace_context),
             );
+            node_span_context = Some(span_context);
             span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
             span.set_attribute("node_id", node.id.as_str());
             span.set_attribute("node_kind", node.kind_name());
@@ -2808,6 +3136,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 tool_trace_mode: options.telemetry.tool_trace_mode,
                 execution_context: context.clone(),
                 email_text: email_text.to_string(),
+                trace_id: trace_id.clone(),
+                trace_context: node_span_context.clone(),
             };
 
             if let Some(span) = node_span.as_mut() {
@@ -3146,6 +3476,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow_span.set_attribute("trace_id", trace_id_value.as_str());
     }
     workflow_span.end();
+    flush_workflow_tracer();
 
     Ok(output)
 }
@@ -3308,6 +3639,8 @@ async fn try_run_yaml_via_ir_runtime(
                     tool_trace_mode: YamlToolTraceMode::Off,
                     execution_context: context.clone(),
                     email_text: email_text.to_string(),
+                    trace_id: self.trace_id.clone(),
+                    trace_context: self.trace_context.clone(),
                 };
 
                 let llm_result = self
@@ -3518,6 +3851,7 @@ async fn try_run_yaml_via_ir_runtime(
 
     workflow_span.set_attribute("workflow_id", workflow.id.as_str());
     workflow_span.end();
+    flush_workflow_tracer();
 
     Ok(Some(YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
@@ -4208,6 +4542,8 @@ async fn execute_subworkflow_tool_call(
     context: &Value,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    parent_trace_context: Option<&TraceContext>,
+    resolved_trace_id: Option<&str>,
 ) -> Result<Value, String> {
     let workflow_id = payload
         .get("workflow_id")
@@ -4287,13 +4623,29 @@ async fn execute_subworkflow_tool_call(
         Value::Number(serde_json::Number::from(max_depth)),
     );
 
+    let mut subworkflow_options = YamlWorkflowRunOptions::default();
+    if parent_trace_context.is_some() || resolved_trace_id.is_some() {
+        let mut trace_context = YamlWorkflowTraceContextInput::default();
+        trace_context.trace_id = resolved_trace_id
+            .map(|value| value.to_string())
+            .or_else(|| parent_trace_context.and_then(|ctx| ctx.trace_id.clone()));
+        trace_context.span_id = parent_trace_context.and_then(|ctx| ctx.span_id.clone());
+        trace_context.parent_span_id = parent_trace_context.and_then(|ctx| ctx.parent_span_id.clone());
+        trace_context.traceparent = parent_trace_context.and_then(|ctx| ctx.traceparent.clone());
+        trace_context.tracestate = parent_trace_context.and_then(|ctx| ctx.tracestate.clone());
+        trace_context.baggage = parent_trace_context
+            .map(|ctx| ctx.baggage.clone())
+            .unwrap_or_default();
+        subworkflow_options.trace.context = Some(trace_context);
+    }
+
     let output = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
         Path::new(workflow_path),
         &Value::Object(subworkflow_input),
         client,
         custom_worker,
         None,
-        &YamlWorkflowRunOptions::default(),
+        &subworkflow_options,
     )
     .await
     .map_err(|error| format!("subworkflow '{}' failed: {}", workflow_id, error))?;
