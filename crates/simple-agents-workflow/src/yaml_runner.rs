@@ -437,6 +437,14 @@ fn validate_schema_instance(schema: &Value, instance: &Value) -> Result<(), Stri
     Ok(())
 }
 
+fn schema_type(schema: &Value) -> Option<&str> {
+    schema.get("type").and_then(Value::as_str)
+}
+
+fn schema_expects_object(schema: &Value) -> bool {
+    schema_type(schema) == Some("object")
+}
+
 fn trace_context_from_options(options: &YamlWorkflowRunOptions) -> Option<TraceContext> {
     options.trace.context.as_ref().map(|input| TraceContext {
         trace_id: input.trace_id.clone(),
@@ -924,14 +932,28 @@ pub fn yaml_workflow_to_mermaid(workflow: &YamlWorkflow) -> String {
 fn yaml_workflow_to_mermaid_fallback(workflow: &YamlWorkflow) -> String {
     let mut lines = Vec::new();
     lines.push("flowchart TD".to_string());
+    let mut tool_node_ids: Vec<String> = Vec::new();
 
     for node in &workflow.nodes {
+        let label = format!("{}\\n({})", node.id, node.kind_name());
         lines.push(format!(
-            "  {}[\"{}\\n({})\"]",
+            "  {}[\"{}\"]",
             sanitize_mermaid_id(&node.id),
-            escape_mermaid_label(&node.id),
-            node.kind_name()
+            escape_mermaid_label(label.as_str()),
         ));
+
+        if let Some(llm) = node.node_type.llm_call.as_ref() {
+            for (idx, tool_name) in llm_tool_names(llm).into_iter().enumerate() {
+                let tool_id = sanitize_mermaid_id(format!("{}__tool_{}", node.id, idx).as_str());
+                lines.push(format!(
+                    "  {}([\"{}\"])",
+                    tool_id,
+                    escape_mermaid_label(format!("tool: {tool_name}").as_str())
+                ));
+                lines.push(format!("  {} -.-> {}", sanitize_mermaid_id(&node.id), tool_id));
+                tool_node_ids.push(tool_id);
+            }
+        }
     }
 
     let mut emitted: HashSet<(String, String, String)> = HashSet::new();
@@ -977,7 +999,22 @@ fn yaml_workflow_to_mermaid_fallback(workflow: &YamlWorkflow) -> String {
         }
     }
 
+    if !tool_node_ids.is_empty() {
+        lines.push("  classDef toolNode fill:#FFF4D6,stroke:#D97706,color:#7C2D12;".to_string());
+        lines.push(format!("  class {} toolNode;", tool_node_ids.join(",")));
+    }
+
     lines.join("\n")
+}
+
+fn llm_tool_names(llm: &YamlLlmCall) -> Vec<String> {
+    llm.tools
+        .iter()
+        .map(|tool| match tool {
+            YamlToolDeclaration::OpenAi(openai) => openai.function.name.clone(),
+            YamlToolDeclaration::Simplified(simple) => simple.name.clone(),
+        })
+        .collect()
 }
 
 /// Load a YAML workflow file and render it as Mermaid flowchart.
@@ -994,7 +1031,359 @@ pub fn yaml_workflow_file_to_mermaid(workflow_path: &Path) -> Result<String, Yam
             source,
         })?;
 
-    Ok(yaml_workflow_to_mermaid(&workflow))
+    let referenced_subgraphs = discover_referenced_subgraphs(workflow_path, &workflow)?;
+    if referenced_subgraphs.is_empty() {
+        return Ok(yaml_workflow_to_mermaid(&workflow));
+    }
+
+    Ok(yaml_workflow_to_mermaid_with_subgraphs(
+        &workflow,
+        &referenced_subgraphs,
+    ))
+}
+
+#[derive(Debug, Clone)]
+struct MermaidSubgraphWorkflow {
+    alias: String,
+    workflow: YamlWorkflow,
+}
+
+#[derive(Debug, Default)]
+struct MermaidBlockRender {
+    lines: Vec<String>,
+    tool_node_ids: Vec<String>,
+    run_workflow_tool_node_ids: Vec<String>,
+    entry_node_id: String,
+}
+
+fn yaml_workflow_to_mermaid_with_subgraphs(
+    workflow: &YamlWorkflow,
+    subgraphs: &[MermaidSubgraphWorkflow],
+) -> String {
+    let mut lines = vec!["flowchart TD".to_string()];
+
+    let main_block = render_mermaid_block(workflow, "main");
+    lines.push(format!(
+        "  subgraph main_graph[\"Main: {}\"]",
+        escape_mermaid_label(&workflow.id)
+    ));
+    for line in &main_block.lines {
+        lines.push(format!("    {line}"));
+    }
+    lines.push("  end".to_string());
+
+    let mut all_tool_nodes = main_block.tool_node_ids.clone();
+
+    for (index, subgraph) in subgraphs.iter().enumerate() {
+        let block_id = format!("subgraph_{}", index + 1);
+        let block = render_mermaid_block(&subgraph.workflow, &block_id);
+        lines.push(format!(
+            "  subgraph {}[\"Subgraph: {}\"]",
+            sanitize_mermaid_id(&format!("{}_cluster", block_id)),
+            escape_mermaid_label(&subgraph.alias)
+        ));
+        for line in &block.lines {
+            lines.push(format!("    {line}"));
+        }
+        lines.push("  end".to_string());
+
+        for tool_node in &main_block.run_workflow_tool_node_ids {
+            lines.push(format!(
+                "  {} -. \"{}\" .-> {}",
+                tool_node,
+                escape_mermaid_label(&format!("calls {}", subgraph.alias)),
+                block.entry_node_id
+            ));
+        }
+
+        all_tool_nodes.extend(block.tool_node_ids);
+    }
+
+    if !all_tool_nodes.is_empty() {
+        lines.push("  classDef toolNode fill:#FFF4D6,stroke:#D97706,color:#7C2D12;".to_string());
+        lines.push(format!("  class {} toolNode;", all_tool_nodes.join(",")));
+    }
+
+    lines.join("\n")
+}
+
+fn render_mermaid_block(workflow: &YamlWorkflow, prefix: &str) -> MermaidBlockRender {
+    let mut block = MermaidBlockRender {
+        entry_node_id: prefixed_mermaid_id(prefix, &workflow.entry_node),
+        ..Default::default()
+    };
+
+    for node in &workflow.nodes {
+        let node_id = prefixed_mermaid_id(prefix, &node.id);
+        let label = format!("{}\\n({})", node.id, node.kind_name());
+        block
+            .lines
+            .push(format!("{}[\"{}\"]", node_id, escape_mermaid_label(&label)));
+
+        if let Some(llm) = node.node_type.llm_call.as_ref() {
+            for (idx, tool) in llm.tools.iter().enumerate() {
+                let tool_name = tool_declaration_name(tool);
+                let tool_id = prefixed_mermaid_id(prefix, &format!("{}__tool_{}", node.id, idx));
+                block.lines.push(format!(
+                    "{}([\"{}\"])",
+                    tool_id,
+                    escape_mermaid_label(format!("tool: {tool_name}").as_str())
+                ));
+                block.lines.push(format!("{} -.-> {}", node_id, tool_id));
+                block.tool_node_ids.push(tool_id.clone());
+
+                if tool_name == "run_workflow_graph" {
+                    block.run_workflow_tool_node_ids.push(tool_id);
+                }
+            }
+        }
+    }
+
+    let mut emitted: HashSet<(String, String, String)> = HashSet::new();
+
+    for edge in &workflow.edges {
+        emitted.insert((edge.from.clone(), String::new(), edge.to.clone()));
+    }
+
+    for node in &workflow.nodes {
+        if let Some(switch) = node.node_type.switch.as_ref() {
+            for branch in &switch.branches {
+                emitted.insert((
+                    node.id.clone(),
+                    branch.condition.clone(),
+                    branch.target.clone(),
+                ));
+            }
+            emitted.insert((
+                node.id.clone(),
+                "default".to_string(),
+                switch.default.clone(),
+            ));
+        }
+    }
+
+    let mut edges = emitted.into_iter().collect::<Vec<_>>();
+    edges.sort();
+
+    for (from, label, to) in edges {
+        let from_id = prefixed_mermaid_id(prefix, &from);
+        let to_id = prefixed_mermaid_id(prefix, &to);
+        if label.is_empty() {
+            block.lines.push(format!("{} --> {}", from_id, to_id));
+        } else {
+            block.lines.push(format!(
+                "{} -- \"{}\" --> {}",
+                from_id,
+                escape_mermaid_label(&label),
+                to_id
+            ));
+        }
+    }
+
+    block
+}
+
+fn discover_referenced_subgraphs(
+    workflow_path: &Path,
+    workflow: &YamlWorkflow,
+) -> Result<Vec<MermaidSubgraphWorkflow>, YamlWorkflowRunError> {
+    let workflow_ids = referenced_workflow_ids(workflow);
+    if workflow_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let parent_dir = workflow_path.parent().unwrap_or(Path::new("."));
+    let sibling_workflows = load_yaml_sibling_workflows(parent_dir, workflow_path)?;
+
+    let mut discovered = Vec::new();
+    let mut seen = HashSet::new();
+
+    for workflow_id in workflow_ids {
+        let normalized = normalize_workflow_lookup_key(&workflow_id);
+        if seen.contains(&normalized) {
+            continue;
+        }
+
+        if let Some((_, subworkflow)) = sibling_workflows
+            .iter()
+            .find(|(key, _)| key == &normalized)
+        {
+            discovered.push(MermaidSubgraphWorkflow {
+                alias: workflow_id.clone(),
+                workflow: subworkflow.clone(),
+            });
+            seen.insert(normalized);
+        }
+    }
+
+    Ok(discovered)
+}
+
+fn load_yaml_sibling_workflows(
+    parent_dir: &Path,
+    workflow_path: &Path,
+) -> Result<Vec<(String, YamlWorkflow)>, YamlWorkflowRunError> {
+    let mut results = Vec::new();
+    let entries = std::fs::read_dir(parent_dir).map_err(|source| YamlWorkflowRunError::Read {
+        path: parent_dir.display().to_string(),
+        source,
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|source| YamlWorkflowRunError::Read {
+            path: parent_dir.display().to_string(),
+            source,
+        })?;
+        let path = entry.path();
+        if !is_yaml_file(&path) {
+            continue;
+        }
+
+        if path == workflow_path {
+            continue;
+        }
+
+        let contents = std::fs::read_to_string(&path).map_err(|source| YamlWorkflowRunError::Read {
+            path: path.display().to_string(),
+            source,
+        })?;
+        let subworkflow: YamlWorkflow =
+            serde_yaml::from_str(&contents).map_err(|source| YamlWorkflowRunError::Parse {
+                path: path.display().to_string(),
+                source,
+            })?;
+
+        if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
+            results.push((normalize_workflow_lookup_key(stem), subworkflow.clone()));
+        }
+        results.push((
+            normalize_workflow_lookup_key(&subworkflow.id),
+            subworkflow,
+        ));
+    }
+
+    Ok(results)
+}
+
+fn referenced_workflow_ids(workflow: &YamlWorkflow) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut seen = HashSet::new();
+
+    for node in &workflow.nodes {
+        let prompt = node.config.as_ref().and_then(|config| config.prompt.as_deref());
+
+        if let Some(llm) = node.node_type.llm_call.as_ref() {
+            for tool in &llm.tools {
+                if tool_declaration_name(tool) != "run_workflow_graph" {
+                    continue;
+                }
+
+                for workflow_id in referenced_workflow_ids_from_tool(tool) {
+                    let normalized = normalize_workflow_lookup_key(&workflow_id);
+                    if seen.insert(normalized) {
+                        ids.push(workflow_id);
+                    }
+                }
+
+                if let Some(prompt_text) = prompt {
+                    for workflow_id in referenced_workflow_ids_from_prompt(prompt_text) {
+                        let normalized = normalize_workflow_lookup_key(&workflow_id);
+                        if seen.insert(normalized) {
+                            ids.push(workflow_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    ids
+}
+
+fn referenced_workflow_ids_from_tool(tool: &YamlToolDeclaration) -> Vec<String> {
+    let schema = match tool {
+        YamlToolDeclaration::OpenAi(openai) => openai.function.parameters.as_ref(),
+        YamlToolDeclaration::Simplified(simple) => Some(&simple.input_schema),
+    };
+
+    let mut ids = Vec::new();
+    if let Some(schema) = schema {
+        if let Some(workflow_prop) = schema
+            .get("properties")
+            .and_then(Value::as_object)
+            .and_then(|properties| properties.get("workflow_id"))
+        {
+            if let Some(value) = workflow_prop.get("const").and_then(Value::as_str) {
+                ids.push(value.to_string());
+            }
+
+            if let Some(enum_values) = workflow_prop.get("enum").and_then(Value::as_array) {
+                for value in enum_values {
+                    if let Some(value) = value.as_str() {
+                        ids.push(value.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    ids
+}
+
+fn referenced_workflow_ids_from_prompt(prompt: &str) -> Vec<String> {
+    let mut ids = Vec::new();
+    let mut search = prompt;
+
+    while let Some(index) = search.find("\"workflow_id\"") {
+        let remainder = &search[index + "\"workflow_id\"".len()..];
+        let Some(colon_index) = remainder.find(':') else {
+            break;
+        };
+
+        let candidate = remainder[colon_index + 1..].trim_start();
+        if let Some(rest) = candidate.strip_prefix('"') {
+            if let Some(end_quote_index) = rest.find('"') {
+                let workflow_id = rest[..end_quote_index].trim();
+                if !workflow_id.is_empty() {
+                    ids.push(workflow_id.to_string());
+                }
+                search = &rest[end_quote_index + 1..];
+                continue;
+            }
+        }
+
+        search = &remainder[colon_index + 1..];
+    }
+
+    ids
+}
+
+fn normalize_workflow_lookup_key(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            '-' => '_',
+            _ => ch.to_ascii_lowercase(),
+        })
+        .collect()
+}
+
+fn is_yaml_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()),
+        Some("yaml") | Some("yml")
+    )
+}
+
+fn prefixed_mermaid_id(prefix: &str, id: &str) -> String {
+    sanitize_mermaid_id(format!("{}__{}", prefix, id).as_str())
+}
+
+fn tool_declaration_name(tool: &YamlToolDeclaration) -> &str {
+    match tool {
+        YamlToolDeclaration::OpenAi(openai) => &openai.function.name,
+        YamlToolDeclaration::Simplified(simple) => &simple.name,
+    }
 }
 
 pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition, YamlToIrError> {
@@ -1502,6 +1891,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
             request: YamlLlmExecutionRequest,
             event_sink: Option<&dyn YamlWorkflowEventSink>,
         ) -> Result<YamlLlmExecutionResult, String> {
+            let expects_object = schema_expects_object(&request.schema);
             let messages = if let Some(mut history) = request.messages.clone() {
                 if request.append_prompt_as_user && !request.prompt.trim().is_empty() {
                     history.push(Message::user(&request.prompt));
@@ -1531,6 +1921,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         .model(&request.model)
                         .messages(conversation.clone())
                         .tools(request.tools.iter().map(|t| t.definition.clone()).collect());
+
+                    if request.heal && expects_object {
+                        builder = builder.json_schema("workflow_step", request.schema.clone());
+                    }
 
                     if let Some(choice) = request.tool_choice.clone() {
                         builder = builder.tool_choice(choice);
@@ -1577,12 +1971,16 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         .ok_or_else(|| "completion returned no choices".to_string())?;
 
                     if choice.finish_reason != FinishReason::ToolCalls {
-                        let content = response.content().ok_or_else(|| {
-                            "completion returned empty content for structured payload".to_string()
-                        })?;
-                        let payload: Value = serde_json::from_str(content).map_err(|error| {
-                            format!("failed to parse structured completion JSON: {error}")
-                        })?;
+                        let content = response.content().unwrap_or_default();
+                        let payload = if expects_object {
+                            parse_streamed_structured_payload(content, request.heal)
+                                .map_err(|error| {
+                                    format!("failed to parse structured completion JSON: {error}")
+                                })?
+                                .payload
+                        } else {
+                            Value::String(content.to_string())
+                        };
                         return Ok(YamlLlmExecutionResult {
                             payload,
                             usage: usage_total,
@@ -1642,7 +2040,15 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             }
                         }
 
-                        let tool_output_result = if let Some(custom_worker) = self.custom_worker {
+                        let tool_output_result = if tool_name == "run_workflow_graph" {
+                            execute_subworkflow_tool_call(
+                                &arguments,
+                                &request.execution_context,
+                                self.client,
+                                self.custom_worker,
+                            )
+                            .await
+                        } else if let Some(custom_worker) = self.custom_worker {
                             custom_worker
                                 .execute(
                                     tool_name.as_str(),
@@ -1792,6 +2198,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 .model(&request.model)
                 .messages(messages);
 
+            if request.heal && !request.stream && expects_object {
+                builder = builder.json_schema("workflow_step", request.schema.clone());
+            }
+
             if request.stream {
                 builder = builder.stream(true);
             }
@@ -1800,7 +2210,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                 .build()
                 .map_err(|error| format!("failed to build completion request: {error}"))?;
 
-            let completion_options = if request.heal && !request.stream {
+            let completion_options = if request.heal && !request.stream && expects_object {
                 CompletionOptions {
                     mode: CompletionMode::HealedJson,
                 }
@@ -1952,30 +2362,35 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         }
                     }
 
-                    let resolved =
-                        parse_streamed_structured_payload(aggregated.as_str(), request.heal)?;
-                    if let Some(confidence) = resolved.heal_confidence {
-                        if let Some(sink) = event_sink {
-                            sink.emit(&YamlWorkflowEvent {
-                                event_type: "node_healed".to_string(),
-                                node_id: Some(request.node_id.clone()),
-                                step_id: Some(request.node_id.clone()),
-                                node_kind: Some("llm_call".to_string()),
-                                streamable: Some(true),
-                                message: Some(format!(
-                                    "healed streamed structured response confidence={confidence}"
-                                )),
-                                delta: None,
-                                token_kind: None,
-                                is_terminal_node_token: None,
-                                elapsed_ms: None,
-                                metadata: None,
-                            });
+                    let payload = if expects_object {
+                        let resolved =
+                            parse_streamed_structured_payload(aggregated.as_str(), request.heal)?;
+                        if let Some(confidence) = resolved.heal_confidence {
+                            if let Some(sink) = event_sink {
+                                sink.emit(&YamlWorkflowEvent {
+                                    event_type: "node_healed".to_string(),
+                                    node_id: Some(request.node_id.clone()),
+                                    step_id: Some(request.node_id.clone()),
+                                    node_kind: Some("llm_call".to_string()),
+                                    streamable: Some(true),
+                                    message: Some(format!(
+                                        "healed streamed structured response confidence={confidence}"
+                                    )),
+                                    delta: None,
+                                    token_kind: None,
+                                    is_terminal_node_token: None,
+                                    elapsed_ms: None,
+                                    metadata: None,
+                                });
+                            }
                         }
-                    }
+                        resolved.payload
+                    } else {
+                        Value::String(aggregated)
+                    };
 
                     Ok(YamlLlmExecutionResult {
-                        payload: resolved.payload,
+                        payload,
                         usage: final_stream_usage.map(|usage| YamlLlmTokenUsage {
                             prompt_tokens: usage.prompt_tokens,
                             completion_tokens: usage.completion_tokens,
@@ -1987,12 +2402,16 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     })
                 }
                 CompletionOutcome::Response(response) => {
-                    let content = response
-                        .content()
-                        .ok_or_else(|| "completion returned empty content".to_string())?;
-                    let payload = serde_json::from_str(content).map_err(|error| {
-                        format!("failed to parse structured completion JSON: {error}")
-                    })?;
+                    let payload = if expects_object {
+                        let content = response
+                            .content()
+                            .ok_or_else(|| "completion returned empty content".to_string())?;
+                        serde_json::from_str(content).map_err(|error| {
+                            format!("failed to parse structured completion JSON: {error}")
+                        })?
+                    } else {
+                        Value::String(response.content().unwrap_or_default().to_string())
+                    };
 
                     Ok(YamlLlmExecutionResult {
                         payload,
@@ -2007,6 +2426,10 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                     })
                 }
                 CompletionOutcome::HealedJson(healed) => {
+                    if !expects_object {
+                        return Err("healed json outcome is unsupported for non-object schema"
+                            .to_string());
+                    }
                     if let Some(sink) = event_sink {
                         sink.emit(&YamlWorkflowEvent {
                             event_type: "node_healed".to_string(),
@@ -2037,17 +2460,24 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                         tool_calls: Vec::new(),
                     })
                 }
-                CompletionOutcome::CoercedSchema(coerced) => Ok(YamlLlmExecutionResult {
-                    payload: coerced.coerced.value,
-                    usage: Some(YamlLlmTokenUsage {
-                        prompt_tokens: coerced.response.usage.prompt_tokens,
-                        completion_tokens: coerced.response.usage.completion_tokens,
-                        total_tokens: coerced.response.usage.total_tokens,
-                        thinking_tokens: None,
-                    }),
-                    ttft_ms: None,
-                    tool_calls: Vec::new(),
-                }),
+                CompletionOutcome::CoercedSchema(coerced) => {
+                    if !expects_object {
+                        return Err(
+                            "coerced schema outcome is unsupported for non-object schema".to_string()
+                        );
+                    }
+                    Ok(YamlLlmExecutionResult {
+                        payload: coerced.coerced.value,
+                        usage: Some(YamlLlmTokenUsage {
+                            prompt_tokens: coerced.response.usage.prompt_tokens,
+                            completion_tokens: coerced.response.usage.completion_tokens,
+                            total_tokens: coerced.response.usage.total_tokens,
+                            thinking_tokens: None,
+                        }),
+                        ttft_ms: None,
+                        tool_calls: Vec::new(),
+                    })
+                }
             }
         }
     }
@@ -2441,12 +2871,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
             let payload = llm_result.payload;
             let tool_calls = llm_result.tool_calls;
-
-            if !payload.is_object() {
-                return Err(YamlWorkflowRunError::LlmPayloadNotObject {
-                    node_id: node.id.clone(),
-                });
-            }
 
             let mut node_output = json!({ "output": payload });
             if !tool_calls.is_empty() {
@@ -3779,10 +4203,141 @@ fn mock_rag(topic: &str) -> Value {
     })
 }
 
+async fn execute_subworkflow_tool_call(
+    payload: &Value,
+    context: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<Value, String> {
+    let workflow_id = payload
+        .get("workflow_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "run_workflow_graph requires payload.workflow_id".to_string())?;
+
+    let input_context = context
+        .get("input")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "run_workflow_graph requires context.input".to_string())?;
+
+    let registry = input_context
+        .get("workflow_registry")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            "run_workflow_graph requires input.workflow_registry map of workflow_id -> yaml_path"
+                .to_string()
+        })?;
+
+    let workflow_path = registry
+        .get(workflow_id)
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            format!(
+                "workflow_registry has no entry for workflow_id '{}'",
+                workflow_id
+            )
+        })?;
+
+    let parent_depth = input_context
+        .get("__subgraph_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let max_depth = input_context
+        .get("__subgraph_max_depth")
+        .and_then(Value::as_u64)
+        .unwrap_or(3);
+
+    if parent_depth >= max_depth {
+        return Err(format!(
+            "run_workflow_graph depth limit reached (depth={}, max={})",
+            parent_depth, max_depth
+        ));
+    }
+
+    let mut subworkflow_input = payload
+        .get("input")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    if !subworkflow_input.contains_key("messages") {
+        if let Some(messages) = input_context.get("messages") {
+            subworkflow_input.insert("messages".to_string(), messages.clone());
+        }
+    }
+
+    if !subworkflow_input.contains_key("email_text") {
+        if let Some(email_text) = input_context.get("email_text") {
+            subworkflow_input.insert("email_text".to_string(), email_text.clone());
+        }
+    }
+
+    if !subworkflow_input.contains_key("workflow_registry") {
+        subworkflow_input.insert(
+            "workflow_registry".to_string(),
+            Value::Object(registry.clone()),
+        );
+    }
+
+    subworkflow_input.insert(
+        "__subgraph_depth".to_string(),
+        Value::Number(serde_json::Number::from(parent_depth + 1)),
+    );
+    subworkflow_input.insert(
+        "__subgraph_max_depth".to_string(),
+        Value::Number(serde_json::Number::from(max_depth)),
+    );
+
+    let output = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+        Path::new(workflow_path),
+        &Value::Object(subworkflow_input),
+        client,
+        custom_worker,
+        None,
+        &YamlWorkflowRunOptions::default(),
+    )
+    .await
+    .map_err(|error| format!("subworkflow '{}' failed: {}", workflow_id, error))?;
+
+    Ok(json!({
+        "workflow_id": workflow_id,
+        "workflow_path": workflow_path,
+        "terminal_node": output.terminal_node,
+        "terminal_output": output.terminal_output,
+        "trace": output.trace,
+    }))
+}
+
 fn mock_custom_worker_output(
     handler: &str,
     payload: &Value,
 ) -> Result<Value, YamlWorkflowRunError> {
+    if handler == "get_employee_record" {
+        let employee_name = payload
+            .get("employee_name")
+            .and_then(Value::as_str)
+            .unwrap_or("Unknown Employee")
+            .trim();
+        let normalized_name = if employee_name.is_empty() {
+            "Unknown Employee"
+        } else {
+            employee_name
+        };
+
+        let (employee_id, location) = match normalized_name.to_ascii_lowercase().as_str() {
+            "alex johnson" => ("EMP-2041", "Austin"),
+            "priya sharma" => ("EMP-3378", "Bengaluru"),
+            "marcus lee" => ("EMP-1196", "Singapore"),
+            "sarah chen" => ("EMP-4450", "Toronto"),
+            _ => ("EMP-0000", "Unassigned"),
+        };
+
+        return Ok(json!({
+            "employee_name": normalized_name,
+            "employee_id": employee_id,
+            "location": location,
+        }));
+    }
+
     if let Some(topic) = payload.get("topic").and_then(Value::as_str) {
         let mut value = mock_rag(topic);
         if let Value::Object(object) = &mut value {
@@ -3946,6 +4501,7 @@ mod tests {
     use simple_agent_type::tool::{ToolCallFunction, ToolType};
     use simple_agent_type::{Result as SaResult, SimpleAgentsError};
     use simple_agents_core::SimpleAgentsClientBuilder;
+    use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
 
@@ -4890,6 +5446,18 @@ nodes:
             .any(|diagnostic| diagnostic.code == "invalid_tools_format"));
     }
 
+    #[test]
+    fn mock_custom_worker_supports_get_employee_record() {
+        let result = mock_custom_worker_output(
+            "get_employee_record",
+            &json!({"employee_name": "Alex Johnson"}),
+        )
+        .expect("mock tool should resolve employee record");
+
+        assert_eq!(result["employee_id"], Value::String("EMP-2041".to_string()));
+        assert_eq!(result["location"], Value::String("Austin".to_string()));
+    }
+
     #[tokio::test]
     async fn custom_worker_receives_trace_context_block() {
         let yaml = r#"
@@ -5070,6 +5638,100 @@ edges:
         assert!(mermaid.contains("decide -- \"route1\" --> draft"));
         assert!(mermaid.contains("decide -- \"default\" --> ask"));
         assert!(mermaid.contains("draft --> ask"));
+    }
+
+    #[test]
+    fn renders_yaml_workflow_tools_as_colored_tool_nodes() {
+        let yaml = r#"
+id: tool-graph
+entry_node: chat
+nodes:
+  - id: chat
+    node_type:
+      llm_call:
+        model: gemini-3-flash
+        tools_format: simplified
+        tools:
+          - name: run_workflow_graph
+            input_schema:
+              type: object
+              properties:
+                workflow_id: { type: string }
+              required: [workflow_id]
+edges: []
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let mermaid = yaml_workflow_to_mermaid(&workflow);
+
+        assert!(mermaid.contains("chat__tool_0"));
+        assert!(mermaid.contains("chat -.-> chat__tool_0"));
+        assert!(mermaid.contains("classDef toolNode"));
+        assert!(mermaid.contains("class chat__tool_0 toolNode;"));
+    }
+
+    #[test]
+    fn renders_yaml_workflow_file_to_mermaid_with_subgraph_cluster_when_present() {
+        let base_dir = std::env::temp_dir().join(format!(
+            "simple_agents_mermaid_subgraph_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("unix epoch")
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base_dir).expect("temp dir should be created");
+
+        let orchestrator_path = base_dir.join("email-chat-orchestrator-with-subgraph-tool.yaml");
+        let subgraph_path = base_dir.join("hr-warning-email-subgraph.yaml");
+
+        let orchestrator_yaml = r#"
+id: email-chat-orchestrator-with-subgraph-tool
+entry_node: respond_casual
+nodes:
+  - id: respond_casual
+    node_type:
+      llm_call:
+        model: gemini-3-flash
+        tools_format: simplified
+        tools:
+          - name: run_workflow_graph
+            input_schema:
+              type: object
+              properties:
+                workflow_id: { type: string }
+              required: [workflow_id]
+    config:
+      prompt: |
+        Call with:
+        {
+          "workflow_id": "hr_warning_email_subgraph"
+        }
+edges: []
+"#;
+
+        let subgraph_yaml = r#"
+id: hr-warning-email-subgraph
+entry_node: draft_hr_warning_email
+nodes:
+  - id: draft_hr_warning_email
+    node_type:
+      llm_call:
+        model: gemini-3-flash
+edges: []
+"#;
+
+        fs::write(&orchestrator_path, orchestrator_yaml).expect("orchestrator yaml written");
+        fs::write(&subgraph_path, subgraph_yaml).expect("subgraph yaml written");
+
+        let mermaid =
+            yaml_workflow_file_to_mermaid(&orchestrator_path).expect("mermaid should render");
+
+        assert!(mermaid.contains("Main: email-chat-orchestrator-with-subgraph-tool"));
+        assert!(mermaid.contains("Subgraph: hr_warning_email_subgraph"));
+        assert!(mermaid.contains("calls hr_warning_email_subgraph"));
+        assert!(mermaid.contains("subgraph_1__draft_hr_warning_email"));
+
+        fs::remove_dir_all(base_dir).expect("temp dir removed");
     }
 
     #[test]
