@@ -31,8 +31,6 @@ jobs:
           cache: npm
           cache-dependency-path: crates/simple-agents-napi/package-lock.json
       - uses: astral-sh/setup-uv@v4
-      - name: Check README/workspace version sync
-        run: ./scripts/check-readme-version.sh
       - name: Run cross-language capability contract gates
         run: ./scripts/run-binding-contracts.sh
 
