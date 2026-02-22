@@ -20,7 +20,7 @@ EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
 	simple-agents-healing simple-agents-router simple-agents-providers \
-	simple-agents-core simple-agents-ffi
+	simple-agents-core simple-agents-workflow simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
 WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
