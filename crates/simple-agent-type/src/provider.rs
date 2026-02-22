@@ -272,6 +272,7 @@ pub trait Provider: Send + Sync {
                     role: Some(choice.message.role),
                     content: Some(choice.message.content),
                     reasoning_content: None,
+                    tool_calls: None,
                 },
                 finish_reason: Some(choice.finish_reason),
             })

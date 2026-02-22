@@ -208,6 +208,7 @@ fn test_streaming_types() {
                 role: Some(Role::Assistant),
                 content: Some("Hello".to_string()),
                 reasoning_content: None,
+                tool_calls: None,
             },
             finish_reason: None,
         }],

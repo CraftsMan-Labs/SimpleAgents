@@ -280,6 +280,36 @@ pub struct MessageDelta {
     /// Optional incremental reasoning/thinking content.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
+    /// Optional incremental tool call deltas.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCallDelta>>,
+}
+
+/// Incremental tool call payload emitted in streaming responses.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallDelta {
+    /// Tool call position in the choice stream.
+    pub index: u32,
+    /// Tool call identifier (may arrive incrementally).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
+    /// Tool type.
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub tool_type: Option<crate::tool::ToolType>,
+    /// Function name/arguments payload.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub function: Option<ToolCallFunctionDelta>,
+}
+
+/// Incremental function payload for a streamed tool call.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ToolCallFunctionDelta {
+    /// Function name (may arrive once).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// JSON arguments text (may arrive in chunks).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub arguments: Option<String>,
 }
 
 #[cfg(test)]
@@ -381,6 +411,7 @@ mod tests {
                     role: Some(crate::message::Role::Assistant),
                     content: Some("Hello".to_string()),
                     reasoning_content: None,
+                    tool_calls: None,
                 },
                 finish_reason: None,
             }],
@@ -399,6 +430,7 @@ mod tests {
             role: Some(crate::message::Role::Assistant),
             content: Some("Hi".to_string()),
             reasoning_content: None,
+            tool_calls: None,
         };
 
         let json = serde_json::to_value(&delta).unwrap();

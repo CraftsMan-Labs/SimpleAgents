@@ -1,0 +1,45 @@
+# Subgraph: draft HR warning email from full chat context
+
+id: hr-warning-email-subgraph
+version: 1.0.0
+
+metadata:
+  name: "HR Warning Email Subgraph"
+  description: "Draft a formal HR warning email from employee complaint context"
+  tags: ["example", "subgraph", "hr", "warning-email"]
+
+entry_node: draft_hr_warning_email
+
+nodes:
+  - id: draft_hr_warning_email
+    name: "Draft HR Warning Email"
+    node_type:
+      llm_call:
+        model: gemini-3-flash
+        temperature: 0.0
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          subject: { type: string }
+          body: { type: string }
+        required: [subject, body]
+        additionalProperties: false
+      prompt: |
+        Draft a formal HR warning email based on the conversation.
+
+        Requirements:
+        - Mention employee name, complaint summary, employee id, and location if present.
+        - Keep tone professional, factual, and policy-compliant.
+        - If critical details are missing, ask one concise follow-up question in the body.
+        - Return JSON only.
+
+        Return JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
