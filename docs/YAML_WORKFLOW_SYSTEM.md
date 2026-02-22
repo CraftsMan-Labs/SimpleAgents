@@ -164,6 +164,12 @@ Runtime behavior notes:
 - `tool_calls_global_key` is opt-in; no default global key is written.
 - Anthropic tool-calling remains disabled in the current provider rollout batch.
 
+Runnable example:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
+```
+
 ### `switch`
 
 ```yaml
