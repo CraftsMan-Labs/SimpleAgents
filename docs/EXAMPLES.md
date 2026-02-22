@@ -183,6 +183,8 @@ Cross-language runnable examples:
 
 - Python: `examples/workflow_email/run_with_python_package.py`
 - Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
+- Python (native YAML tool-calling warning email): `examples/workflow_email/email-chat-draft-with-tool-calling.yaml`
+- Python (graph-to-graph tool call orchestrator): `examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml`
 - Node (chat history input): `examples/workflow_email/node/run_with_chat_history.js`
 - Node: `examples/workflow_email/run_with_node_package.js`
 - Go: `bindings/go/examples/workflow_yaml/main.go`
@@ -198,6 +200,15 @@ Convenience command for Python chat-history workflow runs:
 
 ```bash
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Native YAML tool-calling workflow example
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
+
+# Example prompt in chat: "Draft a warning email for Priya Sharma for repeated late submissions"
+
+# Parent graph delegates to subgraph via run_workflow_graph tool
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
 ```
 
 Convenience command for Node/Bun chat-history workflow runs:

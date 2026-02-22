@@ -98,6 +98,88 @@ Field behavior:
 - `stream_json_as_text`: when `true`, streamed non-thinking JSON output tokens are emitted as text lines (`key: value`) once structured JSON is complete
 - `heal`: enables healing mode
 
+Tool-calling fields (optional):
+
+- `tools_format`: `openai` or `simplified` (default: `openai`)
+- `tools`: tool declarations for the selected format
+- `tool_choice`: `auto`, `none`, or forced function (for example: `{ function: get_customer_context }`)
+- `max_tool_roundtrips`: max tool loops for the node (default: `1`)
+- `tool_calls_global_key`: optional global key for storing tool-call traces from this node
+
+OpenAI-style tool declaration (`tools_format: openai`):
+
+```yaml
+node_type:
+  llm_call:
+    model: gpt-4.1
+    tools_format: openai
+    tools:
+      - type: function
+        function:
+          name: get_customer_context
+          description: Fetch order/customer context
+          parameters:
+            type: object
+            properties:
+              order_id: { type: string }
+            required: [order_id]
+            additionalProperties: false
+          output_schema:
+            type: object
+            properties:
+              customer_name: { type: string }
+            required: [customer_name]
+            additionalProperties: false
+```
+
+Simplified tool declaration (`tools_format: simplified`):
+
+```yaml
+node_type:
+  llm_call:
+    model: gpt-4.1
+    tools_format: simplified
+    tools:
+      - name: get_customer_context
+        description: Fetch order/customer context
+        input_schema:
+          type: object
+          properties:
+            order_id: { type: string }
+          required: [order_id]
+          additionalProperties: false
+        output_schema:
+          type: object
+          properties:
+            customer_name: { type: string }
+          required: [customer_name]
+          additionalProperties: false
+```
+
+Runtime behavior notes:
+
+- `tools_format` is strict per node; mixed declaration styles in one node fail validation.
+- Tool `output_schema` mismatches hard-fail the node execution.
+- Tool tracing is emitted with events: `node_tool_call_requested`, `node_tool_call_completed`, `node_tool_call_failed`, and `node_tool_roundtrip_completed`.
+- `tool_calls_global_key` is opt-in; no default global key is written.
+- Anthropic tool-calling remains disabled in the current provider rollout batch.
+
+Built-in graph-calling tool (current behavior):
+
+- Tool name: `run_workflow_graph`
+- Payload shape:
+  - `workflow_id` (required)
+  - `input` (optional object)
+- Resolver source: `input.workflow_registry` map (`workflow_id -> yaml_path`)
+- The runtime automatically forwards parent `input.messages` and `input.email_text` to the subgraph when missing in `input`.
+- Recursion guard: `input.__subgraph_max_depth` (default `3`), with current depth tracked in `input.__subgraph_depth`.
+
+Runnable example:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
+```
+
 ### `switch`
 
 ```yaml
@@ -248,6 +330,7 @@ Runtime options can be provided by language bindings/FFI using a structured obje
   - `enabled` (default `true`)
   - `sample_rate` (default `1.0`)
   - `payload_mode` (`full_payload` by default, toggle-ready for `redacted_payload`)
+  - `tool_trace_mode` (`full` by default; alternatives: `redacted`, `off`)
   - `retention_days` (default `30`)
   - `multi_tenant` (default `true`)
 - `trace`

@@ -683,6 +683,7 @@ mod tests {
                         role: Some(Role::Assistant),
                         content: Some(content.to_string()),
                         reasoning_content: None,
+                        tool_calls: None,
                     },
                     finish_reason: None,
                 }],

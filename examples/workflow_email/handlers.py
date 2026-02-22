@@ -114,3 +114,40 @@ def terminate_interview(
         "topic": topic,
         "context_nodes": str(len(context.get("nodes", {}))),
     }
+
+
+def get_employee_record(
+    topic: str,
+    *,
+    email_text: str,
+    context: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Tool handler that resolves employee id and location by name."""
+    _ = topic
+    _ = email_text
+    _ = context
+
+    requested_name = "Unknown Employee"
+    if payload is not None:
+        raw_name = payload.get("employee_name")
+        if isinstance(raw_name, str) and raw_name.strip():
+            requested_name = raw_name.strip()
+
+    directory = {
+        "alex johnson": {"employee_id": "EMP-2041", "location": "Austin"},
+        "priya sharma": {"employee_id": "EMP-3378", "location": "Bengaluru"},
+        "marcus lee": {"employee_id": "EMP-1196", "location": "Singapore"},
+        "sarah chen": {"employee_id": "EMP-4450", "location": "Toronto"},
+    }
+
+    profile = directory.get(
+        requested_name.lower(),
+        {"employee_id": "EMP-0000", "location": "Unassigned"},
+    )
+
+    return {
+        "employee_name": requested_name,
+        "employee_id": profile["employee_id"],
+        "location": profile["location"],
+    }

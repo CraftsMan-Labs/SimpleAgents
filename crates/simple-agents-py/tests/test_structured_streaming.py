@@ -119,7 +119,7 @@ class TestStructuredStreaming:
 
     def test_stream_structured_event_properties(self, client, model, simple_schema):
         """Test PyStructuredEvent properties."""
-        messages = [{"role": "user", "content": "Test"}]
+        messages = [{"role": "user", "content": "Create a person named Bob, age 32"}]
 
         events = list(
             client.complete(
@@ -155,7 +155,9 @@ class TestStructuredStreaming:
         messages = [{"role": "user", "content": "List three fruits"}]
 
         events = list(
-            client.complete(model, messages, schema=array_schema, max_tokens=50, stream=True)
+            client.complete(
+                model, messages, schema=array_schema, max_tokens=50, stream=True
+            )
         )
 
         # Should have at least one complete event

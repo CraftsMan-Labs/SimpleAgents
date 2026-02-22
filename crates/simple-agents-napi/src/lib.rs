@@ -1098,7 +1098,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
         ts_return_type = "Promise<any>"
     )]
     pub fn run_workflow_yaml_stream(
@@ -1130,8 +1130,9 @@ impl Client {
 
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-                let js_value = ctx.env.create_string_from_std(ctx.value)?;
-                Ok(vec![js_value.into_unknown()])
+                let null = ctx.env.get_null()?.into_unknown();
+                let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
+                Ok(vec![null, event_json])
             })?;
 
         let task = WorkflowStreamTask {
@@ -1147,7 +1148,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, emailText: string, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, emailText: string, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
         ts_return_type = "Promise<any>"
     )]
     pub fn run_email_workflow_yaml_stream(
