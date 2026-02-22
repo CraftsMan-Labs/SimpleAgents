@@ -19,7 +19,7 @@ nodes:
         temperature: 0.2
         messages_path: input.messages
         append_prompt_as_user: true
-        stream: false
+        stream: true
         heal: true
         tools_format: simplified
         tool_choice: auto
