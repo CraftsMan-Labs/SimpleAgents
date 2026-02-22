@@ -114,3 +114,33 @@ def terminate_interview(
         "topic": topic,
         "context_nodes": str(len(context.get("nodes", {}))),
     }
+
+
+def get_customer_context(
+    topic: str,
+    *,
+    email_text: str,
+    context: dict[str, Any],
+    payload: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Tool handler for YAML llm_call tool-calling examples."""
+    _ = topic
+    _ = context
+    order_id = "unknown"
+    if payload is not None:
+        payload_order_id = payload.get("order_id")
+        if isinstance(payload_order_id, str) and payload_order_id.strip():
+            order_id = payload_order_id.strip()
+
+    if "refund" in email_text.lower():
+        status = "refund_in_review"
+    elif "replace" in email_text.lower() or "replacement" in email_text.lower():
+        status = "replacement_processing"
+    else:
+        status = "investigating"
+
+    return {
+        "customer_name": "Alex",
+        "order_id": order_id,
+        "order_status": status,
+    }

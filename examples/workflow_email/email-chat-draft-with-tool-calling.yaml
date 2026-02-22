@@ -1,0 +1,107 @@
+# Chat-based Email Draft Workflow with native llm_call tool-calling
+# Uses input.messages and demonstrates:
+# - llm_call.tools_format=simplified
+# - per-tool output_schema validation
+# - tool_calls_global_key for downstream prompt interpolation
+
+id: email-chat-draft-with-tool-calling
+version: 1.0.0
+
+metadata:
+  name: "Email Chat Draft With Tool Calling"
+  description: "Use tool-calling in llm_call to fetch customer context before drafting"
+  tags: ["example", "chat-history", "email-draft", "tool-calling"]
+
+entry_node: draft_email_with_context
+
+nodes:
+  - id: draft_email_with_context
+    name: "Draft Email With Tool Context"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        temperature: 0.0
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: false
+        heal: true
+        tools_format: simplified
+        tool_choice: auto
+        max_tool_roundtrips: 1
+        tool_calls_global_key: customer_context_tool_calls
+        tools:
+          - name: get_customer_context
+            description: Fetch customer details needed for support email drafting
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties:
+                customer_name: { type: string }
+                order_id: { type: string }
+                order_status: { type: string }
+              required: [customer_name, order_id, order_status]
+              additionalProperties: false
+    config:
+      output_schema:
+        type: object
+        properties:
+          subject: { type: string }
+          body: { type: string }
+        required: [subject, body]
+        additionalProperties: false
+      prompt: |
+        Draft a professional support email reply.
+
+        Requirements:
+        - If order/customer details are missing, call get_customer_context.
+        - Keep the tone polite and action-oriented.
+        - Return JSON only.
+
+        Return JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+  - id: personalize_greeting
+    name: "Personalize Greeting"
+    node_type:
+      llm_call:
+        model: ollama-lfm2.5-thinking
+        temperature: 0.0
+        stream: false
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          subject: { type: string }
+          body: { type: string }
+        required: [subject, body]
+        additionalProperties: false
+      prompt: |
+        Rewrite the draft to include the customer's name in the greeting.
+
+        Customer name:
+        {{ globals.customer_context_tool_calls.0.output.customer_name }}
+
+        Current draft subject:
+        {{ nodes.draft_email_with_context.output.subject }}
+
+        Current draft body:
+        {{ nodes.draft_email_with_context.output.body }}
+
+        Return JSON:
+        {
+          "subject": "...",
+          "body": "..."
+        }
+
+edges:
+  - from: draft_email_with_context
+    to: personalize_greeting
