@@ -112,6 +112,15 @@ func resolveWorkflowPath(workflow string) (string, error) {
 	return "", fmt.Errorf("workflow file not found: %s", workflow)
 }
 
+func defaultWorkflowRegistry(workflowPath string) map[string]any {
+	registry := map[string]any{}
+	subgraphPath := filepath.Join(filepath.Dir(workflowPath), "hr-warning-email-subgraph.yaml")
+	if _, err := os.Stat(subgraphPath); err == nil {
+		registry["hr_warning_email_subgraph"] = subgraphPath
+	}
+	return registry
+}
+
 func initialMessages() []message {
 	return []message{
 		{
@@ -230,6 +239,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	workflowRegistry := defaultWorkflowRegistry(workflowPath)
 
 	client, err := simpleagents.NewClientFromEnv(provider)
 	if err != nil {
@@ -295,8 +305,9 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
 		workflowInput := map[string]any{
-			"email_text": userInput,
-			"messages":   workflowInputMessages,
+			"email_text":        userInput,
+			"messages":          workflowInputMessages,
+			"workflow_registry": workflowRegistry,
 		}
 
 		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
