@@ -9,7 +9,7 @@ repository = "https://github.com/yourusername/SimpleAgents"
 
 [dependencies]
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.18" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.19" }
 reqwest = { version = "0.12", features = ["json", "stream", "default-tls", "http2", "gzip", "brotli", "deflate"], default-features = false }
 tokio = { version = "1.42", features = ["full"] }
 futures = "0.3"
@@ -34,6 +34,6 @@ prometheus = ["dep:metrics-exporter-prometheus"]
  [dev-dependencies]
  tokio-test = "0.4"
  tracing-subscriber = "0.3"
- simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.18" }
- simple-agents-macros = { path = "../simple-agents-macros", version = "0.2.18" }
+ simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.19" }
+ simple-agents-macros = { path = "../simple-agents-macros", version = "0.2.19" }
  dotenv = "0.15"
