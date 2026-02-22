@@ -1,6 +1,8 @@
 .PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
+	publish-node-doppler \
+	npm-login \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
 	version-get version-sync version-patch version-minor version-major version-set \
@@ -66,7 +68,9 @@ help:
 	@echo "  make publish-python-dry    - Dry-run publish Python package"
 	@echo "  make publish-crates        - Publish Rust crates with Doppler env"
 	@echo "  make publish-python        - Publish Python package with Doppler env"
-	@echo "  make publish-node          - Publish Node package (expects NPM_TOKEN)"
+	@echo "  make publish-node          - Publish Node package (current env token or local npm session)"
+	@echo "  make publish-node-doppler  - Publish Node package using Doppler-injected env"
+	@echo "  make npm-login             - Login to npm locally for on-demand auth"
 	@echo "  make publish-all           - Publish Rust crates + Python + Node package"
 	@echo ""
 	@echo "Versioning:"
@@ -184,20 +188,35 @@ test-go-bindings: release-ffi
 	go test ./...
 
 publish-crates:
-	@set -e; for crate in $(PUBLISH_CRATES); do \
+	@set -e; \
+	max_attempts=$${PUBLISH_MAX_ATTEMPTS:-8}; \
+	retry_delay=$${PUBLISH_RETRY_DELAY_SECONDS:-15}; \
+	for crate in $(PUBLISH_CRATES); do \
 		echo "==> Publishing $$crate..."; \
-		set +e; \
-		out=$$($(DOPPLER_RUN) "cargo publish -p $$crate" 2>&1); \
-		status=$$?; \
-		set -e; \
-		echo "$$out"; \
-		if [ $$status -ne 0 ]; then \
+		attempt=1; \
+		while true; do \
+			set +e; \
+			out=$$($(DOPPLER_RUN) "cargo publish -p $$crate" 2>&1); \
+			status=$$?; \
+			set -e; \
+			echo "$$out"; \
+			if [ $$status -eq 0 ]; then \
+				break; \
+			fi; \
 			if echo "$$out" | grep -q "already exists"; then \
 				echo "==> Skipping $$crate (already exists)"; \
-			else \
-				exit $$status; \
+				break; \
 			fi; \
-		fi; \
+			if echo "$$out" | grep -q "no matching package named"; then \
+				if [ $$attempt -lt $$max_attempts ]; then \
+					echo "==> crates.io index not updated yet for dependencies (attempt $$attempt/$$max_attempts); retrying in $${retry_delay}s..."; \
+					attempt=$$((attempt + 1)); \
+					sleep $$retry_delay; \
+					continue; \
+				fi; \
+			fi; \
+			exit $$status; \
+		done; \
 	done
 
 publish-python:
@@ -265,17 +284,31 @@ publish-python-dry:
 
 publish-node: version-sync build-node
 	@set -e; \
-	$(DOPPLER_RUN) "set -e; \
-		cd $(NAPI_PROJECT_DIR); \
-		tmp_npmrc=\$$(mktemp); \
-		trap 'rm -f \"\$$tmp_npmrc\"' EXIT; \
-		if [ -z \"\$$NPM_TOKEN\" ]; then \
-			echo 'NPM_TOKEN is missing in Doppler context'; \
+	cd $(NAPI_PROJECT_DIR); \
+	token=$${NPM_TOKEN:-$$NODE_AUTH_TOKEN}; \
+	if [ -n "$$token" ]; then \
+		tmp_npmrc=$$(mktemp); \
+		trap 'rm -f "$$tmp_npmrc"' EXIT; \
+		printf 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=%s\n' "$$token" > "$$tmp_npmrc"; \
+		echo '==> Using token-based npm auth (NPM_TOKEN/NODE_AUTH_TOKEN)'; \
+		if ! NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm whoami; then \
+			echo '==> npm authentication failed for provided token'; \
+			echo '==> Refresh token (npm Automation token) and retry'; \
 			exit 1; \
 		fi; \
-		printf 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=%s\n' \"\$$NPM_TOKEN\" > \"\$$tmp_npmrc\"; \
-		NPM_CONFIG_USERCONFIG=\"\$$tmp_npmrc\" npm whoami; \
-		NPM_CONFIG_USERCONFIG=\"\$$tmp_npmrc\" npm publish --access public"
+		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public; \
+	else \
+		echo '==> No token provided; using local npm session (~/.npmrc)'; \
+		echo '==> If this fails, run: make npm-login'; \
+		npm whoami; \
+		npm publish --access public; \
+	fi
+
+publish-node-doppler:
+	@$(DOPPLER_RUN) "$(MAKE) --no-print-directory publish-node"
+
+npm-login:
+	cd $(NAPI_PROJECT_DIR) && npm login
 
 # ============================================================================
 # Version management
