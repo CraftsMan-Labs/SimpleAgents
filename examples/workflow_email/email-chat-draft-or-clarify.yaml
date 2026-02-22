@@ -25,6 +25,16 @@ nodes:
         stream_json_as_text: true
         heal: false
     config:
+      output_schema:
+        type: object
+        properties:
+          state:
+            type: string
+            enum: [ready, missing_scenario, capabilities_query]
+          reason:
+            type: string
+        required: [state, reason]
+        additionalProperties: false
       prompt: |
         Determine the user's intent state.
 
@@ -64,6 +74,13 @@ nodes:
         stream_json_as_text: true
         heal: false
     config:
+      output_schema:
+        type: object
+        properties:
+          question:
+            type: string
+        required: [question]
+        additionalProperties: false
       prompt: |
         User is new and asked about capabilities.
 
@@ -86,6 +103,13 @@ nodes:
         stream_json_as_text: true
         heal: false
     config:
+      output_schema:
+        type: object
+        properties:
+          question:
+            type: string
+        required: [question]
+        additionalProperties: false
       prompt: |
         You cannot draft yet because scenario context is incomplete.
 
@@ -106,6 +130,15 @@ nodes:
         stream_json_as_text: true
         heal: false
     config:
+      output_schema:
+        type: object
+        properties:
+          subject:
+            type: string
+          body:
+            type: string
+        required: [subject, body]
+        additionalProperties: false
       prompt: |
         Draft a professional reply email based on the conversation.
 
