@@ -15,7 +15,7 @@ build = "build.rs"
 async-trait.workspace = true
 prost.workspace = true
 serde_json.workspace = true
-simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.17" }
+simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.18" }
 thiserror.workspace = true
 tokio.workspace = true
 tonic.workspace = true
