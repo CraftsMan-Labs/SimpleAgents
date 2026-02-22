@@ -431,7 +431,8 @@ impl Provider for OpenAIProvider {
         })
     }
 
-    fn transform_response(&self, resp: ProviderResponse) -> Result<CompletionResponse> {
+    fn transform_response(&self, mut resp: ProviderResponse) -> Result<CompletionResponse> {
+        Self::normalize_tool_message_content(&mut resp.body);
         // Try native parsing first (fast path)
         match serde_json::from_value::<OpenAICompletionResponse>(resp.body.clone()) {
             Ok(openai_response) => {
@@ -526,6 +527,31 @@ impl OpenAIProvider {
             return map.remove(Self::HEALING_SCHEMA_KEY);
         }
         None
+    }
+
+    fn normalize_tool_message_content(body: &mut serde_json::Value) {
+        let Some(choices) = body
+            .get_mut("choices")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return;
+        };
+
+        for choice in choices {
+            let Some(message) = choice
+                .get_mut("message")
+                .and_then(serde_json::Value::as_object_mut)
+            else {
+                continue;
+            };
+
+            if !message.contains_key("content") || message["content"].is_null() {
+                message.insert(
+                    "content".to_string(),
+                    serde_json::Value::String(String::new()),
+                );
+            }
+        }
     }
 
     fn safe_token_count(raw: Option<u64>, field: &str) -> u32 {
@@ -671,6 +697,7 @@ impl OpenAIProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::sync::{Mutex, OnceLock};
     use std::time::Duration;
 
@@ -810,6 +837,56 @@ mod tests {
             provider_request.body["stream_options"]["include_usage"],
             true
         );
+    }
+
+    #[test]
+    fn test_transform_response_allows_null_message_content_for_tool_calls() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let response = ProviderResponse {
+            status: 200,
+            body: json!({
+                "id": "chatcmpl-tool",
+                "object": "chat.completion",
+                "created": 1700000000,
+                "model": "gemini-3-flash",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": null,
+                            "tool_calls": [
+                                {
+                                    "id": "call_1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "get_employee_record",
+                                        "arguments": "{\"employee_name\":\"Alex Johnson\"}"
+                                    }
+                                }
+                            ]
+                        },
+                        "finish_reason": "tool_calls"
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 6,
+                    "total_tokens": 16
+                }
+            }),
+            headers: None,
+        };
+
+        let parsed = provider
+            .transform_response(response)
+            .expect("response should parse");
+        let choice = parsed.choices.first().expect("choice should exist");
+        assert_eq!(choice.message.content, "");
+        assert_eq!(choice.finish_reason, FinishReason::ToolCalls);
+        assert!(choice.message.tool_calls.is_some());
     }
 
     #[tokio::test]
