@@ -112,6 +112,15 @@ func resolveWorkflowPath(workflow string) (string, error) {
 	return "", fmt.Errorf("workflow file not found: %s", workflow)
 }
 
+func defaultWorkflowRegistry(workflowPath string) map[string]any {
+	registry := map[string]any{}
+	subgraphPath := filepath.Join(filepath.Dir(workflowPath), "hr-warning-email-subgraph.yaml")
+	if _, err := os.Stat(subgraphPath); err == nil {
+		registry["hr_warning_email_subgraph"] = subgraphPath
+	}
+	return registry
+}
+
 func initialMessages() []message {
 	return []message{
 		{
@@ -183,6 +192,28 @@ func extractNerdstatsFromEvents(events []simpleagents.WorkflowEvent) map[string]
 	return nil
 }
 
+func renderFallbackStream(reply string, showThinking bool) bool {
+	if strings.TrimSpace(reply) == "" {
+		return false
+	}
+
+	fmt.Println()
+	fmt.Println("Step: terminal")
+	if showThinking {
+		fmt.Print("[output terminal] terminal: ")
+	} else {
+		fmt.Print("Streaming: ")
+	}
+
+	for _, r := range reply {
+		fmt.Print(string(r))
+		time.Sleep(5 * time.Millisecond)
+	}
+	fmt.Println()
+
+	return true
+}
+
 func randomConversationID() string {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
@@ -230,6 +261,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+	workflowRegistry := defaultWorkflowRegistry(workflowPath)
 
 	client, err := simpleagents.NewClientFromEnv(provider)
 	if err != nil {
@@ -295,8 +327,9 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 
 		workflowInput := map[string]any{
-			"email_text": userInput,
-			"messages":   workflowInputMessages,
+			"email_text":        userInput,
+			"messages":          workflowInputMessages,
+			"workflow_registry": workflowRegistry,
 		}
 
 		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
@@ -310,11 +343,44 @@ func main() {
 		case *streamFlag:
 			currentNode := ""
 			lastTokenLabel := ""
+			rawDebugStreamDetected := false
 			out, runErr = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, func(event simpleagents.WorkflowEvent) {
 				streamedEvents = append(streamedEvents, event)
+
+				isToolLifecycleEvent := event.EventType == "node_tool_call_requested" ||
+					event.EventType == "node_tool_call_completed" ||
+					event.EventType == "node_tool_call_failed" ||
+					event.EventType == "node_tool_roundtrip_completed"
+				if isToolLifecycleEvent {
+					displayNode := "Workflow"
+					if event.NodeID != nil {
+						displayNode = *event.NodeID
+					} else if event.StepID != nil {
+						displayNode = *event.StepID
+					}
+					if lineOpen {
+						fmt.Println()
+						lineOpen = false
+					}
+					message := event.EventType
+					if event.Message != nil {
+						trimmed := strings.TrimSpace(*event.Message)
+						if trimmed != "" {
+							message = trimmed
+						}
+					}
+					fmt.Printf("[tool] %s: %s\n", displayNode, message)
+					return
+				}
+
 				isDisplayedStreamEvent := event.EventType == "node_stream_delta"
 				if *showThinkingFlag {
-					isDisplayedStreamEvent = event.EventType == "node_stream_thinking_delta" || event.EventType == "node_stream_output_delta"
+					if event.EventType == "node_stream_thinking_delta" || event.EventType == "node_stream_output_delta" {
+						rawDebugStreamDetected = true
+						isDisplayedStreamEvent = true
+					} else {
+						isDisplayedStreamEvent = event.EventType == "node_stream_delta" && !rawDebugStreamDetected
+					}
 				}
 				if !isDisplayedStreamEvent || event.Delta == nil {
 					return
@@ -370,11 +436,11 @@ func main() {
 		if runErr != nil {
 			panic(runErr)
 		}
+		hasVisibleEvents := false
 		if *streamFlag && len(streamedEvents) > 0 {
-			hasVisibleEvents := false
 			expectedEventTypes := map[string]bool{"node_stream_delta": true}
 			if *showThinkingFlag {
-				expectedEventTypes = map[string]bool{"node_stream_thinking_delta": true, "node_stream_output_delta": true}
+				expectedEventTypes = map[string]bool{"node_stream_delta": true, "node_stream_thinking_delta": true, "node_stream_output_delta": true}
 			}
 			for _, event := range streamedEvents {
 				if expectedEventTypes[event.EventType] {
@@ -383,7 +449,7 @@ func main() {
 			}
 			if !hasVisibleEvents {
 				if *showThinkingFlag {
-					fmt.Println("[stream] No node_stream_thinking_delta, node_stream_output_delta events observed. Ensure llm_call nodes use stream=true.")
+					fmt.Println("[stream] No stream delta events observed. This can happen when the node has tools configured (streaming tool-calls are currently unsupported).")
 				} else {
 					fmt.Println("[stream] No node_stream_delta events observed. Ensure llm_call nodes use stream=true.")
 				}
@@ -444,7 +510,15 @@ func main() {
 		}
 
 		reply := renderAssistantReply(out.TerminalOutput)
-		fmt.Printf("\nAssistant: %s\n\n", reply)
+		fallbackStreamRendered := false
+		if *streamFlag && !hasVisibleEvents {
+			fallbackStreamRendered = renderFallbackStream(reply, *showThinkingFlag)
+		}
+		if fallbackStreamRendered {
+			fmt.Println()
+		} else {
+			fmt.Printf("\nAssistant: %s\n\n", reply)
+		}
 		messages = append(messages, message{Role: "assistant", Content: reply})
 
 		terminalOutputMap, isMap := out.TerminalOutput.(map[string]any)

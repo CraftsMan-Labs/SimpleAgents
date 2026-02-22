@@ -3,6 +3,8 @@
 use bytes::Bytes;
 use futures_util::Stream;
 use simple_agent_type::prelude::*;
+use simple_agent_type::response::{ToolCallDelta, ToolCallFunctionDelta};
+use simple_agent_type::tool::ToolType;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -72,6 +74,25 @@ pub fn transform_openai_chunk(chunk: OpenAIStreamChunk) -> Result<CompletionChun
                     role,
                     content: choice.delta.content,
                     reasoning_content: choice.delta.reasoning_content,
+                    tool_calls: choice.delta.tool_calls.map(|tool_calls| {
+                        tool_calls
+                            .into_iter()
+                            .map(|tool_call| ToolCallDelta {
+                                index: tool_call.index,
+                                id: tool_call.id,
+                                tool_type: tool_call.tool_type.as_deref().map(|kind| match kind {
+                                    "function" => ToolType::Function,
+                                    _ => ToolType::Function,
+                                }),
+                                function: tool_call.function.map(|function| {
+                                    ToolCallFunctionDelta {
+                                        name: function.name,
+                                        arguments: function.arguments,
+                                    }
+                                }),
+                            })
+                            .collect()
+                    }),
                 },
                 finish_reason: choice.finish_reason.as_ref().map(|s| match s.as_str() {
                     "stop" => FinishReason::Stop,
@@ -219,6 +240,7 @@ mod tests {
                     role: Some("assistant".to_string()),
                     content: Some("Hello".to_string()),
                     reasoning_content: None,
+                    tool_calls: None,
                 },
                 finish_reason: None,
             }],
@@ -249,6 +271,7 @@ mod tests {
                     role: Some("assistant".to_string()),
                     content: None,
                     reasoning_content: Some("thought token".to_string()),
+                    tool_calls: None,
                 },
                 finish_reason: None,
             }],
@@ -277,6 +300,7 @@ mod tests {
                     role: None,
                     content: None,
                     reasoning_content: None,
+                    tool_calls: None,
                 },
                 finish_reason: Some("stop".to_string()),
             }],

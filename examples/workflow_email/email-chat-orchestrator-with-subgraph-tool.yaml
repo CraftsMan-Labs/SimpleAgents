@@ -1,0 +1,66 @@
+# Parent graph: casual chat + delegate HR email drafting to subgraph via tool call
+
+id: email-chat-orchestrator-with-subgraph-tool
+version: 1.0.0
+
+metadata:
+  name: "Chat Orchestrator With Subgraph Tool"
+  description: "Handles casual chat and calls HR subgraph when warning email is requested"
+  tags: ["example", "chat", "tool-calling", "subgraph"]
+
+entry_node: respond_casual
+
+nodes:
+  - id: respond_casual
+    name: "Respond Casual Or Delegate HR"
+    node_type:
+      llm_call:
+        model: gemini-3-flash
+        temperature: 0.2
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        heal: true
+        tools_format: simplified
+        tool_choice: auto
+        max_tool_roundtrips: 1
+        tools:
+          - name: run_workflow_graph
+            description: Run a registered workflow graph by workflow_id and optional input
+            input_schema:
+              type: object
+              properties:
+                workflow_id: { type: string }
+                input:
+                  type: object
+                  additionalProperties: true
+              required: [workflow_id]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties:
+                workflow_id: { type: string }
+                workflow_path: { type: string }
+                terminal_node: { type: string }
+                terminal_output:
+                  type: object
+                  additionalProperties: true
+                trace:
+                  type: array
+                  items: { type: string }
+              required: [workflow_id, terminal_node, terminal_output, trace]
+              additionalProperties: false
+    config:
+      output_schema:
+        type: string
+      prompt: |
+        You are a chat assistant.
+
+        Behavior:
+        - For normal/casual chat, reply briefly and warmly.
+        - If the user asks to draft/write/send an HR warning or complaint email, call run_workflow_graph with:
+          {
+            "workflow_id": "hr_warning_email_subgraph"
+          }
+        - After tool returns, output a normal plain-text email using tool_result.terminal_output.
+        - Return plain text only (not JSON).
