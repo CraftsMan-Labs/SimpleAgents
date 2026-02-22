@@ -246,6 +246,9 @@ check-publish:
 	@echo "==> Running tests..."
 	@$(MAKE) test
 	@echo ""
+	@echo "==> Running Node binding contract test..."
+	@cd $(NAPI_PROJECT_DIR) && npm run test:contract
+	@echo ""
 	@echo "==> Running clippy..."
 	@$(MAKE) clippy
 	@echo ""
