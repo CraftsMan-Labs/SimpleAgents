@@ -144,9 +144,9 @@ Workflow YAML streaming/healing surface:
 Workflow YAML memory interpolation surface:
 
 - Prompt interpolation supports:
-  - `{{ input.email_text }}`
-  - `{{ nodes.<node_id>.output.<field> }}`
-  - `{{ globals.<key> }}`
+  - `&#123;&#123; input.email_text &#125;&#125;`
+  - `&#123;&#123; nodes.&lt;node_id&gt;.output.&lt;field&gt; &#125;&#125;`
+  - `&#123;&#123; globals.&lt;key&gt; &#125;&#125;`
 - Node config supports global memory writes:
   - `set_globals` for direct key assignment from context paths
   - `update_globals` with mutable ops:
@@ -174,7 +174,7 @@ References:
 | YAML workflow execution | not available | `run_workflow_yaml_file_with_client` / `run_workflow_yaml_with_client` (email wrappers remain) |
 | Workflow live events | not available | `run_email_workflow_yaml_with_client_and_custom_worker_and_events` + `YamlWorkflowEventSink` |
 | YAML workflow verifier | not available | `verify_yaml_workflow` diagnostics before execution |
-| YAML prompt memory | not available | `set_globals` + `update_globals` + `{{ globals.* }}` interpolation |
+| YAML prompt memory | not available | `set_globals` + `update_globals` + `&#123;&#123; globals.* &#125;&#125;` interpolation |
 | Visualization | not available | `workflow_to_mermaid` |
 
 ## 8) Cross-Language Exposure Contract
