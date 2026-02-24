@@ -8,7 +8,7 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 [![License](https://img.shields.io/badge/license-Apache--2.0%20%2F%20MIT-blue?style=flat-square)](LICENSE)
 
 [![PyPI Version](https://img.shields.io/pypi/v/simple-agents-py?style=flat-square&logo=python)](https://pypi.org/project/simple-agents-py/)
-[![PyPI Downloads](https://img.shields.io/pypi/dm/simple-agents-py?style=flat-square)](https://pypi.org/project/simple-agents-py/)
+[![PyPI Downloads](https://static.pepy.tech/badge/simple-agents-py/month)](https://pepy.tech/project/simple-agents-py)
 [![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm)](https://www.npmjs.com/package/simple-agents-node)
 [![npm Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square)](https://www.npmjs.com/package/simple-agents-node)
 
@@ -21,7 +21,7 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 
 | Package | Registry | Version | Downloads |
 |---|---|---|---|
-| `simple-agents-py` | [PyPI](https://pypi.org/project/simple-agents-py/) | ![PyPI Version](https://img.shields.io/pypi/v/simple-agents-py?style=flat-square&logo=python) | ![PyPI Downloads](https://img.shields.io/pypi/dm/simple-agents-py?style=flat-square) |
+| `simple-agents-py` | [PyPI](https://pypi.org/project/simple-agents-py/) | ![PyPI Version](https://img.shields.io/pypi/v/simple-agents-py?style=flat-square&logo=python) | ![PyPI Downloads](https://static.pepy.tech/badge/simple-agents-py/month) |
 | `simple-agents-node` | [npm](https://www.npmjs.com/package/simple-agents-node) | ![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm) | ![npm Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square) |
 | `simple-agent-type` | [crates.io](https://crates.io/crates/simple-agent-type) | ![crates simple-agent-type](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust) | ![downloads simple-agent-type](https://img.shields.io/crates/d/simple-agent-type?style=flat-square) |
 | `simple-agents-core` | [crates.io](https://crates.io/crates/simple-agents-core) | ![crates simple-agents-core](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust) | ![downloads simple-agents-core](https://img.shields.io/crates/d/simple-agents-core?style=flat-square) |
