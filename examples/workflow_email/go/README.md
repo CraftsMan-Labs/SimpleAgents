@@ -17,6 +17,17 @@ go run ./bindings/go/examples/workflow_email \
   "Termination request, second warning already issued"
 ```
 
+Run all workflow YAML files in one pass (shared input):
+
+```bash
+cargo build -p simple-agents-ffi --release
+CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$PWD/target/release" \
+LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
+go run ./bindings/go/examples/workflow_email_all \
+  "Please process damaged order 9921 and suggest next actions"
+```
+
 Interactive chat-history workflow runner (equivalent to Python `run_with_chat_history.py`):
 
 ```bash
