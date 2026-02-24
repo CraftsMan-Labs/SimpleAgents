@@ -1,7 +1,7 @@
 # simple-agents-py
 
 [![PyPI](https://img.shields.io/pypi/v/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
+[![PyPI - Downloads](https://static.pepy.tech/badge/simple-agents-py/month)](https://pepy.tech/project/simple-agents-py)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
 [![License](https://img.shields.io/pypi/l/simple-agents-py)](https://pypi.org/project/simple-agents-py/)
 
@@ -337,17 +337,16 @@ View download statistics on:
 
 The badges above automatically track:
 - **Version**: Current version on PyPI
-- **Downloads**: Monthly download count
+- **Downloads**: Monthly download count (from PePy)
 - **Python Versions**: Supported Python versions
 - **License**: Package license
 
 ### Tracking with shields.io
 
-The badges use [shields.io](https://shields.io/) which automatically fetches data from PyPI. Available metrics:
+Most badges use [shields.io](https://shields.io/), while downloads use PePy to avoid upstream rate-limit responses from the PyPI monthly downloads endpoint. Available metrics:
 - `pypi/v/simple-agents-py` - Latest version
-- `pypi/dm/simple-agents-py` - Monthly downloads
 - `pypi/dw/simple-agents-py` - Weekly downloads
-- `pypi/dd/simple-agents-py` - Daily downloads
+- `static.pepy.tech/badge/simple-agents-py/month` - Monthly downloads
 - `pypi/pyversions/simple-agents-py` - Python version support
 - `pypi/l/simple-agents-py` - License
 - `pypi/status/simple-agents-py` - Development status
