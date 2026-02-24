@@ -121,4 +121,4 @@ Metrics live in `simple-agents-providers`. The optional `prometheus` Cargo featu
 - Common integration issues: [Troubleshooting](/TROUBLESHOOTING)
 - Workflow timeline/replay tooling: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
 - YAML/code migration patterns: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
-- Feature inventory: [features.md (repo)](https://github.com/rishub/SimpleAgents/blob/main/features.md)
+- Feature inventory: [features.md (repo)](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/features.md)

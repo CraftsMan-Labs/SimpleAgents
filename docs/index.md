@@ -14,7 +14,7 @@ hero:
       link: /DOCS_MAP
     - theme: alt
       text: View on GitHub
-      link: https://github.com/rishub/SimpleAgents
+      link: https://github.com/CraftsMan-Labs/SimpleAgents
 
 features:
   - title: Start fast
