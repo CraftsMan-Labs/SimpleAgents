@@ -306,6 +306,70 @@ type WorkflowRunOptions struct {
 	Trace     map[string]any `json:"trace,omitempty"`
 }
 
+// WorkflowTraceContext carries optional upstream trace propagation fields.
+type WorkflowTraceContext struct {
+	TraceID      *string           `json:"trace_id,omitempty"`
+	SpanID       *string           `json:"span_id,omitempty"`
+	ParentSpanID *string           `json:"parent_span_id,omitempty"`
+	Traceparent  *string           `json:"traceparent,omitempty"`
+	Tracestate   *string           `json:"tracestate,omitempty"`
+	Baggage      map[string]string `json:"baggage,omitempty"`
+}
+
+// WorkflowTraceTenant carries optional multi-tenant correlation metadata.
+type WorkflowTraceTenant struct {
+	WorkspaceID    *string `json:"workspace_id,omitempty"`
+	UserID         *string `json:"user_id,omitempty"`
+	ConversationID *string `json:"conversation_id,omitempty"`
+	RequestID      *string `json:"request_id,omitempty"`
+	RunID          *string `json:"run_id,omitempty"`
+}
+
+// WorkflowTraceConfig nests trace context and tenant attributes.
+type WorkflowTraceConfig struct {
+	Context *WorkflowTraceContext `json:"context,omitempty"`
+	Tenant  *WorkflowTraceTenant  `json:"tenant,omitempty"`
+}
+
+// WorkflowTelemetryConfig controls workflow telemetry behavior.
+type WorkflowTelemetryConfig struct {
+	Enabled       *bool    `json:"enabled,omitempty"`
+	Nerdstats     *bool    `json:"nerdstats,omitempty"`
+	SampleRate    *float32 `json:"sample_rate,omitempty"`
+	PayloadMode   *string  `json:"payload_mode,omitempty"`
+	RetentionDays *uint32  `json:"retention_days,omitempty"`
+	MultiTenant   *bool    `json:"multi_tenant,omitempty"`
+	ToolTraceMode *string  `json:"tool_trace_mode,omitempty"`
+}
+
+// TypedWorkflowRunOptions is a typed alternative to map-based workflow options.
+type TypedWorkflowRunOptions struct {
+	Telemetry *WorkflowTelemetryConfig `json:"telemetry,omitempty"`
+	Trace     *WorkflowTraceConfig     `json:"trace,omitempty"`
+}
+
+func typedWorkflowRunOptionsToMap(options *TypedWorkflowRunOptions) (map[string]any, error) {
+	if options == nil {
+		return nil, nil
+	}
+
+	encoded, err := json.Marshal(options)
+	if err != nil {
+		return nil, fmt.Errorf("marshal typed workflow options: %w", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(encoded, &decoded); err != nil {
+		return nil, fmt.Errorf("unmarshal typed workflow options: %w", err)
+	}
+
+	if len(decoded) == 0 {
+		return nil, nil
+	}
+
+	return decoded, nil
+}
+
 type streamBridge struct {
 	ctx context.Context
 	out chan StreamResult
@@ -406,6 +470,26 @@ func (c *Client) RunEmailWorkflowYAML(
 	return c.RunWorkflowYAML(ctx, workflowPath, map[string]any{"email_text": emailText})
 }
 
+// RunEmailWorkflowYAMLWithRunOptions executes email workflow YAML with typed workflow options.
+func (c *Client) RunEmailWorkflowYAMLWithRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	emailText string,
+	options *TypedWorkflowRunOptions,
+) (WorkflowYAMLOutput, error) {
+	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLWithOptions(
+		ctx,
+		workflowPath,
+		map[string]any{"email_text": emailText},
+		workflowOptions,
+	)
+}
+
 // RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.
 func (c *Client) RunWorkflowYAML(
 	ctx context.Context,
@@ -413,6 +497,21 @@ func (c *Client) RunWorkflowYAML(
 	workflowInput map[string]any,
 ) (WorkflowYAMLOutput, error) {
 	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, nil)
+}
+
+// RunWorkflowYAMLWithRunOptions executes workflow YAML with typed workflow options.
+func (c *Client) RunWorkflowYAMLWithRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options *TypedWorkflowRunOptions,
+) (WorkflowYAMLOutput, error) {
+	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
 }
 
 // RunWorkflowYAMLWithOptions executes the Rust workflow YAML runner with telemetry options.
@@ -571,6 +670,21 @@ func (c *Client) RunWorkflowYAMLWithEvents(
 	}
 }
 
+// RunWorkflowYAMLWithEventsAndRunOptions executes workflow YAML with events using typed workflow options.
+func (c *Client) RunWorkflowYAMLWithEventsAndRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options *TypedWorkflowRunOptions,
+) (WorkflowYAMLOutput, error) {
+	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, workflowOptions)
+}
+
 // RunWorkflowYAMLStream emits live workflow events to onEvent while returning final workflow output.
 func (c *Client) RunWorkflowYAMLStream(
 	ctx context.Context,
@@ -679,6 +793,22 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 			return result.value, nil
 		}
 	}
+}
+
+// RunWorkflowYAMLStreamWithRunOptions emits workflow events with typed workflow options.
+func (c *Client) RunWorkflowYAMLStreamWithRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options *TypedWorkflowRunOptions,
+	onEvent func(WorkflowEvent),
+) (WorkflowYAMLOutput, error) {
+	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, onEvent)
 }
 
 type completeResult struct {

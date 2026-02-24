@@ -1,4 +1,4 @@
-module github.com/rishub/simple-agents/workers/go
+module github.com/CraftsMan-Labs/SimpleAgents/workers/go
 
 go 1.22
 

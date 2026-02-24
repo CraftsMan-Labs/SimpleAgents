@@ -1008,13 +1008,21 @@ impl Client {
         Ok(AsyncTask::new(task))
     }
 
-    #[napi(ts_return_type = "any")]
+    #[napi(
+        ts_args_type = "workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_return_type = "any"
+    )]
     pub fn run_email_workflow_yaml(
         &self,
         workflow_path: String,
         email_text: String,
+        workflow_options: Option<JsonValue>,
     ) -> Result<JsonValue> {
-        self.run_workflow_yaml(workflow_path, serde_json::json!({"email_text": email_text}))
+        self.run_workflow_yaml_with_options(
+            workflow_path,
+            serde_json::json!({"email_text": email_text}),
+            workflow_options,
+        )
     }
 
     #[napi(
