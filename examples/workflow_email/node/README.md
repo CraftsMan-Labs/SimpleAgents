@@ -15,6 +15,14 @@ If you also want the custom-worker handler bridge demo, run:
 node examples/workflow_email/run_with_node_package.js
 ```
 
+Run all workflow YAML files in one pass (shared input):
+
+```bash
+npm --prefix crates/simple-agents-napi run build:debug
+node examples/workflow_email/node/run_all_yaml_workflows.js \
+  "Please process damaged order 9921 and suggest next actions"
+```
+
 Interactive chat-history workflow runner (equivalent to Python `run_with_chat_history.py`):
 
 ```bash

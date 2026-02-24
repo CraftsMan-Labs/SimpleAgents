@@ -107,4 +107,4 @@ Most other functionality is runtime-configurable instead of compile-time gated.
 
 ## Reference
 
-- Root feature inventory: [features.md (repo)](https://github.com/rishub/SimpleAgents/blob/main/features.md)
+- Root feature inventory: [features.md (repo)](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/features.md)

@@ -49,6 +49,17 @@ def test_shared_fixture_cases_are_present_and_stable() -> None:
     assert "tool_calls" in shared_cases["streaming"]["finish_reasons"]
 
 
+def test_python_stub_workflow_methods_accept_workflow_options() -> None:
+    root = Path(__file__).resolve().parents[1]
+    stub = (root / "simple_agents_py.pyi").read_text(encoding="utf-8")
+
+    assert "def run_email_workflow_yaml(" in stub
+    assert (
+        "workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None" in stub
+    )
+    assert "def run_workflow_yaml(" in stub
+
+
 def _outgoing_edges_for_node(node: dict) -> list[str]:
     node_type = node["type"]
     if node_type == "start":

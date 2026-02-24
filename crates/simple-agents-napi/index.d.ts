@@ -91,7 +91,7 @@ export declare class Client {
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<unknown>
   stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<unknown>
   streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<unknown>
-  runEmailWorkflowYaml(workflowPath: string, emailText: string): any
+  runEmailWorkflowYaml(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
   runWorkflowYaml(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }): any
   runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any
   runEmailWorkflowYamlWithEvents(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any

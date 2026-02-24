@@ -3,10 +3,10 @@ name = "simple-agents-healing"
 version.workspace = true
 edition = "2021"
 rust-version = "1.70"
-authors = ["Rishub Kumar"]
+authors = ["Rishub C R (aka Craftsman)"]
 description = "Response healing system for SimpleAgents - BAML-inspired JSON parsing and coercion"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rishub/simple-agents"
+repository = "https://github.com/CraftsMan-Labs/SimpleAgents"
 keywords = ["llm", "ai", "json", "parser", "healing"]
 categories = ["parser-implementations", "development-tools"]
 

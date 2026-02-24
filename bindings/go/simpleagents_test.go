@@ -154,6 +154,88 @@ func TestRunWorkflowYAMLWithEventsUninitializedClient(t *testing.T) {
 	}
 }
 
+func TestTypedWorkflowRunOptionsToMapNil(t *testing.T) {
+	actual, err := typedWorkflowRunOptionsToMap(nil)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if actual != nil {
+		t.Fatal("expected nil map for nil typed options")
+	}
+}
+
+func TestTypedWorkflowRunOptionsToMapWithTraceContext(t *testing.T) {
+	traceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	conversationID := "conv-123"
+	enabled := true
+	sampleRate := float32(1.0)
+	options := &TypedWorkflowRunOptions{
+		Telemetry: &WorkflowTelemetryConfig{
+			Enabled:    &enabled,
+			Nerdstats:  &enabled,
+			SampleRate: &sampleRate,
+		},
+		Trace: &WorkflowTraceConfig{
+			Context: &WorkflowTraceContext{
+				Traceparent: &traceparent,
+				Baggage: map[string]string{
+					"tenant": "acme",
+				},
+			},
+			Tenant: &WorkflowTraceTenant{
+				ConversationID: &conversationID,
+			},
+		},
+	}
+
+	actual, err := typedWorkflowRunOptionsToMap(options)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	trace, ok := actual["trace"].(map[string]any)
+	if !ok {
+		t.Fatal("expected trace map")
+	}
+	contextMap, ok := trace["context"].(map[string]any)
+	if !ok {
+		t.Fatal("expected trace.context map")
+	}
+	if contextMap["traceparent"] != traceparent {
+		t.Fatalf("expected traceparent %q, got %v", traceparent, contextMap["traceparent"])
+	}
+
+	tenantMap, ok := trace["tenant"].(map[string]any)
+	if !ok {
+		t.Fatal("expected trace.tenant map")
+	}
+	if tenantMap["conversation_id"] != conversationID {
+		t.Fatalf("expected conversation_id %q, got %v", conversationID, tenantMap["conversation_id"])
+	}
+}
+
+func TestRunWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
+	c := &Client{}
+	traceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
+	options := &TypedWorkflowRunOptions{
+		Trace: &WorkflowTraceConfig{
+			Context: &WorkflowTraceContext{Traceparent: &traceparent},
+		},
+	}
+	_, err := c.RunWorkflowYAMLWithRunOptions(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"}, options)
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
+func TestRunEmailWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunEmailWorkflowYAMLWithRunOptions(context.Background(), "workflow.yaml", "hello", nil)
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
 func TestRunWorkflowYAMLStreamValidation(t *testing.T) {
 	c := &Client{}
 	_, err := c.RunWorkflowYAMLStream(context.Background(), "workflow.yaml", nil, nil)
@@ -165,6 +247,20 @@ func TestRunWorkflowYAMLStreamValidation(t *testing.T) {
 func TestRunWorkflowYAMLStreamUninitializedClient(t *testing.T) {
 	c := &Client{}
 	_, err := c.RunWorkflowYAMLStream(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"}, nil)
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
+func TestRunWorkflowYAMLStreamWithRunOptionsUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLStreamWithRunOptions(
+		context.Background(),
+		"workflow.yaml",
+		map[string]any{"email_text": "x"},
+		nil,
+		nil,
+	)
 	if err == nil {
 		t.Fatal("expected uninitialized client error")
 	}
