@@ -107,6 +107,13 @@ Ready-to-run helper file:
 uv run --directory examples python workflow_email/run_with_python_package.py
 ```
 
+Run every workflow YAML in `examples/workflow_email/*.yaml` with shared input:
+
+```bash
+uv run --directory examples python workflow_email/python/run_all_yaml_workflows.py \
+  --email "Please process damaged order 9921 and suggest next actions"
+```
+
 Non-streaming with collected events (including `node_llm_input_resolved` metadata):
 
 ```bash
@@ -273,6 +280,14 @@ npm --prefix crates/simple-agents-napi run build:debug
 node examples/workflow_email/node/npm_email_workflow_example.js
 ```
 
+Run every workflow YAML in `examples/workflow_email/*.yaml` with shared input:
+
+```bash
+npm --prefix crates/simple-agents-napi run build:debug
+node examples/workflow_email/node/run_all_yaml_workflows.js \
+  "Please process damaged order 9921 and suggest next actions"
+```
+
 Custom-worker bridge demo (executes real JavaScript handlers for `custom_worker` nodes):
 
 ```bash
@@ -313,6 +328,17 @@ CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
 CGO_LDFLAGS="-L$PWD/target/release" \
 LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
 go run ./bindings/go/examples/workflow_email
+```
+
+Run every workflow YAML in `examples/workflow_email/*.yaml` with shared input:
+
+```bash
+cargo build -p simple-agents-ffi --release
+CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
+CGO_LDFLAGS="-L$PWD/target/release" \
+LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
+go run ./bindings/go/examples/workflow_email_all \
+  "Please process damaged order 9921 and suggest next actions"
 ```
 
 When running locally in this repo, ensure FFI library is built and linker flags are set:

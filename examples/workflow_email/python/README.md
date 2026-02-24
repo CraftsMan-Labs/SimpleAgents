@@ -24,3 +24,10 @@ make run-python-chat-history \
 Custom handler implementation:
 
 - `examples/workflow_email/handlers.py` (`get_rag_data`)
+
+Run all workflow YAML files in one pass (shared input):
+
+```bash
+uv run --directory examples python workflow_email/python/run_all_yaml_workflows.py \
+  --email "Please process damaged order 9921 and suggest next actions"
+```
