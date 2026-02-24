@@ -176,3 +176,27 @@ Verification commands executed for YT batch:
 
 - `cargo test -p simple-agents-workflow --lib --tests`
 - `cargo fmt`
+
+## Programmatic Trace Context SDK parity plan (2026-02-24)
+
+Scope: expose typed, portable workflow trace context options across Python/Node/Go while preserving backward compatibility and validating parity with tests.
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| X1 | Freeze cross-language trace context contract | All SDKs need one stable and explicit propagation shape | Canonical schema for `workflow_options.trace.context` and `workflow_options.trace.tenant` with no breaking changes | completed |
+| X2 | Add Node workflow email options parity | Node email helper currently lacks options despite generic workflow options support | `runEmailWorkflowYaml*` methods accept `workflowOptions` and propagate telemetry/trace fields | completed |
+| X3 | Add Go typed run-options API | Map-based options are error-prone and not discoverable in editors | Typed `WorkflowRunOptions` helpers plus convenience methods preserving map API | completed |
+| X4 | Align Python typing stubs with runtime signatures | Runtime supports workflow options on email/general methods but stubs lag | `simple_agents_py.pyi` exposes `workflow_options` on `run_email_workflow_yaml` and non-stream run methods | completed |
+| X5 | Add binding tests for trace option propagation | Prevent regressions and verify transport parity by contract | Node/Go/Python tests assert options serialization, forwarding, and callback behavior | completed |
+| X6 | Update docs and verify gates | Users and maintainers need clear usage + reproducible checks | Docs include copy-paste option examples and all relevant tests pass | pending |
+
+## Cross-language all-YAML example runners (2026-02-24)
+
+Scope: add Python/Node/Go example runners that execute every `examples/workflow_email/*.yaml` file with shared workflow input using SDK APIs.
+
+| ID | Task | Why this is needed | Expected outcome | Status |
+|---|---|---|---|---|
+| E1 | Add Python all-YAML runner example | Python users need one command to validate all workflow YAML examples | `workflow_email/python/run_all_yaml_workflows.py` runs each YAML and prints pass/fail summary JSON | completed |
+| E2 | Add Node all-YAML runner example | Node users need parity with Python for full workflow sample sweeps | `workflow_email/node/run_all_yaml_workflows.js` runs each YAML and prints pass/fail summary JSON | completed |
+| E3 | Add Go all-YAML runner example | Go users need parity with Python/Node for sample sweeps | `bindings/go/examples/workflow_email_all/main.go` runs each YAML and prints pass/fail summary JSON | completed |
+| E4 | Document run commands in workflow example docs | New runners must be discoverable in existing language docs | Updated top-level and language README files with exact commands | completed |
