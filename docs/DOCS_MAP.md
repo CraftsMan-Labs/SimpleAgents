@@ -34,7 +34,7 @@ Use this page to jump directly to the right guide.
 1. [Development Guide](/DEVELOPMENT)
 2. [Architecture](/ARCHITECTURE)
 3. [Documentation Standards](/DOCS_STANDARDS)
-4. [Contribution Checklist](https://github.com/rishub/SimpleAgents/blob/main/CONTRIBUTING.md)
+4. [Contribution Checklist](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/CONTRIBUTING.md)
 
 ## Recommended Reading Paths
 

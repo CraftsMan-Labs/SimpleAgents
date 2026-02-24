@@ -114,7 +114,7 @@ cargo test -- --nocapture
 
 ## Contributing
 
-See the repository-level [Contributing Guide](https://github.com/rishub/SimpleAgents/blob/main/CONTRIBUTING.md) for checklist discipline, required task-board updates, and skill-usage expectations.
+See the repository-level [Contributing Guide](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/CONTRIBUTING.md) for checklist discipline, required task-board updates, and skill-usage expectations.
 
 ### Getting Started
 
