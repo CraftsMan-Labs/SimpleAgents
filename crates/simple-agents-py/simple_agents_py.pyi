@@ -325,6 +325,7 @@ class Client:
         workflow_path: str,
         email_text: str,
         include_events: bool = False,
+        workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def run_email_workflow_yaml_stream(
         self,
@@ -338,6 +339,7 @@ class Client:
         workflow_path: str,
         workflow_input: WorkflowInput | Mapping[str, Any],
         include_events: bool = False,
+        workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
     ) -> dict[str, Any]: ...
     def run_workflow_yaml_stream(
         self,
