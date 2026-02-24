@@ -59,6 +59,15 @@ test('declaration and runtime exports follow shared contract fixture', () => {
   assert.deepStrictEqual(sharedCases.streaming.event_types, ['delta', 'error', 'done']);
 });
 
+test('runEmailWorkflowYaml declaration supports workflowOptions', () => {
+  const declarationPath = path.resolve(__dirname, '../index.d.ts');
+  const declaration = fs.readFileSync(declarationPath, 'utf8');
+  assert.ok(
+    declaration.includes('runEmailWorkflowYaml(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any'),
+    'runEmailWorkflowYaml should accept optional workflowOptions in TypeScript declaration',
+  );
+});
+
 test('workflow DSL fixture preserves canonical IR wires', () => {
   const fixturePath = path.resolve(
     __dirname,
