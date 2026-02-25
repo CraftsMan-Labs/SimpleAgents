@@ -27,6 +27,7 @@ class WorkflowInput(TypedDict, total=False):
 class WorkflowRunOptions(TypedDict, total=False):
     telemetry: Mapping[str, Any]
     trace: Mapping[str, Any]
+    model: str
 
 class ParseResult:
     value: Any
