@@ -241,6 +241,7 @@ func main() {
 	conversationIDFlag := flag.String("conversation-id", "", "Conversation UUID used for trace correlation (auto-generated if omitted)")
 	showStepJSONFlag := flag.Bool("show-step-json", false, "Print per-step JSON summaries after execution")
 	nerdstatsFlag := flag.Bool("nerdstats", true, "Show end-of-stream nerdstats payload")
+	modelFlag := flag.String("model", "", "Override llm_call model for all workflow LLM nodes")
 	flag.Parse()
 
 	if *showThinkingFlag {
@@ -338,6 +339,9 @@ func main() {
 		workflowOptions := map[string]any{
 			"telemetry": map[string]any{"nerdstats": *nerdstatsFlag},
 			"trace":     map[string]any{"tenant": map[string]any{"conversation_id": conversationID}},
+		}
+		if strings.TrimSpace(*modelFlag) != "" {
+			workflowOptions["model"] = strings.TrimSpace(*modelFlag)
 		}
 		switch {
 		case *streamFlag:

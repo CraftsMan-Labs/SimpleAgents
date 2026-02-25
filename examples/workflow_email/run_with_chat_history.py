@@ -70,6 +70,11 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="Disable end-of-stream nerdstats payload",
     )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Override llm_call model for all workflow LLM nodes",
+    )
     return parser.parse_args()
 
 
@@ -353,11 +358,14 @@ def _run_turn(
     nerdstats: bool,
     conversation_id: str,
     node_names: dict[str, str],
+    model: str | None,
 ) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
     workflow_options = {
         "telemetry": {"nerdstats": nerdstats},
         "trace": {"tenant": {"conversation_id": conversation_id}},
     }
+    if model is not None and model.strip() != "":
+        workflow_options["model"] = model.strip()
     client_any: Any = client
     if not stream:
         result = client_any.run_workflow_yaml(
@@ -468,6 +476,7 @@ def main() -> None:
             args.nerdstats,
             conversation_id,
             node_names,
+            args.model,
         )
 
         if args.show_step_json:
