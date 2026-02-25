@@ -182,6 +182,8 @@ pub struct YamlWorkflowRunOptions {
     pub telemetry: YamlWorkflowTelemetryConfig,
     #[serde(default)]
     pub trace: YamlWorkflowTraceOptions,
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -3124,7 +3126,18 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 node_id: node.id.clone(),
                 is_terminal_node,
                 stream_json_as_text: llm.stream_json_as_text.unwrap_or(false),
-                model: llm.model.clone(),
+                model: options
+                    .model
+                    .as_ref()
+                    .and_then(|model| {
+                        let trimmed = model.trim();
+                        if trimmed.is_empty() {
+                            None
+                        } else {
+                            Some(trimmed.to_string())
+                        }
+                    })
+                    .unwrap_or_else(|| llm.model.clone()),
                 messages,
                 append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
                 prompt,
@@ -3731,6 +3744,7 @@ async fn try_run_yaml_via_ir_runtime(
                     context: self.trace_input_context.clone(),
                     tenant: self.tenant_context.clone(),
                 },
+                model: None,
             };
             let worker_trace_context = merged_trace_context_for_worker(
                 handler_span_context.as_ref(),

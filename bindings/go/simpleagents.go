@@ -304,6 +304,7 @@ type WorkflowYAMLOutput struct {
 type WorkflowRunOptions struct {
 	Telemetry map[string]any `json:"telemetry,omitempty"`
 	Trace     map[string]any `json:"trace,omitempty"`
+	Model     string         `json:"model,omitempty"`
 }
 
 // WorkflowTraceContext carries optional upstream trace propagation fields.
@@ -346,6 +347,7 @@ type WorkflowTelemetryConfig struct {
 type TypedWorkflowRunOptions struct {
 	Telemetry *WorkflowTelemetryConfig `json:"telemetry,omitempty"`
 	Trace     *WorkflowTraceConfig     `json:"trace,omitempty"`
+	Model     *string                  `json:"model,omitempty"`
 }
 
 func typedWorkflowRunOptionsToMap(options *TypedWorkflowRunOptions) (map[string]any, error) {

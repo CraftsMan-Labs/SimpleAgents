@@ -15,6 +15,7 @@ function parseArgs(argv) {
     conversationId: null,
     showStepJson: false,
     nerdstats: true,
+    model: null,
   }
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -51,6 +52,11 @@ function parseArgs(argv) {
     }
     if (arg === '--conversation-id' && argv[i + 1]) {
       options.conversationId = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg === '--model' && argv[i + 1]) {
+      options.model = argv[i + 1]
       i += 1
       continue
     }
@@ -313,6 +319,9 @@ async function main() {
       const workflowOptions = {
         telemetry: { nerdstats: args.nerdstats },
         trace: { tenant: { conversation_id: conversationId } },
+      }
+      if (typeof args.model === 'string' && args.model.trim() !== '') {
+        workflowOptions.model = args.model.trim()
       }
       const result = args.stream
         ? parseResultJson(
