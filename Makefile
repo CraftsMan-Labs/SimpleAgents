@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history run-rust-chat-history \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node publish-node test-go-bindings \
 	publish-node-doppler \
@@ -29,6 +29,7 @@ WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
 GO_CHAT_FLAGS ?= --stream --show-thinking
 PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
 NODE_CHAT_FLAGS ?= --stream --show-thinking
+RUST_CHAT_FLAGS ?= --max-turns 8
 JS_RUNTIME ?= node
 
 help:
@@ -47,6 +48,7 @@ help:
 	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
 	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
 	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
+	@echo "  make run-rust-chat-history - Run Rust chat-history workflow example (WORKFLOW_YAML=... RUST_CHAT_FLAGS='...')"
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
@@ -150,6 +152,13 @@ run-node-chat-history: build-node
 	  *" --show-thinking "*) SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW=1 $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
 	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
 	esac
+
+run-rust-chat-history:
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cargo run --manifest-path examples/Cargo.toml --example workflow_chat_history_rust -- --workflow $(WORKFLOW_YAML) $(RUST_CHAT_FLAGS)
 
 release-ffi:
 	cargo build -p simple-agents-ffi --release
