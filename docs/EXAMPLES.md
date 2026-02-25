@@ -183,6 +183,7 @@ Cross-language runnable examples:
 
 - Python: `examples/workflow_email/run_with_python_package.py`
 - Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
+- Rust (chat history input): `examples/workflow_chat_history_rust.rs`
 - Python (native YAML tool-calling warning email): `examples/workflow_email/email-chat-draft-with-tool-calling.yaml`
 - Python (graph-to-graph tool call orchestrator): `examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml`
 - Node (chat history input): `examples/workflow_email/node/run_with_chat_history.js`
@@ -194,12 +195,25 @@ Convenience command for Go chat-history workflow runs:
 
 ```bash
 make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Override all llm_call node models for this run
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
+```
+
+Convenience command for Rust chat-history workflow runs:
+
+```bash
+make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml RUST_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
 ```
 
 Convenience command for Python chat-history workflow runs:
 
 ```bash
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Override all llm_call node models for this run
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml PY_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
 
 # Native YAML tool-calling workflow example
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
@@ -216,4 +230,7 @@ Convenience command for Node/Bun chat-history workflow runs:
 ```bash
 make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
 make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+
+# Override all llm_call node models for this run
+make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml NODE_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
 ```
