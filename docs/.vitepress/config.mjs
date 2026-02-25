@@ -6,7 +6,7 @@ export default defineConfig({
     "A modular, extensible agent framework for building intelligent AI systems",
   cleanUrls: true,
   lastUpdated: true,
-  base: "/SimpleAgents/",
+  base: "/",
 
   themeConfig: {
     nav: [
@@ -86,7 +86,7 @@ export default defineConfig({
     lineNumbers: true,
   },
   sitemap: {
-    hostname: "https://CraftsMan-Labs.github.io/SimpleAgents/",
+    hostname: "https://docs.simpleagents.craftsmanlabs.net/",
   },
   head: [
     ["meta", { name: "theme-color", content: "#2563eb" }],
