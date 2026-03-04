@@ -1,50 +1,84 @@
 # Workflow Performance and Profiling
 
-This guide documents how to profile `simple-agents-workflow` and how the benchmark
-regression harness protects concurrency throughput.
+This guide shows how to benchmark and profile `simple-agents-workflow` and how CI protects concurrency throughput against regressions.
+By the end, you will be able to run local benchmark guards, inspect hot paths, and interpret the performance contract.
 
-## Benchmarks
+## Prerequisites
+
+- Rust toolchain with benchmark support
+- Access to workspace benchmark target
+- Familiarity with workflow execution model
+
+## Quick Path
+
+1. Run the benchmark suite once to establish baseline.
+2. Re-run with stricter guard thresholds if needed.
+3. Inspect Criterion output under `target/criterion/`.
+4. Compare sequential vs concurrent medians against guard policy.
+
+## Benchmark Surfaces
 
 - Benchmark target: `crates/simple-agents-workflow/benches/runtime_benchmarks.rs`
 - CI workflow: `.github/workflows/workflow-benches.yml`
-- Regression guard: compares median sequential vs concurrent execution and fails if
-  concurrent performance regresses below a required gain percentage.
+- Regression guard: median concurrent gain must exceed configured minimum
 
-Environment overrides used by the guard:
+Guard environment overrides:
 
 - `WORKFLOW_BENCH_GUARD_RUNS` (default `7`, minimum `3`)
 - `WORKFLOW_BENCH_MIN_GAIN_PERCENT` (default `15`, maximum `99`)
 
-## Local Commands
+## Run Commands
 
-Run the benchmark suite:
+Run benchmark suite:
 
 ```bash
 cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-size 10
 ```
 
-Run a stricter regression threshold locally:
+Run with stricter local guard threshold:
 
 ```bash
 WORKFLOW_BENCH_GUARD_RUNS=9 WORKFLOW_BENCH_MIN_GAIN_PERCENT=20 \
   cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-size 10
 ```
 
-## Profiling Workflow Runtime Hot Paths
+## Profiling Hot Paths
 
-1. Run benchmark once to warm caches and compile artifacts.
-2. Re-run with Criterion HTML reports enabled (already configured in dev-dependencies).
-3. Inspect generated reports under `target/criterion/`.
+Primary hotspots to inspect:
 
-Primary hot paths:
+- `runtime::execute_from_node` (orchestration loop)
+- `runtime::execute_tool_with_policy_for_scope` (tool-heavy paths)
+- `scheduler::DagScheduler::run_bounded` (map/parallel fan-out)
 
-- `runtime::execute_from_node` orchestration loop
-- `runtime::execute_tool_with_policy_for_scope` for tool-heavy workflows
-- `scheduler::DagScheduler::run_bounded` for map/parallel fan-out
+Recommended profiling loop:
 
-## Performance Contract (Phase 9)
+1. Warm build/cache with one benchmark pass.
+2. Re-run benchmarks and open Criterion HTML output.
+3. Identify highest-cost path and test one focused optimization.
+4. Re-run guard to verify no concurrency regression.
 
-- Concurrent map/parallel workflows must remain measurably faster than equivalent
-  sequential flows on the same payload.
-- Any concurrency regression that violates the configured gain threshold fails CI.
-- Runtime benchmark entrypoints must stay deterministic and runnable on CI runners.
+## Performance Contract
+
+- Concurrent map/parallel workflows must remain measurably faster than equivalent sequential flows.
+- CI fails when median gain drops below configured threshold.
+- Benchmark entrypoints must stay deterministic on CI runners.
+
+## Troubleshooting
+
+### Benchmark variance is too noisy
+
+Increase sample size and guard runs, then compare medians rather than single-run outliers.
+
+### Concurrent gain unexpectedly drops
+
+Inspect scheduler and tool execution hotspots first; these usually dominate fan-out path regressions.
+
+### Local pass but CI fail
+
+Use CI-like settings locally and avoid running with heavy background load when collecting baseline numbers.
+
+## Next Steps
+
+- Debug runtime anomalies with [Workflow Debugging UX](/WORKFLOW_DEBUGGING).
+- Apply runtime limits from [Workflow Security](/WORKFLOW_SECURITY).
+- Revisit workflow modeling guidance in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).

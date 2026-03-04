@@ -1,10 +1,19 @@
 # Quick Start Guide
 
-Get up and running with SimpleAgents in a few minutes.
+This guide gets you from zero to your first successful SimpleAgents request using the unified Rust client.
+By the end, you will send a prompt to a provider and print the model output locally.
 
-## Installation
+## Prerequisites
 
-Add to your `Cargo.toml`:
+- Rust toolchain installed (`stable` recommended)
+- A valid provider key (`OPENAI_API_KEY` used below)
+- A new or existing Rust binary project
+
+## Quick Path
+
+### 1. Add dependencies
+
+Update your `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -14,7 +23,15 @@ simple-agents-providers = "0.2.4"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
-## First Request
+### 2. Configure environment variable
+
+```sh
+export OPENAI_API_KEY="<your-api-key>"
+```
+
+### 3. Send your first request
+
+Create `src/main.rs`:
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -45,9 +62,27 @@ async fn main() -> Result<()> {
 }
 ```
 
-## YAML <-> Code Workflow Migration
+### 4. Run it
 
-When a workflow starts as YAML, keep the same node ids and edges when moving to code-first canonical IR.
+```sh
+cargo run
+```
+
+If setup is correct, you should see a model-generated response in your terminal.
+
+## Mental Model
+
+SimpleAgents separates concerns into three parts:
+
+1. **Provider**: converts your request to provider-specific API calls.
+2. **Unified client**: applies shared behaviors like routing, cache, and healing.
+3. **Outcome**: returns either standard response, stream, or schema-coerced output.
+
+For deeper architecture boundaries, read [Architecture](/ARCHITECTURE) and [Rust Core Systems](/RUST_CORE_SYSTEMS).
+
+## YAML <-> Code Workflow Migration (Optional)
+
+When migrating workflows, keep node ids and edge semantics stable to preserve behavior and replay traceability.
 
 ```yaml
 name: review-flow
@@ -120,13 +155,34 @@ let workflow = WorkflowDefinition {
 };
 ```
 
-For a full conversion checklist (YAML -> code and code -> YAML), see [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK).
+For full bidirectional migration guidance, see [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK).
+
+## Troubleshooting
+
+### Missing API key
+
+If you see authentication or key validation errors, verify the variable is set in the same shell session:
+
+```sh
+echo "$OPENAI_API_KEY"
+```
+
+### Provider/model mismatch
+
+If a model name is rejected, switch to a model supported by the selected provider and retry.
+
+### Build fails on dependencies
+
+Refresh your lockfile and rebuild:
+
+```sh
+cargo update && cargo build
+```
 
 ## Next Steps
 
-- Read [Usage Guide](/USAGE) for routing, streaming, caching, and healing.
-- Explore [Examples](/EXAMPLES) for more workflows.
-- Review [Rust Core Systems](/RUST_CORE_SYSTEMS) for crate map and extension points.
-- Check [Capability Matrix](/CAPABILITY_MATRIX) for cross-language parity expectations.
-- Use [Troubleshooting](/TROUBLESHOOTING) when setup or contract checks fail.
-- Need a different path? Open the [Documentation Map](/DOCS_MAP).
+- Learn multi-provider routing and streaming in [Usage Guide](/USAGE).
+- Explore end-to-end snippets in [Examples](/EXAMPLES).
+- Review crate boundaries in [Rust Core Systems](/RUST_CORE_SYSTEMS).
+- Use [Troubleshooting](/TROUBLESHOOTING) for setup and contract issues.
+- Need role-based navigation? Open [Documentation Map](/DOCS_MAP).

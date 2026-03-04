@@ -18,11 +18,31 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: "Getting Started",
+        text: "Start Here",
         items: [
           { text: "Quick Start", link: "/QUICKSTART" },
           { text: "Usage Guide", link: "/USAGE" },
           { text: "Docs Map", link: "/DOCS_MAP" },
+          { text: "Troubleshooting", link: "/TROUBLESHOOTING" },
+        ],
+      },
+      {
+        text: "Build and Operate",
+        items: [
+          { text: "Examples", link: "/EXAMPLES" },
+          { text: "Development Guide", link: "/DEVELOPMENT" },
+          { text: "Release Checklist", link: "/RELEASE_CHECKLIST" },
+        ],
+      },
+      {
+        text: "Workflow System",
+        items: [
+          { text: "YAML Workflow System", link: "/YAML_WORKFLOW_SYSTEM" },
+          { text: "Workflow Capability Contract", link: "/WORKFLOW_CAPABILITY_CONTRACT" },
+          { text: "Workflow Debugging UX", link: "/WORKFLOW_DEBUGGING" },
+          { text: "Workflow Performance", link: "/WORKFLOW_PERFORMANCE" },
+          { text: "Workflow Security", link: "/WORKFLOW_SECURITY" },
+          { text: "Workflow DSL Migration Cookbook", link: "/WORKFLOW_DSL_MIGRATION_COOKBOOK" },
         ],
       },
       {
@@ -31,16 +51,15 @@ export default defineConfig({
           { text: "Python", link: "/BINDINGS_PYTHON" },
           { text: "Node.js / TypeScript", link: "/BINDINGS_NODE" },
           { text: "Go", link: "/BINDINGS_GO" },
+          { text: "Capability Matrix", link: "/CAPABILITY_MATRIX" },
         ],
       },
       {
-        text: "Core Guides",
+        text: "Architecture and Internals",
         items: [
-          { text: "Examples", link: "/EXAMPLES" },
-          { text: "YAML Workflow System", link: "/YAML_WORKFLOW_SYSTEM" },
           { text: "Architecture", link: "/ARCHITECTURE" },
           { text: "Rust Core Systems", link: "/RUST_CORE_SYSTEMS" },
-          { text: "Development Guide", link: "/DEVELOPMENT" },
+          { text: "Tracing Architecture", link: "/TRACING_ARCHITECTURE" },
         ],
       },
       {

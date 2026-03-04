@@ -1,10 +1,17 @@
 # Usage Guide
 
-This guide covers core usage of SimpleAgents with the unified Rust client.
+This guide shows the core runtime patterns of SimpleAgents with the unified Rust client.
+By the end, you will know how to use completion, routing, streaming, schema coercion, and cache in production-oriented flows.
 
-## Installation
+## Prerequisites
 
-Add the core crates to your `Cargo.toml`:
+- Rust toolchain installed
+- One provider API key configured (examples use OpenAI)
+- Familiarity with the setup from [Quick Start](/QUICKSTART)
+
+## Quick Path: Unified Client Baseline
+
+Add core crates to `Cargo.toml`:
 
 ```toml
 [dependencies]
@@ -17,7 +24,7 @@ tokio = { version = "1.35", features = ["full"] }
 futures-util = "0.3"
 ```
 
-## Basic Usage (Unified Client)
+Minimum completion flow:
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -48,7 +55,11 @@ async fn main() -> Result<()> {
 }
 ```
 
-## Routing with Multiple Providers
+## Core Patterns
+
+### Route across providers
+
+Use multiple providers with an explicit routing strategy:
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -65,7 +76,7 @@ let client = SimpleAgentsClientBuilder::new()
     .build()?;
 ```
 
-## Streaming
+### Stream responses
 
 ```rust
 use futures_util::StreamExt;
@@ -93,7 +104,7 @@ match client.complete(&request, CompletionOptions::default()).await? {
 }
 ```
 
-## Healing and Schema Coercion
+### Heal and coerce to schema
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -130,7 +141,7 @@ match client.complete(&request, options).await? {
 }
 ```
 
-## Caching
+### Add response cache
 
 ```rust
 use simple_agents_cache::InMemoryCache;
@@ -147,9 +158,9 @@ let client = SimpleAgentsClientBuilder::new()
     .build()?;
 ```
 
-## Direct Provider Usage (Advanced)
+## Advanced: Direct Provider Access
 
-If you need to bypass the unified client, you can call providers directly. This is useful for testing or custom orchestration, but most users should prefer `simple-agents-core`.
+Use provider-specific execution only when you intentionally bypass unified-client behaviors.
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -166,10 +177,23 @@ let provider_response = provider.execute(provider_request).await?;
 let response = provider.transform_response(provider_response)?;
 ```
 
+## Troubleshooting
+
+### Unexpected non-stream response
+
+If your code expects a stream, ensure `.stream(true)` is set on the request before calling `complete`.
+
+### Schema coercion does not trigger
+
+Confirm `CompletionOptions.mode` is set to `CompletionMode::CoercedSchema(...)` and you handle `CompletionOutcome::CoercedSchema`.
+
+### Routing does not appear active
+
+Confirm the client is built with `with_providers(...)` and an explicit `with_routing_mode(...)`.
+
 ## Next Steps
 
-- Review [Rust Core Systems](/RUST_CORE_SYSTEMS) for crate responsibilities.
-- See [Examples](/EXAMPLES) for more examples.
-- Check [API Surface](/API) for the API surface map.
-- Binding guides: [Python](/BINDINGS_PYTHON), [Node.js / TypeScript](/BINDINGS_NODE), [Go](/BINDINGS_GO).
-- Need a task-oriented index? Use the [Documentation Map](/DOCS_MAP).
+- Explore role-specific paths in [Documentation Map](/DOCS_MAP).
+- Learn crate boundaries in [Rust Core Systems](/RUST_CORE_SYSTEMS).
+- Review interfaces in [API Surface](/API).
+- Continue with language-specific integration: [Python](/BINDINGS_PYTHON), [Node.js / TypeScript](/BINDINGS_NODE), [Go](/BINDINGS_GO).

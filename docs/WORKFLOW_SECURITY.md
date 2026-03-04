@@ -1,60 +1,65 @@
 # Workflow Security Hardening Contract
 
-This document defines runtime, expression, and worker hardening controls added in
-Phase 9.
+This guide defines workflow runtime hardening controls for expressions, fan-out limits, worker request contracts, and secret handling.
+By the end, you should know which limits are enforced, what errors they raise, and how to validate hardening behavior with targeted tests.
+
+## Prerequisites
+
+- Familiarity with workflow runtime concepts in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM)
+- Ability to run Rust tests in the workspace
+
+## Quick Path
+
+1. Review expression complexity limits.
+2. Review runtime fan-out and payload scope limits.
+3. Review worker security policy validation.
+4. Run targeted verification tests.
+5. Confirm secret handling rules in your workflow patterns.
+
+## Security Control Matrix
+
+| Control area | Location | Limits / policy |
+|---|---|---|
+| Expression engine | `crates/simple-agents-workflow/src/expressions.rs` | `max_expression_chars`, `max_operator_count`, `max_depth`, `max_path_segments`, `max_cache_entries` |
+| Runtime resource guards | `crates/simple-agents-workflow/src/runtime.rs` | `max_expression_scope_bytes`, `max_map_items`, `max_parallel_branches`, `max_filter_items` |
+| Worker request contract | `crates/simple-agents-workflow/src/worker.rs` | `max_request_timeout_ms`, `max_request_payload_bytes`, `max_identifier_length` |
 
 ## Expression Engine Controls
 
-Implemented in `crates/simple-agents-workflow/src/expressions.rs`:
+Expression complexity violations return:
 
-- `ExpressionLimits::max_expression_chars`
-- `ExpressionLimits::max_operator_count`
-- `ExpressionLimits::max_depth`
-- `ExpressionLimits::max_path_segments`
-- `ExpressionLimits::max_cache_entries`
+- `ExpressionError::ComplexityLimitExceeded`
 
-Violations return `ExpressionError::ComplexityLimitExceeded`.
+Use these limits to prevent expensive or adversarial expressions from exhausting runtime resources.
 
 ## Runtime Resource Guards
 
-Implemented in `crates/simple-agents-workflow/src/runtime.rs` via
-`RuntimeSecurityLimits`:
+`RuntimeSecurityLimits` enforces bounded execution on high-fanout and large-scope operations.
 
-- `max_expression_scope_bytes` for condition/loop/filter expression scope payloads
-- `max_map_items` for `map` node fan-out control
-- `max_parallel_branches` for `parallel` node fan-out control
-- `max_filter_items` for `filter` input cardinality control
-
-Violations return explicit runtime errors:
+Explicit runtime errors:
 
 - `ExpressionScopeLimitExceeded`
 - `MapItemLimitExceeded`
 - `ParallelBranchLimitExceeded`
 - `FilterItemLimitExceeded`
 
+Treat these as policy failures, not transient retries.
+
 ## Worker Sandbox and Request Contract
 
-Implemented in `crates/simple-agents-workflow/src/worker.rs` via
-`WorkerSecurityPolicy`:
+Every worker request is validated before queueing. Violations are rejected and not executed.
 
-- `max_request_timeout_ms`
-- `max_request_payload_bytes`
-- `max_identifier_length`
+- Worker-side error surface: `WorkerPoolError::InvalidRequest`
+- Protocol-level parity code: `WorkerErrorCode::InvalidRequest`
 
-Before queueing, every request is validated against this contract. Violations
-return `WorkerPoolError::InvalidRequest` and are not executed.
+This protects runtime worker pools from oversized payloads and malformed identifiers/timeouts.
 
-`WorkerErrorCode::InvalidRequest` is propagated for worker protocol parity.
+## Secret Handling Rules
 
-## Secret Handling Contract
-
-- Do not embed plaintext credentials in workflow node definitions or static node
-  inputs.
-- Pass secret references (for example IDs/handles) and resolve them in trusted
-  tool handlers or worker environments.
-- Keep workflow traces and benchmark artifacts free of secret payloads.
-- Treat `scoped_input` as potentially sensitive and enforce strict size limits to
-  reduce accidental data over-exposure.
+- Do not embed plaintext credentials in workflow node definitions.
+- Pass secret references (IDs/handles) and resolve in trusted handlers/workers.
+- Keep traces and benchmark artifacts free of secret payloads.
+- Treat `scoped_input` as sensitive and enforce strict size boundaries.
 
 ## Verification Commands
 
@@ -63,3 +68,23 @@ cargo test -p simple-agents-workflow expressions::tests::rejects_expression_when
 cargo test -p simple-agents-workflow runtime::tests::rejects_condition_when_expression_scope_exceeds_limit
 cargo test -p simple-agents-workflow worker::tests::rejects_request_when_security_contract_is_violated
 ```
+
+## Troubleshooting
+
+### Security errors appear after adding workflow features
+
+Check whether new expressions, map fan-out, or worker payload shape exceeded configured limits.
+
+### Worker requests rejected unexpectedly
+
+Validate timeout, payload byte size, and identifier lengths against `WorkerSecurityPolicy` limits.
+
+### Limits feel too strict for workload
+
+Tune limits deliberately and re-run security-focused tests; avoid removing limits without replacement protections.
+
+## Next Steps
+
+- Connect guardrails to runtime design in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+- Use [Workflow Debugging UX](/WORKFLOW_DEBUGGING) to inspect failures caused by policy limits.
+- Validate performance impact in [Workflow Performance](/WORKFLOW_PERFORMANCE).

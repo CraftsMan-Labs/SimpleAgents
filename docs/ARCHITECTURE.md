@@ -1,124 +1,114 @@
 # Architecture Overview
 
-This document describes the current SimpleAgents architecture as implemented in the Rust workspace.
+This page explains how SimpleAgents is structured in the Rust workspace and how data flows from request input to provider output.
+By the end, you should be able to place each crate in the system and understand where routing, caching, healing, and parity checks are enforced.
 
-## Design Goals
+## Prerequisites
 
-- Type-safe request/response contracts.
-- Modular crates with clear responsibilities.
-- Provider-agnostic core orchestration.
-- Pluggable routing, caching, and healing.
-- Multiple language surfaces built on the same core.
+- Familiarity with [Quick Start](/QUICKSTART)
+- Basic understanding of Rust crate boundaries
 
-## System Map
+## Quick Path
 
+1. Read the system map to identify the core execution path.
+2. Read the request lifecycle to understand runtime order of operations.
+3. Use the parity contract section if you are touching bindings.
+4. Use the reference links at the end for deeper subsystem docs.
+
+## System Model
+
+SimpleAgents is designed as a provider-agnostic core with optional capabilities layered around it.
+
+| Layer | Responsibility | Main crate(s) |
+|---|---|---|
+| Type contract | Shared request/response types and traits | `simple-agent-type` |
+| Core orchestration | Unified client execution path and options | `simple-agents-core` |
+| Routing | Provider selection, retries, health/circuit behavior | `simple-agents-router` |
+| Providers | API-specific request/response transforms and execution | `simple-agents-providers` |
+| Caching | Response memoization and eviction/TTL policy | `simple-agents-cache` |
+| Healing | JSON repair and schema coercion modes | `simple-agents-healing` |
+| Language surfaces | CLI + FFI + Node + Python entry points | `simple-agents-cli`, `simple-agents-ffi`, `simple-agents-napi`, `simple-agents-py` |
+
+High-level map:
+
+```text
+Application
+  -> simple-agents-core (SimpleAgentsClient)
+      -> simple-agents-router (provider selection)
+      -> simple-agents-providers (provider execution)
+      -> optional simple-agents-cache
+      -> optional simple-agents-healing
+      -> shared contracts from simple-agent-type
 ```
-┌────────────────────────────────────────────────────────────┐
-│                          Application                       │
-└─────────────────────────────┬──────────────────────────────┘
-                              │
-                              ▼
-┌────────────────────────────────────────────────────────────┐
-│                  simple-agents-core                        │
-│  SimpleAgentsClient + Routing + Cache + Healing + Middleware│
-└───────────────┬──────────────┬──────────────┬───────────────┘
-                │              │              │
-                ▼              ▼              ▼
-     simple-agents-router  simple-agents-cache  simple-agents-healing
-                │                                  │
-                ▼                                  ▼
-        simple-agents-providers              simple-agent-type
-                │                                  │
-                ▼                                  ▼
-           Provider APIs                     Shared types/traits
+
+## Request Lifecycle
+
+1. Build `CompletionRequest` from `simple-agent-type`.
+2. `SimpleAgentsClient` validates request and runs middleware hooks.
+3. Router selects provider by configured `RoutingMode`.
+4. Provider performs `transform_request -> execute -> transform_response`.
+5. Core applies optional cache write/read and optional healing mode.
+6. Caller receives a typed `CompletionOutcome`.
+
+```text
+CompletionRequest
+  -> SimpleAgentsClient
+  -> RouterEngine
+  -> Provider::transform_request
+  -> Provider::execute
+  -> Provider::transform_response
+  -> CompletionOutcome
 ```
 
-Language surfaces build on the core client:
-- CLI (`simple-agents-cli`)
-- C FFI (`simple-agents-ffi`)
-- Node (`simple-agents-napi`)
-- Python (`simple-agents-py`)
+If `CompletionRequest.stream` is enabled, the final outcome is `CompletionOutcome::Stream` and chunks flow through stream-aware hooks.
 
 ## Cross-Language Parity Contract
 
-Cross-language parity is enforced with a shared fixture and CI contract runner:
+Cross-language behavior is guarded by shared fixtures and CI contract checks.
 
-- Shared fixture source: `parity-fixtures/binding_contract.json`
-- Workflow DSL/IR golden fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
-- Contract runner: `scripts/run-binding-contracts.sh`
+- Shared fixture: `parity-fixtures/binding_contract.json`
+- Workflow golden fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
+- Contract runner script: `scripts/run-binding-contracts.sh`
 - CI gate: `capability-contract-gates` in `.github/workflows/bindings-ci.yml`
 
-See [Cross-Language Capability Matrix](/CAPABILITY_MATRIX) for required minimum behavior and CI expectations.
+If you change API behavior in core crates, update contract fixtures and binding verifiers in the same change set.
 
 ## Workflow Authoring Surfaces
 
-Workflow authoring now uses a parity-checked golden fixture that keeps DSL intent and canonical IR wiring aligned across Rust, Python, Node, and Go test suites.
+YAML and code-first workflow surfaces are kept aligned with parity fixtures.
 
 - Authoring fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
 - Rust verifier: `crates/simple-agents-workflow/tests/workflow_dsl_ir_fixtures.rs`
-- Binding verifiers: `crates/simple-agents-py/tests/test_contract_fixtures.py`, `crates/simple-agents-napi/test/contract.test.js`, `bindings/go/contract_fixture_test.go`
+- Python verifier: `crates/simple-agents-py/tests/test_contract_fixtures.py`
+- Node verifier: `crates/simple-agents-napi/test/contract.test.js`
+- Go verifier: `bindings/go/contract_fixture_test.go`
 
-Use this model when migrating workflows between YAML and code definitions so node ids, branching edges, and merge source wires stay deterministic.
+When migrating between YAML and code, preserve node ids and edge semantics to keep replay/debug outputs deterministic.
 
-## Request Flow
+## Operational Capabilities
 
-1. Build a `CompletionRequest` in `simple-agent-type`.
-2. `SimpleAgentsClient` validates and runs middleware hooks.
-3. The router selects a provider based on `RoutingMode`.
-4. Provider executes HTTP requests and returns a unified response.
-5. Core handles cache population and optional healing.
+- **Routing and resilience:** latency/cost/round-robin/fallback strategies with health tracking.
+- **Healing and schema coercion:** `CompletionMode::HealedJson` and `CompletionMode::CoercedSchema`.
+- **Caching:** request-keyed response caching with TTL and eviction.
+- **Metrics/observability:** provider metrics with optional Prometheus feature.
 
-```
-CompletionRequest
-   -> SimpleAgentsClient
-   -> RouterEngine (RoutingMode)
-   -> Provider::transform_request
-   -> Provider::execute
-   -> Provider::transform_response
-   -> CompletionResponse / HealedJson / CoercedSchema
-```
+## Troubleshooting
 
-## Streaming Flow
+### Behavior differs across bindings
 
-If `CompletionRequest.stream` is set, `SimpleAgentsClient` returns a streaming outcome:
+Re-run parity checks and compare against `parity-fixtures/binding_contract.json` before changing public APIs.
 
-```
-CompletionOutcome::Stream
-  -> Stream<CompletionChunk>
-  -> Middleware after_stream/on_error hooks
-```
+### Workflow migration produces different graph behavior
 
-## Routing and Resilience
+Check node id and edge mapping against `parity-fixtures/workflow_dsl_ir_golden.json` and corresponding binding tests.
 
-Routing strategies live in `simple-agents-router` and include round-robin, latency, cost, and fallback routing. The router also provides circuit breaking, health tracking, and retry policies used by core and provider flows.
+### Runtime output shape changed unexpectedly
 
-## Healing and Schema Coercion
+Check whether healing mode or schema coercion mode was enabled in `CompletionOptions`.
 
-Healing is implemented in `simple-agents-healing` and wired through core completion modes:
-- `CompletionMode::HealedJson` parses JSON-ish output into structured values.
-- `CompletionMode::CoercedSchema` parses and coerces responses into a provided schema.
+## Next Steps
 
-Parser and coercion behavior is configurable via `HealingSettings` in `simple-agents-core`.
-
-## Caching
-
-Caching is optional. If enabled, `SimpleAgentsClient` uses `Cache` to store serialized responses keyed by request contents. The default in-memory cache supports TTL and eviction.
-
-## Metrics and Observability
-
-Metrics live in `simple-agents-providers`. The optional `prometheus` Cargo feature adds a Prometheus exporter for request timing and retry metrics.
-
-## Language Surfaces
-
-- `simple-agents-ffi` exposes a C ABI for core completion flows.
-- `simple-agents-napi` exposes Node bindings with standard/healed/schema modes.
-- `simple-agents-py` exposes Python bindings, streaming iterators, and schema helpers.
-
-## Reference
-
-- Rust core systems: [Rust Core Systems](/RUST_CORE_SYSTEMS)
-- Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
-- Common integration issues: [Troubleshooting](/TROUBLESHOOTING)
-- Workflow timeline/replay tooling: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
-- YAML/code migration patterns: [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK)
-- Feature inventory: [features.md (repo)](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/features.md)
+- Read crate boundaries in [Rust Core Systems](/RUST_CORE_SYSTEMS).
+- Review compatibility targets in [Capability Matrix](/CAPABILITY_MATRIX).
+- Learn workflow runtime details in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+- Use [Workflow Debugging UX](/WORKFLOW_DEBUGGING) for replay/timeline diagnostics.
