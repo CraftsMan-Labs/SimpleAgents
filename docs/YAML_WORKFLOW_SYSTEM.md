@@ -1,38 +1,27 @@
 # YAML Workflow System Guide
 
-This is the comprehensive guide for designing, running, debugging, and productionizing YAML workflows in SimpleAgents.
+This guide shows how to design, run, and troubleshoot YAML workflows in SimpleAgents.
+By the end, you will understand the workflow file model, supported node behavior, schema contracts, runtime telemetry, and practical production checks.
 
-It covers:
+## Prerequisites
 
-- workflow file structure and node model
-- chat-history workflows (`input.messages`)
-- structured output contracts (`config.output_schema`)
-- custom workers and handler execution
-- observability (events, traces, timings)
-- CLI visualization and replay tooling
-- practical design patterns and anti-patterns
+- Familiarity with [Quick Start](/QUICKSTART) and [Usage Guide](/USAGE)
+- A runnable workspace with `cargo` and optional `uv` for Python examples
+- Basic JSON schema knowledge for `llm_call` output contracts
 
-## 1) Mental Model
+## Quick Path
 
-Think in three layers:
+1. Create a minimal YAML workflow with one `llm_call` node.
+2. Add explicit `config.output_schema` for structured output stability.
+3. Run workflow via Rust API or examples runner.
+4. Render the workflow graph to Mermaid for fast wiring validation.
+5. Inspect trace/timing fields and iterate.
 
-1. **Workflow authoring (YAML)**: graph + prompts + routing + worker calls.
-2. **Canonical runtime model (IR)**: YAML is converted when compatible; fallback path is used for YAML-specific features.
-3. **Execution + telemetry**: runtime executes node-by-node and emits trace/timing/event data.
-
-The YAML authoring format is where your product logic should live.
-
-## 2) File Skeleton
+Minimal workflow skeleton:
 
 ```yaml
 id: my-workflow
 version: 1.0.0
-
-metadata:
-  name: "My Workflow"
-  description: "What this workflow does"
-  tags: ["example"]
-
 entry_node: first_node
 
 nodes:
@@ -52,34 +41,34 @@ nodes:
 
 edges:
   - from: first_node
-    to: next_node
+    to: first_node
 ```
 
-Required top-level fields:
+Required top-level fields are `id`, `entry_node`, and non-empty `nodes`.
 
-- `id`
-- `entry_node`
-- `nodes` (non-empty)
+## Mental Model
 
-`version`/`metadata` are optional but strongly recommended.
+| Layer | What it does |
+|---|---|
+| YAML authoring | Defines graph, prompts, routing, workers, and state updates |
+| Runtime model | Converts YAML to canonical IR when compatible, otherwise runs YAML-specific path |
+| Execution + telemetry | Runs node-by-node and emits trace, timings, and event diagnostics |
 
-## 3) Supported Node Types
+Keep product logic in YAML; treat runtime output as verification and observability material.
 
-- `llm_call`
-  - model-driven structured generation
-- `switch`
-  - condition-based routing
-- `custom_worker`
-  - deterministic/non-LLM external logic (Python handlers in examples)
+## Supported Node Types
 
-### `llm_call`
+- `llm_call`: structured LLM generation with optional tools and streaming flags
+- `switch`: condition-driven routing with deterministic default
+- `custom_worker`: deterministic external logic handler
+
+### `llm_call` essentials
 
 ```yaml
 node_type:
   llm_call:
     model: gpt-4.1
     stream: false
-    stream_json_as_text: false
     heal: true
     messages_path: input.messages
     append_prompt_as_user: true
@@ -89,98 +78,21 @@ config:
     ...
 ```
 
-Field behavior:
+Behavior notes:
 
-- `model`: required
-- `messages_path`: optional path to chat messages (e.g. `input.messages`)
-- `append_prompt_as_user`: if true, appends resolved prompt as final user message
-- `stream`: request stream mode where applicable
-- `stream_json_as_text`: when `true`, streamed non-thinking JSON output tokens are emitted as text lines (`key: value`) once structured JSON is complete
-- `heal`: enables healing mode
+- `model` is required.
+- `config.output_schema` should be explicit for every `llm_call`.
+- `config.schema` is accepted as an alias but prefer `output_schema`.
+- If schema is omitted, runtime falls back to permissive object behavior.
 
-Tool-calling fields (optional):
+Tool calling (per-node strict format):
 
-- `tools_format`: `openai` or `simplified` (default: `openai`)
-- `tools`: tool declarations for the selected format
-- `tool_choice`: `auto`, `none`, or forced function (for example: `{ function: get_customer_context }`)
-- `max_tool_roundtrips`: max tool loops for the node (default: `1`)
-- `tool_calls_global_key`: optional global key for storing tool-call traces from this node
+- `tools_format`: `openai` or `simplified`
+- `tools`, `tool_choice`, `max_tool_roundtrips`, `tool_calls_global_key`
+- Mixed tool declaration formats in one node fail validation.
+- Tool output schema mismatch hard-fails node execution.
 
-OpenAI-style tool declaration (`tools_format: openai`):
-
-```yaml
-node_type:
-  llm_call:
-    model: gpt-4.1
-    tools_format: openai
-    tools:
-      - type: function
-        function:
-          name: get_customer_context
-          description: Fetch order/customer context
-          parameters:
-            type: object
-            properties:
-              order_id: { type: string }
-            required: [order_id]
-            additionalProperties: false
-          output_schema:
-            type: object
-            properties:
-              customer_name: { type: string }
-            required: [customer_name]
-            additionalProperties: false
-```
-
-Simplified tool declaration (`tools_format: simplified`):
-
-```yaml
-node_type:
-  llm_call:
-    model: gpt-4.1
-    tools_format: simplified
-    tools:
-      - name: get_customer_context
-        description: Fetch order/customer context
-        input_schema:
-          type: object
-          properties:
-            order_id: { type: string }
-          required: [order_id]
-          additionalProperties: false
-        output_schema:
-          type: object
-          properties:
-            customer_name: { type: string }
-          required: [customer_name]
-          additionalProperties: false
-```
-
-Runtime behavior notes:
-
-- `tools_format` is strict per node; mixed declaration styles in one node fail validation.
-- Tool `output_schema` mismatches hard-fail the node execution.
-- Tool tracing is emitted with events: `node_tool_call_requested`, `node_tool_call_completed`, `node_tool_call_failed`, and `node_tool_roundtrip_completed`.
-- `tool_calls_global_key` is opt-in; no default global key is written.
-- Anthropic tool-calling remains disabled in the current provider rollout batch.
-
-Built-in graph-calling tool (current behavior):
-
-- Tool name: `run_workflow_graph`
-- Payload shape:
-  - `workflow_id` (required)
-  - `input` (optional object)
-- Resolver source: `input.workflow_registry` map (`workflow_id -> yaml_path`)
-- The runtime automatically forwards parent `input.messages` and `input.email_text` to the subgraph when missing in `input`.
-- Recursion guard: `input.__subgraph_max_depth` (default `3`), with current depth tracked in `input.__subgraph_depth`.
-
-Runnable example:
-
-```bash
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
-```
-
-### `switch`
+### `switch` essentials
 
 ```yaml
 node_type:
@@ -191,7 +103,9 @@ node_type:
     default: fallback_node
 ```
 
-### `custom_worker`
+Always define deterministic `default` behavior.
+
+### `custom_worker` essentials
 
 ```yaml
 node_type:
@@ -202,66 +116,26 @@ config:
     topic: termination
 ```
 
-When a custom worker runs, the runtime automatically injects trace correlation into the worker `context` argument under `context.trace`:
+Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
 
-- `context.trace.context`: `trace_id`, `span_id`, `parent_span_id`, `traceparent`, `tracestate`, `baggage`
-- `context.trace.tenant`: `workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`
+## Prompt Context and Run Memory
 
-This lets external code continue or correlate telemetry without parsing workflow internals.
+Templates can resolve from:
 
-## 4) Output Schema (Important)
+- `input.*`
+- `nodes.<node_id>.output.*`
+- `globals.*`
 
-Use `config.output_schema` for every `llm_call` node.
-
-```yaml
-config:
-  output_schema:
-    type: object
-    properties:
-      decision:
-        type: string
-        enum: [continue, terminated]
-      message:
-        type: string
-    required: [decision, message]
-    additionalProperties: false
-```
-
-Notes:
-
-- `config.schema` is accepted as an alias.
-- If omitted, runtime falls back to a permissive object schema.
-- Best practice: always define schema explicitly to avoid drift.
-
-## 5) Prompt Templating and Context
-
-Templates can read from:
-
-- `input.*` (workflow input)
-- `nodes.<node_id>.output.*` (prior node outputs)
-- `globals.*` (memory values)
-
-Example:
-
-```yaml
-prompt: |
-  Category: {{ nodes.classify_top_level.output.category }}
-  User text: {{ input.email_text }}
-  Memory: {{ globals.last_policy }}
-```
-
-## 6) Globals / Memory
-
-YAML supports mutable memory:
+Memory updates are available via:
 
 - `config.set_globals`
-- `config.update_globals` with `op: set|append|increment|merge`
+- `config.update_globals` with `set|append|increment|merge`
 
-Use this for conversation/workflow state that should persist within a run.
+Use globals for run-level state, not for long-term secret storage.
 
-## 7) Chat-History Workflows
+## Chat-History Workflows
 
-Pass message arrays as `input.messages`:
+Pass chat arrays in `input.messages`:
 
 ```json
 {
@@ -273,16 +147,11 @@ Pass message arrays as `input.messages`:
 }
 ```
 
-`role` values:
+Supported `role` values: `system`, `user`, `assistant`, `tool` (requires `tool_call_id`).
 
-- `system`
-- `user`
-- `assistant`
-- `tool` (requires `tool_call_id`)
+## Running Workflows
 
-## 8) Running Workflows
-
-### Rust API
+Rust API:
 
 ```rust
 use serde_json::json;
@@ -295,87 +164,74 @@ let output = run_workflow_yaml_file_with_client(
 ).await?;
 ```
 
-### Python Examples
+Python examples:
 
-- Chat runner:
-  - `uv run --directory examples python workflow_email/run_with_chat_history.py`
-- Unified system runner:
-  - `uv run --directory examples python workflow_email/run_with_unified_system.py`
-- Interview workflow:
-  - `uv run --directory examples python workflow_email/run_with_chat_history.py --workflow examples/workflow_email/python-intern-fun-interview-system.yaml`
+```bash
+uv run --directory examples python workflow_email/run_with_chat_history.py
+uv run --directory examples python workflow_email/run_with_unified_system.py
+```
 
-## 9) Visualize Workflow Graph
-
-CLI Mermaid command:
+Graph visualization:
 
 ```bash
 cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/python-intern-fun-interview-system.yaml
 ```
 
-Output is Mermaid `flowchart TD` text for docs, PRs, and debugging.
-
-## 10) Telemetry and Traces
+## Telemetry and Diagnostics
 
 Workflow outputs include:
 
-- `trace` (node order)
+- `trace` node order
 - `step_timings` per node
 - `total_elapsed_ms`
-- `trace_id` (top-level correlation id)
-- `metadata.telemetry.trace_id` (nested telemetry correlation id)
+- `trace_id`
+- `metadata.telemetry.trace_id`
 
-Runtime options can be provided by language bindings/FFI using a structured object:
+Runtime options can include telemetry sampling, payload mode, tool trace mode, retention, and tenant context. Use `conversation_id` to group multi-turn traces reliably.
 
-- `telemetry`
-  - `enabled` (default `true`)
-  - `sample_rate` (default `1.0`)
-  - `payload_mode` (`full_payload` by default, toggle-ready for `redacted_payload`)
-  - `tool_trace_mode` (`full` by default; alternatives: `redacted`, `off`)
-  - `retention_days` (default `30`)
-  - `multi_tenant` (default `true`)
-- `trace`
-  - `context` (`trace_id`, `span_id`, `parent_span_id`, optional raw `traceparent`/`tracestate`, `baggage`)
-  - `tenant` (`workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`)
+## Design Patterns That Work Well
 
-`conversation_id` is recommended for multi-turn chat sessions. Keep per-turn traces and group by `conversation_id` in Jaeger/logs.
+1. Classifier node -> `switch` router -> action node
+2. LLM action plus deterministic guardrail worker
+3. One-question-at-a-time interview/chat progression
+4. Explicit output schema for every `llm_call`
+5. Explicit closed terminal states for completed sessions
 
-In Python chat runner, per-turn records are persisted as JSONL trace files.
+## Troubleshooting
 
-## 11) Design Patterns That Work Well
-
-1. **State classifier -> switch router -> action node**
-2. **Action + deterministic guardrails via custom workers**
-3. **One-question-at-a-time interview/chat progression**
-4. **Always explicit output schema for every LLM node**
-5. **Close-loop termination states** (no reopening in same session)
-
-## 12) Common Pitfalls
-
-- Missing `output_schema` on `llm_call` nodes.
-- Switch conditions referencing nonexistent node paths.
-- Using multi-question prompts when workflow expects one-step progression.
-- Forgetting to rebuild local Python binding in `examples` env after Rust changes.
-
-## 13) Troubleshooting
-
-- Stale examples binding:
+### Stale Python bindings in examples
 
 ```bash
 uv sync --directory examples --reinstall-package simple-agents-py
 ```
 
-- Validate YAML graph quickly:
+### Graph validation issues
+
+Render Mermaid output first to confirm parse and wiring:
 
 ```bash
 cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/email-unified-chat-intake-classification.yaml
 ```
 
-If Mermaid renders, the YAML parsed and graph wiring is valid enough for visualization.
+### Non-deterministic routing behavior
 
-## 14) Production Checklist
+Verify every `switch` has a deterministic `default` and branch paths point to existing node ids.
+
+### Schema drift in LLM output
+
+Define `config.output_schema` on every `llm_call` node and keep it strict (`additionalProperties: false` where appropriate).
+
+## Production Checklist
 
 - Every `llm_call` has explicit `config.output_schema`.
-- Every `switch` has deterministic `default` route.
-- High-risk or policy-critical decisions are represented as deterministic nodes.
-- Session-close states (e.g., terminated) are modeled and enforced.
-- Trace/timing output is captured and retained for auditing.
+- Every `switch` defines deterministic default routing.
+- Sensitive logic is represented in deterministic worker nodes where needed.
+- Trace/timing output is captured and retained for audit/debug use.
+- Session-close states are explicitly modeled.
+
+## Next Steps
+
+- Use [Workflow Debugging UX](/WORKFLOW_DEBUGGING) for replay and retry inspection.
+- Tune runtime characteristics in [Workflow Performance](/WORKFLOW_PERFORMANCE).
+- Apply guardrails from [Workflow Security](/WORKFLOW_SECURITY).
+- For YAML/code conversion, follow [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK).

@@ -1,18 +1,40 @@
 # Workflow Debugging UX
 
-This guide covers workflow debugging surfaces added for timeline, retries, and replay inspection.
+This guide covers the practical debugging surfaces for workflow timeline inspection, retry analysis, and replay validation.
+By the end, you will be able to resume failed runs, inspect replay quality, and pinpoint retry causes quickly.
 
-For end-to-end authoring and runtime behavior (nodes, schemas, workers, chat input), see [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+For full authoring/runtime behavior, see [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+
+## Prerequisites
+
+- Familiarity with workflow execution in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM)
+- Access to workflow runtime results and trace outputs
+
+## Quick Path
+
+1. Resume from failure checkpoint when possible.
+2. Build a node timeline from runtime output.
+3. Group retry reasons to find dominant failure classes.
+4. Run replay inspection to validate trace structure.
+5. Render Mermaid graph to validate wiring assumptions.
+
+## Debugging Surfaces
+
+| Surface | Use it for | API/helper |
+|---|---|---|
+| Resume from failure | Continue from checkpoint instead of full rerun | `WorkflowRuntime::execute_resume_from_failure` |
+| Replay with cache policy | Control replay recomputation cost/strictness | `replay_trace_with_options`, `ReplayOptions.cache_policy` |
+| Node timeline | UI-friendly step/event sequence | `node_timeline(&result)` |
+| Retry summary | Group retries by node + operation | `retry_reason_summary(&result.retry_events)` |
+| Replay validation | Structural integrity and violation checks | `inspect_replay_trace(trace)` |
 
 ## Inspect + Replay Controls
 
-`simple-agents-workflow` now includes foundational controls for failure recovery and replay tuning:
+Replay cache policy options:
 
-- `WorkflowRuntime::execute_resume_from_failure` resumes from a `WorkflowCheckpoint`.
-- `ReplayOptions.cache_policy` configures replay cache behavior:
-  - `always` - prefer cached replay metadata when available.
-  - `refresh` - always recompute replay validation from trace events.
-  - `mixed` - use cache if complete, recompute when cache is partial/missing.
+- `always`: prefer cached replay metadata.
+- `refresh`: always recompute replay validation from events.
+- `mixed`: use cache if complete, recompute when partial/missing.
 
 Example:
 
@@ -30,9 +52,7 @@ let report = replay_trace_with_options(
 println!("replayed {} events", report.total_events);
 ```
 
-## Node Timeline
-
-Use `node_timeline` to convert runtime events into a UI-friendly sequence:
+## Build a Node Timeline
 
 ```rust
 use simple_agents_workflow::node_timeline;
@@ -43,10 +63,9 @@ for entry in timeline {
 }
 ```
 
-## Retry Reasons
+Use timeline output to verify event order and identify where execution diverges from expected branch behavior.
 
-Runtime results now expose `retry_events` with operation, failed attempt, and reason.
-Use `retry_reason_summary` for grouped diagnostics:
+## Group Retry Reasons
 
 ```rust
 use simple_agents_workflow::retry_reason_summary;
@@ -57,9 +76,9 @@ for group in retries {
 }
 ```
 
-## Replay Trace Inspection
+This is the fastest way to identify whether failures are concentrated in one node, one provider operation, or one policy path.
 
-Use `inspect_replay_trace` to validate trace structure and collect violations:
+## Validate Replay Trace
 
 ```rust
 use simple_agents_workflow::inspect_replay_trace;
@@ -70,57 +89,50 @@ if let Some(trace) = result.trace.as_ref() {
 }
 ```
 
-## End-to-End Example
+If replay is invalid, fix graph definitions or runtime event emission assumptions before using replay output for production decisions.
 
-See `crates/simple-agents-workflow/examples/debug_inspection.rs` for a complete run that prints:
+## Workflow Verifier and Streaming Diagnostics
 
-- node timeline entries
-- retry reason groups
-- replay validation output
-
-## YAML Run Timing Output
-
-For YAML workflow execution, the output includes per-step timing and total runtime:
-
-- `step_timings[]` with `node_id`, `node_kind`, `elapsed_ms`
-- `total_elapsed_ms`
-
-Rust API entrypoints:
-
-- `run_workflow_yaml_file_with_client`
-- `run_workflow_yaml_with_client`
-- compatibility wrappers: `run_email_workflow_yaml_file_with_client`, `run_email_workflow_yaml_with_client`
-
-These are also exposed in Python/Node/Go bindings and return the same timing fields.
-
-## Workflow Verifier
-
-Before execution, workflow YAML validation checks run through `verify_yaml_workflow(...)` and reject invalid graphs.
-
-Validation covers:
+`verify_yaml_workflow(...)` validation covers:
 
 - missing entry node
 - unknown edge `from`/`to` references
 - unknown `switch` branch/default targets
 - empty `llm_call.model`
 
-Streaming-related validation includes streamability diagnostics:
+Streaming diagnostics include non-streamable combinations such as `llm_call.stream=true` with `heal=true`.
 
-- `llm_call.stream=true` with `heal=true` is flagged as non-streamable for that node
-- runtime emits explanatory event text when streaming is disabled
+Event telemetry also includes `node_llm_input_resolved` metadata for prompt/template provenance and binding resolution details.
 
-Workflow event telemetry includes per-node resolved LLM input details:
+## Mermaid Visualization
 
-- `node_llm_input_resolved` includes `metadata.prompt` and `metadata.prompt_template`
-- `metadata.bindings[]` lists template provenance (`expression`, `source_path`, `resolved`, `missing`)
+Use graph rendering helpers for review and debugging:
 
-## Workflow Visualization
+- Canonical IR: `workflow_to_mermaid(&WorkflowDefinition)`
+- YAML: `yaml_workflow_to_mermaid(&YamlWorkflow)`, `yaml_workflow_file_to_mermaid(path)`
 
-Use `workflow_to_mermaid(&WorkflowDefinition)` to render canonical IR workflows as Mermaid diagrams for debugging/review.
+YAML rendering prefers YAML->IR conversion when compatible and falls back to direct YAML graph rendering otherwise.
 
-For YAML workflows, use:
+## Troubleshooting
 
-- `yaml_workflow_to_mermaid(&YamlWorkflow)`
-- `yaml_workflow_file_to_mermaid(path)`
+### Replay says valid but behavior still differs
 
-YAML Mermaid rendering now prefers YAML -> canonical IR conversion (`yaml_workflow_to_ir`) when the YAML feature set is IR-compatible, and falls back to direct YAML graph rendering otherwise.
+Compare timeline events and retry groups; structural replay validity does not guarantee semantic parity with changed prompt/tool behavior.
+
+### Missing timings in output
+
+Use YAML execution entry points that return timing fields (`run_workflow_yaml_file_with_client` or `run_workflow_yaml_with_client`).
+
+### Resume from checkpoint fails
+
+Ensure checkpoint is captured from the same runtime version and that referenced node ids still exist.
+
+### Mermaid graph looks correct but run fails
+
+Graph wiring may be valid while schema/model/tool configuration is invalid; run verifier and inspect node-level diagnostics.
+
+## Next Steps
+
+- Review workflow authoring rules in [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM).
+- Tune runtime behavior using [Workflow Performance](/WORKFLOW_PERFORMANCE).
+- Apply guardrails from [Workflow Security](/WORKFLOW_SECURITY).
