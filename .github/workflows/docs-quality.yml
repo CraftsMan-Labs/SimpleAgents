@@ -1,0 +1,45 @@
+name: Docs Quality
+
+on:
+  pull_request:
+    paths:
+      - "docs/**"
+      - "scripts/docs/**"
+      - ".github/workflows/docs-quality.yml"
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "docs/**"
+      - "scripts/docs/**"
+      - ".github/workflows/docs-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docs-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      - name: Install docs dependencies
+        run: npm ci
+        working-directory: docs
+
+      - name: Build docs
+        run: npm run docs:build
+        working-directory: docs
+
+      - name: Check docs links and structure
+        run: npm run docs:check
+        working-directory: docs
