@@ -197,6 +197,17 @@ func TestTypedWorkflowRunOptionsToMapWithTraceContext(t *testing.T) {
 	if !ok {
 		t.Fatal("expected trace map")
 	}
+	telemetry, ok := actual["telemetry"].(map[string]any)
+	if !ok {
+		t.Fatal("expected telemetry map")
+	}
+	sampleRateValue, ok := telemetry["sample_rate"].(float64)
+	if !ok {
+		t.Fatalf("expected sample_rate number, got %T", telemetry["sample_rate"])
+	}
+	if sampleRateValue != float64(sampleRate) {
+		t.Fatalf("expected sample_rate %v, got %v", sampleRate, sampleRateValue)
+	}
 	contextMap, ok := trace["context"].(map[string]any)
 	if !ok {
 		t.Fatal("expected trace.context map")
