@@ -44,7 +44,14 @@ Workflow results include correlation IDs in both locations:
 
 - top-level `trace_id`
 - `metadata.telemetry.trace_id`
+- `metadata.telemetry.sampled`
 - `metadata.trace.tenant.*` (including `conversation_id` when provided)
+
+Sampling behavior:
+
+- `sample_rate` is validated at runtime and must be between `0.0` and `1.0` (inclusive).
+- Sampling decision is deterministic per `trace_id` (same `trace_id` + same `sample_rate` => same sampled outcome).
+- `trace_id` is still returned even when a run is not sampled, so logs/events can stay correlated.
 
 ## Programmatic Correlation In External Code
 
