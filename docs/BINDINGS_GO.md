@@ -90,3 +90,9 @@ Workflow event parity with Python is available via:
 
 - `RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, options)` for collected events in output.
 - `RunWorkflowYAMLStream(ctx, workflowPath, workflowInput, onEvent)` for live callbacks plus final output.
+
+Workflow telemetry options follow Rust runner semantics:
+
+- `Telemetry.SampleRate` must be between `0.0` and `1.0`.
+- Sampling is deterministic per trace id.
+- Final output metadata includes `metadata.telemetry.sampled`.

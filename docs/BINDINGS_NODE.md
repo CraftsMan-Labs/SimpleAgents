@@ -111,3 +111,9 @@ Workflow events parity with Python is also available:
 
 - `runWorkflowYamlWithEvents(...)` returns output with `events` attached.
 - `runWorkflowYamlStream(...)` emits live workflow events via `onEvent(eventJson)` as JSON strings and returns the final structured output object.
+
+Workflow telemetry options follow Rust runner semantics:
+
+- `workflowOptions.telemetry.sample_rate` must be between `0.0` and `1.0`.
+- Sampling is deterministic per trace id.
+- Final output metadata includes `metadata.telemetry.sampled`.

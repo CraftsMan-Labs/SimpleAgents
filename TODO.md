@@ -16,6 +16,7 @@ Scope: Active execution tasks (remaining work only)
 |---|---|---|---|---|
 | P1 | Freeze parity matrix and acceptance criteria | Work needs one source-of-truth so parity is testable and reviewable | Matrix mapping Python APIs/features to Node/Go status with explicit P0/P1 priorities and acceptance checks | pending |
 | X6 | Update docs and verify gates | Users and maintainers need clear usage + reproducible checks | Docs include copy-paste option examples and all relevant tests pass | pending |
+| T1 | Enforce workflow telemetry sample rate semantics | Sampling config currently appears in metadata but was not enforced in trace emission | Runtime validates `sample_rate`, applies deterministic per-trace sampling, and exposes sampled state in output metadata/docs | completed |
 | D1 | Define docs modernization plan | Team needs an explicit execution blueprint modeled after high-DX CocoIndex docs patterns | `plan.md` exists with phased strategy, success criteria, risks, and deliverables | completed |
 | D2 | Standardize docs structure and writing contract | Contributors need one repeatable page format to improve scanability and consistency | `docs/DOCS_STANDARDS.md` contains required template, metadata contract, and review checklist | completed |
 | D3 | Align navigation and journey paths | Users need fast route-to-answer by role and intent | Sidebar and `docs/DOCS_MAP.md` reflect New User, Integrator, Contributor pathways with clear progression | completed |
