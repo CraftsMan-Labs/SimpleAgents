@@ -186,8 +186,10 @@ Workflow outputs include:
 - `total_elapsed_ms`
 - `trace_id`
 - `metadata.telemetry.trace_id`
+- `metadata.telemetry.sampled`
 
 Runtime options can include telemetry sampling, payload mode, tool trace mode, retention, and tenant context. Use `conversation_id` to group multi-turn traces reliably.
+`telemetry.sample_rate` must be between `0.0` and `1.0` and is applied deterministically per trace id.
 
 ## Design Patterns That Work Well
 

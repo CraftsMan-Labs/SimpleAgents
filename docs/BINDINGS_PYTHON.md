@@ -208,4 +208,6 @@ Notes:
 - When available for streamed runs, nerdstats includes `ttft_ms` (time-to-first-token in milliseconds).
 - For providers that do not emit token usage on streaming responses, nerdstats includes `token_metrics_available=false`, `token_metrics_source="provider_stream_usage_unavailable"`, and `llm_nodes_without_usage`.
 - Disable nerdstats emission for streaming callbacks with `workflow_options={"telemetry": {"nerdstats": False}}`.
+- `workflow_options["telemetry"]["sample_rate"]` controls deterministic per-trace sampling (`0.0` to `1.0` inclusive).
+- Workflow output metadata includes `metadata.telemetry.sampled` so callers can branch on sampled vs unsampled traces.
 - You can pass chat/session identity into trace metadata with `workflow_options={"trace": {"tenant": {"conversation_id": "<uuid>"}}}`; it is attached to workflow trace attributes and output metadata.

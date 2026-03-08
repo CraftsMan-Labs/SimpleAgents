@@ -264,6 +264,139 @@ fn default_retention_days() -> u32 {
     30
 }
 
+fn validate_sample_rate(sample_rate: f32) -> Result<(), YamlWorkflowRunError> {
+    if sample_rate.is_finite() && (0.0..=1.0).contains(&sample_rate) {
+        return Ok(());
+    }
+
+    Err(YamlWorkflowRunError::InvalidInput {
+        message: format!(
+            "telemetry.sample_rate must be between 0.0 and 1.0 inclusive; received {sample_rate}"
+        ),
+    })
+}
+
+fn should_sample_trace(trace_id: &str, sample_rate: f32) -> bool {
+    if sample_rate >= 1.0 {
+        return true;
+    }
+    if sample_rate <= 0.0 {
+        return false;
+    }
+
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in trace_id.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+
+    let ratio = (hash as f64) / (u64::MAX as f64);
+    ratio < (sample_rate as f64)
+}
+
+fn trace_id_from_traceparent(traceparent: &str) -> Option<String> {
+    let mut parts = traceparent.split('-');
+    let version = parts.next()?;
+    let trace_id = parts.next()?;
+    let _span_id = parts.next()?;
+    let _flags = parts.next()?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    if version.len() != 2 || trace_id.len() != 32 {
+        return None;
+    }
+
+    if !version.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    if !trace_id.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return None;
+    }
+    if trace_id.chars().all(|ch| ch == '0') {
+        return None;
+    }
+
+    Some(trace_id.to_ascii_lowercase())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TraceIdSource {
+    Disabled,
+    ExplicitTraceId,
+    ParentTraceId,
+    Traceparent,
+    ParentTraceparent,
+    Generated,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedTelemetryContext {
+    trace_id: Option<String>,
+    sampled: bool,
+    trace_id_source: TraceIdSource,
+}
+
+fn resolve_run_trace_id_with_source(
+    options: &YamlWorkflowRunOptions,
+    parent_trace_context: Option<&TraceContext>,
+) -> (Option<String>, TraceIdSource) {
+    if !options.telemetry.enabled {
+        return (None, TraceIdSource::Disabled);
+    }
+
+    if let Some(trace_id) = options
+        .trace
+        .context
+        .as_ref()
+        .and_then(|context| context.trace_id.clone())
+    {
+        return (Some(trace_id), TraceIdSource::ExplicitTraceId);
+    }
+
+    if let Some(trace_id) = parent_trace_context.and_then(|context| context.trace_id.clone()) {
+        return (Some(trace_id), TraceIdSource::ParentTraceId);
+    }
+
+    if let Some(trace_id) = options
+        .trace
+        .context
+        .as_ref()
+        .and_then(|context| context.traceparent.as_deref())
+        .and_then(trace_id_from_traceparent)
+    {
+        return (Some(trace_id), TraceIdSource::Traceparent);
+    }
+
+    if let Some(trace_id) = parent_trace_context
+        .and_then(|context| context.traceparent.as_deref())
+        .and_then(trace_id_from_traceparent)
+    {
+        return (Some(trace_id), TraceIdSource::ParentTraceparent);
+    }
+
+    (Some(generate_trace_id()), TraceIdSource::Generated)
+}
+
+fn resolve_telemetry_context(
+    options: &YamlWorkflowRunOptions,
+    parent_trace_context: Option<&TraceContext>,
+) -> ResolvedTelemetryContext {
+    let (trace_id, trace_id_source) =
+        resolve_run_trace_id_with_source(options, parent_trace_context);
+    let sampled = trace_id
+        .as_deref()
+        .map(|value| should_sample_trace(value, options.telemetry.sample_rate))
+        .unwrap_or(false);
+
+    ResolvedTelemetryContext {
+        trace_id,
+        sampled,
+        trace_id_source,
+    }
+}
+
 fn generate_trace_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -275,21 +408,25 @@ fn generate_trace_id() -> String {
     format!("{:032x}", now_nanos ^ sequence)
 }
 
-fn resolve_trace_id(options: &YamlWorkflowRunOptions, span_context: &TraceContext) -> String {
-    options
-        .trace
-        .context
-        .as_ref()
-        .and_then(|context| context.trace_id.clone())
-        .or_else(|| span_context.trace_id.clone())
-        .unwrap_or_else(generate_trace_id)
-}
-
-fn workflow_metadata_with_trace(options: &YamlWorkflowRunOptions, trace_id: &str) -> Value {
+fn workflow_metadata_with_trace(
+    options: &YamlWorkflowRunOptions,
+    trace_id: &str,
+    sampled: bool,
+    trace_id_source: TraceIdSource,
+) -> Value {
     json!({
         "telemetry": {
             "trace_id": trace_id,
+            "trace_id_source": match trace_id_source {
+                TraceIdSource::Disabled => "disabled",
+                TraceIdSource::ExplicitTraceId => "explicit_trace_id",
+                TraceIdSource::ParentTraceId => "parent_trace_id",
+                TraceIdSource::Traceparent => "traceparent",
+                TraceIdSource::ParentTraceparent => "parent_traceparent",
+                TraceIdSource::Generated => "generated",
+            },
             "enabled": options.telemetry.enabled,
+            "sampled": sampled,
             "nerdstats": options.telemetry.nerdstats,
             "sample_rate": options.telemetry.sample_rate,
             "payload_mode": match options.telemetry.payload_mode {
@@ -1616,6 +1753,7 @@ pub struct YamlLlmExecutionRequest {
     pub email_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
+    pub trace_sampled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1891,6 +2029,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     struct BorrowedClientExecutor<'a> {
         client: &'a SimpleAgentsClient,
         custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+        run_options: YamlWorkflowRunOptions,
     }
 
     #[async_trait]
@@ -2298,7 +2437,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 )
                             })?;
                         let mut tool_span_context: Option<TraceContext> = None;
-                        let mut tool_span = if request.trace_id.is_some() {
+                        let mut tool_span = if request.trace_sampled {
                             let (span_context, mut span) = workflow_tracer().start_span(
                                 "workflow.tool.execute",
                                 SpanKind::Node,
@@ -2361,6 +2500,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 &request.execution_context,
                                 self.client,
                                 self.custom_worker,
+                                &self.run_options,
                                 tool_span_context.as_ref(),
                                 request.trace_id.as_deref(),
                             )
@@ -2825,6 +2965,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     let executor = BorrowedClientExecutor {
         client,
         custom_worker,
+        run_options: options.clone(),
     };
     run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow,
@@ -2931,6 +3072,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
+    validate_sample_rate(options.telemetry.sample_rate)?;
+
     let email_text = workflow_input
         .get("email_text")
         .and_then(Value::as_str)
@@ -2956,18 +3099,23 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         return Ok(output);
     }
 
-    let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
-    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
-        "workflow.run",
-        SpanKind::Workflow,
-        parent_trace_context.as_ref(),
-    );
-    let trace_id = if options.telemetry.enabled {
-        let value = resolve_trace_id(options, &workflow_trace_context);
-        workflow_span.set_attribute("trace_id", value.as_str());
-        apply_trace_tenant_attributes(workflow_span.as_mut(), options);
-        Some(value)
+    let telemetry_context = resolve_telemetry_context(options, parent_trace_context.as_ref());
+
+    let tracer = workflow_tracer();
+    let mut workflow_span_context: Option<TraceContext> = None;
+    let mut workflow_span = if telemetry_context.sampled {
+        let (span_context, mut span) = tracer.start_span(
+            "workflow.run",
+            SpanKind::Workflow,
+            parent_trace_context.as_ref(),
+        );
+        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
+            span.set_attribute("trace_id", trace_id_value);
+        }
+        apply_trace_tenant_attributes(span.as_mut(), options);
+        workflow_span_context = Some(span_context);
+        Some(span)
     } else {
         None
     };
@@ -3045,14 +3193,17 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         let step_started = Instant::now();
 
         let mut node_span_context: Option<TraceContext> = None;
-        let mut node_span = if options.telemetry.enabled {
+        let mut node_span = if telemetry_context.sampled {
             let (span_context, mut span) = tracer.start_span(
                 "workflow.node.execute",
                 SpanKind::Node,
-                Some(&workflow_trace_context),
+                workflow_span_context.as_ref(),
             );
             node_span_context = Some(span_context);
-            span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+            span.set_attribute(
+                "trace_id",
+                telemetry_context.trace_id.as_deref().unwrap_or_default(),
+            );
             span.set_attribute("node_id", node.id.as_str());
             span.set_attribute("node_kind", node.kind_name());
             Some(span)
@@ -3161,8 +3312,9 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 tool_trace_mode: options.telemetry.tool_trace_mode,
                 execution_context: context.clone(),
                 email_text: email_text.to_string(),
-                trace_id: trace_id.clone(),
+                trace_id: telemetry_context.trace_id.clone(),
                 trace_context: node_span_context.clone(),
+                trace_sampled: telemetry_context.sampled,
             };
 
             if let Some(span) = node_span.as_mut() {
@@ -3295,14 +3447,17 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             }
 
             let mut handler_span_context: Option<TraceContext> = None;
-            let mut handler_span = if options.telemetry.enabled {
+            let mut handler_span = if telemetry_context.sampled {
                 let (span_context, mut span) = tracer.start_span(
                     "handler.invoke",
                     SpanKind::Node,
-                    Some(&workflow_trace_context),
+                    workflow_span_context.as_ref(),
                 );
                 handler_span_context = Some(span_context);
-                span.set_attribute("trace_id", trace_id.as_deref().unwrap_or_default());
+                span.set_attribute(
+                    "trace_id",
+                    telemetry_context.trace_id.as_deref().unwrap_or_default(),
+                );
                 span.set_attribute("handler_name", custom.handler.as_str());
                 apply_trace_tenant_attributes(span.as_mut(), options);
                 Some(span)
@@ -3312,7 +3467,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
             let worker_trace_context = merged_trace_context_for_worker(
                 handler_span_context.as_ref(),
-                trace_id.as_deref(),
+                telemetry_context.trace_id.as_deref(),
                 options,
             );
             let worker_context = custom_worker_context_with_trace(
@@ -3461,10 +3616,15 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
-        trace_id: trace_id.clone(),
-        metadata: trace_id
-            .as_ref()
-            .map(|value| workflow_metadata_with_trace(options, value)),
+        trace_id: telemetry_context.trace_id.clone(),
+        metadata: telemetry_context.trace_id.as_ref().map(|value| {
+            workflow_metadata_with_trace(
+                options,
+                value,
+                telemetry_context.sampled,
+                telemetry_context.trace_id_source,
+            )
+        }),
     };
 
     if let Some(sink) = event_sink {
@@ -3496,12 +3656,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         });
     }
 
-    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
-    if let Some(trace_id_value) = trace_id.as_ref() {
-        workflow_span.set_attribute("trace_id", trace_id_value.as_str());
+    if let Some(mut span) = workflow_span.take() {
+        span.set_attribute("workflow_id", workflow.id.as_str());
+        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
+            span.set_attribute("trace_id", trace_id_value.as_str());
+        }
+        span.end();
+        flush_workflow_tracer();
     }
-    workflow_span.end();
-    flush_workflow_tracer();
 
     Ok(output)
 }
@@ -3524,18 +3686,23 @@ async fn try_run_yaml_via_ir_runtime(
         }
     };
 
-    let tracer = workflow_tracer();
     let parent_trace_context = trace_context_from_options(options);
-    let (workflow_trace_context, mut workflow_span) = tracer.start_span(
-        "workflow.run",
-        SpanKind::Workflow,
-        parent_trace_context.as_ref(),
-    );
-    let trace_id = if options.telemetry.enabled {
-        let value = resolve_trace_id(options, &workflow_trace_context);
-        workflow_span.set_attribute("trace_id", value.as_str());
-        apply_trace_tenant_attributes(workflow_span.as_mut(), options);
-        Some(value)
+    let telemetry_context = resolve_telemetry_context(options, parent_trace_context.as_ref());
+
+    let tracer = workflow_tracer();
+    let mut workflow_span_context: Option<TraceContext> = None;
+    let mut workflow_span = if telemetry_context.sampled {
+        let (span_context, mut span) = tracer.start_span(
+            "workflow.run",
+            SpanKind::Workflow,
+            parent_trace_context.as_ref(),
+        );
+        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
+            span.set_attribute("trace_id", trace_id_value);
+        }
+        apply_trace_tenant_attributes(span.as_mut(), options);
+        workflow_span_context = Some(span_context);
+        Some(span)
     } else {
         None
     };
@@ -3563,6 +3730,7 @@ async fn try_run_yaml_via_ir_runtime(
         trace_input_context: Option<YamlWorkflowTraceContextInput>,
         tenant_context: YamlWorkflowTraceTenantContext,
         payload_mode: YamlWorkflowPayloadMode,
+        trace_sampled: bool,
     }
 
     #[async_trait]
@@ -3666,6 +3834,7 @@ async fn try_run_yaml_via_ir_runtime(
                     email_text: email_text.to_string(),
                     trace_id: self.trace_id.clone(),
                     trace_context: self.trace_context.clone(),
+                    trace_sampled: self.trace_sampled,
                 };
 
                 let llm_result = self
@@ -3703,7 +3872,7 @@ async fn try_run_yaml_via_ir_runtime(
 
             let tracer = workflow_tracer();
             let mut handler_span_context: Option<TraceContext> = None;
-            let mut handler_span = if self.trace_id.is_some() {
+            let mut handler_span = if self.trace_sampled {
                 let (span_context, mut span) = tracer.start_span(
                     "handler.invoke",
                     SpanKind::Node,
@@ -3783,11 +3952,12 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker,
         token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
         node_usage: std::sync::Mutex::new(BTreeMap::new()),
-        trace_id: trace_id.clone(),
-        trace_context: trace_id.as_ref().map(|_| workflow_trace_context.clone()),
+        trace_id: telemetry_context.trace_id.clone(),
+        trace_context: workflow_span_context.clone(),
         trace_input_context: options.trace.context.clone(),
         tenant_context: options.trace.tenant.clone(),
         payload_mode: options.telemetry.payload_mode,
+        trace_sampled: telemetry_context.sampled,
     };
 
     let runtime = WorkflowRuntime::new(
@@ -3875,9 +4045,14 @@ async fn try_run_yaml_via_ir_runtime(
         .map(|totals| totals.clone())
         .unwrap_or_default();
 
-    workflow_span.set_attribute("workflow_id", workflow.id.as_str());
-    workflow_span.end();
-    flush_workflow_tracer();
+    if let Some(mut span) = workflow_span.take() {
+        span.set_attribute("workflow_id", workflow.id.as_str());
+        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
+            span.set_attribute("trace_id", trace_id_value.as_str());
+        }
+        span.end();
+        flush_workflow_tracer();
+    }
 
     Ok(Some(YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
@@ -3896,10 +4071,15 @@ async fn try_run_yaml_via_ir_runtime(
         total_tokens: token_totals.total_tokens,
         total_thinking_tokens: token_totals.thinking_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
-        trace_id: trace_id.clone(),
-        metadata: trace_id
-            .as_ref()
-            .map(|value| workflow_metadata_with_trace(options, value)),
+        trace_id: telemetry_context.trace_id.clone(),
+        metadata: telemetry_context.trace_id.as_ref().map(|value| {
+            workflow_metadata_with_trace(
+                options,
+                value,
+                telemetry_context.sampled,
+                telemetry_context.trace_id_source,
+            )
+        }),
     }))
 }
 
@@ -4568,6 +4748,7 @@ async fn execute_subworkflow_tool_call(
     context: &Value,
     client: &SimpleAgentsClient,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    parent_options: &YamlWorkflowRunOptions,
     parent_trace_context: Option<&TraceContext>,
     resolved_trace_id: Option<&str>,
 ) -> Result<Value, String> {
@@ -4649,22 +4830,8 @@ async fn execute_subworkflow_tool_call(
         Value::Number(serde_json::Number::from(max_depth)),
     );
 
-    let mut subworkflow_options = YamlWorkflowRunOptions::default();
-    if parent_trace_context.is_some() || resolved_trace_id.is_some() {
-        let trace_context = YamlWorkflowTraceContextInput {
-            trace_id: resolved_trace_id
-                .map(|value| value.to_string())
-                .or_else(|| parent_trace_context.and_then(|ctx| ctx.trace_id.clone())),
-            span_id: parent_trace_context.and_then(|ctx| ctx.span_id.clone()),
-            parent_span_id: parent_trace_context.and_then(|ctx| ctx.parent_span_id.clone()),
-            traceparent: parent_trace_context.and_then(|ctx| ctx.traceparent.clone()),
-            tracestate: parent_trace_context.and_then(|ctx| ctx.tracestate.clone()),
-            baggage: parent_trace_context
-                .map(|ctx| ctx.baggage.clone())
-                .unwrap_or_default(),
-        };
-        subworkflow_options.trace.context = Some(trace_context);
-    }
+    let subworkflow_options =
+        build_subworkflow_options(parent_options, parent_trace_context, resolved_trace_id);
 
     let output = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
         Path::new(workflow_path),
@@ -4684,6 +4851,30 @@ async fn execute_subworkflow_tool_call(
         "terminal_output": output.terminal_output,
         "trace": output.trace,
     }))
+}
+
+fn build_subworkflow_options(
+    parent_options: &YamlWorkflowRunOptions,
+    parent_trace_context: Option<&TraceContext>,
+    resolved_trace_id: Option<&str>,
+) -> YamlWorkflowRunOptions {
+    let mut subworkflow_options = parent_options.clone();
+    if parent_trace_context.is_some() || resolved_trace_id.is_some() {
+        let trace_context = YamlWorkflowTraceContextInput {
+            trace_id: resolved_trace_id
+                .map(|value| value.to_string())
+                .or_else(|| parent_trace_context.and_then(|ctx| ctx.trace_id.clone())),
+            span_id: parent_trace_context.and_then(|ctx| ctx.span_id.clone()),
+            parent_span_id: parent_trace_context.and_then(|ctx| ctx.parent_span_id.clone()),
+            traceparent: parent_trace_context.and_then(|ctx| ctx.traceparent.clone()),
+            tracestate: parent_trace_context.and_then(|ctx| ctx.tracestate.clone()),
+            baggage: parent_trace_context
+                .map(|ctx| ctx.baggage.clone())
+                .unwrap_or_default(),
+        };
+        subworkflow_options.trace.context = Some(trace_context);
+    }
+    subworkflow_options
 }
 
 fn mock_custom_worker_output(
@@ -6338,6 +6529,389 @@ nodes:
     }
 
     #[tokio::test]
+    async fn workflow_run_options_sample_rate_zero_marks_trace_unsampled() {
+        let yaml = r#"
+id: sample-rate-zero
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: 0.0,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-sample-zero".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                tenant: YamlWorkflowTraceTenantContext::default(),
+            },
+            model: None,
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.trace_id.as_deref(), Some("trace-sample-zero"));
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("sampled"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn trace_id_from_traceparent_parses_w3c_header() {
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        assert_eq!(
+            trace_id_from_traceparent(traceparent).as_deref(),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+    }
+
+    #[test]
+    fn resolve_telemetry_context_marks_traceparent_source() {
+        let mut options = YamlWorkflowRunOptions::default();
+        options.trace.context = Some(YamlWorkflowTraceContextInput {
+            traceparent: Some(
+                "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01".to_string(),
+            ),
+            ..YamlWorkflowTraceContextInput::default()
+        });
+
+        let context = resolve_telemetry_context(&options, None);
+
+        assert_eq!(context.trace_id_source, TraceIdSource::Traceparent);
+        assert_eq!(
+            context.trace_id.as_deref(),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_derives_trace_id_from_traceparent_when_trace_id_missing() {
+        let yaml = r#"
+id: traceparent-derived
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: 0.0,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    traceparent: Some(traceparent.to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                tenant: YamlWorkflowTraceTenantContext::default(),
+            },
+            model: None,
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(
+            output.trace_id.as_deref(),
+            Some("4bf92f3577b34da6a3ce929d0e0e4736")
+        );
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("sampled"))
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_sample_rate_one_marks_trace_sampled() {
+        let yaml = r#"
+id: sample-rate-one
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: 1.0,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-sample-one".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                tenant: YamlWorkflowTraceTenantContext::default(),
+            },
+            model: None,
+        };
+
+        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.trace_id.as_deref(), Some("trace-sample-one"));
+        assert_eq!(
+            output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("sampled"))
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_sampling_is_deterministic_for_fixed_trace_id() {
+        let yaml = r#"
+id: sample-rate-deterministic
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: 0.5,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            trace: YamlWorkflowTraceOptions {
+                context: Some(YamlWorkflowTraceContextInput {
+                    trace_id: Some("trace-sample-deterministic".to_string()),
+                    ..YamlWorkflowTraceContextInput::default()
+                }),
+                tenant: YamlWorkflowTraceTenantContext::default(),
+            },
+            model: None,
+        };
+
+        let mut sampled_values = Vec::new();
+        for _ in 0..3 {
+            let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+                &workflow,
+                &json!({"email_text":"hello"}),
+                &MockExecutor,
+                None,
+                None,
+                &options,
+            )
+            .await
+            .expect("workflow should execute");
+
+            let sampled = output
+                .metadata
+                .as_ref()
+                .and_then(|value| value.get("telemetry"))
+                .and_then(|telemetry| telemetry.get("sampled"))
+                .and_then(Value::as_bool)
+                .expect("sampled flag should be present");
+            sampled_values.push(sampled);
+        }
+
+        assert!(sampled_values
+            .iter()
+            .all(|value| *value == sampled_values[0]));
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_reject_invalid_sample_rate() {
+        let yaml = r#"
+id: sample-rate-invalid
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: 1.1,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            ..YamlWorkflowRunOptions::default()
+        };
+
+        let err = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect_err("invalid sample_rate should fail");
+
+        match err {
+            YamlWorkflowRunError::InvalidInput { message } => {
+                assert!(message.contains("telemetry.sample_rate"));
+            }
+            _ => panic!("expected invalid input error for sample_rate"),
+        }
+    }
+
+    #[tokio::test]
+    async fn workflow_run_options_reject_nan_sample_rate() {
+        let yaml = r#"
+id: sample-rate-invalid
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let options = YamlWorkflowRunOptions {
+            telemetry: YamlWorkflowTelemetryConfig {
+                sample_rate: f32::NAN,
+                ..YamlWorkflowTelemetryConfig::default()
+            },
+            ..YamlWorkflowRunOptions::default()
+        };
+
+        let err = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &options,
+        )
+        .await
+        .expect_err("nan sample_rate should fail");
+
+        assert!(matches!(err, YamlWorkflowRunError::InvalidInput { .. }));
+    }
+
+    #[test]
+    fn subworkflow_options_inherit_parent_telemetry_configuration() {
+        let mut parent_options = YamlWorkflowRunOptions::default();
+        parent_options.telemetry.sample_rate = 0.0;
+        parent_options.telemetry.payload_mode = YamlWorkflowPayloadMode::RedactedPayload;
+        parent_options.telemetry.tool_trace_mode = YamlToolTraceMode::Redacted;
+        parent_options.trace.tenant.conversation_id = Some("conv-123".to_string());
+
+        let parent_context = TraceContext {
+            trace_id: Some("trace-parent".to_string()),
+            span_id: Some("span-parent".to_string()),
+            parent_span_id: None,
+            traceparent: Some("00-trace-parent-span-parent-01".to_string()),
+            tracestate: None,
+            baggage: BTreeMap::new(),
+        };
+
+        let subworkflow_options =
+            build_subworkflow_options(&parent_options, Some(&parent_context), None);
+
+        assert_eq!(subworkflow_options.telemetry.sample_rate, 0.0);
+        assert_eq!(
+            subworkflow_options.telemetry.payload_mode,
+            YamlWorkflowPayloadMode::RedactedPayload
+        );
+        assert_eq!(
+            subworkflow_options.telemetry.tool_trace_mode,
+            YamlToolTraceMode::Redacted
+        );
+        assert_eq!(
+            subworkflow_options.trace.tenant.conversation_id.as_deref(),
+            Some("conv-123")
+        );
+        assert_eq!(
+            subworkflow_options
+                .trace
+                .context
+                .as_ref()
+                .and_then(|ctx| ctx.trace_id.as_deref()),
+            Some("trace-parent")
+        );
+    }
+
+    #[tokio::test]
     async fn workflow_run_options_use_explicit_trace_id_and_payload_mode() {
         let yaml = r#"
 id: trace-options-test
@@ -6370,6 +6944,7 @@ nodes:
                     ..YamlWorkflowTraceTenantContext::default()
                 },
             },
+            model: None,
         };
 
         let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
