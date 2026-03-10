@@ -282,10 +282,11 @@ def _print_step_json_summary(
 
 
 def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
-    step_timings = result.get("step_timings", [])
+    step_details = result.get("step_details", result.get("step_timings", []))
     llm_nodes_without_usage: list[str] = []
-    if isinstance(step_timings, list):
-        for step in step_timings:
+    llm_node_models: dict[str, str] = {}
+    if isinstance(step_details, list):
+        for step in step_details:
             if not isinstance(step, dict):
                 continue
             if step.get("node_kind") != "llm_call":
@@ -294,6 +295,27 @@ def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
                 step.get("node_id"), str
             ):
                 llm_nodes_without_usage.append(step["node_id"])
+            node_id = step.get("node_id")
+            if not isinstance(node_id, str):
+                continue
+            model_value = step.get("model")
+            if not isinstance(model_value, str) or model_value.strip() == "":
+                model_value = step.get("model_name")
+            if not isinstance(model_value, str) or model_value.strip() == "":
+                model_value = step.get("model_id")
+            if not isinstance(model_value, str) or model_value.strip() == "":
+                model_value = step.get("provider_model")
+            if isinstance(model_value, str) and model_value.strip() != "":
+                llm_node_models[node_id] = model_value.strip()
+
+    if not llm_node_models:
+        raw_models = result.get("llm_node_models")
+        if isinstance(raw_models, dict):
+            for node_id, model_name in raw_models.items():
+                if isinstance(node_id, str) and isinstance(model_name, str):
+                    cleaned = model_name.strip()
+                    if cleaned != "":
+                        llm_node_models[node_id] = cleaned
 
     token_metrics_available = len(llm_nodes_without_usage) == 0
     total_input_tokens = (
@@ -315,8 +337,8 @@ def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
         "terminal_node": result.get("terminal_node"),
         "total_elapsed_ms": result.get("total_elapsed_ms"),
         "ttft_ms": result.get("ttft_ms"),
-        "step_timings": step_timings,
-        "llm_node_metrics": result.get("llm_node_metrics", {}),
+        "step_details": step_details,
+        "llm_node_models": llm_node_models,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_tokens": total_tokens,
