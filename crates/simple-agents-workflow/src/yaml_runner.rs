@@ -2110,12 +2110,17 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 usage.prompt_tokens += response.usage.prompt_tokens;
                                 usage.completion_tokens += response.usage.completion_tokens;
                                 usage.total_tokens += response.usage.total_tokens;
+                                if let Some(reasoning_tokens) = response.usage.reasoning_tokens {
+                                    usage.reasoning_tokens = Some(
+                                        usage.reasoning_tokens.unwrap_or(0) + reasoning_tokens,
+                                    );
+                                }
                             } else {
                                 usage_total = Some(YamlLlmTokenUsage {
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    reasoning_tokens: None,
+                                    reasoning_tokens: response.usage.reasoning_tokens,
                                 });
                             }
 
@@ -2133,12 +2138,17 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 usage.prompt_tokens += response.usage.prompt_tokens;
                                 usage.completion_tokens += response.usage.completion_tokens;
                                 usage.total_tokens += response.usage.total_tokens;
+                                if let Some(reasoning_tokens) = response.usage.reasoning_tokens {
+                                    usage.reasoning_tokens = Some(
+                                        usage.reasoning_tokens.unwrap_or(0) + reasoning_tokens,
+                                    );
+                                }
                             } else {
                                 usage_total = Some(YamlLlmTokenUsage {
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    reasoning_tokens: None,
+                                    reasoning_tokens: response.usage.reasoning_tokens,
                                 });
                             }
 
@@ -2156,12 +2166,17 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 usage.prompt_tokens += response.usage.prompt_tokens;
                                 usage.completion_tokens += response.usage.completion_tokens;
                                 usage.total_tokens += response.usage.total_tokens;
+                                if let Some(reasoning_tokens) = response.usage.reasoning_tokens {
+                                    usage.reasoning_tokens = Some(
+                                        usage.reasoning_tokens.unwrap_or(0) + reasoning_tokens,
+                                    );
+                                }
                             } else {
                                 usage_total = Some(YamlLlmTokenUsage {
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    reasoning_tokens: None,
+                                    reasoning_tokens: response.usage.reasoning_tokens,
                                 });
                             }
 
@@ -2371,12 +2386,17 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     total.prompt_tokens += usage.prompt_tokens;
                                     total.completion_tokens += usage.completion_tokens;
                                     total.total_tokens += usage.total_tokens;
+                                    if let Some(reasoning_tokens) = usage.reasoning_tokens {
+                                        total.reasoning_tokens = Some(
+                                            total.reasoning_tokens.unwrap_or(0) + reasoning_tokens,
+                                        );
+                                    }
                                 } else {
                                     usage_total = Some(YamlLlmTokenUsage {
                                         prompt_tokens: usage.prompt_tokens,
                                         completion_tokens: usage.completion_tokens,
                                         total_tokens: usage.total_tokens,
-                                        reasoning_tokens: None,
+                                        reasoning_tokens: usage.reasoning_tokens,
                                     });
                                 }
                             }
@@ -2888,7 +2908,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: usage.prompt_tokens,
                             completion_tokens: usage.completion_tokens,
                             total_tokens: usage.total_tokens,
-                            reasoning_tokens: None,
+                            reasoning_tokens: usage.reasoning_tokens,
                         }),
                         ttft_ms,
                         tool_calls: Vec::new(),
@@ -2912,7 +2932,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: response.usage.prompt_tokens,
                             completion_tokens: response.usage.completion_tokens,
                             total_tokens: response.usage.total_tokens,
-                            reasoning_tokens: None,
+                            reasoning_tokens: response.usage.reasoning_tokens,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -2948,7 +2968,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: healed.response.usage.prompt_tokens,
                             completion_tokens: healed.response.usage.completion_tokens,
                             total_tokens: healed.response.usage.total_tokens,
-                            reasoning_tokens: None,
+                            reasoning_tokens: healed.response.usage.reasoning_tokens,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -2967,7 +2987,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: coerced.response.usage.prompt_tokens,
                             completion_tokens: coerced.response.usage.completion_tokens,
                             total_tokens: coerced.response.usage.total_tokens,
-                            reasoning_tokens: None,
+                            reasoning_tokens: coerced.response.usage.reasoning_tokens,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -5140,6 +5160,10 @@ mod tests {
 
     struct UnknownToolProvider;
 
+    struct ReasoningUsageProvider;
+
+    struct ToolLoopReasoningProvider;
+
     #[async_trait]
     impl Provider for ToolLoopProvider {
         fn name(&self) -> &str {
@@ -5271,6 +5295,120 @@ mod tests {
                 created: None,
                 provider: Some(self.name().to_string()),
                 healing_metadata: None,
+            };
+
+            let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderResponse::new(200, body))
+        }
+
+        fn transform_response(&self, resp: ProviderResponse) -> SaResult<CompletionResponse> {
+            serde_json::from_value(resp.body).map_err(SimpleAgentsError::from)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ReasoningUsageProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn transform_request(&self, req: &CompletionRequest) -> SaResult<ProviderRequest> {
+            let body = serde_json::to_value(req).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderRequest::new("mock://reasoning-usage").with_body(body))
+        }
+
+        async fn execute(&self, req: ProviderRequest) -> SaResult<ProviderResponse> {
+            let request: CompletionRequest =
+                serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
+
+            let mut usage = Usage::new(9, 5);
+            usage.reasoning_tokens = Some(4);
+            let response = CompletionResponse {
+                id: "resp_reasoning".to_string(),
+                model: request.model,
+                choices: vec![CompletionChoice {
+                    index: 0,
+                    message: Message::assistant("{\"state\":\"ok\"}"),
+                    finish_reason: FinishReason::Stop,
+                    logprobs: None,
+                }],
+                usage,
+                created: None,
+                provider: Some(self.name().to_string()),
+                healing_metadata: None,
+            };
+
+            let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderResponse::new(200, body))
+        }
+
+        fn transform_response(&self, resp: ProviderResponse) -> SaResult<CompletionResponse> {
+            serde_json::from_value(resp.body).map_err(SimpleAgentsError::from)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for ToolLoopReasoningProvider {
+        fn name(&self) -> &str {
+            "openai"
+        }
+
+        fn transform_request(&self, req: &CompletionRequest) -> SaResult<ProviderRequest> {
+            let body = serde_json::to_value(req).map_err(SimpleAgentsError::from)?;
+            Ok(ProviderRequest::new("mock://tool-loop-reasoning").with_body(body))
+        }
+
+        async fn execute(&self, req: ProviderRequest) -> SaResult<ProviderResponse> {
+            let request: CompletionRequest =
+                serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
+
+            let has_tools = request
+                .tools
+                .as_ref()
+                .is_some_and(|tools| !tools.is_empty());
+            let has_tool_result = request.messages.iter().any(|m| m.role == Role::Tool);
+
+            let response = if has_tools && !has_tool_result {
+                let mut usage = Usage::new(10, 5);
+                usage.reasoning_tokens = Some(2);
+                CompletionResponse {
+                    id: "resp_tool_reasoning_1".to_string(),
+                    model: request.model.clone(),
+                    choices: vec![CompletionChoice {
+                        index: 0,
+                        message: Message::assistant("").with_tool_calls(vec![ToolCall {
+                            id: "call_get_context".to_string(),
+                            tool_type: ToolType::Function,
+                            function: ToolCallFunction {
+                                name: "get_customer_context".to_string(),
+                                arguments: "{\"order_id\":\"123\"}".to_string(),
+                            },
+                        }]),
+                        finish_reason: FinishReason::ToolCalls,
+                        logprobs: None,
+                    }],
+                    usage,
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                }
+            } else {
+                let mut usage = Usage::new(12, 6);
+                usage.reasoning_tokens = Some(3);
+                CompletionResponse {
+                    id: "resp_tool_reasoning_2".to_string(),
+                    model: request.model,
+                    choices: vec![CompletionChoice {
+                        index: 0,
+                        message: Message::assistant("{\"state\":\"done\"}"),
+                        finish_reason: FinishReason::Stop,
+                        logprobs: None,
+                    }],
+                    usage,
+                    created: None,
+                    provider: Some(self.name().to_string()),
+                    healing_metadata: None,
+                }
             };
 
             let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
@@ -5875,6 +6013,91 @@ nodes:
         );
     }
 
+    #[test]
+    fn workflow_nerdstats_schema_contract_is_stable() {
+        let output = YamlWorkflowRunOutput {
+            workflow_id: "schema-workflow".to_string(),
+            entry_node: "start".to_string(),
+            email_text: "hello".to_string(),
+            trace: vec!["classify".to_string(), "route".to_string()],
+            outputs: BTreeMap::new(),
+            terminal_node: "route".to_string(),
+            terminal_output: None,
+            step_timings: vec![
+                YamlStepTiming {
+                    node_id: "classify".to_string(),
+                    node_kind: "llm_call".to_string(),
+                    model_name: Some("gpt-4.1".to_string()),
+                    elapsed_ms: 100,
+                    prompt_tokens: Some(11),
+                    completion_tokens: Some(22),
+                    total_tokens: Some(33),
+                    reasoning_tokens: Some(7),
+                    tokens_per_second: Some(220.0),
+                },
+                YamlStepTiming {
+                    node_id: "route".to_string(),
+                    node_kind: "switch".to_string(),
+                    model_name: None,
+                    elapsed_ms: 0,
+                    prompt_tokens: None,
+                    completion_tokens: None,
+                    total_tokens: None,
+                    reasoning_tokens: None,
+                    tokens_per_second: None,
+                },
+            ],
+            llm_node_metrics: BTreeMap::new(),
+            llm_node_models: BTreeMap::new(),
+            total_elapsed_ms: 100,
+            ttft_ms: Some(9),
+            total_input_tokens: 11,
+            total_output_tokens: 22,
+            total_tokens: 33,
+            total_reasoning_tokens: Some(7),
+            tokens_per_second: 220.0,
+            trace_id: Some("trace-schema".to_string()),
+            metadata: None,
+        };
+
+        let nerdstats = workflow_nerdstats(&output);
+        let expected = json!({
+            "workflow_id": "schema-workflow",
+            "terminal_node": "route",
+            "total_elapsed_ms": 100,
+            "ttft_ms": 9,
+            "step_details": [
+                {
+                    "node_id": "classify",
+                    "node_kind": "llm_call",
+                    "model_name": "gpt-4.1",
+                    "elapsed_ms": 100,
+                    "prompt_tokens": 11,
+                    "completion_tokens": 22,
+                    "total_tokens": 33,
+                    "reasoning_tokens": 7,
+                    "tokens_per_second": 220.0
+                },
+                {
+                    "node_id": "route",
+                    "node_kind": "switch",
+                    "elapsed_ms": 0
+                }
+            ],
+            "total_input_tokens": 11,
+            "total_output_tokens": 22,
+            "total_tokens": 33,
+            "total_reasoning_tokens": 7,
+            "tokens_per_second": 220.0,
+            "trace_id": "trace-schema",
+            "token_metrics_available": true,
+            "token_metrics_source": "provider_usage",
+            "llm_nodes_without_usage": []
+        });
+
+        assert_eq!(nerdstats, expected);
+    }
+
     struct MessageHistoryExecutor;
 
     #[async_trait]
@@ -6065,6 +6288,128 @@ edges:
             .as_str()
             .expect("body should be string");
         assert!(body.contains("Ava"));
+    }
+
+    #[tokio::test]
+    async fn workflow_with_client_preserves_reasoning_tokens_in_output_and_nerdstats() {
+        let yaml = r#"
+id: reasoning-usage-workflow
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Return JSON only:
+        {"state":"ok"}
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+        required: [state]
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(Arc::new(ReasoningUsageProvider))
+            .build()
+            .expect("client should build");
+
+        let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &client,
+            None,
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.total_reasoning_tokens, Some(4));
+        assert_eq!(output.step_timings.len(), 1);
+        assert_eq!(output.step_timings[0].reasoning_tokens, Some(4));
+
+        let nerdstats = workflow_nerdstats(&output);
+        assert_eq!(
+            nerdstats["total_reasoning_tokens"],
+            Value::Number(4u64.into())
+        );
+        assert_eq!(
+            nerdstats["step_details"][0]["reasoning_tokens"],
+            Value::Number(4u64.into())
+        );
+    }
+
+    #[tokio::test]
+    async fn workflow_with_tools_accumulates_reasoning_tokens_across_roundtrips() {
+        let yaml = r#"
+id: tool-reasoning-workflow
+entry_node: generate_with_tool
+nodes:
+  - id: generate_with_tool
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        tools_format: simplified
+        max_tool_roundtrips: 1
+        tools:
+          - name: get_customer_context
+            input_schema:
+              type: object
+              properties:
+                order_id: { type: string }
+              required: [order_id]
+              additionalProperties: false
+            output_schema:
+              type: object
+              properties:
+                customer_name: { type: string }
+              required: [customer_name]
+              additionalProperties: false
+    config:
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+        required: [state]
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let client = SimpleAgentsClientBuilder::new()
+            .with_provider(Arc::new(ToolLoopReasoningProvider))
+            .build()
+            .expect("client should build");
+        let worker = FixedToolWorker {
+            payload: json!({"customer_name": "Ava"}),
+        };
+
+        let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &client,
+            Some(&worker),
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        assert_eq!(output.total_reasoning_tokens, Some(5));
+        assert_eq!(output.step_timings.len(), 1);
+        assert_eq!(output.step_timings[0].reasoning_tokens, Some(5));
+
+        let nerdstats = workflow_nerdstats(&output);
+        assert_eq!(
+            nerdstats["total_reasoning_tokens"],
+            Value::Number(5u64.into())
+        );
+        assert_eq!(
+            nerdstats["step_details"][0]["reasoning_tokens"],
+            Value::Number(5u64.into())
+        );
     }
 
     #[tokio::test]
