@@ -3,7 +3,7 @@ import * as protoLoader from "@grpc/proto-loader";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { startWorker } from "./worker.ts";
+import { startWorker } from "./worker.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
