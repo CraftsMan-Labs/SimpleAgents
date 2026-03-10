@@ -114,6 +114,7 @@ pub fn transform_openai_chunk(chunk: OpenAIStreamChunk) -> Result<CompletionChun
             prompt_tokens: usage.prompt_tokens,
             completion_tokens: usage.completion_tokens,
             total_tokens: usage.total_tokens,
+            reasoning_tokens: usage.reasoning_tokens(),
         }),
     })
 }
@@ -309,6 +310,9 @@ mod tests {
                 prompt_tokens: 21,
                 completion_tokens: 669,
                 total_tokens: 690,
+                reasoning_tokens: None,
+                completion_tokens_details: None,
+                output_tokens_details: None,
             }),
         };
 
@@ -319,7 +323,45 @@ mod tests {
                 prompt_tokens: 21,
                 completion_tokens: 669,
                 total_tokens: 690,
+                reasoning_tokens: None,
             })
+        );
+    }
+
+    #[test]
+    fn test_transform_chunk_maps_reasoning_usage_from_details() {
+        let chunk = OpenAIStreamChunk {
+            id: "chatcmpl-126".to_string(),
+            object: "chat.completion.chunk".to_string(),
+            created: 1677652291,
+            model: "gpt-4".to_string(),
+            choices: vec![super::super::models::OpenAIStreamChoice {
+                index: 0,
+                delta: super::super::models::OpenAIDelta {
+                    role: None,
+                    content: None,
+                    reasoning_content: None,
+                    tool_calls: None,
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            system_fingerprint: None,
+            usage: Some(super::super::models::OpenAIUsage {
+                prompt_tokens: 21,
+                completion_tokens: 669,
+                total_tokens: 690,
+                reasoning_tokens: None,
+                completion_tokens_details: Some(super::super::models::OpenAIUsageDetails {
+                    reasoning_tokens: Some(9),
+                }),
+                output_tokens_details: None,
+            }),
+        };
+
+        let unified = transform_openai_chunk(chunk).expect("chunk should transform");
+        assert_eq!(
+            unified.usage.and_then(|usage| usage.reasoning_tokens),
+            Some(9)
         );
     }
 }

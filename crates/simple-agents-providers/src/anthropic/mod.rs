@@ -446,6 +446,7 @@ impl Provider for AnthropicProvider {
                         completion_tokens: anthropic_response.usage.output_tokens,
                         total_tokens: anthropic_response.usage.input_tokens
                             + anthropic_response.usage.output_tokens,
+                        reasoning_tokens: None,
                     },
                     created: None,
                     provider: Some(self.name().to_string()),
@@ -588,6 +589,7 @@ impl AnthropicProvider {
                     ),
                     "usage.total_tokens",
                 ),
+                reasoning_tokens: None,
             },
             created: None,
             provider: Some(self.name().to_string()),

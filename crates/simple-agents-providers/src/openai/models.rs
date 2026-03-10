@@ -112,6 +112,48 @@ pub struct OpenAIUsage {
 
     /// Total tokens used
     pub total_tokens: u32,
+
+    /// Optional top-level reasoning tokens from OpenAI-compatible providers.
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "thinking_tokens"
+    )]
+    pub reasoning_tokens: Option<u32>,
+
+    /// Optional detailed completion token breakdown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens_details: Option<OpenAIUsageDetails>,
+
+    /// Optional detailed output token breakdown used by some providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens_details: Option<OpenAIUsageDetails>,
+}
+
+impl OpenAIUsage {
+    pub fn reasoning_tokens(&self) -> Option<u32> {
+        self.reasoning_tokens
+            .or_else(|| {
+                self.completion_tokens_details
+                    .as_ref()
+                    .and_then(|details| details.reasoning_tokens)
+            })
+            .or_else(|| {
+                self.output_tokens_details
+                    .as_ref()
+                    .and_then(|details| details.reasoning_tokens)
+            })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAIUsageDetails {
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "thinking_tokens"
+    )]
+    pub reasoning_tokens: Option<u32>,
 }
 
 /// OpenAI error response
@@ -288,6 +330,65 @@ mod tests {
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.choices[0].message.content, "Hello there!");
         assert_eq!(response.usage.total_tokens, 30);
+        assert_eq!(response.usage.reasoning_tokens(), None);
+    }
+
+    #[test]
+    fn test_deserialize_response_with_reasoning_usage_details() {
+        let json = r#"{
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1677652288,
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello there!"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+                "completion_tokens_details": {
+                    "reasoning_tokens": 7
+                }
+            }
+        }"#;
+
+        let response: OpenAICompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.usage.reasoning_tokens(), Some(7));
+    }
+
+    #[test]
+    fn test_deserialize_response_with_thinking_usage_alias() {
+        let json = r#"{
+            "id": "chatcmpl-123",
+            "object": "chat.completion",
+            "created": 1677652288,
+            "model": "gpt-4",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "Hello there!"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 20,
+                "total_tokens": 30,
+                "completion_tokens_details": {
+                    "thinking_tokens": 8
+                }
+            }
+        }"#;
+
+        let response: OpenAICompletionResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.usage.reasoning_tokens(), Some(8));
     }
 
     #[test]

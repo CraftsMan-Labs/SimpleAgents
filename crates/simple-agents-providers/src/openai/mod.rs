@@ -466,6 +466,7 @@ impl Provider for OpenAIProvider {
                         prompt_tokens: openai_response.usage.prompt_tokens,
                         completion_tokens: openai_response.usage.completion_tokens,
                         total_tokens: openai_response.usage.total_tokens,
+                        reasoning_tokens: openai_response.usage.reasoning_tokens(),
                     },
                     created: Some(openai_response.created as i64),
                     provider: Some(self.name().to_string()),
@@ -624,11 +625,18 @@ impl OpenAIProvider {
                     resp.body["usage"]["total_tokens"].as_u64(),
                     "usage.total_tokens",
                 ),
+                reasoning_tokens: Self::extract_reasoning_tokens_from_usage(&resp.body["usage"]),
             },
             created: resp.body["created"].as_i64(),
             provider: Some(self.name().to_string()),
             healing_metadata: Some(healed.metadata),
         })
+    }
+
+    fn extract_reasoning_tokens_from_usage(usage: &serde_json::Value) -> Option<u32> {
+        serde_json::from_value::<OpenAIUsage>(usage.clone())
+            .ok()
+            .and_then(|parsed| parsed.reasoning_tokens())
     }
 
     async fn execute_stream_impl(
@@ -887,6 +895,46 @@ mod tests {
         assert_eq!(choice.message.content, "");
         assert_eq!(choice.finish_reason, FinishReason::ToolCalls);
         assert!(choice.message.tool_calls.is_some());
+    }
+
+    #[test]
+    fn test_transform_response_maps_reasoning_tokens_from_usage_details() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let response = ProviderResponse {
+            status: 200,
+            body: json!({
+                "id": "chatcmpl-reasoning",
+                "object": "chat.completion",
+                "created": 1700000000,
+                "model": "gpt-4o",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": "assistant",
+                            "content": "Answer"
+                        },
+                        "finish_reason": "stop"
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 10,
+                    "completion_tokens": 6,
+                    "total_tokens": 16,
+                    "completion_tokens_details": {
+                        "reasoning_tokens": 4
+                    }
+                }
+            }),
+            headers: None,
+        };
+
+        let parsed = provider
+            .transform_response(response)
+            .expect("response should parse");
+        assert_eq!(parsed.usage.reasoning_tokens, Some(4));
     }
 
     #[tokio::test]
