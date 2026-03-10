@@ -3768,7 +3768,8 @@ async fn try_run_yaml_via_ir_runtime(
                         ToolExecutionError::Failed("yaml llm call missing model".to_string())
                     })?
                     .to_string();
-                let resolved_model = resolve_requested_model(self.model_override.as_deref(), &model);
+                let resolved_model =
+                    resolve_requested_model(self.model_override.as_deref(), &model);
                 let prompt_template = input
                     .input
                     .get("prompt_template")
@@ -5813,12 +5814,10 @@ nodes:
             nerdstats["step_details"][0]["node_id"],
             Value::String("llm_node".to_string())
         );
-        assert!(
-            nerdstats["llm_node_models"]
-                .as_object()
-                .expect("llm_node_models should be an object")
-                .is_empty()
-        );
+        assert!(nerdstats["llm_node_models"]
+            .as_object()
+            .expect("llm_node_models should be an object")
+            .is_empty());
     }
 
     #[test]
@@ -5862,12 +5861,10 @@ nodes:
             nerdstats["step_details"][0]["node_id"],
             Value::String("llm_node".to_string())
         );
-        assert!(
-            nerdstats["llm_node_models"]
-                .as_object()
-                .expect("llm_node_models should be an object")
-                .is_empty()
-        );
+        assert!(nerdstats["llm_node_models"]
+            .as_object()
+            .expect("llm_node_models should be an object")
+            .is_empty());
     }
 
     struct MessageHistoryExecutor;
