@@ -74,6 +74,7 @@ pub struct YamlWorkflowRunOutput {
     pub terminal_output: Option<Value>,
     pub step_timings: Vec<YamlStepTiming>,
     pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
+    pub llm_node_models: BTreeMap<String, String>,
     pub total_elapsed_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ttft_ms: Option<u128>,
@@ -250,6 +251,19 @@ fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64
         return 0.0;
     }
     round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
+}
+
+fn resolve_requested_model(run_model_override: Option<&str>, node_model: &str) -> String {
+    run_model_override
+        .and_then(|model| {
+            let trimmed = model.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_else(|| node_model.to_string())
 }
 
 fn default_true() -> bool {
@@ -515,8 +529,8 @@ fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
         "terminal_node": output.terminal_node,
         "total_elapsed_ms": output.total_elapsed_ms,
         "ttft_ms": output.ttft_ms,
-        "step_timings": output.step_timings,
-        "llm_node_metrics": output.llm_node_metrics,
+        "step_details": output.step_timings,
+        "llm_node_models": output.llm_node_models,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_tokens": total_tokens,
@@ -3149,6 +3163,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     let mut globals = serde_json::Map::new();
     let mut step_timings = Vec::new();
     let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
+    let mut llm_node_models: BTreeMap<String, String> = BTreeMap::new();
     let mut token_totals = YamlTokenTotals::default();
     let mut workflow_ttft_ms: Option<u128> = None;
     let started = Instant::now();
@@ -3277,18 +3292,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 node_id: node.id.clone(),
                 is_terminal_node,
                 stream_json_as_text: llm.stream_json_as_text.unwrap_or(false),
-                model: options
-                    .model
-                    .as_ref()
-                    .and_then(|model| {
-                        let trimmed = model.trim();
-                        if trimmed.is_empty() {
-                            None
-                        } else {
-                            Some(trimmed.to_string())
-                        }
-                    })
-                    .unwrap_or_else(|| llm.model.clone()),
+                model: resolve_requested_model(options.model.as_deref(), &llm.model),
                 messages,
                 append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
                 prompt,
@@ -3351,6 +3355,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     })),
                 });
             }
+
+            llm_node_models.insert(node.id.clone(), request.model.clone());
 
             if event_sink_is_cancelled(event_sink) {
                 return Err(YamlWorkflowRunError::EventSinkCancelled {
@@ -3609,6 +3615,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         terminal_output,
         step_timings,
         llm_node_metrics,
+        llm_node_models,
         total_elapsed_ms,
         ttft_ms: workflow_ttft_ms,
         total_input_tokens: token_totals.input_tokens,
@@ -3725,6 +3732,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
         token_totals: std::sync::Mutex<YamlTokenTotals>,
         node_usage: std::sync::Mutex<BTreeMap<String, YamlLlmTokenUsage>>,
+        node_models: std::sync::Mutex<BTreeMap<String, String>>,
+        model_override: Option<String>,
         trace_id: Option<String>,
         trace_context: Option<TraceContext>,
         trace_input_context: Option<YamlWorkflowTraceContextInput>,
@@ -3759,6 +3768,8 @@ async fn try_run_yaml_via_ir_runtime(
                         ToolExecutionError::Failed("yaml llm call missing model".to_string())
                     })?
                     .to_string();
+                let resolved_model =
+                    resolve_requested_model(self.model_override.as_deref(), &model);
                 let prompt_template = input
                     .input
                     .get("prompt_template")
@@ -3816,7 +3827,7 @@ async fn try_run_yaml_via_ir_runtime(
                         .get("stream_json_as_text")
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
-                    model,
+                    model: resolved_model.clone(),
                     messages,
                     append_prompt_as_user,
                     prompt,
@@ -3849,8 +3860,11 @@ async fn try_run_yaml_via_ir_runtime(
                             totals.add_usage(usage);
                         }
                         if let Ok(mut usage_map) = self.node_usage.lock() {
-                            usage_map.insert(node_id_for_metrics, usage.clone());
+                            usage_map.insert(node_id_for_metrics.clone(), usage.clone());
                         }
+                    }
+                    if let Ok(mut model_map) = self.node_models.lock() {
+                        model_map.insert(node_id_for_metrics, resolved_model);
                     }
                 }
 
@@ -3952,6 +3966,8 @@ async fn try_run_yaml_via_ir_runtime(
         custom_worker,
         token_totals: std::sync::Mutex::new(YamlTokenTotals::default()),
         node_usage: std::sync::Mutex::new(BTreeMap::new()),
+        node_models: std::sync::Mutex::new(BTreeMap::new()),
+        model_override: options.model.clone(),
         trace_id: telemetry_context.trace_id.clone(),
         trace_context: workflow_span_context.clone(),
         trace_input_context: options.trace.context.clone(),
@@ -3993,6 +4009,11 @@ async fn try_run_yaml_via_ir_runtime(
         .node_usage
         .lock()
         .map(|usage| usage.clone())
+        .unwrap_or_default();
+    let llm_node_models = tool_executor
+        .node_models
+        .lock()
+        .map(|models| models.clone())
         .unwrap_or_default();
     let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
     for execution in result.node_executions {
@@ -4064,6 +4085,7 @@ async fn try_run_yaml_via_ir_runtime(
         terminal_output,
         step_timings,
         llm_node_metrics,
+        llm_node_models,
         total_elapsed_ms,
         ttft_ms: None,
         total_input_tokens: token_totals.input_tokens,
@@ -5593,6 +5615,18 @@ nodes:
             nerdstats["token_metrics_source"],
             Value::String("provider_usage".to_string())
         );
+        assert!(nerdstats.get("step_timings").is_none());
+        assert!(nerdstats.get("llm_node_metrics").is_none());
+        assert!(nerdstats.get("step_details").is_some());
+        assert!(nerdstats.get("llm_node_models").is_some());
+        assert_eq!(
+            nerdstats["llm_node_models"]["classify"],
+            Value::String("gpt-4.1".to_string())
+        );
+        assert_eq!(
+            nerdstats["step_details"][0]["node_id"],
+            Value::String("classify".to_string())
+        );
         assert_eq!(nerdstats["ttft_ms"], Value::Null);
     }
 
@@ -5721,6 +5755,16 @@ nodes:
         assert_eq!(nerdstats["token_metrics_available"], Value::Bool(true));
         assert_eq!(nerdstats["total_tokens"], Value::Number(30u64.into()));
         assert_eq!(nerdstats["ttft_ms"], Value::Number(12u64.into()));
+        assert!(nerdstats.get("step_timings").is_none());
+        assert!(nerdstats.get("llm_node_metrics").is_none());
+        assert_eq!(
+            nerdstats["llm_node_models"]["classify"],
+            Value::String("gpt-4.1".to_string())
+        );
+        assert_eq!(
+            nerdstats["step_details"][0]["node_id"],
+            Value::String("classify".to_string())
+        );
     }
 
     #[test]
@@ -5744,6 +5788,7 @@ nodes:
                 tokens_per_second: None,
             }],
             llm_node_metrics: BTreeMap::new(),
+            llm_node_models: BTreeMap::new(),
             total_elapsed_ms: 100,
             ttft_ms: None,
             total_input_tokens: 0,
@@ -5763,6 +5808,16 @@ nodes:
         );
         assert_eq!(nerdstats["total_tokens"], Value::Null);
         assert_eq!(nerdstats["ttft_ms"], Value::Null);
+        assert!(nerdstats.get("step_timings").is_none());
+        assert!(nerdstats.get("llm_node_metrics").is_none());
+        assert_eq!(
+            nerdstats["step_details"][0]["node_id"],
+            Value::String("llm_node".to_string())
+        );
+        assert!(nerdstats["llm_node_models"]
+            .as_object()
+            .expect("llm_node_models should be an object")
+            .is_empty());
     }
 
     #[test]
@@ -5786,6 +5841,7 @@ nodes:
                 tokens_per_second: Some(150.0),
             }],
             llm_node_metrics: BTreeMap::new(),
+            llm_node_models: BTreeMap::new(),
             total_elapsed_ms: 100,
             ttft_ms: Some(42),
             total_input_tokens: 10,
@@ -5799,6 +5855,16 @@ nodes:
 
         let nerdstats = workflow_nerdstats(&output);
         assert_eq!(nerdstats["ttft_ms"], Value::Number(42u64.into()));
+        assert!(nerdstats.get("step_timings").is_none());
+        assert!(nerdstats.get("llm_node_metrics").is_none());
+        assert_eq!(
+            nerdstats["step_details"][0]["node_id"],
+            Value::String("llm_node".to_string())
+        );
+        assert!(nerdstats["llm_node_models"]
+            .as_object()
+            .expect("llm_node_models should be an object")
+            .is_empty());
     }
 
     struct MessageHistoryExecutor;

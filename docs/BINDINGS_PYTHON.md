@@ -206,6 +206,8 @@ Notes:
   - `bindings[]` entries that map each template expression to its source path and resolved value
 - `workflow_completed` includes `metadata.nerdstats` by default (`telemetry.nerdstats=true`), with end-of-run timing/token metrics for turn-level summaries.
 - When available for streamed runs, nerdstats includes `ttft_ms` (time-to-first-token in milliseconds).
+- Nerdstats uses `step_details` for per-node timing details.
+- Nerdstats no longer includes `llm_node_metrics`; use `llm_node_models` (`node_id -> resolved model`) for model attribution.
 - For providers that do not emit token usage on streaming responses, nerdstats includes `token_metrics_available=false`, `token_metrics_source="provider_stream_usage_unavailable"`, and `llm_nodes_without_usage`.
 - Disable nerdstats emission for streaming callbacks with `workflow_options={"telemetry": {"nerdstats": False}}`.
 - `workflow_options["telemetry"]["sample_rate"]` controls deterministic per-trace sampling (`0.0` to `1.0` inclusive).
