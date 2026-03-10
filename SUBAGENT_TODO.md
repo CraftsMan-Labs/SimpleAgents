@@ -1,7 +1,6 @@
 # SUBAGENT TODO
 
-Track active subagent assignments only. Completed items have been removed.
-Every subagent item must map to a parent item in `TODO.md`.
+Purpose: Scratchpad for active subagent assignments.
 
 ## Status values
 
@@ -10,20 +9,11 @@ Every subagent item must map to a parent item in `TODO.md`.
 - `completed`
 - `blocked`
 
-## Subagent assignments
+## Scratchpad assignments
 
 | Parent TODO | Subagent | Scope | Why | Expected Outcome | Status | Notes |
 |---|---|---|---|---|---|---|
-| P1 | SA-Parity-Matrix | `docs/**`, `parity-fixtures/**`, binding API surfaces (`*.pyi`, `index.d.ts`, `bindings/go/simpleagents.go`) | All implementation and tests need one explicit parity target | Versioned parity matrix + prioritized gap list (P0/P1) with acceptance criteria | pending | Parent: `TODO.md` P1 |
-| T1 | SA-Telemetry-Sampling | `crates/simple-agents-workflow/src/yaml_runner.rs`, tracing docs, binding docs | Trace cost control requires enforced sampling semantics rather than metadata-only fields | Deterministic per-trace sampling (`sample_rate`), validation, metadata exposure, and docs alignment | completed | Parent: `TODO.md` T1 |
-| D3 | SA-Docs-IA | `docs/.vitepress/config.mjs`, `docs/DOCS_MAP.md` | Navigation quality is central to docs DX and should be validated separately | Sidebar/docs-map parity with role-based reading paths and minimal overlap | completed | Parent: `TODO.md` D3 |
-| D4 | SA-Docs-Content | `docs/QUICKSTART.md`, `docs/USAGE.md`, workflow and architecture guides | Priority pages need consistent rewrite to shared template without breaking technical depth | Outcome-first, runnable, cross-linked pages with troubleshooting and next steps | completed | Parent: `TODO.md` D4 |
-| D5 | SA-Docs-QA | docs CI workflow files and docs quality checks | Prevent regressions and stale links as docs volume grows | Automated docs build + link/style checks on PRs | completed | Parent: `TODO.md` D5 |
-
-## Coordination checklist
-
-- Define each subagent scope so no two subagents own overlapping implementation areas.
-- Ensure each subagent assignment references the corresponding parent task in `TODO.md`.
-- Provide each subagent with clear instructions: goal, approach, constraints, verification, and expected return format.
-- Specify required skill usage whenever relevant.
-- Review outputs for completeness and mergeability before integration.
+| NS1, NS2, NS3, NS7 | SA-Nerdstats-Core | `crates/simple-agents-workflow/src/yaml_runner.rs` | Core schema and model tracking changes must be implemented at Rust source-of-truth layer | Nerdstats hard break implemented with `step_details` + `llm_node_models`, no `nerdstats.llm_node_metrics`, and unchanged token-availability diagnostics | completed | Implemented in `yaml_runner.rs`; targeted `workflow_nerdstats` tests passed |
+| NS4 | SA-Nerdstats-Tests | `crates/simple-agents-workflow/src/yaml_runner.rs` test module | Schema break requires deterministic tests to prevent regressions | Updated assertions for new nerdstats keys and removed old-key assertions | completed | Updated tests in `yaml_runner.rs`; targeted cargo tests passed |
+| NS5 | SA-Nerdstats-Python-Fallback | `examples/workflow_email/run_with_chat_history.py` | Fallback path must match new schema for consistency | Fallback nerdstats emits new keys and shape | completed | Updated fallback schema and validated with `py_compile` |
+| NS6 | SA-Nerdstats-Docs | `docs/BINDINGS_PYTHON.md`, `PERFORMANCE.md` | Contract changes must be documented for binding users and perf readers | Docs reflect renamed and removed nerdstats fields plus model map addition | completed | Corrected docs to distinguish return payload (`step_timings`) vs nerdstats (`step_details`) |

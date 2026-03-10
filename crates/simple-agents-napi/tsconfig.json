@@ -8,5 +8,5 @@
     "esModuleInterop": true,
     "skipLibCheck": true
   },
-  "include": ["index.ts", "index.d.ts"]
+  "include": ["index.ts", "index.d.ts", "native-addon.d.ts"]
 }
