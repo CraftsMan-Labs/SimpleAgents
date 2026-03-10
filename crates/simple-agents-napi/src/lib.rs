@@ -1138,9 +1138,8 @@ impl Client {
 
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-                let null = ctx.env.get_null()?.into_unknown();
                 let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
-                Ok(vec![null, event_json])
+                Ok(vec![event_json])
             })?;
 
         let task = WorkflowStreamTask {

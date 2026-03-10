@@ -231,9 +231,10 @@ function parseEventJson(eventJson) {
   }
 }
 
-function extractEventJson(firstArg, secondArg) {
+function extractEventJson(firstArg, secondArg, thirdArg) {
   if (typeof secondArg === 'string') return secondArg
   if (typeof firstArg === 'string') return firstArg
+  if (typeof thirdArg === 'string') return thirdArg
   return null
 }
 
@@ -328,8 +329,8 @@ async function main() {
             await client.runWorkflowYamlStream(
             workflowPath,
             workflowInput,
-            (errOrEventJson, maybeEventJson) => {
-              const eventJson = extractEventJson(errOrEventJson, maybeEventJson)
+            (errOrEventJson, maybeEventJson, fallbackEventJson) => {
+              const eventJson = extractEventJson(errOrEventJson, maybeEventJson, fallbackEventJson)
               if (eventJson === null) return
               const event = parseEventJson(eventJson)
               if (event === null) return

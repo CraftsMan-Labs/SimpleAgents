@@ -34,6 +34,13 @@ function debugLog(label, value) {
   }
 }
 
+function extractEventJsonFromCallbackArgs(firstArg, secondArg, thirdArg) {
+  if (typeof secondArg === 'string') return secondArg;
+  if (typeof firstArg === 'string') return firstArg;
+  if (typeof thirdArg === 'string') return thirdArg;
+  return null;
+}
+
 test('complete returns content', async (t) => {
   if (!hasEnv) {
     t.skip(REQUIRED_ENV_MESSAGE);
@@ -93,42 +100,29 @@ test('workflow stream emits explicit stream event types', async (t) => {
   const workflowPath = path.join(os.tmpdir(), `live-workflow-stream-${Date.now()}.yaml`);
   const workflowYaml = `id: live-workflow-stream-test
 version: 1.0.0
-entry_node: classify
+entry_node: answer
 nodes:
-  - id: classify
+  - id: answer
     node_type:
       llm_call:
         model: ${MODEL}
+        temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
         stream_json_as_text: true
-        heal: false
+        heal: true
     config:
+      output_schema:
+        type: object
+        properties:
+          state: { type: string }
+          reason: { type: string }
+        required: [state, reason]
+        additionalProperties: false
       prompt: |
-        Return JSON only:
-        {
-          "state": "capabilities_query",
-          "reason": "short"
-        }
-  - id: explain
-    node_type:
-      llm_call:
-        model: ${MODEL}
-        messages_path: input.messages
-        append_prompt_as_user: true
-        stream: true
-        stream_json_as_text: true
-        heal: false
-    config:
-      prompt: |
-        Return JSON only:
-        {
-          "question": "one short sentence"
-        }
-edges:
-  - from: classify
-    to: explain
+        Return exactly this JSON object and nothing else:
+        {"state":"ok","reason":"ok"}
 `;
   fs.writeFileSync(workflowPath, workflowYaml, 'utf8');
   t.after(() => {
@@ -142,6 +136,7 @@ edges:
   const client = new Client(PROVIDER);
   const eventCounts = new Map();
   let completionNerdstats = null;
+  let sawSecondArgEventJson = false;
   const result = await client.runWorkflowYamlStream(
     workflowPath,
     {
@@ -149,12 +144,15 @@ edges:
         { role: 'user', content: 'Hi' },
       ],
     },
-    (errOrEventJson, maybeEventJson) => {
-      const eventJson = typeof maybeEventJson === 'string'
-        ? maybeEventJson
-        : typeof errOrEventJson === 'string'
-          ? errOrEventJson
-          : null;
+    (errOrEventJson, maybeEventJson, fallbackEventJson) => {
+      if (typeof maybeEventJson === 'string') {
+        sawSecondArgEventJson = true;
+      }
+      const eventJson = extractEventJsonFromCallbackArgs(
+        errOrEventJson,
+        maybeEventJson,
+        fallbackEventJson,
+      );
       if (eventJson === null) return;
       let event;
       try {
@@ -180,6 +178,7 @@ edges:
   assert.ok((eventCounts.get('node_stream_delta') || 0) > 0, 'expected node_stream_delta events');
   assert.ok((eventCounts.get('node_stream_output_delta') || 0) > 0, 'expected node_stream_output_delta events');
   assert.strictEqual(eventCounts.get('node_stream_raw_delta') || 0, 0, 'deprecated node_stream_raw_delta must not be emitted');
+  assert.ok(sawSecondArgEventJson, 'stream callback should provide event JSON in second argument');
   assert.ok(completionNerdstats && typeof completionNerdstats === 'object', 'workflow_completed should include nerdstats metadata');
   assert.strictEqual(typeof completionNerdstats.total_elapsed_ms, 'number', 'nerdstats should include total_elapsed_ms');
   assert.strictEqual(typeof completionNerdstats.token_metrics_available, 'boolean', 'nerdstats should include token_metrics_available');
