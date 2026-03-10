@@ -1,7 +1,7 @@
 # Active TODO
 
-Date: 2026-03-04
-Scope: Active execution tasks (remaining work only)
+Date: 2026-03-10
+Purpose: Scratchpad for current execution tasks.
 
 ## Status values
 
@@ -10,15 +10,14 @@ Scope: Active execution tasks (remaining work only)
 - `completed`
 - `blocked`
 
-## Open tasks
+## Scratchpad
 
 | ID | Task | Why this is needed | Expected outcome | Status |
 |---|---|---|---|---|
-| P1 | Freeze parity matrix and acceptance criteria | Work needs one source-of-truth so parity is testable and reviewable | Matrix mapping Python APIs/features to Node/Go status with explicit P0/P1 priorities and acceptance checks | pending |
-| X6 | Update docs and verify gates | Users and maintainers need clear usage + reproducible checks | Docs include copy-paste option examples and all relevant tests pass | pending |
-| T1 | Enforce workflow telemetry sample rate semantics | Sampling config currently appears in metadata but was not enforced in trace emission | Runtime validates `sample_rate`, applies deterministic per-trace sampling, and exposes sampled state in output metadata/docs | completed |
-| D1 | Define docs modernization plan | Team needs an explicit execution blueprint modeled after high-DX CocoIndex docs patterns | `plan.md` exists with phased strategy, success criteria, risks, and deliverables | completed |
-| D2 | Standardize docs structure and writing contract | Contributors need one repeatable page format to improve scanability and consistency | `docs/DOCS_STANDARDS.md` contains required template, metadata contract, and review checklist | completed |
-| D3 | Align navigation and journey paths | Users need fast route-to-answer by role and intent | Sidebar and `docs/DOCS_MAP.md` reflect New User, Integrator, Contributor pathways with clear progression | completed |
-| D4 | Refresh priority guides with high-DX format | Highest-traffic pages need outcome-first structure, runnable steps, and troubleshooting | Priority docs (`QUICKSTART`, `USAGE`, architecture/workflow guides) updated to shared template | completed |
-| D5 | Add docs quality gates | Docs regressions should be blocked automatically | CI enforces docs build and link/style checks for docs-touching PRs | completed |
+| NS1 | Hard-break nerdstats schema in workflow payload builder | Nerdstats should reflect the new contract without duplicate structures | `workflow_nerdstats` emits `step_details` and `llm_node_models`, and no longer emits `llm_node_metrics` | completed |
+| NS2 | Track resolved model per `llm_call` node | Nerdstats must include model identity for each LLM execution node | Node-id to model map is captured during execution and attached to output used by nerdstats | completed |
+| NS3 | Preserve runtime output compatibility for now | Requested break is scoped to nerdstats, not full workflow output payload contract | `result.step_timings` and `result.llm_node_metrics` remain unchanged outside nerdstats | completed |
+| NS4 | Update nerdstats unit tests in Rust | Hard-break schema must be validated with regression coverage | Tests assert `step_details` and `llm_node_models`, and remove assertions for `nerdstats.llm_node_metrics` | completed |
+| NS5 | Update Python fallback nerdstats shape | Fallback output should match new nerdstats contract when event metadata is unavailable | `examples/workflow_email/run_with_chat_history.py` fallback emits `step_details` and `llm_node_models`, without `llm_node_metrics` | completed |
+| NS6 | Update docs for nerdstats field changes | Consumers need accurate field names and semantics for integrations | `docs/BINDINGS_PYTHON.md` and `PERFORMANCE.md` document the new nerdstats schema | completed |
+| NS7 | Keep token-availability diagnostics semantics | `llm_nodes_without_usage` explains null token totals and stream-usage gaps | Existing behavior for `llm_nodes_without_usage`, `token_metrics_available`, and `token_metrics_source` remains unchanged | completed |
