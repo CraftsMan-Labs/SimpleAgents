@@ -252,7 +252,7 @@ type WorkflowStepTiming struct {
 	PromptTokens     *uint32  `json:"prompt_tokens,omitempty"`
 	CompletionTokens *uint32  `json:"completion_tokens,omitempty"`
 	TotalTokens      *uint32  `json:"total_tokens,omitempty"`
-	ThinkingTokens   *uint32  `json:"thinking_tokens,omitempty"`
+	ReasoningTokens  *uint32  `json:"reasoning_tokens,omitempty"`
 	TokensPerSecond  *float64 `json:"tokens_per_second,omitempty"`
 }
 
@@ -261,7 +261,7 @@ type WorkflowLlmNodeMetrics struct {
 	PromptTokens     uint32  `json:"prompt_tokens"`
 	CompletionTokens uint32  `json:"completion_tokens"`
 	TotalTokens      uint32  `json:"total_tokens"`
-	ThinkingTokens   *uint32 `json:"thinking_tokens,omitempty"`
+	ReasoningTokens  *uint32 `json:"reasoning_tokens,omitempty"`
 	TokensPerSecond  float64 `json:"tokens_per_second"`
 }
 
@@ -280,25 +280,25 @@ type WorkflowEvent struct {
 }
 
 type WorkflowYAMLOutput struct {
-	WorkflowID          string                            `json:"workflow_id"`
-	EntryNode           string                            `json:"entry_node"`
-	EmailText           string                            `json:"email_text"`
-	Trace               []string                          `json:"trace"`
-	Outputs             map[string]map[string]any         `json:"outputs"`
-	TerminalNode        string                            `json:"terminal_node"`
-	TerminalOutput      any                               `json:"terminal_output"`
-	StepTimings         []WorkflowStepTiming              `json:"step_timings"`
-	LlmNodeMetrics      map[string]WorkflowLlmNodeMetrics `json:"llm_node_metrics"`
-	TotalElapsedMS      uint64                            `json:"total_elapsed_ms"`
-	TTFTMS              *uint64                           `json:"ttft_ms,omitempty"`
-	TotalInputTokens    uint64                            `json:"total_input_tokens"`
-	TotalOutputTokens   uint64                            `json:"total_output_tokens"`
-	TotalTokens         uint64                            `json:"total_tokens"`
-	TotalThinkingTokens *uint64                           `json:"total_thinking_tokens,omitempty"`
-	TokensPerSecond     float64                           `json:"tokens_per_second"`
-	TraceID             string                            `json:"trace_id,omitempty"`
-	Metadata            map[string]any                    `json:"metadata,omitempty"`
-	Events              []WorkflowEvent                   `json:"events,omitempty"`
+	WorkflowID           string                            `json:"workflow_id"`
+	EntryNode            string                            `json:"entry_node"`
+	EmailText            string                            `json:"email_text"`
+	Trace                []string                          `json:"trace"`
+	Outputs              map[string]map[string]any         `json:"outputs"`
+	TerminalNode         string                            `json:"terminal_node"`
+	TerminalOutput       any                               `json:"terminal_output"`
+	StepTimings          []WorkflowStepTiming              `json:"step_timings"`
+	LlmNodeMetrics       map[string]WorkflowLlmNodeMetrics `json:"llm_node_metrics"`
+	TotalElapsedMS       uint64                            `json:"total_elapsed_ms"`
+	TTFTMS               *uint64                           `json:"ttft_ms,omitempty"`
+	TotalInputTokens     uint64                            `json:"total_input_tokens"`
+	TotalOutputTokens    uint64                            `json:"total_output_tokens"`
+	TotalTokens          uint64                            `json:"total_tokens"`
+	TotalReasoningTokens *uint64                           `json:"total_reasoning_tokens,omitempty"`
+	TokensPerSecond      float64                           `json:"tokens_per_second"`
+	TraceID              string                            `json:"trace_id,omitempty"`
+	Metadata             map[string]any                    `json:"metadata,omitempty"`
+	Events               []WorkflowEvent                   `json:"events,omitempty"`
 }
 
 type WorkflowRunOptions struct {

@@ -19,7 +19,8 @@ class WorkflowStepDetails(TypedDict, total=False):
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int | None
-    thinking_tokens: int
+    reasoning_tokens: int
+    model_name: str
     tokens_per_second: float
 
 
@@ -30,11 +31,10 @@ class NerdstatsFallbackRequest(TypedDict, total=False):
     ttft_ms: int | None
     step_details: list[WorkflowStepDetails]
     step_timings: list[WorkflowStepDetails]
-    llm_node_models: dict[str, str]
     total_input_tokens: int
     total_output_tokens: int
     total_tokens: int
-    total_thinking_tokens: int | None
+    total_reasoning_tokens: int | None
     tokens_per_second: float
     trace_id: str
 
@@ -45,11 +45,10 @@ class NerdstatsFallbackResponse(TypedDict):
     total_elapsed_ms: int | None
     ttft_ms: int | None
     step_details: list[WorkflowStepDetails]
-    llm_node_models: dict[str, str]
     total_input_tokens: int | None
     total_output_tokens: int | None
     total_tokens: int | None
-    total_thinking_tokens: int | None
+    total_reasoning_tokens: int | None
     tokens_per_second: float | None
     trace_id: str | None
     token_metrics_available: bool
@@ -376,7 +375,6 @@ def _print_step_json_summary(
 def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackResponse:
     step_details = request.get("step_details", request.get("step_timings", []))
     llm_nodes_without_usage: list[str] = []
-    llm_node_models: dict[str, str] = {}
     if isinstance(step_details, list):
         for step in step_details:
             if not isinstance(step, dict):
@@ -387,14 +385,6 @@ def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackR
             if step.get("total_tokens") is None and isinstance(node_id, str):
                 llm_nodes_without_usage.append(node_id)
 
-    raw_models = request.get("llm_node_models")
-    if isinstance(raw_models, dict):
-        for node_id, model_name in raw_models.items():
-            if isinstance(node_id, str) and isinstance(model_name, str):
-                cleaned = model_name.strip()
-                if cleaned != "":
-                    llm_node_models[node_id] = cleaned
-
     token_metrics_available = len(llm_nodes_without_usage) == 0
     total_input_tokens = (
         request.get("total_input_tokens") if token_metrics_available else None
@@ -403,8 +393,8 @@ def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackR
         request.get("total_output_tokens") if token_metrics_available else None
     )
     total_tokens = request.get("total_tokens") if token_metrics_available else None
-    total_thinking_tokens = (
-        request.get("total_thinking_tokens") if token_metrics_available else None
+    total_reasoning_tokens = (
+        request.get("total_reasoning_tokens") if token_metrics_available else None
     )
     tokens_per_second = (
         request.get("tokens_per_second") if token_metrics_available else None
@@ -416,11 +406,10 @@ def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackR
         "total_elapsed_ms": request.get("total_elapsed_ms"),
         "ttft_ms": request.get("ttft_ms"),
         "step_details": step_details,
-        "llm_node_models": llm_node_models,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_tokens": total_tokens,
-        "total_thinking_tokens": total_thinking_tokens,
+        "total_reasoning_tokens": total_reasoning_tokens,
         "tokens_per_second": tokens_per_second,
         "trace_id": request.get("trace_id"),
         "token_metrics_available": token_metrics_available,

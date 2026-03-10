@@ -12,7 +12,7 @@ This file combines two sources:
 | Language | Workflow runtime source | Runtime metrics currently exposed | Peak memory currently exposed |
 | --- | --- | --- | --- |
 | Rust | `simple-agents-workflow` runtime + Criterion bench harness | Criterion timing (`linear_execute`, `sequential_execute`, `concurrent_execute`, `worker_pool_submit`); concurrency gain guard (`WORKFLOW_BENCH_MIN_GAIN_PERCENT`, default `15`) | Not exposed in runtime output or benchmark docs |
-| Python | Rust-backed workflow runner via `simple-agents-py` | Return payload: `total_elapsed_ms`, `step_timings`, `llm_node_metrics`, token totals, tokens/sec; nerdstats: `step_details`, `llm_node_models`, optional `ttft_ms` | Not exposed by binding output |
+| Python | Rust-backed workflow runner via `simple-agents-py` | Return payload: `total_elapsed_ms`, `step_timings`, `llm_node_metrics`, token totals, tokens/sec; nerdstats: `step_details` (including `model_name`), optional `ttft_ms` | Not exposed by binding output |
 | Node.js / TypeScript | Rust-backed workflow runner via `simple-agents-node` | `total_elapsed_ms`, `step_timings` (same Rust source-of-truth runner) | Not exposed by binding output |
 | Go | Rust-backed workflow runner via Go FFI | `TotalElapsedMS`, `StepTimings` (same Rust source-of-truth runner) | Not exposed by binding output |
 
@@ -80,8 +80,8 @@ Current state:
   - return payload: `llm_node_metrics`
   - `total_input_tokens`, `total_output_tokens`, `total_tokens`
   - `tokens_per_second`
-  - optional `total_thinking_tokens`, optional `ttft_ms`
-  - nerdstats: `step_details`, `llm_node_models` (`node_id -> resolved model`)
+  - optional `total_reasoning_tokens`, optional `ttft_ms`
+  - nerdstats: `step_details` (`model_name` provides per-node model attribution)
   - nerdstats: `token_metrics_available`, `token_metrics_source`, `llm_nodes_without_usage`
 - Memory metric status:
   - no `peak_memory`, RSS, or heap high-water field in output contract
