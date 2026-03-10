@@ -11,10 +11,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 
-simple-agents-core = { path = "../simple-agents-core", version = "0.2.20" }
-simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.20" }
-simple-agents-router = { path = "../simple-agents-router", version = "0.2.20" }
-simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.20" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.2.21" }
+simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.21" }
+simple-agents-router = { path = "../simple-agents-router", version = "0.2.21" }
+simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.21" }
 simple-agent-type = { workspace = true }
 
 toml = "0.8"
