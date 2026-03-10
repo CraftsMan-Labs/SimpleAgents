@@ -6,10 +6,102 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 from dotenv import load_dotenv
 from simple_agents_py import Client
+
+
+class WorkflowStepDetails(TypedDict, total=False):
+    node_id: str
+    node_kind: str
+    elapsed_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int | None
+    thinking_tokens: int
+    tokens_per_second: float
+
+
+class NerdstatsFallbackRequest(TypedDict, total=False):
+    workflow_id: str
+    terminal_node: str
+    total_elapsed_ms: int
+    ttft_ms: int | None
+    step_details: list[WorkflowStepDetails]
+    step_timings: list[WorkflowStepDetails]
+    llm_node_models: dict[str, str]
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_thinking_tokens: int | None
+    tokens_per_second: float
+    trace_id: str
+
+
+class NerdstatsFallbackResponse(TypedDict):
+    workflow_id: str | None
+    terminal_node: str | None
+    total_elapsed_ms: int | None
+    ttft_ms: int | None
+    step_details: list[WorkflowStepDetails]
+    llm_node_models: dict[str, str]
+    total_input_tokens: int | None
+    total_output_tokens: int | None
+    total_tokens: int | None
+    total_thinking_tokens: int | None
+    tokens_per_second: float | None
+    trace_id: str | None
+    token_metrics_available: bool
+    token_metrics_source: str
+    llm_nodes_without_usage: list[str]
+
+
+NerdstatsPayload = dict[str, object] | NerdstatsFallbackResponse
+
+
+class WorkflowEvent(TypedDict, total=False):
+    event_type: str
+    node_id: str
+    step_id: str
+    node_kind: str
+    streamable: bool
+    message: str
+    delta: str
+    token_kind: str
+    is_terminal_node_token: bool
+    elapsed_ms: int
+    metadata: dict[str, object]
+
+
+class WorkflowRunResult(TypedDict, total=False):
+    workflow_id: str
+    terminal_node: str
+    terminal_output: object
+    trace: list[str]
+    outputs: dict[str, dict[str, object]]
+    step_timings: list[WorkflowStepDetails]
+    total_elapsed_ms: int
+    events: list[WorkflowEvent]
+
+
+class RunTurnRequest(TypedDict):
+    client: Client
+    workflow_path: Path
+    workflow_input: dict[str, object]
+    include_events: bool
+    stream: bool
+    show_thinking: bool
+    nerdstats: bool
+    conversation_id: str
+    node_names: dict[str, str]
+    model: str | None
+
+
+class RunTurnResponse(TypedDict):
+    result: WorkflowRunResult
+    streamed_events: list[WorkflowEvent]
+    nerdstats: NerdstatsPayload | None
 
 
 def parse_args() -> argparse.Namespace:
@@ -176,7 +268,7 @@ def step_display_name(node_id: str | None, node_names: dict[str, str]) -> str:
     return node_names.get(node_id, node_id.replace("_", " ").title())
 
 
-def render_assistant_reply(result: dict) -> str:
+def render_assistant_reply(result: WorkflowRunResult) -> str:
     terminal_output = result.get("terminal_output")
     if terminal_output is None:
         return ""
@@ -186,7 +278,7 @@ def render_assistant_reply(result: dict) -> str:
 
 
 def _print_stream_event(
-    event: dict[str, object],
+    event: WorkflowEvent,
     show_thinking: bool,
     stream_state: dict[str, object],
     node_names: dict[str, str],
@@ -253,7 +345,7 @@ def _print_stream_event(
 
 
 def _print_step_json_summary(
-    result: dict[str, Any], node_names: dict[str, str]
+    result: WorkflowRunResult, node_names: dict[str, str]
 ) -> None:
     trace = result.get("trace")
     outputs = result.get("outputs")
@@ -281,8 +373,8 @@ def _print_step_json_summary(
         print(json.dumps(terminal_output, indent=2, ensure_ascii=True))
 
 
-def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
-    step_details = result.get("step_details", result.get("step_timings", []))
+def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackResponse:
+    step_details = request.get("step_details", request.get("step_timings", []))
     llm_nodes_without_usage: list[str] = []
     llm_node_models: dict[str, str] = {}
     if isinstance(step_details, list):
@@ -291,52 +383,38 @@ def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
                 continue
             if step.get("node_kind") != "llm_call":
                 continue
-            if step.get("total_tokens") is None and isinstance(
-                step.get("node_id"), str
-            ):
-                llm_nodes_without_usage.append(step["node_id"])
             node_id = step.get("node_id")
-            if not isinstance(node_id, str):
-                continue
-            model_value = step.get("model")
-            if not isinstance(model_value, str) or model_value.strip() == "":
-                model_value = step.get("model_name")
-            if not isinstance(model_value, str) or model_value.strip() == "":
-                model_value = step.get("model_id")
-            if not isinstance(model_value, str) or model_value.strip() == "":
-                model_value = step.get("provider_model")
-            if isinstance(model_value, str) and model_value.strip() != "":
-                llm_node_models[node_id] = model_value.strip()
+            if step.get("total_tokens") is None and isinstance(node_id, str):
+                llm_nodes_without_usage.append(node_id)
 
-    if not llm_node_models:
-        raw_models = result.get("llm_node_models")
-        if isinstance(raw_models, dict):
-            for node_id, model_name in raw_models.items():
-                if isinstance(node_id, str) and isinstance(model_name, str):
-                    cleaned = model_name.strip()
-                    if cleaned != "":
-                        llm_node_models[node_id] = cleaned
+    raw_models = request.get("llm_node_models")
+    if isinstance(raw_models, dict):
+        for node_id, model_name in raw_models.items():
+            if isinstance(node_id, str) and isinstance(model_name, str):
+                cleaned = model_name.strip()
+                if cleaned != "":
+                    llm_node_models[node_id] = cleaned
 
     token_metrics_available = len(llm_nodes_without_usage) == 0
     total_input_tokens = (
-        result.get("total_input_tokens") if token_metrics_available else None
+        request.get("total_input_tokens") if token_metrics_available else None
     )
     total_output_tokens = (
-        result.get("total_output_tokens") if token_metrics_available else None
+        request.get("total_output_tokens") if token_metrics_available else None
     )
-    total_tokens = result.get("total_tokens") if token_metrics_available else None
+    total_tokens = request.get("total_tokens") if token_metrics_available else None
     total_thinking_tokens = (
-        result.get("total_thinking_tokens") if token_metrics_available else None
+        request.get("total_thinking_tokens") if token_metrics_available else None
     )
     tokens_per_second = (
-        result.get("tokens_per_second") if token_metrics_available else None
+        request.get("tokens_per_second") if token_metrics_available else None
     )
 
     return {
-        "workflow_id": result.get("workflow_id"),
-        "terminal_node": result.get("terminal_node"),
-        "total_elapsed_ms": result.get("total_elapsed_ms"),
-        "ttft_ms": result.get("ttft_ms"),
+        "workflow_id": request.get("workflow_id"),
+        "terminal_node": request.get("terminal_node"),
+        "total_elapsed_ms": request.get("total_elapsed_ms"),
+        "ttft_ms": request.get("ttft_ms"),
         "step_details": step_details,
         "llm_node_models": llm_node_models,
         "total_input_tokens": total_input_tokens,
@@ -344,7 +422,7 @@ def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
         "total_tokens": total_tokens,
         "total_thinking_tokens": total_thinking_tokens,
         "tokens_per_second": tokens_per_second,
-        "trace_id": result.get("trace_id"),
+        "trace_id": request.get("trace_id"),
         "token_metrics_available": token_metrics_available,
         "token_metrics_source": (
             "provider_usage"
@@ -356,7 +434,7 @@ def _fallback_nerdstats(result: dict[str, object]) -> dict[str, object]:
 
 
 def _extract_nerdstats_from_events(
-    streamed_events: list[dict[str, object]],
+    streamed_events: list[WorkflowEvent],
 ) -> dict[str, object] | None:
     for event in reversed(streamed_events):
         if event.get("event_type") != "workflow_completed":
@@ -370,52 +448,56 @@ def _extract_nerdstats_from_events(
     return None
 
 
-def _run_turn(
-    client: Client,
-    workflow_path: Path,
-    workflow_input: dict[str, object],
-    include_events: bool,
-    stream: bool,
-    show_thinking: bool,
-    nerdstats: bool,
-    conversation_id: str,
-    node_names: dict[str, str],
-    model: str | None,
-) -> tuple[dict[str, object], list[dict[str, object]], dict[str, object] | None]:
-    workflow_options = {
-        "telemetry": {"nerdstats": nerdstats},
-        "trace": {"tenant": {"conversation_id": conversation_id}},
+def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
+    workflow_options: dict[str, object] = {
+        "telemetry": {"nerdstats": request["nerdstats"]},
+        "trace": {"tenant": {"conversation_id": request["conversation_id"]}},
     }
+    model = request["model"]
     if model is not None and model.strip() != "":
         workflow_options["model"] = model.strip()
-    client_any: Any = client
-    if not stream:
-        result = client_any.run_workflow_yaml(
-            str(workflow_path),
-            workflow_input,
-            include_events=include_events,
+    client_any: Any = request["client"]
+    if not request["stream"]:
+        result_any = client_any.run_workflow_yaml(
+            str(request["workflow_path"]),
+            request["workflow_input"],
+            include_events=request["include_events"],
             workflow_options=workflow_options,
         )
-        events = result.get("events", []) if include_events else []
-        return result, events if isinstance(events, list) else [], None
+        result = cast(
+            WorkflowRunResult,
+            result_any if isinstance(result_any, dict) else {},
+        )
+        events: list[WorkflowEvent] = []
+        if request["include_events"]:
+            raw_events = result.get("events", [])
+            if isinstance(raw_events, list):
+                events = [event for event in raw_events if isinstance(event, dict)]
+        return {"result": result, "streamed_events": events, "nerdstats": None}
 
-    streamed_events: list[dict[str, object]] = []
+    streamed_events: list[WorkflowEvent] = []
     stream_state: dict[str, object] = {"current_node": None, "line_open": False}
 
-    def on_event(event: dict[str, object]) -> None:
+    def on_event(event: WorkflowEvent) -> None:
         streamed_events.append(event)
-        _print_stream_event(event, show_thinking, stream_state, node_names)
+        _print_stream_event(
+            event, request["show_thinking"], stream_state, request["node_names"]
+        )
 
-    result = client_any.run_workflow_yaml_stream(
-        str(workflow_path),
-        workflow_input,
+    result_any = client_any.run_workflow_yaml_stream(
+        str(request["workflow_path"]),
+        request["workflow_input"],
         on_event=on_event,
         workflow_options=workflow_options,
+    )
+    result = cast(
+        WorkflowRunResult,
+        result_any if isinstance(result_any, dict) else {},
     )
 
     expected_types = (
         {"node_stream_thinking_delta", "node_stream_output_delta"}
-        if show_thinking
+        if request["show_thinking"]
         else {"node_stream_delta"}
     )
     if not any(
@@ -429,14 +511,20 @@ def _run_turn(
     elif stream_state.get("line_open", False):
         print()
 
-    nerdstats_payload: dict[str, object] | None = None
-    if nerdstats:
+    nerdstats_payload: NerdstatsPayload | None = None
+    if request["nerdstats"]:
         nerdstats_payload = _extract_nerdstats_from_events(streamed_events)
         if nerdstats_payload is None:
-            nerdstats_payload = _fallback_nerdstats(result)
+            nerdstats_payload = _fallback_nerdstats(
+                cast(NerdstatsFallbackRequest, result)
+            )
         print(f"Nerdstats: {json.dumps(nerdstats_payload, ensure_ascii=True)}")
 
-    return result, streamed_events, nerdstats_payload
+    return {
+        "result": result,
+        "streamed_events": streamed_events,
+        "nerdstats": nerdstats_payload,
+    }
 
 
 def main() -> None:
@@ -488,18 +576,23 @@ def main() -> None:
             "workflow_registry": workflow_registry,
         }
 
-        result, streamed_events, nerdstats_payload = _run_turn(
-            client,
-            workflow_path,
-            workflow_input,
-            args.include_events,
-            args.stream,
-            args.show_thinking,
-            args.nerdstats,
-            conversation_id,
-            node_names,
-            args.model,
+        turn_output = _run_turn(
+            {
+                "client": client,
+                "workflow_path": workflow_path,
+                "workflow_input": workflow_input,
+                "include_events": args.include_events,
+                "stream": args.stream,
+                "show_thinking": args.show_thinking,
+                "nerdstats": args.nerdstats,
+                "conversation_id": conversation_id,
+                "node_names": node_names,
+                "model": args.model,
+            }
         )
+        result = turn_output["result"]
+        streamed_events = turn_output["streamed_events"]
+        nerdstats_payload = turn_output["nerdstats"]
 
         if args.show_step_json:
             _print_step_json_summary(result, node_names)
