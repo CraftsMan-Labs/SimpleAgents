@@ -84,6 +84,7 @@ impl CompletionResponse {
     ///         prompt_tokens: 10,
     ///         completion_tokens: 5,
     ///         total_tokens: 15,
+    ///         reasoning_tokens: None,
     ///     },
     ///     created: None,
     ///     provider: None,
@@ -226,6 +227,13 @@ pub struct Usage {
     pub completion_tokens: u32,
     /// Total tokens used
     pub total_tokens: u32,
+    /// Optional reasoning token usage (provider-dependent).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "thinking_tokens"
+    )]
+    pub reasoning_tokens: Option<u32>,
 }
 
 impl Usage {
@@ -235,6 +243,7 @@ impl Usage {
             prompt_tokens,
             completion_tokens,
             total_tokens: prompt_tokens + completion_tokens,
+            reasoning_tokens: None,
         }
     }
 }
@@ -361,6 +370,37 @@ mod tests {
         assert_eq!(usage.prompt_tokens, 100);
         assert_eq!(usage.completion_tokens, 50);
         assert_eq!(usage.total_tokens, 150);
+        assert_eq!(usage.reasoning_tokens, None);
+    }
+
+    #[test]
+    fn test_usage_deserializes_thinking_tokens_alias() {
+        let json = serde_json::json!({
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "thinking_tokens": 3
+        });
+
+        let usage: Usage = serde_json::from_value(json).unwrap();
+        assert_eq!(usage.reasoning_tokens, Some(3));
+    }
+
+    #[test]
+    fn test_usage_serializes_reasoning_tokens_name() {
+        let usage = Usage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+            reasoning_tokens: Some(3),
+        };
+
+        let json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(
+            json.get("reasoning_tokens").and_then(|v| v.as_u64()),
+            Some(3)
+        );
+        assert!(json.get("thinking_tokens").is_none());
     }
 
     #[test]

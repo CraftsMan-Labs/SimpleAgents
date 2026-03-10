@@ -103,6 +103,7 @@ impl Provider for MockProvider {
                 prompt_tokens: body["usage"]["prompt_tokens"].as_u64().unwrap_or(0) as u32,
                 completion_tokens: body["usage"]["completion_tokens"].as_u64().unwrap_or(0) as u32,
                 total_tokens: body["usage"]["total_tokens"].as_u64().unwrap_or(0) as u32,
+                reasoning_tokens: None,
             },
             created: None,
             provider: Some(self.name.clone()),

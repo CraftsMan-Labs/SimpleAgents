@@ -351,6 +351,7 @@ impl Provider for OpenRouterProvider {
                 prompt_tokens: openai_response.usage.prompt_tokens,
                 completion_tokens: openai_response.usage.completion_tokens,
                 total_tokens: openai_response.usage.total_tokens,
+                reasoning_tokens: openai_response.usage.reasoning_tokens(),
             },
             created: Some(openai_response.created as i64),
             provider: Some(self.name().to_string()),
