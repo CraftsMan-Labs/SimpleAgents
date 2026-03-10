@@ -39,6 +39,8 @@ static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::Atomi
 pub struct YamlStepTiming {
     pub node_id: String,
     pub node_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
     pub elapsed_ms: u128,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u32>,
@@ -47,7 +49,7 @@ pub struct YamlStepTiming {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub total_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_tokens: Option<u32>,
+    pub reasoning_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tokens_per_second: Option<f64>,
 }
@@ -59,7 +61,7 @@ pub struct YamlLlmNodeMetrics {
     pub completion_tokens: u32,
     pub total_tokens: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub thinking_tokens: Option<u32>,
+    pub reasoning_tokens: Option<u32>,
     pub tokens_per_second: f64,
 }
 
@@ -82,7 +84,7 @@ pub struct YamlWorkflowRunOutput {
     pub total_output_tokens: u64,
     pub total_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_thinking_tokens: Option<u64>,
+    pub total_reasoning_tokens: Option<u64>,
     pub tokens_per_second: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
@@ -192,7 +194,7 @@ pub struct YamlLlmTokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
     pub total_tokens: u32,
-    pub thinking_tokens: Option<u32>,
+    pub reasoning_tokens: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -219,7 +221,7 @@ struct YamlTokenTotals {
     input_tokens: u64,
     output_tokens: u64,
     total_tokens: u64,
-    thinking_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
 }
 
 impl YamlTokenTotals {
@@ -228,9 +230,9 @@ impl YamlTokenTotals {
         self.output_tokens += u64::from(usage.completion_tokens);
         self.total_tokens += u64::from(usage.total_tokens);
 
-        if let Some(thinking_tokens) = usage.thinking_tokens {
-            let next = self.thinking_tokens.unwrap_or(0) + u64::from(thinking_tokens);
-            self.thinking_tokens = Some(next);
+        if let Some(reasoning_tokens) = usage.reasoning_tokens {
+            let next = self.reasoning_tokens.unwrap_or(0) + u64::from(reasoning_tokens);
+            self.reasoning_tokens = Some(next);
         }
     }
 
@@ -513,8 +515,8 @@ fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
     } else {
         Value::Null
     };
-    let total_thinking_tokens = if token_metrics_available {
-        json!(output.total_thinking_tokens)
+    let total_reasoning_tokens = if token_metrics_available {
+        json!(output.total_reasoning_tokens)
     } else {
         Value::Null
     };
@@ -530,11 +532,10 @@ fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
         "total_elapsed_ms": output.total_elapsed_ms,
         "ttft_ms": output.ttft_ms,
         "step_details": output.step_timings,
-        "llm_node_models": output.llm_node_models,
         "total_input_tokens": total_input_tokens,
         "total_output_tokens": total_output_tokens,
         "total_tokens": total_tokens,
-        "total_thinking_tokens": total_thinking_tokens,
+        "total_reasoning_tokens": total_reasoning_tokens,
         "tokens_per_second": tokens_per_second,
         "trace_id": output.trace_id,
         "token_metrics_available": token_metrics_available,
@@ -2114,7 +2115,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    thinking_tokens: None,
+                                    reasoning_tokens: None,
                                 });
                             }
 
@@ -2137,7 +2138,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    thinking_tokens: None,
+                                    reasoning_tokens: None,
                                 });
                             }
 
@@ -2160,7 +2161,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                     prompt_tokens: response.usage.prompt_tokens,
                                     completion_tokens: response.usage.completion_tokens,
                                     total_tokens: response.usage.total_tokens,
-                                    thinking_tokens: None,
+                                    reasoning_tokens: None,
                                 });
                             }
 
@@ -2375,7 +2376,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                         prompt_tokens: usage.prompt_tokens,
                                         completion_tokens: usage.completion_tokens,
                                         total_tokens: usage.total_tokens,
-                                        thinking_tokens: None,
+                                        reasoning_tokens: None,
                                     });
                                 }
                             }
@@ -2887,7 +2888,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: usage.prompt_tokens,
                             completion_tokens: usage.completion_tokens,
                             total_tokens: usage.total_tokens,
-                            thinking_tokens: None,
+                            reasoning_tokens: None,
                         }),
                         ttft_ms,
                         tool_calls: Vec::new(),
@@ -2911,7 +2912,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: response.usage.prompt_tokens,
                             completion_tokens: response.usage.completion_tokens,
                             total_tokens: response.usage.total_tokens,
-                            thinking_tokens: None,
+                            reasoning_tokens: None,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -2947,7 +2948,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: healed.response.usage.prompt_tokens,
                             completion_tokens: healed.response.usage.completion_tokens,
                             total_tokens: healed.response.usage.total_tokens,
-                            thinking_tokens: None,
+                            reasoning_tokens: None,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -2966,7 +2967,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                             prompt_tokens: coerced.response.usage.prompt_tokens,
                             completion_tokens: coerced.response.usage.completion_tokens,
                             total_tokens: coerced.response.usage.total_tokens,
-                            thinking_tokens: None,
+                            reasoning_tokens: None,
                         }),
                         ttft_ms: None,
                         tool_calls: Vec::new(),
@@ -3260,6 +3261,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         }
 
         let mut node_usage: Option<YamlLlmTokenUsage> = None;
+        let mut node_model_name: Option<String> = None;
         let is_terminal_node = !edge_map.contains_key(node.id.as_str());
         let next = if let Some(llm) = &node.node_type.llm_call {
             let prompt_template = node
@@ -3356,6 +3358,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 });
             }
 
+            node_model_name = Some(request.model.clone());
             llm_node_models.insert(node.id.clone(), request.model.clone());
 
             if event_sink_is_cancelled(event_sink) {
@@ -3530,11 +3533,12 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         step_timings.push(YamlStepTiming {
             node_id: node.id.clone(),
             node_kind,
+            model_name: node_model_name,
             elapsed_ms,
             prompt_tokens: node_usage.as_ref().map(|usage| usage.prompt_tokens),
             completion_tokens: node_usage.as_ref().map(|usage| usage.completion_tokens),
             total_tokens: node_usage.as_ref().map(|usage| usage.total_tokens),
-            thinking_tokens: node_usage.as_ref().and_then(|usage| usage.thinking_tokens),
+            reasoning_tokens: node_usage.as_ref().and_then(|usage| usage.reasoning_tokens),
             tokens_per_second: node_usage
                 .as_ref()
                 .map(|usage| completion_tokens_per_second(usage.completion_tokens, elapsed_ms)),
@@ -3548,7 +3552,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     prompt_tokens: usage.prompt_tokens,
                     completion_tokens: usage.completion_tokens,
                     total_tokens: usage.total_tokens,
-                    thinking_tokens: usage.thinking_tokens,
+                    reasoning_tokens: usage.reasoning_tokens,
                     tokens_per_second: completion_tokens_per_second(
                         usage.completion_tokens,
                         elapsed_ms,
@@ -3621,7 +3625,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         total_input_tokens: token_totals.input_tokens,
         total_output_tokens: token_totals.output_tokens,
         total_tokens: token_totals.total_tokens,
-        total_thinking_tokens: token_totals.thinking_tokens,
+        total_reasoning_tokens: token_totals.reasoning_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
         trace_id: telemetry_context.trace_id.clone(),
         metadata: telemetry_context.trace_id.as_ref().map(|value| {
@@ -4020,29 +4024,31 @@ async fn try_run_yaml_via_ir_runtime(
         if execution.node_id == YAML_START_NODE_ID {
             continue;
         }
-        trace.push(execution.node_id.clone());
-        let usage = node_usage_map.get(&execution.node_id);
+        let node_id = execution.node_id;
+        trace.push(node_id.clone());
+        let usage = node_usage_map.get(&node_id);
         if let Some(usage) = usage {
             llm_node_metrics.insert(
-                execution.node_id.clone(),
+                node_id.clone(),
                 YamlLlmNodeMetrics {
                     elapsed_ms: 0,
                     prompt_tokens: usage.prompt_tokens,
                     completion_tokens: usage.completion_tokens,
                     total_tokens: usage.total_tokens,
-                    thinking_tokens: usage.thinking_tokens,
+                    reasoning_tokens: usage.reasoning_tokens,
                     tokens_per_second: completion_tokens_per_second(usage.completion_tokens, 0),
                 },
             );
         }
         step_timings.push(YamlStepTiming {
-            node_id: execution.node_id,
+            node_id: node_id.clone(),
             node_kind: "ir_runtime".to_string(),
+            model_name: llm_node_models.get(&node_id).cloned(),
             elapsed_ms: 0,
             prompt_tokens: usage.map(|value| value.prompt_tokens),
             completion_tokens: usage.map(|value| value.completion_tokens),
             total_tokens: usage.map(|value| value.total_tokens),
-            thinking_tokens: usage.and_then(|value| value.thinking_tokens),
+            reasoning_tokens: usage.and_then(|value| value.reasoning_tokens),
             tokens_per_second: usage
                 .map(|value| completion_tokens_per_second(value.completion_tokens, 0)),
         });
@@ -4091,7 +4097,7 @@ async fn try_run_yaml_via_ir_runtime(
         total_input_tokens: token_totals.input_tokens,
         total_output_tokens: token_totals.output_tokens,
         total_tokens: token_totals.total_tokens,
-        total_thinking_tokens: token_totals.thinking_tokens,
+        total_reasoning_tokens: token_totals.reasoning_tokens,
         tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
         trace_id: telemetry_context.trace_id.clone(),
         metadata: telemetry_context.trace_id.as_ref().map(|value| {
@@ -5370,7 +5376,7 @@ mod tests {
                         prompt_tokens: 10,
                         completion_tokens: 5,
                         total_tokens: 15,
-                        thinking_tokens: None,
+                        reasoning_tokens: None,
                     }),
                     ttft_ms: None,
                     tool_calls: Vec::new(),
@@ -5383,7 +5389,7 @@ mod tests {
                         prompt_tokens: 12,
                         completion_tokens: 6,
                         total_tokens: 18,
-                        thinking_tokens: None,
+                        reasoning_tokens: None,
                     }),
                     ttft_ms: None,
                     tool_calls: Vec::new(),
@@ -5396,7 +5402,7 @@ mod tests {
                         prompt_tokens: 11,
                         completion_tokens: 4,
                         total_tokens: 15,
-                        thinking_tokens: None,
+                        reasoning_tokens: None,
                     }),
                     ttft_ms: None,
                     tool_calls: Vec::new(),
@@ -5618,9 +5624,9 @@ nodes:
         assert!(nerdstats.get("step_timings").is_none());
         assert!(nerdstats.get("llm_node_metrics").is_none());
         assert!(nerdstats.get("step_details").is_some());
-        assert!(nerdstats.get("llm_node_models").is_some());
+        assert!(nerdstats.get("llm_node_models").is_none());
         assert_eq!(
-            nerdstats["llm_node_models"]["classify"],
+            nerdstats["step_details"][0]["model_name"],
             Value::String("gpt-4.1".to_string())
         );
         assert_eq!(
@@ -5695,7 +5701,7 @@ nodes:
                     prompt_tokens: 20,
                     completion_tokens: 10,
                     total_tokens: 30,
-                    thinking_tokens: None,
+                    reasoning_tokens: None,
                 }),
                 ttft_ms: if request.stream { Some(12) } else { None },
                 tool_calls: Vec::new(),
@@ -5758,7 +5764,7 @@ nodes:
         assert!(nerdstats.get("step_timings").is_none());
         assert!(nerdstats.get("llm_node_metrics").is_none());
         assert_eq!(
-            nerdstats["llm_node_models"]["classify"],
+            nerdstats["step_details"][0]["model_name"],
             Value::String("gpt-4.1".to_string())
         );
         assert_eq!(
@@ -5780,11 +5786,12 @@ nodes:
             step_timings: vec![YamlStepTiming {
                 node_id: "llm_node".to_string(),
                 node_kind: "llm_call".to_string(),
+                model_name: Some("gpt-4.1".to_string()),
                 elapsed_ms: 100,
                 prompt_tokens: None,
                 completion_tokens: None,
                 total_tokens: None,
-                thinking_tokens: None,
+                reasoning_tokens: None,
                 tokens_per_second: None,
             }],
             llm_node_metrics: BTreeMap::new(),
@@ -5794,7 +5801,7 @@ nodes:
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_tokens: 0,
-            total_thinking_tokens: None,
+            total_reasoning_tokens: None,
             tokens_per_second: 0.0,
             trace_id: Some("trace-1".to_string()),
             metadata: None,
@@ -5814,10 +5821,10 @@ nodes:
             nerdstats["step_details"][0]["node_id"],
             Value::String("llm_node".to_string())
         );
-        assert!(nerdstats["llm_node_models"]
-            .as_object()
-            .expect("llm_node_models should be an object")
-            .is_empty());
+        assert_eq!(
+            nerdstats["step_details"][0]["model_name"],
+            Value::String("gpt-4.1".to_string())
+        );
     }
 
     #[test]
@@ -5833,11 +5840,12 @@ nodes:
             step_timings: vec![YamlStepTiming {
                 node_id: "llm_node".to_string(),
                 node_kind: "llm_call".to_string(),
+                model_name: Some("gpt-4.1".to_string()),
                 elapsed_ms: 100,
                 prompt_tokens: Some(10),
                 completion_tokens: Some(15),
                 total_tokens: Some(25),
-                thinking_tokens: None,
+                reasoning_tokens: None,
                 tokens_per_second: Some(150.0),
             }],
             llm_node_metrics: BTreeMap::new(),
@@ -5847,7 +5855,7 @@ nodes:
             total_input_tokens: 10,
             total_output_tokens: 15,
             total_tokens: 25,
-            total_thinking_tokens: None,
+            total_reasoning_tokens: None,
             tokens_per_second: 150.0,
             trace_id: Some("trace-2".to_string()),
             metadata: None,
@@ -5861,10 +5869,10 @@ nodes:
             nerdstats["step_details"][0]["node_id"],
             Value::String("llm_node".to_string())
         );
-        assert!(nerdstats["llm_node_models"]
-            .as_object()
-            .expect("llm_node_models should be an object")
-            .is_empty());
+        assert_eq!(
+            nerdstats["step_details"][0]["model_name"],
+            Value::String("gpt-4.1".to_string())
+        );
     }
 
     struct MessageHistoryExecutor;
@@ -5888,7 +5896,7 @@ nodes:
                     prompt_tokens: 7,
                     completion_tokens: 3,
                     total_tokens: 10,
-                    thinking_tokens: None,
+                    reasoning_tokens: None,
                 }),
                 ttft_ms: None,
                 tool_calls: Vec::new(),
