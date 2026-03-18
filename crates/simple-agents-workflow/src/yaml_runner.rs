@@ -469,22 +469,39 @@ fn workflow_metadata_with_trace(
     })
 }
 
-fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
-    if let Some(workspace_id) = options.trace.tenant.workspace_id.as_deref() {
+fn apply_trace_identity_attributes(span: &mut dyn WorkflowSpan, trace_id: Option<&str>) {
+    if let Some(value) = trace_id {
+        span.set_attribute("trace_id", value);
+    }
+}
+
+fn apply_trace_tenant_attributes_from_tenant(
+    span: &mut dyn WorkflowSpan,
+    tenant: &YamlWorkflowTraceTenantContext,
+) {
+    if let Some(workspace_id) = tenant.workspace_id.as_deref() {
         span.set_attribute("tenant.workspace_id", workspace_id);
     }
-    if let Some(user_id) = options.trace.tenant.user_id.as_deref() {
+    if let Some(user_id) = tenant.user_id.as_deref() {
         span.set_attribute("tenant.user_id", user_id);
+        span.set_attribute("user.id", user_id);
+        span.set_attribute("langfuse.user.id", user_id);
     }
-    if let Some(conversation_id) = options.trace.tenant.conversation_id.as_deref() {
+    if let Some(conversation_id) = tenant.conversation_id.as_deref() {
         span.set_attribute("tenant.conversation_id", conversation_id);
+        span.set_attribute("session.id", conversation_id);
+        span.set_attribute("langfuse.session.id", conversation_id);
     }
-    if let Some(request_id) = options.trace.tenant.request_id.as_deref() {
+    if let Some(request_id) = tenant.request_id.as_deref() {
         span.set_attribute("tenant.request_id", request_id);
     }
-    if let Some(run_id) = options.trace.tenant.run_id.as_deref() {
+    if let Some(run_id) = tenant.run_id.as_deref() {
         span.set_attribute("tenant.run_id", run_id);
     }
+}
+
+fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
+    apply_trace_tenant_attributes_from_tenant(span, &options.trace.tenant);
 }
 
 fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
@@ -1768,6 +1785,7 @@ pub struct YamlLlmExecutionRequest {
     pub email_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
+    pub tenant_context: YamlWorkflowTraceTenantContext,
     pub trace_sampled: bool,
 }
 
@@ -2479,9 +2497,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 request.trace_context.as_ref(),
                             );
                             tool_span_context = Some(span_context);
-                            span.set_attribute(
-                                "trace_id",
-                                request.trace_id.as_deref().unwrap_or_default(),
+                            apply_trace_identity_attributes(
+                                span.as_mut(),
+                                request.trace_id.as_deref(),
+                            );
+                            apply_trace_tenant_attributes_from_tenant(
+                                span.as_mut(),
+                                &request.tenant_context,
                             );
                             span.set_attribute("node_id", request.node_id.as_str());
                             span.set_attribute("node_kind", "llm_call");
@@ -3145,9 +3167,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             SpanKind::Workflow,
             parent_trace_context.as_ref(),
         );
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
-            span.set_attribute("trace_id", trace_id_value);
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         apply_trace_tenant_attributes(span.as_mut(), options);
         workflow_span_context = Some(span_context);
         Some(span)
@@ -3236,10 +3256,8 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 workflow_span_context.as_ref(),
             );
             node_span_context = Some(span_context);
-            span.set_attribute(
-                "trace_id",
-                telemetry_context.trace_id.as_deref().unwrap_or_default(),
-            );
+            apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
+            apply_trace_tenant_attributes(span.as_mut(), options);
             span.set_attribute("node_id", node.id.as_str());
             span.set_attribute("node_kind", node.kind_name());
             Some(span)
@@ -3340,6 +3358,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 email_text: email_text.to_string(),
                 trace_id: telemetry_context.trace_id.clone(),
                 trace_context: node_span_context.clone(),
+                tenant_context: options.trace.tenant.clone(),
                 trace_sampled: telemetry_context.sampled,
             };
 
@@ -3483,9 +3502,9 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     workflow_span_context.as_ref(),
                 );
                 handler_span_context = Some(span_context);
-                span.set_attribute(
-                    "trace_id",
-                    telemetry_context.trace_id.as_deref().unwrap_or_default(),
+                apply_trace_identity_attributes(
+                    span.as_mut(),
+                    telemetry_context.trace_id.as_deref(),
                 );
                 span.set_attribute("handler_name", custom.handler.as_str());
                 apply_trace_tenant_attributes(span.as_mut(), options);
@@ -3689,9 +3708,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
     if let Some(mut span) = workflow_span.take() {
         span.set_attribute("workflow_id", workflow.id.as_str());
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
-            span.set_attribute("trace_id", trace_id_value.as_str());
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         span.end();
         flush_workflow_tracer();
     }
@@ -3728,9 +3745,7 @@ async fn try_run_yaml_via_ir_runtime(
             SpanKind::Workflow,
             parent_trace_context.as_ref(),
         );
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
-            span.set_attribute("trace_id", trace_id_value);
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         apply_trace_tenant_attributes(span.as_mut(), options);
         workflow_span_context = Some(span_context);
         Some(span)
@@ -3869,6 +3884,7 @@ async fn try_run_yaml_via_ir_runtime(
                     email_text: email_text.to_string(),
                     trace_id: self.trace_id.clone(),
                     trace_context: self.trace_context.clone(),
+                    tenant_context: self.tenant_context.clone(),
                     trace_sampled: self.trace_sampled,
                 };
 
@@ -3917,25 +3933,9 @@ async fn try_run_yaml_via_ir_runtime(
                     self.trace_context.as_ref(),
                 );
                 handler_span_context = Some(span_context);
-                if let Some(trace_id) = self.trace_id.as_ref() {
-                    span.set_attribute("trace_id", trace_id.as_str());
-                }
+                apply_trace_identity_attributes(span.as_mut(), self.trace_id.as_deref());
                 span.set_attribute("handler_name", input.tool.as_str());
-                if let Some(workspace_id) = self.tenant_context.workspace_id.as_deref() {
-                    span.set_attribute("tenant.workspace_id", workspace_id);
-                }
-                if let Some(user_id) = self.tenant_context.user_id.as_deref() {
-                    span.set_attribute("tenant.user_id", user_id);
-                }
-                if let Some(conversation_id) = self.tenant_context.conversation_id.as_deref() {
-                    span.set_attribute("tenant.conversation_id", conversation_id);
-                }
-                if let Some(request_id) = self.tenant_context.request_id.as_deref() {
-                    span.set_attribute("tenant.request_id", request_id);
-                }
-                if let Some(run_id) = self.tenant_context.run_id.as_deref() {
-                    span.set_attribute("tenant.run_id", run_id);
-                }
+                apply_trace_tenant_attributes_from_tenant(span.as_mut(), &self.tenant_context);
                 span.set_attribute(
                     "node_input",
                     payload_for_span(self.payload_mode, &payload).as_str(),
@@ -4094,9 +4094,7 @@ async fn try_run_yaml_via_ir_runtime(
 
     if let Some(mut span) = workflow_span.take() {
         span.set_attribute("workflow_id", workflow.id.as_str());
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
-            span.set_attribute("trace_id", trace_id_value.as_str());
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         span.end();
         flush_workflow_tracer();
     }
@@ -5119,6 +5117,7 @@ mod tests {
     use simple_agent_type::tool::{ToolCallFunction, ToolType};
     use simple_agent_type::{Result as SaResult, SimpleAgentsError};
     use simple_agents_core::SimpleAgentsClientBuilder;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -5163,6 +5162,21 @@ mod tests {
     struct ReasoningUsageProvider;
 
     struct ToolLoopReasoningProvider;
+
+    #[derive(Default)]
+    struct CapturingSpan {
+        attributes: BTreeMap<String, String>,
+    }
+
+    impl WorkflowSpan for CapturingSpan {
+        fn set_attribute(&mut self, key: &str, value: &str) {
+            self.attributes.insert(key.to_string(), value.to_string());
+        }
+
+        fn add_event(&mut self, _name: &str) {}
+
+        fn end(self: Box<Self>) {}
+    }
 
     #[async_trait]
     impl Provider for ToolLoopProvider {
@@ -7327,6 +7341,46 @@ nodes:
                 .as_ref()
                 .and_then(|ctx| ctx.trace_id.as_deref()),
             Some("trace-parent")
+        );
+    }
+
+    #[test]
+    fn trace_tenant_attributes_include_langfuse_aliases() {
+        let tenant = YamlWorkflowTraceTenantContext {
+            workspace_id: Some("ws-1".to_string()),
+            user_id: Some("user-1".to_string()),
+            conversation_id: Some("conv-1".to_string()),
+            request_id: Some("req-1".to_string()),
+            run_id: Some("run-1".to_string()),
+        };
+        let mut span = CapturingSpan::default();
+        apply_trace_tenant_attributes_from_tenant(&mut span, &tenant);
+
+        assert_eq!(
+            span.attributes
+                .get("tenant.workspace_id")
+                .map(String::as_str),
+            Some("ws-1")
+        );
+        assert_eq!(
+            span.attributes.get("tenant.user_id").map(String::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            span.attributes
+                .get("tenant.conversation_id")
+                .map(String::as_str),
+            Some("conv-1")
+        );
+        assert_eq!(
+            span.attributes.get("langfuse.user.id").map(String::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            span.attributes
+                .get("langfuse.session.id")
+                .map(String::as_str),
+            Some("conv-1")
         );
     }
 
