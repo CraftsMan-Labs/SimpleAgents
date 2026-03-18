@@ -213,3 +213,11 @@ Notes:
 - `workflow_options["telemetry"]["sample_rate"]` controls deterministic per-trace sampling (`0.0` to `1.0` inclusive).
 - Workflow output metadata includes `metadata.telemetry.sampled` so callers can branch on sampled vs unsampled traces.
 - You can pass chat/session identity into trace metadata with `workflow_options={"trace": {"tenant": {"conversation_id": "<uuid>"}}}`; it is attached to workflow trace attributes and output metadata.
+
+Tracing exporter env configuration is shared across runtimes:
+
+- `SIMPLE_AGENTS_TRACING_ENABLED`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`)
+- `OTEL_EXPORTER_OTLP_HEADERS`
+- `OTEL_SERVICE_NAME`
