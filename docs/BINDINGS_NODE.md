@@ -125,3 +125,10 @@ Tracing exporter env configuration is shared across runtimes:
 - `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`)
 - `OTEL_EXPORTER_OTLP_HEADERS`
 - `OTEL_SERVICE_NAME`
+
+## Testing Notes
+
+The Node binding tests require the native addon (`index.node`) to be built.
+
+- `npm run test:unit` and `npm run test:contract` run `build:debug` automatically via pretest hooks.
+- CI/layered scripts also run `build:debug` explicitly after `npm ci` to guarantee deterministic behavior in clean environments.
