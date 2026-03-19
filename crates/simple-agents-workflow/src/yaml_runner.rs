@@ -28,6 +28,7 @@ use crate::runtime::{
     ToolExecutionInput, ToolExecutor, WorkflowRuntime, WorkflowRuntimeError,
     WorkflowRuntimeOptions,
 };
+use crate::validation::validate_and_normalize;
 use crate::visualize::workflow_to_mermaid;
 
 const YAML_START_NODE_ID: &str = "__yaml_start";
@@ -469,22 +470,39 @@ fn workflow_metadata_with_trace(
     })
 }
 
-fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
-    if let Some(workspace_id) = options.trace.tenant.workspace_id.as_deref() {
+fn apply_trace_identity_attributes(span: &mut dyn WorkflowSpan, trace_id: Option<&str>) {
+    if let Some(value) = trace_id {
+        span.set_attribute("trace_id", value);
+    }
+}
+
+fn apply_trace_tenant_attributes_from_tenant(
+    span: &mut dyn WorkflowSpan,
+    tenant: &YamlWorkflowTraceTenantContext,
+) {
+    if let Some(workspace_id) = tenant.workspace_id.as_deref() {
         span.set_attribute("tenant.workspace_id", workspace_id);
     }
-    if let Some(user_id) = options.trace.tenant.user_id.as_deref() {
+    if let Some(user_id) = tenant.user_id.as_deref() {
         span.set_attribute("tenant.user_id", user_id);
+        span.set_attribute("user.id", user_id);
+        span.set_attribute("langfuse.user.id", user_id);
     }
-    if let Some(conversation_id) = options.trace.tenant.conversation_id.as_deref() {
+    if let Some(conversation_id) = tenant.conversation_id.as_deref() {
         span.set_attribute("tenant.conversation_id", conversation_id);
+        span.set_attribute("session.id", conversation_id);
+        span.set_attribute("langfuse.session.id", conversation_id);
     }
-    if let Some(request_id) = options.trace.tenant.request_id.as_deref() {
+    if let Some(request_id) = tenant.request_id.as_deref() {
         span.set_attribute("tenant.request_id", request_id);
     }
-    if let Some(run_id) = options.trace.tenant.run_id.as_deref() {
+    if let Some(run_id) = tenant.run_id.as_deref() {
         span.set_attribute("tenant.run_id", run_id);
     }
+}
+
+fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
+    apply_trace_tenant_attributes_from_tenant(span, &options.trace.tenant);
 }
 
 fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
@@ -542,6 +560,153 @@ fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
         "token_metrics_source": token_metrics_source,
         "llm_nodes_without_usage": llm_nodes_without_usage,
     })
+}
+
+fn apply_langfuse_nerdstats_attributes(
+    span: &mut dyn WorkflowSpan,
+    output: &YamlWorkflowRunOutput,
+    enabled: bool,
+) {
+    if !enabled {
+        return;
+    }
+
+    let nerdstats = workflow_nerdstats(output);
+    let nerdstats_json = nerdstats.to_string();
+    span.set_attribute("langfuse.trace.metadata.nerdstats", nerdstats_json.as_str());
+
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.workflow_id",
+        output.workflow_id.as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.terminal_node",
+        output.terminal_node.as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.total_elapsed_ms",
+        output.total_elapsed_ms.to_string().as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.step_details_count",
+        output.step_timings.len().to_string().as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.total_input_tokens",
+        output.total_input_tokens.to_string().as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.total_output_tokens",
+        output.total_output_tokens.to_string().as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.total_tokens",
+        output.total_tokens.to_string().as_str(),
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.tokens_per_second",
+        output.tokens_per_second.to_string().as_str(),
+    );
+
+    if let Some(ttft_ms) = output.ttft_ms {
+        span.set_attribute(
+            "langfuse.trace.metadata.nerdstats.ttft_ms",
+            ttft_ms.to_string().as_str(),
+        );
+    }
+
+    if let Some(reasoning_tokens) = output.total_reasoning_tokens {
+        span.set_attribute(
+            "langfuse.trace.metadata.nerdstats.total_reasoning_tokens",
+            reasoning_tokens.to_string().as_str(),
+        );
+    }
+
+    let llm_nodes_without_usage_count = output
+        .step_timings
+        .iter()
+        .filter(|step| step.node_kind == "llm_call" && step.total_tokens.is_none())
+        .count();
+    let token_metrics_available = llm_nodes_without_usage_count == 0;
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.token_metrics_available",
+        if token_metrics_available {
+            "true"
+        } else {
+            "false"
+        },
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.token_metrics_source",
+        if token_metrics_available {
+            "provider_usage"
+        } else {
+            "provider_stream_usage_unavailable"
+        },
+    );
+    span.set_attribute(
+        "langfuse.trace.metadata.nerdstats.llm_nodes_without_usage_count",
+        llm_nodes_without_usage_count.to_string().as_str(),
+    );
+}
+
+fn apply_langfuse_trace_input_output_attributes(
+    span: &mut dyn WorkflowSpan,
+    workflow_input: &Value,
+    output: &YamlWorkflowRunOutput,
+    payload_mode: YamlWorkflowPayloadMode,
+) {
+    let trace_input = payload_for_span(payload_mode, workflow_input);
+    span.set_attribute("langfuse.trace.input", trace_input.as_str());
+
+    if let Some(terminal_output) = output.terminal_output.as_ref() {
+        let trace_output = payload_for_span(payload_mode, terminal_output);
+        span.set_attribute("langfuse.trace.output", trace_output.as_str());
+    }
+
+    let usage_details = json!({
+        "input": output.total_input_tokens,
+        "output": output.total_output_tokens,
+        "total": output.total_tokens,
+        "reasoning": output.total_reasoning_tokens,
+    })
+    .to_string();
+    span.set_attribute(
+        "langfuse.trace.metadata.usage_details",
+        usage_details.as_str(),
+    );
+}
+
+fn apply_langfuse_observation_usage_attributes(
+    span: &mut dyn WorkflowSpan,
+    usage: &YamlLlmTokenUsage,
+) {
+    let usage_details = json!({
+        "input": usage.prompt_tokens,
+        "output": usage.completion_tokens,
+        "total": usage.total_tokens,
+        "reasoning": usage.reasoning_tokens,
+    })
+    .to_string();
+    span.set_attribute("langfuse.observation.usage_details", usage_details.as_str());
+    span.set_attribute(
+        "gen_ai.usage.input_tokens",
+        usage.prompt_tokens.to_string().as_str(),
+    );
+    span.set_attribute(
+        "gen_ai.usage.output_tokens",
+        usage.completion_tokens.to_string().as_str(),
+    );
+    span.set_attribute(
+        "gen_ai.usage.total_tokens",
+        usage.total_tokens.to_string().as_str(),
+    );
+    if let Some(reasoning_tokens) = usage.reasoning_tokens {
+        span.set_attribute(
+            "gen_ai.usage.reasoning_tokens",
+            reasoning_tokens.to_string().as_str(),
+        );
+    }
 }
 
 fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -> String {
@@ -1768,6 +1933,7 @@ pub struct YamlLlmExecutionRequest {
     pub email_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
+    pub tenant_context: YamlWorkflowTraceTenantContext,
     pub trace_sampled: bool,
 }
 
@@ -2479,9 +2645,13 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
                                 request.trace_context.as_ref(),
                             );
                             tool_span_context = Some(span_context);
-                            span.set_attribute(
-                                "trace_id",
-                                request.trace_id.as_deref().unwrap_or_default(),
+                            apply_trace_identity_attributes(
+                                span.as_mut(),
+                                request.trace_id.as_deref(),
+                            );
+                            apply_trace_tenant_attributes_from_tenant(
+                                span.as_mut(),
+                                &request.tenant_context,
                             );
                             span.set_attribute("node_id", request.node_id.as_str());
                             span.set_attribute("node_kind", "llm_call");
@@ -3145,9 +3315,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             SpanKind::Workflow,
             parent_trace_context.as_ref(),
         );
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
-            span.set_attribute("trace_id", trace_id_value);
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         apply_trace_tenant_attributes(span.as_mut(), options);
         workflow_span_context = Some(span_context);
         Some(span)
@@ -3236,12 +3404,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 workflow_span_context.as_ref(),
             );
             node_span_context = Some(span_context);
-            span.set_attribute(
-                "trace_id",
-                telemetry_context.trace_id.as_deref().unwrap_or_default(),
-            );
+            apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
+            apply_trace_tenant_attributes(span.as_mut(), options);
             span.set_attribute("node_id", node.id.as_str());
             span.set_attribute("node_kind", node.kind_name());
+            if node.kind_name() == "llm_call" {
+                span.set_attribute("langfuse.observation.type", "generation");
+            }
             Some(span)
         } else {
             None
@@ -3340,14 +3509,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                 email_text: email_text.to_string(),
                 trace_id: telemetry_context.trace_id.clone(),
                 trace_context: node_span_context.clone(),
+                tenant_context: options.trace.tenant.clone(),
                 trace_sampled: telemetry_context.sampled,
             };
 
             if let Some(span) = node_span.as_mut() {
-                span.set_attribute(
-                    "node_input",
-                    payload_for_span(options.telemetry.payload_mode, &context).as_str(),
-                );
+                let node_input = payload_for_span(options.telemetry.payload_mode, &context);
+                span.set_attribute("node_input", node_input.as_str());
+                span.set_attribute("langfuse.observation.input", node_input.as_str());
             }
 
             if let Some(sink) = event_sink {
@@ -3417,10 +3586,10 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             outputs.insert(node.id.clone(), node_output);
             if let Some(span) = node_span.as_mut() {
                 if let Some(output_payload) = outputs.get(node.id.as_str()) {
-                    span.set_attribute(
-                        "node_output",
-                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
-                    );
+                    let node_output =
+                        payload_for_span(options.telemetry.payload_mode, output_payload);
+                    span.set_attribute("node_output", node_output.as_str());
+                    span.set_attribute("langfuse.observation.output", node_output.as_str());
                 }
             }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
@@ -3469,10 +3638,9 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
             if let Some(span) = node_span.as_mut() {
                 span.set_attribute("handler_name", custom.handler.as_str());
-                span.set_attribute(
-                    "node_input",
-                    payload_for_span(options.telemetry.payload_mode, &payload).as_str(),
-                );
+                let node_input = payload_for_span(options.telemetry.payload_mode, &payload);
+                span.set_attribute("node_input", node_input.as_str());
+                span.set_attribute("langfuse.observation.input", node_input.as_str());
             }
 
             let mut handler_span_context: Option<TraceContext> = None;
@@ -3483,9 +3651,9 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
                     workflow_span_context.as_ref(),
                 );
                 handler_span_context = Some(span_context);
-                span.set_attribute(
-                    "trace_id",
-                    telemetry_context.trace_id.as_deref().unwrap_or_default(),
+                apply_trace_identity_attributes(
+                    span.as_mut(),
+                    telemetry_context.trace_id.as_deref(),
                 );
                 span.set_attribute("handler_name", custom.handler.as_str());
                 apply_trace_tenant_attributes(span.as_mut(), options);
@@ -3531,10 +3699,10 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
             outputs.insert(node.id.clone(), json!({ "output": worker_output }));
             if let Some(span) = node_span.as_mut() {
                 if let Some(output_payload) = outputs.get(node.id.as_str()) {
-                    span.set_attribute(
-                        "node_output",
-                        payload_for_span(options.telemetry.payload_mode, output_payload).as_str(),
-                    );
+                    let node_output =
+                        payload_for_span(options.telemetry.payload_mode, output_payload);
+                    span.set_attribute("node_output", node_output.as_str());
+                    span.set_attribute("langfuse.observation.output", node_output.as_str());
                 }
             }
             apply_set_globals(node, &outputs, workflow_input, &mut globals);
@@ -3553,7 +3721,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         step_timings.push(YamlStepTiming {
             node_id: node.id.clone(),
             node_kind,
-            model_name: node_model_name,
+            model_name: node_model_name.clone(),
             elapsed_ms,
             prompt_tokens: node_usage.as_ref().map(|usage| usage.prompt_tokens),
             completion_tokens: node_usage.as_ref().map(|usage| usage.completion_tokens),
@@ -3582,6 +3750,13 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         }
 
         if let Some(mut span) = node_span.take() {
+            if let Some(model_name) = node_model_name.as_deref() {
+                span.set_attribute("langfuse.observation.model.name", model_name);
+                span.set_attribute("gen_ai.request.model", model_name);
+            }
+            if let Some(usage) = node_usage.as_ref() {
+                apply_langfuse_observation_usage_attributes(span.as_mut(), usage);
+            }
             span.set_attribute("elapsed_ms", elapsed_ms.to_string().as_str());
             span.add_event("node_completed");
             span.end();
@@ -3689,9 +3864,14 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 
     if let Some(mut span) = workflow_span.take() {
         span.set_attribute("workflow_id", workflow.id.as_str());
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
-            span.set_attribute("trace_id", trace_id_value.as_str());
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
+        apply_langfuse_trace_input_output_attributes(
+            span.as_mut(),
+            workflow_input,
+            &output,
+            options.telemetry.payload_mode,
+        );
+        apply_langfuse_nerdstats_attributes(span.as_mut(), &output, options.telemetry.nerdstats);
         span.end();
         flush_workflow_tracer();
     }
@@ -3717,6 +3897,10 @@ async fn try_run_yaml_via_ir_runtime(
         }
     };
 
+    if validate_and_normalize(&ir).is_err() {
+        return Ok(None);
+    }
+
     let parent_trace_context = trace_context_from_options(options);
     let telemetry_context = resolve_telemetry_context(options, parent_trace_context.as_ref());
 
@@ -3728,9 +3912,7 @@ async fn try_run_yaml_via_ir_runtime(
             SpanKind::Workflow,
             parent_trace_context.as_ref(),
         );
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_deref() {
-            span.set_attribute("trace_id", trace_id_value);
-        }
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
         apply_trace_tenant_attributes(span.as_mut(), options);
         workflow_span_context = Some(span_context);
         Some(span)
@@ -3869,6 +4051,7 @@ async fn try_run_yaml_via_ir_runtime(
                     email_text: email_text.to_string(),
                     trace_id: self.trace_id.clone(),
                     trace_context: self.trace_context.clone(),
+                    tenant_context: self.tenant_context.clone(),
                     trace_sampled: self.trace_sampled,
                 };
 
@@ -3917,25 +4100,9 @@ async fn try_run_yaml_via_ir_runtime(
                     self.trace_context.as_ref(),
                 );
                 handler_span_context = Some(span_context);
-                if let Some(trace_id) = self.trace_id.as_ref() {
-                    span.set_attribute("trace_id", trace_id.as_str());
-                }
+                apply_trace_identity_attributes(span.as_mut(), self.trace_id.as_deref());
                 span.set_attribute("handler_name", input.tool.as_str());
-                if let Some(workspace_id) = self.tenant_context.workspace_id.as_deref() {
-                    span.set_attribute("tenant.workspace_id", workspace_id);
-                }
-                if let Some(user_id) = self.tenant_context.user_id.as_deref() {
-                    span.set_attribute("tenant.user_id", user_id);
-                }
-                if let Some(conversation_id) = self.tenant_context.conversation_id.as_deref() {
-                    span.set_attribute("tenant.conversation_id", conversation_id);
-                }
-                if let Some(request_id) = self.tenant_context.request_id.as_deref() {
-                    span.set_attribute("tenant.request_id", request_id);
-                }
-                if let Some(run_id) = self.tenant_context.run_id.as_deref() {
-                    span.set_attribute("tenant.run_id", run_id);
-                }
+                apply_trace_tenant_attributes_from_tenant(span.as_mut(), &self.tenant_context);
                 span.set_attribute(
                     "node_input",
                     payload_for_span(self.payload_mode, &payload).as_str(),
@@ -4000,12 +4167,9 @@ async fn try_run_yaml_via_ir_runtime(
         trace_sampled: telemetry_context.sampled,
     };
 
-    let runtime = WorkflowRuntime::new(
-        ir,
-        &NoopLlm,
-        Some(&tool_executor),
-        WorkflowRuntimeOptions::default(),
-    );
+    let mut runtime_options = WorkflowRuntimeOptions::default();
+    runtime_options.validate_before_run = false;
+    let runtime = WorkflowRuntime::new(ir, &NoopLlm, Some(&tool_executor), runtime_options);
 
     let started = Instant::now();
     let result = match runtime.execute(workflow_input.clone(), None).await {
@@ -4092,16 +4256,7 @@ async fn try_run_yaml_via_ir_runtime(
         .map(|totals| totals.clone())
         .unwrap_or_default();
 
-    if let Some(mut span) = workflow_span.take() {
-        span.set_attribute("workflow_id", workflow.id.as_str());
-        if let Some(trace_id_value) = telemetry_context.trace_id.as_ref() {
-            span.set_attribute("trace_id", trace_id_value.as_str());
-        }
-        span.end();
-        flush_workflow_tracer();
-    }
-
-    Ok(Some(YamlWorkflowRunOutput {
+    let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
         email_text,
@@ -4128,7 +4283,23 @@ async fn try_run_yaml_via_ir_runtime(
                 telemetry_context.trace_id_source,
             )
         }),
-    }))
+    };
+
+    if let Some(mut span) = workflow_span.take() {
+        span.set_attribute("workflow_id", workflow.id.as_str());
+        apply_trace_identity_attributes(span.as_mut(), telemetry_context.trace_id.as_deref());
+        apply_langfuse_trace_input_output_attributes(
+            span.as_mut(),
+            workflow_input,
+            &output,
+            options.telemetry.payload_mode,
+        );
+        apply_langfuse_nerdstats_attributes(span.as_mut(), &output, options.telemetry.nerdstats);
+        span.end();
+        flush_workflow_tracer();
+    }
+
+    Ok(Some(output))
 }
 
 fn build_yaml_context_from_ir_scope(scoped_input: &Value) -> Value {
@@ -5119,6 +5290,7 @@ mod tests {
     use simple_agent_type::tool::{ToolCallFunction, ToolType};
     use simple_agent_type::{Result as SaResult, SimpleAgentsError};
     use simple_agents_core::SimpleAgentsClientBuilder;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -5163,6 +5335,21 @@ mod tests {
     struct ReasoningUsageProvider;
 
     struct ToolLoopReasoningProvider;
+
+    #[derive(Default)]
+    struct CapturingSpan {
+        attributes: BTreeMap<String, String>,
+    }
+
+    impl WorkflowSpan for CapturingSpan {
+        fn set_attribute(&mut self, key: &str, value: &str) {
+            self.attributes.insert(key.to_string(), value.to_string());
+        }
+
+        fn add_event(&mut self, _name: &str) {}
+
+        fn end(self: Box<Self>) {}
+    }
 
     #[async_trait]
     impl Provider for ToolLoopProvider {
@@ -7328,6 +7515,199 @@ nodes:
                 .and_then(|ctx| ctx.trace_id.as_deref()),
             Some("trace-parent")
         );
+    }
+
+    #[test]
+    fn trace_tenant_attributes_include_langfuse_aliases() {
+        let tenant = YamlWorkflowTraceTenantContext {
+            workspace_id: Some("ws-1".to_string()),
+            user_id: Some("user-1".to_string()),
+            conversation_id: Some("conv-1".to_string()),
+            request_id: Some("req-1".to_string()),
+            run_id: Some("run-1".to_string()),
+        };
+        let mut span = CapturingSpan::default();
+        apply_trace_tenant_attributes_from_tenant(&mut span, &tenant);
+
+        assert_eq!(
+            span.attributes
+                .get("tenant.workspace_id")
+                .map(String::as_str),
+            Some("ws-1")
+        );
+        assert_eq!(
+            span.attributes.get("tenant.user_id").map(String::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            span.attributes
+                .get("tenant.conversation_id")
+                .map(String::as_str),
+            Some("conv-1")
+        );
+        assert_eq!(
+            span.attributes.get("langfuse.user.id").map(String::as_str),
+            Some("user-1")
+        );
+        assert_eq!(
+            span.attributes
+                .get("langfuse.session.id")
+                .map(String::as_str),
+            Some("conv-1")
+        );
+    }
+
+    #[test]
+    fn langfuse_nerdstats_attributes_are_written_when_enabled() {
+        let output = YamlWorkflowRunOutput {
+            workflow_id: "wf-1".to_string(),
+            entry_node: "start".to_string(),
+            email_text: "email".to_string(),
+            trace: vec!["node-1".to_string()],
+            outputs: BTreeMap::new(),
+            terminal_node: "node-1".to_string(),
+            terminal_output: None,
+            step_timings: vec![YamlStepTiming {
+                node_id: "node-1".to_string(),
+                node_kind: "llm_call".to_string(),
+                model_name: Some("gpt-4.1-mini".to_string()),
+                elapsed_ms: 42,
+                prompt_tokens: Some(4),
+                completion_tokens: Some(6),
+                total_tokens: Some(10),
+                reasoning_tokens: Some(2),
+                tokens_per_second: Some(14.0),
+            }],
+            llm_node_metrics: BTreeMap::new(),
+            llm_node_models: BTreeMap::new(),
+            total_elapsed_ms: 42,
+            ttft_ms: Some(7),
+            total_input_tokens: 4,
+            total_output_tokens: 6,
+            total_tokens: 10,
+            total_reasoning_tokens: Some(2),
+            tokens_per_second: 14.0,
+            trace_id: Some("trace-1".to_string()),
+            metadata: None,
+        };
+
+        let mut span = CapturingSpan::default();
+        apply_langfuse_nerdstats_attributes(&mut span, &output, true);
+
+        assert_eq!(
+            span.attributes
+                .get("langfuse.trace.metadata.nerdstats.workflow_id")
+                .map(String::as_str),
+            Some("wf-1")
+        );
+        assert_eq!(
+            span.attributes
+                .get("langfuse.trace.metadata.nerdstats.total_tokens")
+                .map(String::as_str),
+            Some("10")
+        );
+        assert_eq!(
+            span.attributes
+                .get("langfuse.trace.metadata.nerdstats.token_metrics_available")
+                .map(String::as_str),
+            Some("true")
+        );
+        assert!(span
+            .attributes
+            .get("langfuse.trace.metadata.nerdstats")
+            .is_some());
+    }
+
+    #[test]
+    fn langfuse_trace_input_output_and_usage_are_written() {
+        let output = YamlWorkflowRunOutput {
+            workflow_id: "wf-1".to_string(),
+            entry_node: "start".to_string(),
+            email_text: "email".to_string(),
+            trace: vec!["node-1".to_string()],
+            outputs: BTreeMap::new(),
+            terminal_node: "node-1".to_string(),
+            terminal_output: Some(json!({"final":"ok"})),
+            step_timings: Vec::new(),
+            llm_node_metrics: BTreeMap::new(),
+            llm_node_models: BTreeMap::new(),
+            total_elapsed_ms: 10,
+            ttft_ms: None,
+            total_input_tokens: 11,
+            total_output_tokens: 22,
+            total_tokens: 33,
+            total_reasoning_tokens: Some(4),
+            tokens_per_second: 1.5,
+            trace_id: Some("trace-1".to_string()),
+            metadata: None,
+        };
+
+        let mut span = CapturingSpan::default();
+        let input = json!({"email_text":"hello"});
+        apply_langfuse_trace_input_output_attributes(
+            &mut span,
+            &input,
+            &output,
+            YamlWorkflowPayloadMode::FullPayload,
+        );
+
+        assert_eq!(
+            span.attributes
+                .get("langfuse.trace.input")
+                .map(String::as_str),
+            Some("{\"email_text\":\"hello\"}")
+        );
+        assert_eq!(
+            span.attributes
+                .get("langfuse.trace.output")
+                .map(String::as_str),
+            Some("{\"final\":\"ok\"}")
+        );
+        assert!(span
+            .attributes
+            .get("langfuse.trace.metadata.usage_details")
+            .is_some());
+    }
+
+    #[test]
+    fn langfuse_observation_usage_attributes_are_written() {
+        let usage = YamlLlmTokenUsage {
+            prompt_tokens: 7,
+            completion_tokens: 9,
+            total_tokens: 16,
+            reasoning_tokens: Some(3),
+        };
+        let mut span = CapturingSpan::default();
+        apply_langfuse_observation_usage_attributes(&mut span, &usage);
+
+        assert_eq!(
+            span.attributes
+                .get("gen_ai.usage.input_tokens")
+                .map(String::as_str),
+            Some("7")
+        );
+        assert_eq!(
+            span.attributes
+                .get("gen_ai.usage.output_tokens")
+                .map(String::as_str),
+            Some("9")
+        );
+        assert_eq!(
+            span.attributes
+                .get("gen_ai.usage.total_tokens")
+                .map(String::as_str),
+            Some("16")
+        );
+        assert_eq!(
+            span.attributes
+                .get("gen_ai.usage.reasoning_tokens")
+                .map(String::as_str),
+            Some("3")
+        );
+        assert!(span
+            .attributes
+            .get("langfuse.observation.usage_details")
+            .is_some());
     }
 
     #[tokio::test]

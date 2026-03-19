@@ -191,6 +191,14 @@ Workflow outputs include:
 Runtime options can include telemetry sampling, payload mode, tool trace mode, retention, and tenant context. Use `conversation_id` to group multi-turn traces reliably.
 `telemetry.sample_rate` must be between `0.0` and `1.0` and is applied deterministically per trace id.
 
+Exporter configuration is environment-driven and shared across tracing backends:
+
+- `SIMPLE_AGENTS_TRACING_ENABLED`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`)
+- `OTEL_EXPORTER_OTLP_HEADERS`
+- `OTEL_SERVICE_NAME`
+
 ## Design Patterns That Work Well
 
 1. Classifier node -> `switch` router -> action node

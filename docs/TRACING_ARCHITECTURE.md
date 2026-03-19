@@ -1,6 +1,6 @@
-# Tracing Architecture (Jaeger + PostHog)
+# Tracing Architecture (OTLP Backends)
 
-This document defines tracing data flow for SimpleAgents workflow runs when used from an external API layer.
+This document defines tracing data flow for SimpleAgents workflow runs when used from an external API layer, with OTLP destinations such as Jaeger and Langfuse.
 
 ## Goals
 
@@ -37,6 +37,40 @@ Workflow execution accepts a structured options object (`YamlWorkflowRunOptions`
 - `trace`
   - `context`: `trace_id`, `span_id`, `parent_span_id`, `traceparent`, `tracestate`, `baggage`
   - `tenant`: `workspace_id`, `user_id`, `conversation_id`, `request_id`, `run_id`
+
+## Runtime exporter env contract
+
+Tracing exporter configuration is clean-break and OTLP-native:
+
+- `SIMPLE_AGENTS_TRACING_ENABLED`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`)
+- `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`)
+- `OTEL_SERVICE_NAME`
+
+Notes:
+
+- For `http/protobuf`, endpoint can be a base OTLP URL; traces are emitted to the traces signal path (`/v1/traces`).
+- OTLP headers are applied in both `grpc` and `http/protobuf` modes.
+
+### Jaeger / Collector example
+
+```bash
+export SIMPLE_AGENTS_TRACING_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+export OTEL_SERVICE_NAME=simple-agents-workflow
+```
+
+### Langfuse API example
+
+```bash
+export SIMPLE_AGENTS_TRACING_ENABLED=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=https://cloud.langfuse.com/api/public/otel
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Basic <base64(public_key:secret_key)>,x-langfuse-ingestion-version=4"
+export OTEL_SERVICE_NAME=simple-agents-workflow
+```
 
 ## Output contract
 
@@ -161,6 +195,6 @@ Recommended deployment path:
 - SDK/runtime spans -> OpenTelemetry Collector
 - Collector -> Jaeger (trace UI + query)
 - Jaeger storage -> OpenSearch (retention policy e.g. 30 days)
-- Collector or API side sink -> PostHog events with shared `trace_id`
+- Collector can fan out to multiple backends (e.g. Jaeger + Langfuse) when needed.
 
-This keeps vendor interoperability through OpenTelemetry while allowing product analytics correlation in PostHog.
+This keeps vendor interoperability through OpenTelemetry and avoids backend-specific runtime code paths.
