@@ -1,7 +1,7 @@
 # Active TODO
 
-Date: 2026-03-10
-Purpose: Scratchpad for current execution tasks.
+Date: 2026-03-18
+Purpose: Langfuse OTEL API integration as a clean-break tracing foundation for current and future third-party OTEL backends.
 
 ## Status values
 
@@ -10,13 +10,25 @@ Purpose: Scratchpad for current execution tasks.
 - `completed`
 - `blocked`
 
-## Scratchpad
+## Master tasks
 
 | ID | Task | Why this is needed | Expected outcome | Status |
 |---|---|---|---|---|
-| NS8 | Rename telemetry keys to `reasoning_tokens` | We are standardizing on reasoning terminology and removing `thinking_tokens` naming drift | All workflow/provider/binding outputs use `reasoning_tokens` and `total_reasoning_tokens`; no `thinking_tokens` keys remain | completed |
-| NS9 | Propagate provider reasoning usage into workflow metrics | Reasoning token counts are currently dropped in usage flow, causing null totals despite reasoning stream deltas | Provider response/stream-final usage populates `reasoning_tokens` and workflow totals aggregate it | completed |
-| NS10 | Move model attribution into `step_details` and remove `llm_node_models` | Nerdstats contract should attribute models per step instead of maintaining a separate top-level map | Every `llm_call` entry in `step_details` includes `model_name`; top-level `llm_node_models` is removed | completed |
-| NS11 | Align Go and Python consumers with new nerdstats contract | Bindings/examples must decode renamed token fields and new per-step model field | Go structs and Python fallback paths emit/consume `reasoning_tokens`, `total_reasoning_tokens`, and `step_details[].model_name` | completed |
-| NS12 | Refresh tests and docs for the schema break | Contract changes need regression coverage and documentation parity across surfaces | Rust/provider/binding tests and docs assert new keys and remove stale `thinking_tokens`/`llm_node_models` references | completed |
-| NS13 | Verify end-to-end via `make run-go-chat-history` | Fix must be validated in the exact user-reported workflow path | Repro run shows expected nerdstats schema and reasoning totals key (`total_reasoning_tokens`), non-null when provider usage includes reasoning data | completed |
+| LF1 | Define clean-break tracing env contract | Current tracing envs are Jaeger-specific and not protocol-flexible; we need one minimal vendor-agnostic contract | New canonical env schema finalized: `SIMPLE_AGENTS_TRACING_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_SERVICE_NAME` | completed |
+| LF2 | Refactor tracing bootstrap into typed config + factories | Existing `tracing.rs` mixes env parsing, exporter creation, and provider lifecycle, making extension risky | `TracingConfig`, `TracingConfigLoader`, and exporter/provider factory boundaries introduced with single-responsibility modules | completed |
+| LF3 | Add OTLP HTTP/protobuf exporter path for Langfuse API | Langfuse OTEL ingest endpoint requires OTLP over HTTP; current runtime is gRPC-only | Runtime can initialize OTLP exporter via `grpc` or `http/protobuf` based on unified env config | completed |
+| LF4 | Keep Jaeger path first-class under same config model | We must preserve existing Jaeger compatibility while adding Langfuse | Jaeger/collector flow works unchanged by setting endpoint+protocol only; no backend-specific code paths required | completed |
+| LF5 | Normalize span attributes via shared mapper | Trace attributes are repeated in multiple workflow execution paths and are inconsistent across span types | Common attribute helpers apply stable canonical attributes (`trace_id`, `tenant.*`, workflow/node identifiers) across workflow/node/tool/handler spans | completed |
+| LF6 | Add Langfuse-friendly alias attributes without breaking canonical keys | Langfuse query/filter UX benefits from conventional keys, but internal contracts should stay stable | Each relevant span includes `langfuse.user.id`/`langfuse.session.id` aliases (and optional `user.id`/`session.id`) alongside existing canonical attrs | completed |
+| LF7 | Expand tracing test suite for config and exporter matrix | Clean-break refactor must be hardened against config regressions and protocol miswiring | Unit tests cover env parsing, validation, protocol selection, header parsing, and provider creation behavior | completed |
+| LF8 | Add runtime-level tracing regression tests in workflow runner | Span attribute consistency and trace metadata behavior are critical runtime contracts | Tests assert consistent attribute propagation and no regressions in trace ID, sampling, and tenant metadata output | completed |
+| LF9 | Add integration tests for Langfuse-style OTLP HTTP ingestion | We need confidence that emitted traces can be delivered to HTTP OTLP endpoints with required headers | Mock HTTP OTLP test validates request endpoint, headers, and successful exporter flush path | pending |
+| LF10 | Update cross-language docs and operational runbooks | This is a clean-break config change and needs exact setup instructions to avoid rollout failures | Updated docs for Rust/Go/Node/Python users, plus a focused OTEL configuration guide with Jaeger and Langfuse examples and troubleshooting | completed |
+| LF11 | Run full quality gates and release validation | Refactor touches core runtime and observability contracts; must pass all gates before merge | `make fmt`, `make clippy`, `make test-rust`, `make test-binding-contracts`, and `make test-binding-layers` pass with no regressions | blocked |
+
+## Technical notes
+
+- Rust remains source-of-truth for tracing behavior and schema.
+- Bindings should remain pass-through for workflow options (no duplicated backend logic).
+- Single endpoint per process remains the default design; multi-destination fan-out is delegated to OTEL Collector.
+- LF11 is currently blocked by existing local Node/N-API environment issues (`index.node` missing in layered tests and unresolved `napi_*` symbols during node contract build).

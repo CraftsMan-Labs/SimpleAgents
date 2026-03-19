@@ -117,3 +117,11 @@ Workflow telemetry options follow Rust runner semantics:
 - `workflowOptions.telemetry.sample_rate` must be between `0.0` and `1.0`.
 - Sampling is deterministic per trace id.
 - Final output metadata includes `metadata.telemetry.sampled`.
+
+Tracing exporter env configuration is shared across runtimes:
+
+- `SIMPLE_AGENTS_TRACING_ENABLED`
+- `OTEL_EXPORTER_OTLP_ENDPOINT`
+- `OTEL_EXPORTER_OTLP_PROTOCOL` (`grpc` or `http/protobuf`)
+- `OTEL_EXPORTER_OTLP_HEADERS`
+- `OTEL_SERVICE_NAME`
