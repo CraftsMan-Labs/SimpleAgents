@@ -2738,7 +2738,7 @@ checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
 
 [[package]]
 name = "simple-agent-type"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2753,7 +2753,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2762,7 +2762,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "clap",
  "serde",
@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2797,7 +2797,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-examples"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2812,7 +2812,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2828,7 +2828,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "criterion",
  "proptest",
@@ -2844,7 +2844,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "futures-util",
  "napi",
@@ -2874,7 +2874,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2903,7 +2903,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2923,7 +2923,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2935,7 +2935,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2958,7 +2958,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow-workers"
-version = "0.2.25"
+version = "0.2.26"
 dependencies = [
  "async-trait",
  "prost",
