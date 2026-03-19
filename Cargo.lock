@@ -1517,6 +1517,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "napi-build"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d376940fd5b723c6893cd1ee3f33abbfd86acb1cd1ec079f3ab04a2a3bc4d3b1"
+
+[[package]]
 name = "napi-derive"
 version = "2.16.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2818,6 +2824,7 @@ version = "0.2.22"
 dependencies = [
  "futures-util",
  "napi",
+ "napi-build",
  "napi-derive",
  "serde",
  "serde_json",

@@ -22,3 +22,6 @@ simple-agents-providers = { path = "../simple-agents-providers", version = "0.2.
 simple-agent-type = { workspace = true }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.22" }
 simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.2.22" }
+
+[build-dependencies]
+napi-build = "2.1"
