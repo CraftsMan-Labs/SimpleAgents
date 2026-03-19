@@ -53,17 +53,15 @@ fn response_format_is_strict_json_schema(response_format: &serde_json::Value) ->
         .get("json_schema")
         .and_then(|json_schema| json_schema.get("strict"))
         .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true)
+        .unwrap_or(false)
 }
 
 fn enforce_strict_object_schema(schema: &mut serde_json::Value) {
     match schema {
         serde_json::Value::Object(map) => {
             if type_includes_object(map.get("type")) {
-                map.insert(
-                    "additionalProperties".to_string(),
-                    serde_json::Value::Bool(false),
-                );
+                map.entry("additionalProperties".to_string())
+                    .or_insert(serde_json::Value::Bool(false));
             }
 
             for key in ["properties", "$defs", "definitions", "dependentSchemas"] {
@@ -1008,6 +1006,67 @@ mod tests {
             provider_request.body["response_format"]["json_schema"]["schema"]
                 ["additionalProperties"],
             serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn test_transform_request_does_not_normalize_when_strict_omitted() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4.1")
+            .message(Message::user("Extract person"))
+            .response_format(ResponseFormat::JsonSchema {
+                json_schema: simple_agent_type::request::JsonSchemaFormat {
+                    name: "person".to_string(),
+                    schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"}
+                        },
+                        "required": ["name"]
+                    }),
+                    strict: None,
+                },
+            })
+            .build()
+            .unwrap();
+
+        let provider_request = provider.transform_request(&request).unwrap();
+        assert_eq!(
+            provider_request.body["response_format"]["json_schema"]["schema"]
+                ["additionalProperties"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
+    fn test_transform_request_preserves_existing_additional_properties_schema() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4.1")
+            .message(Message::user("Extract map"))
+            .response_format(ResponseFormat::JsonSchema {
+                json_schema: simple_agent_type::request::JsonSchemaFormat {
+                    name: "kv_map".to_string(),
+                    schema: json!({
+                        "type": "object",
+                        "additionalProperties": {"type": "string"}
+                    }),
+                    strict: Some(true),
+                },
+            })
+            .build()
+            .unwrap();
+
+        let provider_request = provider.transform_request(&request).unwrap();
+        assert_eq!(
+            provider_request.body["response_format"]["json_schema"]["schema"]
+                ["additionalProperties"],
+            json!({"type": "string"})
         );
     }
 
