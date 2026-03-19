@@ -45,4 +45,6 @@ export OTEL_SERVICE_NAME=simple-agents-workflow
 ## Notes
 
 - Header entries must use `key=value` format and be comma-separated.
+- For `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_EXPORTER_OTLP_ENDPOINT` can be a base OTLP URL (for example `http://localhost:4318`); runtime sends traces to the traces signal endpoint (`.../v1/traces`).
+- `OTEL_EXPORTER_OTLP_HEADERS` is applied for both `grpc` and `http/protobuf` exporters.
 - Runtime uses a single OTLP destination per process. Use an OpenTelemetry Collector for fan-out.
