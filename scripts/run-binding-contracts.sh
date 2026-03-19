@@ -11,6 +11,7 @@ make -C "${ROOT_DIR}" test-go-bindings
 
 echo "==> Running Node binding contract tests"
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" ci
+npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" run build:debug
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" test
 
 echo "==> Running Python binding contract tests"
