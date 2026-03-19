@@ -8,6 +8,7 @@ use opentelemetry::{Context, KeyValue};
 use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
 use opentelemetry_sdk::{propagation::TraceContextPropagator, Resource};
+use tonic::metadata::{AsciiMetadataKey, MetadataMap, MetadataValue};
 
 pub const ENV_TRACING_ENABLED: &str = "SIMPLE_AGENTS_TRACING_ENABLED";
 pub const ENV_OTLP_ENDPOINT: &str = "OTEL_EXPORTER_OTLP_ENDPOINT";
@@ -205,21 +206,54 @@ impl OtlpExporterFactory {
         config: &TracingConfig,
     ) -> Result<opentelemetry_otlp::SpanExporter, String> {
         match config.protocol {
-            OtlpProtocol::Grpc => opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_protocol(config.protocol.to_otlp_protocol())
-                .with_endpoint(config.endpoint.clone())
-                .build_span_exporter()
-                .map_err(|error| error.to_string()),
+            OtlpProtocol::Grpc => {
+                let builder = opentelemetry_otlp::new_exporter()
+                    .tonic()
+                    .with_protocol(config.protocol.to_otlp_protocol())
+                    .with_endpoint(config.endpoint.clone());
+                let builder = if config.headers.is_empty() {
+                    builder
+                } else {
+                    builder.with_metadata(grpc_metadata_from_headers(&config.headers)?)
+                };
+                builder
+                    .build_span_exporter()
+                    .map_err(|error| error.to_string())
+            }
             OtlpProtocol::HttpProtobuf => opentelemetry_otlp::new_exporter()
                 .http()
                 .with_protocol(config.protocol.to_otlp_protocol())
-                .with_endpoint(config.endpoint.clone())
+                .with_endpoint(normalize_http_traces_endpoint(&config.endpoint))
                 .with_headers(config.headers.clone())
                 .build_span_exporter()
                 .map_err(|error| error.to_string()),
         }
     }
+}
+
+fn normalize_http_traces_endpoint(endpoint: &str) -> String {
+    let trimmed = endpoint.trim();
+    if trimmed.is_empty() {
+        return "/v1/traces".to_string();
+    }
+    let without_trailing_slash = trimmed.trim_end_matches('/');
+    if without_trailing_slash.ends_with("/v1/traces") {
+        return without_trailing_slash.to_string();
+    }
+    format!("{without_trailing_slash}/v1/traces")
+}
+
+fn grpc_metadata_from_headers(headers: &HashMap<String, String>) -> Result<MetadataMap, String> {
+    let mut metadata = MetadataMap::new();
+    for (name, value) in headers {
+        let key = AsciiMetadataKey::from_bytes(name.as_bytes())
+            .map_err(|_| format!("{ENV_OTLP_HEADERS} has invalid gRPC header key '{name}'"))?;
+        let metadata_value = MetadataValue::try_from(value.as_str()).map_err(|_| {
+            format!("{ENV_OTLP_HEADERS} has invalid gRPC header value for key '{name}'")
+        })?;
+        metadata.insert(key, metadata_value);
+    }
+    Ok(metadata)
 }
 
 static WORKFLOW_TRACER: OnceLock<Box<dyn WorkflowTracer>> = OnceLock::new();
@@ -396,9 +430,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{
-        parse_headers, NoopWorkflowTracer, OtlpProtocol, SpanKind, TraceContext, TracingConfig,
-        WorkflowTracer, ENV_OTLP_ENDPOINT, ENV_OTLP_HEADERS, ENV_OTLP_PROTOCOL,
-        ENV_TRACING_ENABLED,
+        grpc_metadata_from_headers, normalize_http_traces_endpoint, parse_headers,
+        NoopWorkflowTracer, OtlpProtocol, SpanKind, TraceContext, TracingConfig, WorkflowTracer,
+        ENV_OTLP_ENDPOINT, ENV_OTLP_HEADERS, ENV_OTLP_PROTOCOL, ENV_TRACING_ENABLED,
     };
 
     #[test]
@@ -476,5 +510,34 @@ mod tests {
         let error = TracingConfig::from_lookup(|key| values.get(key).cloned())
             .expect_err("invalid protocol should fail");
         assert!(error.contains(ENV_OTLP_PROTOCOL));
+    }
+
+    #[test]
+    fn http_endpoint_normalizer_appends_v1_traces() {
+        assert_eq!(
+            normalize_http_traces_endpoint("http://localhost:4318"),
+            "http://localhost:4318/v1/traces"
+        );
+        assert_eq!(
+            normalize_http_traces_endpoint("http://localhost:4318/"),
+            "http://localhost:4318/v1/traces"
+        );
+        assert_eq!(
+            normalize_http_traces_endpoint("https://cloud.langfuse.com/api/public/otel"),
+            "https://cloud.langfuse.com/api/public/otel/v1/traces"
+        );
+        assert_eq!(
+            normalize_http_traces_endpoint("https://example.com/v1/traces"),
+            "https://example.com/v1/traces"
+        );
+    }
+
+    #[test]
+    fn grpc_metadata_builder_rejects_invalid_keys() {
+        let mut headers = HashMap::new();
+        headers.insert("Invalid Header".to_string(), "value".to_string());
+        let error =
+            grpc_metadata_from_headers(&headers).expect_err("invalid metadata key should fail");
+        assert!(error.contains(ENV_OTLP_HEADERS));
     }
 }
