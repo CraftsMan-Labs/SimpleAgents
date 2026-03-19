@@ -4167,8 +4167,10 @@ async fn try_run_yaml_via_ir_runtime(
         trace_sampled: telemetry_context.sampled,
     };
 
-    let mut runtime_options = WorkflowRuntimeOptions::default();
-    runtime_options.validate_before_run = false;
+    let runtime_options = WorkflowRuntimeOptions {
+        validate_before_run: false,
+        ..WorkflowRuntimeOptions::default()
+    };
     let runtime = WorkflowRuntime::new(ir, &NoopLlm, Some(&tool_executor), runtime_options);
 
     let started = Instant::now();
@@ -7614,8 +7616,7 @@ nodes:
         );
         assert!(span
             .attributes
-            .get("langfuse.trace.metadata.nerdstats")
-            .is_some());
+            .contains_key("langfuse.trace.metadata.nerdstats"));
     }
 
     #[test]
@@ -7665,8 +7666,7 @@ nodes:
         );
         assert!(span
             .attributes
-            .get("langfuse.trace.metadata.usage_details")
-            .is_some());
+            .contains_key("langfuse.trace.metadata.usage_details"));
     }
 
     #[test]
@@ -7706,8 +7706,7 @@ nodes:
         );
         assert!(span
             .attributes
-            .get("langfuse.observation.usage_details")
-            .is_some());
+            .contains_key("langfuse.observation.usage_details"));
     }
 
     #[tokio::test]
