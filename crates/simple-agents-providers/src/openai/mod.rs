@@ -23,6 +23,93 @@ use std::time::Duration;
 use crate::healing_integration::{HealingConfig, HealingIntegration};
 use crate::utils::DEFAULT_TIMEOUT;
 
+pub(crate) fn normalize_openai_strict_json_schema(body: &mut serde_json::Value) {
+    let Some(response_format) = body.get_mut("response_format") else {
+        return;
+    };
+    if !response_format_is_strict_json_schema(response_format) {
+        return;
+    }
+    let Some(schema) = response_format
+        .get_mut("json_schema")
+        .and_then(|json_schema| json_schema.get_mut("schema"))
+    else {
+        return;
+    };
+    enforce_strict_object_schema(schema);
+}
+
+fn response_format_is_strict_json_schema(response_format: &serde_json::Value) -> bool {
+    let is_json_schema = response_format
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .map(|value| value == "json_schema")
+        .unwrap_or(false);
+    if !is_json_schema {
+        return false;
+    }
+
+    response_format
+        .get("json_schema")
+        .and_then(|json_schema| json_schema.get("strict"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(true)
+}
+
+fn enforce_strict_object_schema(schema: &mut serde_json::Value) {
+    match schema {
+        serde_json::Value::Object(map) => {
+            if type_includes_object(map.get("type")) {
+                map.insert(
+                    "additionalProperties".to_string(),
+                    serde_json::Value::Bool(false),
+                );
+            }
+
+            for key in ["properties", "$defs", "definitions", "dependentSchemas"] {
+                if let Some(serde_json::Value::Object(children)) = map.get_mut(key) {
+                    for value in children.values_mut() {
+                        enforce_strict_object_schema(value);
+                    }
+                }
+            }
+
+            for key in ["items", "contains", "if", "then", "else", "not"] {
+                if let Some(value) = map.get_mut(key) {
+                    enforce_strict_object_schema(value);
+                }
+            }
+
+            for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+                if let Some(serde_json::Value::Array(values)) = map.get_mut(key) {
+                    for value in values {
+                        enforce_strict_object_schema(value);
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                enforce_strict_object_schema(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn type_includes_object(type_field: Option<&serde_json::Value>) -> bool {
+    match type_field {
+        Some(serde_json::Value::String(value)) => value == "object",
+        Some(serde_json::Value::Array(values)) => values.iter().any(|entry| {
+            entry
+                .as_str()
+                .map(|value| value == "object")
+                .unwrap_or(false)
+        }),
+        _ => false,
+    }
+}
+
 /// OpenAI API provider
 #[derive(Clone)]
 pub struct OpenAIProvider {
@@ -277,6 +364,7 @@ impl Provider for OpenAIProvider {
         };
 
         let mut body = serde_json::to_value(&openai_request)?;
+        normalize_openai_strict_json_schema(&mut body);
         self.embed_healing_schema(&mut body, req)?;
 
         Ok(ProviderRequest {
@@ -844,6 +932,82 @@ mod tests {
         assert_eq!(
             provider_request.body["stream_options"]["include_usage"],
             true
+        );
+    }
+
+    #[test]
+    fn test_transform_request_normalizes_strict_json_schema_objects() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4.1")
+            .message(Message::user("Extract person"))
+            .response_format(ResponseFormat::JsonSchema {
+                json_schema: simple_agent_type::request::JsonSchemaFormat {
+                    name: "person".to_string(),
+                    schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "meta": {
+                                "type": "object",
+                                "properties": {
+                                    "city": {"type": "string"}
+                                },
+                                "required": ["city"]
+                            }
+                        },
+                        "required": ["name", "meta"]
+                    }),
+                    strict: Some(true),
+                },
+            })
+            .build()
+            .unwrap();
+
+        let provider_request = provider.transform_request(&request).unwrap();
+        assert_eq!(
+            provider_request.body["response_format"]["json_schema"]["schema"]
+                ["additionalProperties"],
+            json!(false)
+        );
+        assert_eq!(
+            provider_request.body["response_format"]["json_schema"]["schema"]["properties"]["meta"]
+                ["additionalProperties"],
+            json!(false)
+        );
+    }
+
+    #[test]
+    fn test_transform_request_does_not_normalize_non_strict_json_schema() {
+        let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
+        let provider = OpenAIProvider::new(api_key).unwrap();
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4.1")
+            .message(Message::user("Extract person"))
+            .response_format(ResponseFormat::JsonSchema {
+                json_schema: simple_agent_type::request::JsonSchemaFormat {
+                    name: "person".to_string(),
+                    schema: json!({
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string"}
+                        },
+                        "required": ["name"]
+                    }),
+                    strict: Some(false),
+                },
+            })
+            .build()
+            .unwrap();
+
+        let provider_request = provider.transform_request(&request).unwrap();
+        assert_eq!(
+            provider_request.body["response_format"]["json_schema"]["schema"]
+                ["additionalProperties"],
+            serde_json::Value::Null
         );
     }
 
