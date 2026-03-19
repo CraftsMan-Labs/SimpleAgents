@@ -48,6 +48,11 @@ Tracing exporter configuration is clean-break and OTLP-native:
 - `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k2=v2`)
 - `OTEL_SERVICE_NAME`
 
+Notes:
+
+- For `http/protobuf`, endpoint can be a base OTLP URL; traces are emitted to the traces signal path (`/v1/traces`).
+- OTLP headers are applied in both `grpc` and `http/protobuf` modes.
+
 ### Jaeger / Collector example
 
 ```bash
