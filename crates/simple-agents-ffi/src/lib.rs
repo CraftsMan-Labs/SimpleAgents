@@ -157,8 +157,13 @@ impl CallbackWorkflowEventSink {
     }
 }
 
-// Safe because callback/user_data ownership belongs to the caller; this sink only forwards events.
+// SAFETY:
+// - The sink does not dereference `user_data`; it forwards the raw pointer back to the caller's callback.
+// - `callback` is an immutable function pointer copied by value.
+// - Shared mutable state inside the sink is guarded by `Mutex<bool>`.
+// - FFI callers are responsible for ensuring `user_data` remains valid for the callback lifetime.
 unsafe impl Send for CallbackWorkflowEventSink {}
+// SAFETY: same invariants as `Send`; no additional aliasing or ownership assumptions are introduced.
 unsafe impl Sync for CallbackWorkflowEventSink {}
 
 impl YamlWorkflowEventSink for CallbackWorkflowEventSink {
