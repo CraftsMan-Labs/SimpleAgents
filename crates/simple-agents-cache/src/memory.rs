@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use simple_agent_type::cache::Cache;
 use simple_agent_type::error::Result;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
@@ -15,19 +15,90 @@ struct CacheEntry {
     data: Vec<u8>,
     /// When this entry expires
     expires_at: Instant,
-    /// Last time this entry was accessed (for LRU)
-    last_accessed: Instant,
+    /// Logical access tick used for LRU ordering.
+    access_tick: u64,
 }
 
-impl CacheEntry {
-    /// Check if this entry has expired.
-    fn is_expired(&self) -> bool {
-        Instant::now() >= self.expires_at
+#[derive(Debug, Default)]
+struct CacheState {
+    store: HashMap<String, CacheEntry>,
+    access_order: VecDeque<(String, u64)>,
+    total_size: usize,
+    next_tick: u64,
+}
+
+impl CacheState {
+    fn next_access_tick(&mut self) -> u64 {
+        self.next_tick = self.next_tick.saturating_add(1);
+        self.next_tick
     }
 
-    /// Update the last accessed time.
-    fn touch(&mut self) {
-        self.last_accessed = Instant::now();
+    fn is_expired(entry: &CacheEntry) -> bool {
+        Instant::now() >= entry.expires_at
+    }
+
+    fn touch_key(&mut self, key: &str) {
+        let tick = self.next_access_tick();
+        if let Some(entry) = self.store.get_mut(key) {
+            entry.access_tick = tick;
+            self.access_order.push_back((key.to_string(), tick));
+        }
+    }
+
+    fn upsert(&mut self, key: &str, value: Vec<u8>, ttl: Duration) {
+        let tick = self.next_access_tick();
+        if let Some(previous) = self.store.get(key) {
+            self.total_size = self.total_size.saturating_sub(previous.data.len());
+        }
+
+        self.total_size = self.total_size.saturating_add(value.len());
+        self.store.insert(
+            key.to_string(),
+            CacheEntry {
+                data: value,
+                expires_at: Instant::now() + ttl,
+                access_tick: tick,
+            },
+        );
+        self.access_order.push_back((key.to_string(), tick));
+    }
+
+    fn remove_key(&mut self, key: &str) {
+        if let Some(entry) = self.store.remove(key) {
+            self.total_size = self.total_size.saturating_sub(entry.data.len());
+        }
+    }
+
+    fn evict_expired(&mut self) {
+        let now = Instant::now();
+        self.store.retain(|_, entry| {
+            if now >= entry.expires_at {
+                self.total_size = self.total_size.saturating_sub(entry.data.len());
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    fn evict_lru_until_within_limits(&mut self, max_size: usize, max_entries: usize) {
+        let over_size = |total_size: usize| max_size > 0 && total_size > max_size;
+        let over_count = |entry_count: usize| max_entries > 0 && entry_count > max_entries;
+
+        while over_size(self.total_size) || over_count(self.store.len()) {
+            let Some((key, tick)) = self.access_order.pop_front() else {
+                break;
+            };
+
+            let should_remove = self
+                .store
+                .get(key.as_str())
+                .is_some_and(|entry| entry.access_tick == tick);
+
+            if should_remove {
+                self.remove_key(key.as_str());
+            }
+        }
     }
 }
 
@@ -52,8 +123,8 @@ impl CacheEntry {
 /// # }
 /// ```
 pub struct InMemoryCache {
-    /// The cache store
-    store: Arc<RwLock<HashMap<String, CacheEntry>>>,
+    /// Shared cache state.
+    state: Arc<RwLock<CacheState>>,
     /// Maximum total size in bytes
     max_size: usize,
     /// Maximum number of entries
@@ -68,63 +139,9 @@ impl InMemoryCache {
     /// - `max_entries`: Maximum number of entries (0 = unlimited)
     pub fn new(max_size: usize, max_entries: usize) -> Self {
         Self {
-            store: Arc::new(RwLock::new(HashMap::new())),
+            state: Arc::new(RwLock::new(CacheState::default())),
             max_size,
             max_entries,
-        }
-    }
-
-    /// Evict expired entries from the cache.
-    async fn evict_expired(&self) {
-        let mut store = self.store.write().await;
-        store.retain(|_, entry| !entry.is_expired());
-    }
-
-    /// Evict least recently used entries to enforce size/count limits.
-    async fn evict_lru(&self) {
-        let mut store = self.store.write().await;
-
-        // Calculate current size
-        let current_size: usize = store.values().map(|e| e.data.len()).sum();
-
-        // Check if we need to evict based on size or entry count
-        let needs_eviction = (self.max_size > 0 && current_size > self.max_size)
-            || (self.max_entries > 0 && store.len() > self.max_entries);
-
-        if !needs_eviction {
-            return;
-        }
-
-        // Sort entries by last accessed time (oldest first)
-        let mut entries: Vec<_> = store
-            .iter()
-            .map(|(k, v)| (k.clone(), v.last_accessed, v.data.len()))
-            .collect();
-        entries.sort_by_key(|(_, accessed, _)| *accessed);
-
-        // Remove oldest entries until we're under the limit
-        let mut remaining_size = current_size;
-        let mut remaining_count = store.len();
-        let mut entries_to_remove = Vec::new();
-
-        for (key, _, size) in entries {
-            // Check if we're now under both limits
-            let under_size_limit = self.max_size == 0 || remaining_size <= self.max_size;
-            let under_count_limit = self.max_entries == 0 || remaining_count <= self.max_entries;
-
-            if under_size_limit && under_count_limit {
-                break;
-            }
-
-            // Mark this entry for removal
-            remaining_size = remaining_size.saturating_sub(size);
-            remaining_count = remaining_count.saturating_sub(1);
-            entries_to_remove.push(key);
-        }
-
-        // Remove the marked entries
-        for key in entries_to_remove {
-            store.remove(&key);
         }
     }
 }
@@ -132,74 +149,41 @@ impl InMemoryCache {
 #[async_trait]
 impl Cache for InMemoryCache {
     async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        {
-            let store = self.store.read().await;
-            match store.get(key) {
-                Some(entry) if !entry.is_expired() => {
-                    drop(store);
-
-                    let mut store = self.store.write().await;
-                    if let Some(entry) = store.get_mut(key) {
-                        if entry.is_expired() {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-
-                        entry.touch();
-                        return Ok(Some(entry.data.clone()));
-                    }
-
-                    return Ok(None);
-                }
-                Some(_) => {} // expired; clean up below
-                None => return Ok(None),
+        let mut state = self.state.write().await;
+        match state.store.get(key) {
+            Some(entry) if CacheState::is_expired(entry) => {
+                state.remove_key(key);
+                Ok(None)
             }
-        }
-
-        let mut store = self.store.write().await;
-        if let Some(entry) = store.get_mut(key) {
-            if entry.is_expired() {
-                store.remove(key);
-                return Ok(None);
+            Some(_) => {
+                let value = state.store.get(key).map(|entry| entry.data.clone());
+                state.touch_key(key);
+                Ok(value)
             }
-
-            entry.touch();
-            Ok(Some(entry.data.clone()))
-        } else {
-            Ok(None)
+            None => Ok(None),
         }
     }
 
     async fn set(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<()> {
-        let entry = CacheEntry {
-            data: value,
-            expires_at: Instant::now() + ttl,
-            last_accessed: Instant::now(),
-        };
-
-        {
-            let mut store = self.store.write().await;
-            store.insert(key.to_string(), entry);
-        }
-
-        // Periodically clear expired entries before enforcing limits
-        self.evict_expired().await;
-
-        // Evict if needed
-        self.evict_lru().await;
+        let mut state = self.state.write().await;
+        state.upsert(key, value, ttl);
+        state.evict_expired();
+        state.evict_lru_until_within_limits(self.max_size, self.max_entries);
 
         Ok(())
     }
 
     async fn delete(&self, key: &str) -> Result<()> {
-        let mut store = self.store.write().await;
-        store.remove(key);
+        let mut state = self.state.write().await;
+        state.remove_key(key);
         Ok(())
     }
 
     async fn clear(&self) -> Result<()> {
-        let mut store = self.store.write().await;
-        store.clear();
+        let mut state = self.state.write().await;
+        state.store.clear();
+        state.access_order.clear();
+        state.total_size = 0;
         Ok(())
     }
 
@@ -310,11 +294,14 @@ mod tests {
             .unwrap();
 
         // After eviction, we should have at most 2 entries
-        let store = cache.store.read().await;
-        assert!(store.len() <= 2, "Cache should not exceed max_entries");
+        let store = cache.state.read().await;
+        assert!(
+            store.store.len() <= 2,
+            "Cache should not exceed max_entries"
+        );
         // key3 (most recent) should definitely exist
         assert!(
-            store.contains_key("key3"),
+            store.store.contains_key("key3"),
             "Most recently added key should exist"
         );
     }
@@ -372,5 +359,22 @@ mod tests {
     async fn test_cache_name() {
         let cache = InMemoryCache::new(1024, 10);
         assert_eq!(cache.name(), "in-memory");
+    }
+
+    #[tokio::test]
+    async fn test_update_existing_key_keeps_latest_value() {
+        let cache = InMemoryCache::new(6, 2);
+
+        cache
+            .set("key", b"abc".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
+        cache
+            .set("key", b"abcdef".to_vec(), Duration::from_secs(60))
+            .await
+            .unwrap();
+
+        let value = cache.get("key").await.unwrap();
+        assert_eq!(value, Some(b"abcdef".to_vec()));
     }
 }

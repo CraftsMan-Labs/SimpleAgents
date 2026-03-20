@@ -515,6 +515,7 @@ impl StreamChunk {
 #[pyclass]
 pub struct PyStreamIterator {
     stream: Option<Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>>,
+    runtime: Arc<Mutex<Runtime>>,
 }
 
 #[pymethods]
@@ -573,6 +574,7 @@ impl PyStreamIterator {
 
         Ok(Self {
             stream: Some(Box::pin(stream)),
+            runtime: Arc::clone(&client.runtime),
         })
     }
 
@@ -582,15 +584,19 @@ impl PyStreamIterator {
     }
 
     /// Iterator protocol: return next chunk or raise StopIteration.
-    fn __next__(mut slf: PyRefMut<'_, Self>) -> PyResult<Option<StreamChunk>> {
+    fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<StreamChunk>> {
+        let runtime = Arc::clone(&slf.runtime);
         let stream = slf
             .stream
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("Stream exhausted"))?;
 
-        // Create a new runtime just for this poll
-        let rt = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let result = rt.block_on(stream.next());
+        let result = py.allow_threads(|| {
+            let runtime = runtime
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+            Ok::<_, PyErr>(runtime.block_on(stream.next()))
+        })?;
 
         match result {
             Some(Ok(chunk)) => {
@@ -812,6 +818,7 @@ impl ResponseWithMetadata {
 #[pyclass]
 pub struct StructuredStreamIterator {
     stream: Option<StructuredStreamBox>,
+    runtime: Arc<Mutex<Runtime>>,
 }
 
 #[pymethods]
@@ -826,14 +833,18 @@ impl StructuredStreamIterator {
         mut slf: PyRefMut<'_, Self>,
         py: Python<'_>,
     ) -> PyResult<Option<PyStructuredEvent>> {
+        let runtime = Arc::clone(&slf.runtime);
         let stream = slf
             .stream
             .as_mut()
             .ok_or_else(|| PyRuntimeError::new_err("Stream exhausted"))?;
 
-        // Create a new runtime just for this poll
-        let rt = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let result = rt.block_on(stream.next());
+        let result = py.allow_threads(|| {
+            let runtime = runtime
+                .lock()
+                .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+            Ok::<_, PyErr>(runtime.block_on(stream.next()))
+        })?;
 
         match result {
             Some(Ok(rust_event)) => {
@@ -889,7 +900,7 @@ impl StructuredStreamIterator {
 
 #[pyclass]
 struct Client {
-    runtime: Mutex<Runtime>,
+    runtime: Arc<Mutex<Runtime>>,
     client: SimpleAgentsClient,
 }
 
@@ -1900,7 +1911,7 @@ impl ClientBuilder {
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(Client {
-            runtime: Mutex::new(runtime),
+            runtime: Arc::new(Mutex::new(runtime)),
             client,
         })
     }
@@ -2707,7 +2718,7 @@ impl Client {
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(Self {
-            runtime: Mutex::new(runtime),
+            runtime: Arc::new(Mutex::new(runtime)),
             client,
         })
     }
@@ -2777,8 +2788,10 @@ impl Client {
                 .runtime
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-            let outcome = runtime
-                .block_on(self.client.complete(&request, CompletionOptions::default()))
+            let outcome = py
+                .allow_threads(|| {
+                    runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+                })
                 .map_err(py_err)?;
             let stream = expect_stream(outcome)?;
 
@@ -2794,12 +2807,14 @@ impl Client {
                     StructuredStream::new(stream, schema_value, Some(healing));
                 let iterator = StructuredStreamIterator {
                     stream: Some(Box::pin(structured_stream)),
+                    runtime: Arc::clone(&self.runtime),
                 };
                 return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
             }
 
             let iterator = PyStreamIterator {
                 stream: Some(Box::pin(stream)),
+                runtime: Arc::clone(&self.runtime),
             };
             return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
         }
@@ -2811,18 +2826,20 @@ impl Client {
         let start = Instant::now();
 
         let outcome = if heal && response_plan.expects_json {
-            runtime
-                .block_on(self.client.complete(
+            py.allow_threads(|| {
+                runtime.block_on(self.client.complete(
                     &request,
                     CompletionOptions {
                         mode: CompletionMode::HealedJson,
                     },
                 ))
-                .map_err(py_err)?
+            })
+            .map_err(py_err)?
         } else {
-            runtime
-                .block_on(self.client.complete(&request, CompletionOptions::default()))
-                .map_err(py_err)?
+            py.allow_threads(|| {
+                runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+            })
+            .map_err(py_err)?
         };
 
         let latency_ms = start.elapsed().as_millis() as u64;
@@ -2884,8 +2901,8 @@ impl Client {
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
         let event_sink = RecordingWorkflowEventSink::new();
         let output = if include_events {
-            runtime
-                .block_on(
+            py.allow_threads(|| {
+                runtime.block_on(
                     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input,
@@ -2895,10 +2912,11 @@ impl Client {
                         &run_options,
                     ),
                 )
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            })
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         } else {
-            runtime
-                .block_on(
+            py.allow_threads(|| {
+                runtime.block_on(
                     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input,
@@ -2908,7 +2926,8 @@ impl Client {
                         &run_options,
                     ),
                 )
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            })
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         };
 
         let mut value = serde_json::to_value(output)
@@ -2964,8 +2983,8 @@ impl Client {
         let event_sink = RecordingWorkflowEventSink::new();
 
         let output = if include_events {
-            runtime
-                .block_on(
+            py.allow_threads(|| {
+                runtime.block_on(
                     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input_value,
@@ -2975,10 +2994,11 @@ impl Client {
                         &run_options,
                     ),
                 )
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            })
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         } else {
-            runtime
-                .block_on(
+            py.allow_threads(|| {
+                runtime.block_on(
                     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
                         workflow_path_buf.as_path(),
                         &workflow_input_value,
@@ -2988,7 +3008,8 @@ impl Client {
                         &run_options,
                     ),
                 )
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
+            })
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
         };
 
         let mut value = serde_json::to_value(output)
@@ -3041,17 +3062,19 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
         let event_sink = PythonWorkflowEventSink { callback: on_event };
-        let output = runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    workflow_path_buf.as_path(),
-                    &workflow_input,
-                    &self.client,
-                    Some(&custom_executor),
-                    Some(&event_sink),
-                    &run_options,
-                ),
-            )
+        let output = py
+            .allow_threads(|| {
+                runtime.block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                        workflow_path_buf.as_path(),
+                        &workflow_input,
+                        &self.client,
+                        Some(&custom_executor),
+                        Some(&event_sink),
+                        &run_options,
+                    ),
+                )
+            })
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
         let value = serde_json::to_value(output)
@@ -3101,17 +3124,19 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let custom_executor = PythonCustomWorkerExecutor { handlers_path };
         let event_sink = PythonWorkflowEventSink { callback: on_event };
-        let output = runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    workflow_path_buf.as_path(),
-                    &workflow_input_value,
-                    &self.client,
-                    Some(&custom_executor),
-                    Some(&event_sink),
-                    &run_options,
-                ),
-            )
+        let output = py
+            .allow_threads(|| {
+                runtime.block_on(
+                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
+                        workflow_path_buf.as_path(),
+                        &workflow_input_value,
+                        &self.client,
+                        Some(&custom_executor),
+                        Some(&event_sink),
+                        &run_options,
+                    ),
+                )
+            })
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
         let value = serde_json::to_value(output)
