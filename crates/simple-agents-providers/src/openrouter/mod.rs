@@ -41,7 +41,10 @@ use reqwest::Client;
 use simple_agent_type::prelude::*;
 use std::time::Duration;
 
-use crate::openai::{OpenAICompletionRequest, OpenAICompletionResponse, OpenAIStreamOptions};
+use crate::openai::{
+    normalize_openai_strict_json_schema, OpenAICompletionRequest, OpenAICompletionResponse,
+    OpenAIStreamOptions,
+};
 use crate::utils::DEFAULT_TIMEOUT;
 
 /// OpenRouter API provider.
@@ -192,7 +195,8 @@ impl Provider for OpenRouterProvider {
             tool_choice: req.tool_choice.as_ref(),
         };
 
-        let body = serde_json::to_value(&openai_request)?;
+        let mut body = serde_json::to_value(&openai_request)?;
+        normalize_openai_strict_json_schema(&mut body);
 
         Ok(ProviderRequest {
             url: format!("{}/chat/completions", self.base_url),
