@@ -164,6 +164,26 @@ let output = run_workflow_yaml_file_with_client(
 ).await?;
 ```
 
+Builder-style API (preferred for new code):
+
+```rust
+use serde_json::json;
+use simple_agents_workflow::WorkflowRunner;
+
+let output = WorkflowRunner::from_file(
+    std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
+)
+.with_client(&client)
+.with_input(&json!({ "email_text": "Need replacement", "messages": [] }))
+.run()
+.await?;
+```
+
+Compatibility note:
+
+- Existing `run_*` helper functions remain available as compatibility wrappers.
+- New integrations should prefer `WorkflowRunner` to avoid combinatorial API growth.
+
 Python examples:
 
 ```bash
