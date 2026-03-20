@@ -23,6 +23,7 @@ go test ./... -run 'TestGoBindingsFollowSharedContractFixture|TestValidateComple
 
 echo "==> Node unit tests"
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" ci
+npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" run build:debug
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" run test:unit
 
 echo "==> Node contract tests"

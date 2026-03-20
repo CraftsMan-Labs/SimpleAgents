@@ -397,7 +397,7 @@ version-patch:
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
 	sleep 1; \
-	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -422,7 +422,7 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -447,7 +447,7 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -482,7 +482,7 @@ version-set:
 		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
 		exit 1; \
 	fi; \
-	git add Cargo.toml crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
 	git commit -m "chore(release): bump version to $(VERSION)"; \
 	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
 	git push origin HEAD --follow-tags; \

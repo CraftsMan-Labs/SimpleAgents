@@ -395,7 +395,7 @@ mod tests {
             reasoning_tokens: Some(3),
         };
 
-        let json = serde_json::to_value(&usage).unwrap();
+        let json = serde_json::to_value(usage).unwrap();
         assert_eq!(
             json.get("reasoning_tokens").and_then(|v| v.as_u64()),
             Some(3)

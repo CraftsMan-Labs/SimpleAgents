@@ -1,6 +1,6 @@
 {
   "name": "simple-agents-node",
-  "version": "0.2.22",
+  "version": "0.2.26",
   "description": "Node.js bindings for SimpleAgents using napi-rs",
   "main": "index.js",
   "types": "index.d.ts",
@@ -14,6 +14,9 @@
     "build": "napi build --release",
     "build:debug": "napi build",
     "pretest": "npm run build:debug",
+    "pretest:unit": "npm run build:debug",
+    "pretest:contract": "npm run build:debug",
+    "pretest:live": "npm run build:debug",
     "test": "npm run test:unit && npm run test:contract",
     "test:unit": "node --test test/unit.test.js",
     "test:contract": "node --test test/contract.test.js",
