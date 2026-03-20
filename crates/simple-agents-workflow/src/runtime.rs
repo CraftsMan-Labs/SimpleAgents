@@ -16,8 +16,12 @@ use crate::ir::{MergePolicy, Node, NodeKind, ReduceOperation, WorkflowDefinition
 use crate::recorder::{TraceRecordError, TraceRecorder};
 use crate::replay::{replay_trace, ReplayError, ReplayReport};
 use crate::scheduler::DagScheduler;
+pub use crate::state::ScopeAccessError;
 use crate::trace::{TraceTerminalStatus, WorkflowTrace, WorkflowTraceMetadata};
 use crate::validation::{validate_and_normalize, ValidationErrors};
+
+mod scope;
+use scope::{RuntimeScope, ScopeCapability};
 
 /// Runtime configuration for workflow execution.
 #[derive(Debug, Clone)]
@@ -518,53 +522,6 @@ pub struct WorkflowRetryEvent {
     pub reason: String,
 }
 
-/// Scope access capabilities used by runtime nodes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScopeCapability {
-    LlmRead,
-    ToolRead,
-    ConditionRead,
-    LlmWrite,
-    ToolWrite,
-    ConditionWrite,
-    MapRead,
-    MapWrite,
-    ReduceWrite,
-}
-
-impl ScopeCapability {
-    fn as_str(self) -> &'static str {
-        match self {
-            Self::LlmRead => "llm_read",
-            Self::ToolRead => "tool_read",
-            Self::ConditionRead => "condition_read",
-            Self::LlmWrite => "llm_write",
-            Self::ToolWrite => "tool_write",
-            Self::ConditionWrite => "condition_write",
-            Self::MapRead => "map_read",
-            Self::MapWrite => "map_write",
-            Self::ReduceWrite => "reduce_write",
-        }
-    }
-}
-
-/// Typed read/write boundary failures for scoped runtime state.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum ScopeAccessError {
-    /// Node attempted to read scope with an invalid capability.
-    #[error("scope read denied for capability '{capability}'")]
-    ReadDenied {
-        /// Capability used for the read.
-        capability: &'static str,
-    },
-    /// Node attempted to write scope with an invalid capability.
-    #[error("scope write denied for capability '{capability}'")]
-    WriteDenied {
-        /// Capability used for the write.
-        capability: &'static str,
-    },
-}
-
 /// Runtime failures.
 #[derive(Debug, Error)]
 pub enum WorkflowRuntimeError {
@@ -1052,7 +1009,7 @@ impl<'a> WorkflowRuntime<'a> {
                     node_executions,
                     events,
                     retry_events,
-                    node_outputs: scope.node_outputs,
+                    node_outputs: scope.into_node_outputs_btree(),
                     trace,
                     replay_report,
                 });
@@ -2628,18 +2585,6 @@ impl<'a> WorkflowRuntime<'a> {
     }
 }
 
-#[derive(Debug)]
-struct RuntimeScope {
-    workflow_input: Value,
-    node_outputs: BTreeMap<String, Value>,
-    loop_iterations: HashMap<String, u32>,
-    debounce_last_seen: HashMap<String, usize>,
-    throttle_last_pass: HashMap<String, usize>,
-    cache_entries: BTreeMap<String, Value>,
-    last_llm_output: Option<String>,
-    last_tool_output: Option<Value>,
-}
-
 struct ToolPolicyRequest<'a> {
     step: usize,
     node: &'a Node,
@@ -2687,177 +2632,6 @@ struct MapNodeSpec<'a> {
     items_path: &'a str,
     next: &'a str,
     max_in_flight: Option<usize>,
-}
-
-impl RuntimeScope {
-    fn new(workflow_input: Value) -> Self {
-        Self {
-            workflow_input,
-            node_outputs: BTreeMap::new(),
-            loop_iterations: HashMap::new(),
-            debounce_last_seen: HashMap::new(),
-            throttle_last_pass: HashMap::new(),
-            cache_entries: BTreeMap::new(),
-            last_llm_output: None,
-            last_tool_output: None,
-        }
-    }
-
-    fn scoped_input(&self, capability: ScopeCapability) -> Result<Value, ScopeAccessError> {
-        if !matches!(
-            capability,
-            ScopeCapability::LlmRead
-                | ScopeCapability::ToolRead
-                | ScopeCapability::ConditionRead
-                | ScopeCapability::MapRead
-        ) {
-            return Err(ScopeAccessError::ReadDenied {
-                capability: capability.as_str(),
-            });
-        }
-
-        let mut object = Map::new();
-        object.insert("input".to_string(), self.workflow_input.clone());
-        object.insert(
-            "last_llm_output".to_string(),
-            self.last_llm_output
-                .as_ref()
-                .map_or(Value::Null, |value| Value::String(value.clone())),
-        );
-        object.insert(
-            "last_tool_output".to_string(),
-            self.last_tool_output.clone().unwrap_or(Value::Null),
-        );
-        object.insert(
-            "node_outputs".to_string(),
-            Value::Object(
-                self.node_outputs
-                    .iter()
-                    .map(|(key, value)| (key.clone(), value.clone()))
-                    .collect(),
-            ),
-        );
-        Ok(Value::Object(object))
-    }
-
-    fn record_llm_output(
-        &mut self,
-        node_id: &str,
-        output: String,
-        capability: ScopeCapability,
-    ) -> Result<(), ScopeAccessError> {
-        if capability != ScopeCapability::LlmWrite {
-            return Err(ScopeAccessError::WriteDenied {
-                capability: capability.as_str(),
-            });
-        }
-
-        self.last_llm_output = Some(output.clone());
-        self.node_outputs
-            .insert(node_id.to_string(), Value::String(output));
-        Ok(())
-    }
-
-    fn record_tool_output(
-        &mut self,
-        node_id: &str,
-        output: Value,
-        capability: ScopeCapability,
-    ) -> Result<(), ScopeAccessError> {
-        if capability != ScopeCapability::ToolWrite {
-            return Err(ScopeAccessError::WriteDenied {
-                capability: capability.as_str(),
-            });
-        }
-
-        self.last_tool_output = Some(output.clone());
-        self.node_outputs.insert(node_id.to_string(), output);
-        Ok(())
-    }
-
-    fn record_condition_output(
-        &mut self,
-        node_id: &str,
-        evaluated: bool,
-        capability: ScopeCapability,
-    ) -> Result<(), ScopeAccessError> {
-        if capability != ScopeCapability::ConditionWrite {
-            return Err(ScopeAccessError::WriteDenied {
-                capability: capability.as_str(),
-            });
-        }
-
-        self.node_outputs
-            .insert(node_id.to_string(), Value::Bool(evaluated));
-        Ok(())
-    }
-
-    fn record_node_output(
-        &mut self,
-        node_id: &str,
-        output: Value,
-        capability: ScopeCapability,
-    ) -> Result<(), ScopeAccessError> {
-        if !matches!(
-            capability,
-            ScopeCapability::MapWrite | ScopeCapability::ReduceWrite
-        ) {
-            return Err(ScopeAccessError::WriteDenied {
-                capability: capability.as_str(),
-            });
-        }
-
-        self.node_outputs.insert(node_id.to_string(), output);
-        Ok(())
-    }
-
-    fn node_output(&self, node_id: &str) -> Option<&Value> {
-        self.node_outputs.get(node_id)
-    }
-
-    fn loop_iteration(&self, node_id: &str) -> u32 {
-        self.loop_iterations.get(node_id).copied().unwrap_or(0)
-    }
-
-    fn set_loop_iteration(&mut self, node_id: &str, iteration: u32) {
-        self.loop_iterations.insert(node_id.to_string(), iteration);
-    }
-
-    fn clear_loop_iteration(&mut self, node_id: &str) {
-        self.loop_iterations.remove(node_id);
-    }
-
-    fn debounce(&mut self, node_id: &str, key: &str, step: usize, window_steps: u32) -> bool {
-        let namespaced = format!("{node_id}:{key}");
-        let window = window_steps as usize;
-        let suppressed = self
-            .debounce_last_seen
-            .get(&namespaced)
-            .is_some_and(|last| step.saturating_sub(*last) < window);
-        self.debounce_last_seen.insert(namespaced, step);
-        suppressed
-    }
-
-    fn throttle(&mut self, node_id: &str, key: &str, step: usize, window_steps: u32) -> bool {
-        let namespaced = format!("{node_id}:{key}");
-        let window = window_steps as usize;
-        let throttled = self
-            .throttle_last_pass
-            .get(&namespaced)
-            .is_some_and(|last| step.saturating_sub(*last) < window);
-        if !throttled {
-            self.throttle_last_pass.insert(namespaced, step);
-        }
-        throttled
-    }
-
-    fn put_cache(&mut self, key: &str, value: Value) {
-        self.cache_entries.insert(key.to_string(), value);
-    }
-
-    fn cache_value(&self, key: &str) -> Option<&Value> {
-        self.cache_entries.get(key)
-    }
 }
 
 fn check_cancelled(
