@@ -17,7 +17,7 @@ nodes:
     name: "Draft Warning Email"
     node_type:
       llm_call:
-        model: gemini-3-flash
+        model: azure/gpt-4.1-mini
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
