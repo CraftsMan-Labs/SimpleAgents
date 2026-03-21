@@ -3333,7 +3333,15 @@ edges:
 "#;
 
         let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
-        let output = run_email_workflow_yaml(&workflow, "test", &MockExecutor)
+        let custom_worker = FixedToolWorker {
+            payload: json!({"context":"mock"}),
+        };
+        let output = run_email_workflow_yaml_with_custom_worker(
+            &workflow,
+            "test",
+            &MockExecutor,
+            Some(&custom_worker),
+        )
             .await
             .expect("yaml workflow should execute");
 
