@@ -6,7 +6,7 @@
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
 	version-get version-sync version-patch version-minor version-major version-set \
-	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-readme-version
+	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-binding-lockfiles sync-readme-version
 
 EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
@@ -17,6 +17,9 @@ PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
 NAPI_PROJECT_DIR ?= crates/simple-agents-napi
 NAPI_PACKAGE_JSON ?= $(NAPI_PROJECT_DIR)/package.json
+NAPI_PACKAGE_LOCK ?= $(NAPI_PROJECT_DIR)/package-lock.json
+PYTHON_UV_LOCK ?= crates/simple-agents-py/uv.lock
+EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
 EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
@@ -332,6 +335,7 @@ version-get:
 version-sync:
 	@./scripts/sync-versions.sh
 	@$(MAKE) --no-print-directory sync-napi-version
+	@$(MAKE) --no-print-directory sync-binding-lockfiles
 	@$(MAKE) --no-print-directory sync-readme-version
 
 sync-napi-version:
@@ -345,6 +349,34 @@ sync-napi-version:
 		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
 	else \
 		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
+		exit 1; \
+	fi
+
+sync-binding-lockfiles:
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: sync-binding-lockfiles cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	if [ -f "$(NAPI_PROJECT_DIR)/package.json" ]; then \
+		if command -v npm >/dev/null 2>&1; then \
+			( cd "$(NAPI_PROJECT_DIR)" && npm install --package-lock-only --ignore-scripts >/dev/null ); \
+			echo "✓ Node package lock refreshed ($(NAPI_PACKAGE_LOCK))"; \
+		else \
+			echo "Error: npm is required to refresh $(NAPI_PACKAGE_LOCK)"; \
+			exit 1; \
+		fi; \
+	fi; \
+	if command -v uv >/dev/null 2>&1; then \
+		if [ -f "crates/simple-agents-py/pyproject.toml" ]; then \
+			UV_CACHE_DIR="$(CURDIR)/.uv-cache" uv lock --directory crates/simple-agents-py >/dev/null; \
+			echo "✓ Python lock refreshed ($(PYTHON_UV_LOCK))"; \
+		fi; \
+		if [ -f "examples/pyproject.toml" ]; then \
+			UV_CACHE_DIR="$(CURDIR)/.uv-cache" uv lock --directory examples >/dev/null; \
+			echo "✓ Examples lock refreshed ($(EXAMPLES_UV_LOCK))"; \
+		fi; \
+	else \
+		echo "Error: uv is required to refresh Python lockfiles"; \
 		exit 1; \
 	fi
 
@@ -397,7 +429,7 @@ version-patch:
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
 	sleep 1; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -422,7 +454,7 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -447,7 +479,7 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -473,16 +505,8 @@ version-set:
 	rm -f crates/simple-agents-py/pyproject.toml.bak; \
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
-	./scripts/sync-versions.sh; \
-	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
-	if [ -f "$(NAPI_PACKAGE_JSON)" ]; then \
-		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(NAPI_PACKAGE_JSON)" "$$version"; \
-		echo "✓ Node package version updated ($(NAPI_PACKAGE_JSON) -> $$version)"; \
-	else \
-		echo "⚠ NAPI package.json not found at $(NAPI_PACKAGE_JSON)"; \
-		exit 1; \
-	fi; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) README.md; \
+	$(MAKE) --no-print-directory version-sync; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $(VERSION)"; \
 	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
 	git push origin HEAD --follow-tags; \
