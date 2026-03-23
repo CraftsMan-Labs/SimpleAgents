@@ -1,7 +1,7 @@
 # Active TODO
 
-Date: 2026-03-20
-Purpose: Non-breaking remediation program for all findings under `code-review/`.
+Date: 2026-03-24
+Purpose: Deliver `simple-agents-wasm` with near-API parity to `simple-agents-node`, then integrate YamSLAM with WASM-first runtime and Node fallback during rollout.
 
 ## Status values
 
@@ -10,41 +10,37 @@ Purpose: Non-breaking remediation program for all findings under `code-review/`.
 - `completed`
 - `blocked`
 
-## Non-breaking constraints (applies to every task)
+## Rollout decisions (locked)
 
-1. Preserve existing public behavior across Rust/Python/Node/Go/FFI unless explicitly versioned + deprecated.
-2. Prefer additive changes (new builders/helpers/typed APIs) with compatibility wrappers first.
-3. Keep Rust as source of truth; bindings must reuse Rust behavior, not fork logic.
-4. Every fix must include regression tests for both success and failure paths.
-5. No unsafe expansion in core crates; FFI/Py unsafe invariants must be documented and tested.
+1. Keep `/api/complete` Node route as temporary fallback for one release while WASM path stabilizes.
+2. Browser workflow execution supports YAML string/object input only (no file path-based APIs in WASM).
+
+## Core constraints (applies to every task)
+
+1. Rust remains source-of-truth; WASM and Node bindings must reuse shared core behavior.
+2. Preserve public behavior unless change is intentional, documented, and parity-tested.
+3. Maintain explicit typed contracts and actionable errors across bindings.
+4. Add regression tests for success and failure paths for every behavior change.
+5. Do not leak secrets in logs, telemetry, or serialized payloads.
 
 ## Master tasks
 
 | ID | Task | Why this is needed | Expected outcome | Status |
 |---|---|---|---|---|
-| QR0 | Baseline and guardrails for remediation | Code-review metrics are partly stale; we need reproducible baselines before changing behavior | Baseline report checked in (counts, perf smoke, API surface map) and a remediation checklist that tracks true vs stale findings | completed |
-| QR1 | Fix critical Python binding runtime overhead and GIL blocking | Current Python path creates Tokio runtimes per stream poll and holds GIL during blocking calls | Single reused runtime for streaming iterators, `py.allow_threads` around blocking calls, and no behavior regressions in Python tests | completed |
-| QR2 | Eliminate workflow runtime hot-path cloning pressure | `RuntimeScope::scoped_input()` currently deep-clones accumulated outputs each step | Scoped-input path redesigned for lower allocation pressure with identical functional output and benchmark coverage | completed |
-| QR3 | Replace cache eviction strategy with true O(1)-style LRU behavior | Current memory cache sorts entries on eviction path and scales poorly under load | In-memory cache uses efficient eviction data structure, preserves TTL semantics, and passes cache behavior parity tests | completed |
-| QR4 | Remove production mock fallback behavior in YAML runner safely | Mock custom-worker output currently exists in production execution path | Runtime fails fast with actionable error when custom worker is missing; mock data moved to test-only fixtures | completed |
-| QR5 | Consolidate workflow run API without breaking callers | Workflow crate exposes combinatorial `run_*` functions causing API bloat | Introduce `WorkflowRunner` builder; keep existing `run_*` wrappers as backward-compatible adapters with deprecation notices/docs | completed |
-| QR6 | Decompose `yaml_runner.rs` and `runtime.rs` into focused modules | God-module/function complexity slows development and increases regression risk | Module split by responsibility (types/api/executor/telemetry/streaming/tools/validation/etc.) with unchanged external behavior | completed |
-| QR7 | Resolve duplicated/unsafe structural risks | Duplicate `ScopeAccessError`, weak unsafe invariants, stringly event types increase risk | Canonical error type ownership, explicit `// SAFETY:` contracts + tests, typed workflow event kinds, and reduced duplication | completed |
-| QR8 | Harden security boundaries from code-review findings | Need guardrails for path handling, YAML resource bounds, sensitive serialization, and protocol defaults | Path normalization policy, YAML size/depth limits, `ProviderConfig` secret-safe serialization, and safer HTTP client defaults | completed |
-| QR9 | Binding parity and DX quality improvements | Node/Go/Python surfaces have gaps vs Rust API quality and parity | Typed Node return types, parity tests expanded, shared binding utilities, and preserved runtime behavior across bindings | completed |
-| QR10 | Expand test strategy execution for high-risk subsystems | Workflow/router/cache/CLI and timing paths remain under-tested relative to risk | Priority test plan executed in phases (P0/P1 first), including integration and temporal tests for runtime/retry/cache/circuit-breaker | completed |
-| QR11 | Documentation and migration notes for non-breaking rollout | We need contributors and users to adopt new APIs safely | Updated docs: deprecations, builder migration, security/perf notes, and release checklist with compatibility guarantees | completed |
-| QR12 | Complete previous tracing carry-over tasks | Existing TODO has unresolved tracing integration/quality gate items | OTLP HTTP ingestion integration test complete and full quality gates pass (or blockers documented with remediation owner) | completed |
+| WS0 | Define parity contract and migration guardrails | WASM rollout needs clear compatibility targets before implementation | Versioned Node/WASM contract doc + migration rules + explicit non-parity exceptions approved | completed |
+| WS1 | Implement `simple-agents-wasm` package scaffold | Browser runtime cannot use N-API package directly | Publishable WASM package structure with loader, typed exports, and init flow | completed |
+| WS2 | Port completion + streaming APIs to WASM | Core LLM operations must match Node behavior | `Client.complete`, `Client.stream`, and `Client.streamEvents` function in browser with typed outputs | completed |
+| WS3 | Add browser-safe workflow execution APIs | Node path-based workflow APIs do not map to browser | `runWorkflowYamlString`/object-based workflow methods with explicit errors for path-only calls | completed |
+| WS4 | Build Node/WASM parity test suite | Near-replica claim must be enforced by tests | Shared fixtures verify response/event/type parity and document acceptable differences | pending |
+| WS5 | Integrate YamSLAM runtime adapter (WASM-first, Node fallback) | YamSLAM needs safe staged migration without breaking active users | Runtime selector defaults to WASM with opt-in or auto fallback to `/api/complete` route | pending |
+| WS6 | Security and DX hardening for browser BYOK | Browser runtime increases CORS and credential UX concerns | Redaction-safe logs, clear CORS/auth errors, and documented BYOK handling guarantees | pending |
+| WS7 | Deployability and release automation | Vercel deployment currently blocked by platform-specific native binary limits | WASM package release + YamSLAM deploy checklist pass + smoke tests green on Vercel preview | pending |
+| WS8 | Documentation and cutover plan | Users need adoption guidance and rollback path | Updated docs for WASM usage, fallback policy, known constraints, and final cutover steps | in_progress |
 
 ## Technical notes
 
-- Keep compatibility wrappers for at least one release cycle when introducing builder-based replacements.
-- Prioritize behavior-preserving refactors before semantic changes.
-- For every performance fix, add a benchmark and a correctness parity test.
-- For every security fix, add a negative test proving rejection behavior.
-- Track all subagent ownership in `SUBAGENT_TODO.md` mapped to `QR*` tasks.
-
-## Archive: previous tracing program
-
-- Prior tracking IDs `LF1`..`LF11` remain historically completed/blocked work from 2026-03-18.
-- Their active continuation is now represented by `QR12` above.
+- Keep `simple-agents-node` as server runtime fallback until WS4+WS7 pass and preview deployments are stable.
+- Keep browser API key handling explicit: forwarded only to target provider in WASM mode; if fallback is enabled, forwarded per-request to server runtime.
+- Do not expose file-system based workflow helpers in browser-facing APIs.
+- Prefer one adapter layer in YamSLAM (`runtime: "wasm" | "node"`) to avoid split logic throughout UI code.
+- Add parity-focused fixtures once and reuse them in Node + WASM test layers.
