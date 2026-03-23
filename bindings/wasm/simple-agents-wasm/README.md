@@ -47,5 +47,7 @@ console.log(result.content);
 - Browser mode still depends on provider CORS support.
 - `healed_json` and `schema` completion modes are not supported yet.
 - `runWorkflowYaml(workflowPath, ...)` is not supported in browser runtime.
-- `runWorkflowYamlString(...)` supports string-based workflow execution only.
+- `runWorkflowYamlString(...)` supports string-based workflow execution for:
+  - step workflows (`steps` DSL)
+  - graph workflows (`entry_node` + `nodes` + `edges`) with `llm_call`, `switch`, and `custom_worker`.
 - Use `hasRustBackend()` to check whether Rust wasm backend was loaded.

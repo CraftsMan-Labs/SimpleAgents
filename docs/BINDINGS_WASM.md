@@ -36,6 +36,7 @@ This document defines the current browser-compatible binding surface for
 WASM/browser flow support is string/object based:
 
 - Implemented: `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
+  - Supports step DSL (`steps`) and graph YAML (`entry_node` + `nodes` + `edges`) for `llm_call`, `switch`, and `custom_worker` node types.
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
 
 ## Security and deployment notes
