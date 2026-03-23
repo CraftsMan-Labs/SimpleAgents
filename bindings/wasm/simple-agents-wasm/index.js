@@ -127,11 +127,98 @@ function parseWorkflow(yamlText) {
     throw configError("workflow YAML must parse to an object");
   }
 
-  if (!Array.isArray(parsed.steps)) {
-    throw configError("workflow YAML must contain a steps array");
+  if (!Array.isArray(parsed.steps) && !isGraphWorkflow(parsed)) {
+    throw configError(
+      "workflow YAML must contain either a steps array or graph fields (entry_node + nodes)"
+    );
   }
 
   return parsed;
+}
+
+function isGraphWorkflow(doc) {
+  return (
+    doc &&
+    typeof doc === "object" &&
+    typeof doc.entry_node === "string" &&
+    Array.isArray(doc.nodes)
+  );
+}
+
+function getPathValue(source, path) {
+  if (!source || typeof source !== "object") {
+    return undefined;
+  }
+
+  const normalized = String(path).trim().replace(/^\$\./, "");
+  const tokens = normalized.split(".").filter((token) => token.length > 0);
+  let current = source;
+  for (const token of tokens) {
+    if (!current || typeof current !== "object") {
+      return undefined;
+    }
+    current = current[token];
+  }
+  return current;
+}
+
+function interpolatePathTemplate(template, context) {
+  if (typeof template !== "string") {
+    return "";
+  }
+
+  return template.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
+    const resolved = getPathValue(context, token);
+    if (resolved === null || resolved === undefined) {
+      return "";
+    }
+    if (typeof resolved === "string") {
+      return resolved;
+    }
+    return JSON.stringify(resolved);
+  });
+}
+
+function maybeParseJson(text) {
+  if (typeof text !== "string") {
+    return text;
+  }
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      const candidate = text.slice(start, end + 1);
+      try {
+        return JSON.parse(candidate);
+      } catch {
+        return text;
+      }
+    }
+    return text;
+  }
+}
+
+function evaluateSwitchCondition(condition, context) {
+  if (typeof condition !== "string") {
+    return false;
+  }
+
+  const eq = condition.match(/^\$\.([A-Za-z0-9_.]+)\s*==\s*"([\s\S]*)"$/);
+  if (eq) {
+    const left = getPathValue(context, eq[1]);
+    return String(left ?? "") === eq[2];
+  }
+
+  const ne = condition.match(/^\$\.([A-Za-z0-9_.]+)\s*!=\s*"([\s\S]*)"$/);
+  if (ne) {
+    const left = getPathValue(context, ne[1]);
+    return String(left ?? "") !== ne[2];
+  }
+
+  return false;
 }
 
 function parseSseEventBlock(block) {
@@ -467,6 +554,126 @@ class BrowserJsClient {
       workflowOptions && typeof workflowOptions.functions === "object"
         ? workflowOptions.functions
         : {};
+
+    if (isGraphWorkflow(doc)) {
+      const nodeById = new Map();
+      for (const node of doc.nodes) {
+        if (!node || typeof node !== "object" || typeof node.id !== "string") {
+          throw configError("workflow node is invalid or missing id");
+        }
+        nodeById.set(node.id, node);
+      }
+
+      const edgeMap = new Map();
+      if (Array.isArray(doc.edges)) {
+        for (const edge of doc.edges) {
+          if (!edge || typeof edge.from !== "string" || typeof edge.to !== "string") {
+            continue;
+          }
+          const existing = edgeMap.get(edge.from) ?? [];
+          existing.push(edge.to);
+          edgeMap.set(edge.from, existing);
+        }
+      }
+
+      const graphContext = {
+        input: workflowInput,
+        nodes: {}
+      };
+
+      let pointer = doc.entry_node;
+      let output;
+      let iterations = 0;
+
+      while (typeof pointer === "string" && pointer.length > 0) {
+        iterations += 1;
+        if (iterations > 1000) {
+          throw runtimeError("workflow exceeded maximum step iterations");
+        }
+
+        const node = nodeById.get(pointer);
+        if (!node) {
+          throw configError(`workflow references unknown node '${pointer}'`);
+        }
+
+        const nodeType = node.node_type ?? {};
+        const nodeTypeName = Object.keys(nodeType)[0] ?? "unknown";
+        events.push({ stepId: node.id, stepType: nodeTypeName, status: "started" });
+
+        if (nodeType.llm_call) {
+          const llm = nodeType.llm_call;
+          const model = llm.model ?? doc.model ?? workflowInput.model;
+          if (typeof model !== "string" || model.trim().length === 0) {
+            throw configError(`llm_call node '${node.id}' requires node_type.llm_call.model`);
+          }
+
+          const prompt = interpolatePathTemplate(node.config?.prompt ?? "", graphContext);
+          let promptOrMessages = prompt;
+          if (llm.messages_path === "input.messages") {
+            const source = getPathValue(graphContext, llm.messages_path);
+            const history = Array.isArray(source)
+              ? source
+                  .filter((message) => {
+                    return (
+                      message &&
+                      typeof message === "object" &&
+                      typeof message.role === "string" &&
+                      typeof message.content === "string"
+                    );
+                  })
+                  .map((message) => ({ role: message.role, content: message.content }))
+              : [];
+            if (llm.append_prompt_as_user !== false) {
+              history.push({ role: "user", content: prompt });
+            }
+            promptOrMessages = history;
+          }
+
+          const completion = await this.complete(model, promptOrMessages, {
+            temperature: llm.temperature
+          });
+          const parsedOutput = maybeParseJson(completion.content ?? "");
+          graphContext.nodes[node.id] = {
+            output: parsedOutput,
+            raw: completion.content ?? ""
+          };
+          output = parsedOutput;
+
+          const nextTargets = edgeMap.get(node.id) ?? [];
+          pointer = nextTargets[0] ?? "";
+        } else if (nodeType.switch) {
+          const switchSpec = nodeType.switch;
+          const branches = Array.isArray(switchSpec.branches) ? switchSpec.branches : [];
+          const matched = branches.find((branch) =>
+            evaluateSwitchCondition(branch?.condition, graphContext)
+          );
+          pointer = matched?.target ?? switchSpec.default ?? "";
+        } else if (nodeType.custom_worker) {
+          const handler = nodeType.custom_worker.handler ?? "custom_worker";
+          const workerOutput = {
+            handler,
+            payload: node.config?.payload ?? null
+          };
+          graphContext.nodes[node.id] = {
+            output: workerOutput
+          };
+          output = workerOutput;
+          const nextTargets = edgeMap.get(node.id) ?? [];
+          pointer = nextTargets[0] ?? "";
+        } else {
+          throw configError(`unsupported node_type in simple-agents-wasm graph workflow`);
+        }
+
+        events.push({ stepId: node.id, stepType: nodeTypeName, status: "completed" });
+      }
+
+      return {
+        status: "ok",
+        context: graphContext,
+        output,
+        events
+      };
+    }
 
     const indexById = new Map();
     doc.steps.forEach((step, index) => {

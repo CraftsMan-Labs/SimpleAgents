@@ -54,6 +54,65 @@ struct WorkflowDoc {
 }
 
 #[derive(Deserialize, Clone)]
+struct GraphWorkflowDoc {
+    model: Option<String>,
+    entry_node: String,
+    nodes: Vec<GraphWorkflowNode>,
+    edges: Option<Vec<GraphWorkflowEdge>>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphWorkflowEdge {
+    from: String,
+    to: String,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphWorkflowNode {
+    id: String,
+    node_type: GraphNodeType,
+    config: Option<GraphNodeConfig>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphNodeConfig {
+    prompt: Option<String>,
+    payload: Option<JsonValue>,
+}
+
+#[derive(Deserialize, Clone, Default)]
+struct GraphNodeType {
+    llm_call: Option<GraphLlmCall>,
+    switch: Option<GraphSwitch>,
+    custom_worker: Option<GraphCustomWorker>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphLlmCall {
+    model: Option<String>,
+    temperature: Option<f64>,
+    messages_path: Option<String>,
+    append_prompt_as_user: Option<bool>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphSwitch {
+    branches: Option<Vec<GraphSwitchBranch>>,
+    default: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphSwitchBranch {
+    condition: Option<String>,
+    target: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
+struct GraphCustomWorker {
+    handler: Option<String>,
+}
+
+#[derive(Deserialize, Clone)]
 struct WorkflowStep {
     id: String,
     #[serde(rename = "type")]
@@ -354,6 +413,86 @@ fn evaluate_condition(condition: &WorkflowCondition, context: &JsonMap<String, J
         }
         _ => false,
     }
+}
+
+fn get_path_value<'a>(root: &'a JsonValue, path: &str) -> Option<&'a JsonValue> {
+    let normalized = path.trim().strip_prefix("$.").unwrap_or(path.trim());
+    let mut current = root;
+    for token in normalized.split('.') {
+        if token.is_empty() {
+            continue;
+        }
+        current = current.get(token)?;
+    }
+    Some(current)
+}
+
+fn interpolate_graph_prompt(input: &str, context: &JsonValue) -> String {
+    let mut output = String::new();
+    let mut rest = input;
+
+    while let Some(start) = rest.find("{{") {
+        output.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        if let Some(end) = after_start.find("}}") {
+            let key = after_start[..end].trim();
+            let replacement = get_path_value(context, key)
+                .map(|value| match value {
+                    JsonValue::String(s) => s.clone(),
+                    _ => serde_json::to_string(value).unwrap_or_default(),
+                })
+                .unwrap_or_default();
+            output.push_str(&replacement);
+            rest = &after_start[end + 2..];
+        } else {
+            output.push_str(&rest[start..]);
+            rest = "";
+        }
+    }
+
+    output.push_str(rest);
+    output
+}
+
+fn parse_json_from_text(value: &str) -> JsonValue {
+    if let Ok(parsed) = serde_json::from_str::<JsonValue>(value) {
+        return parsed;
+    }
+
+    if let (Some(start), Some(end)) = (value.find('{'), value.rfind('}')) {
+        if end > start {
+            let candidate = &value[start..=end];
+            if let Ok(parsed) = serde_json::from_str::<JsonValue>(candidate) {
+                return parsed;
+            }
+        }
+    }
+
+    JsonValue::String(value.to_string())
+}
+
+fn evaluate_switch_condition(condition: &str, context: &JsonValue) -> bool {
+    let trimmed = condition.trim();
+
+    if let Some((left, right)) = trimmed.split_once("==") {
+        let left_path = left.trim();
+        let right_value = right.trim().trim_matches('"');
+        let left_value = get_path_value(context, left_path)
+            .map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()))
+            .unwrap_or_default();
+        return left_value == right_value;
+    }
+
+    if let Some((left, right)) = trimmed.split_once("!=") {
+        let left_path = left.trim();
+        let right_value = right.trim().trim_matches('"');
+        let left_value = get_path_value(context, left_path)
+            .map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()))
+            .unwrap_or_default();
+        return left_value != right_value;
+    }
+
+    false
 }
 
 fn parse_sse_blocks(text: &str) -> Vec<String> {
@@ -784,13 +923,8 @@ impl WasmClient {
         workflow_input: JsValue,
         workflow_options: Option<JsValue>,
     ) -> Result<JsValue, JsValue> {
-        let doc: WorkflowDoc = serde_yaml::from_str(&yaml_text)
+        let raw_doc: JsonValue = serde_yaml::from_str(&yaml_text)
             .map_err(|error| config_error(format!("invalid workflow YAML: {error}")))?;
-        if doc.steps.is_empty() {
-            return Err(config_error(
-                "workflow YAML must contain a non-empty steps array",
-            ));
-        }
 
         let mut context: JsonMap<String, JsonValue> =
             serde_wasm_bindgen::from_value(workflow_input)
@@ -806,6 +940,210 @@ impl WasmClient {
                 .map_err(|_| config_error("invalid workflowOptions object"))?;
             let functions_value = Reflect::get(&options_js, &JsValue::from_str("functions")).ok();
             options.functions_js = functions_value;
+        }
+
+        if raw_doc.get("entry_node").is_some() && raw_doc.get("nodes").is_some() {
+            let graph_doc: GraphWorkflowDoc = serde_json::from_value(raw_doc)
+                .map_err(|error| config_error(format!("invalid graph workflow YAML: {error}")))?;
+
+            let mut node_by_id: HashMap<String, GraphWorkflowNode> = HashMap::new();
+            for node in &graph_doc.nodes {
+                if node.id.trim().is_empty() {
+                    return Err(config_error("graph workflow node id cannot be empty"));
+                }
+                node_by_id.insert(node.id.clone(), node.clone());
+            }
+
+            let mut edge_map: HashMap<String, Vec<String>> = HashMap::new();
+            if let Some(edges) = graph_doc.edges.as_ref() {
+                for edge in edges {
+                    edge_map
+                        .entry(edge.from.clone())
+                        .or_default()
+                        .push(edge.to.clone());
+                }
+            }
+
+            let mut graph_context = json!({
+                "input": JsonValue::Object(context.clone()),
+                "nodes": JsonValue::Object(JsonMap::new())
+            });
+
+            let mut events = Vec::new();
+            let mut output: Option<JsonValue> = None;
+            let mut pointer = graph_doc.entry_node.clone();
+            let mut iterations = 0usize;
+
+            while !pointer.is_empty() {
+                iterations += 1;
+                if iterations > 1000 {
+                    return Err(js_error("workflow exceeded maximum step iterations"));
+                }
+
+                let node = node_by_id
+                    .get(&pointer)
+                    .cloned()
+                    .ok_or_else(|| config_error(format!("workflow references unknown node '{}'", pointer)))?;
+
+                let step_type = if node.node_type.llm_call.is_some() {
+                    "llm_call"
+                } else if node.node_type.switch.is_some() {
+                    "switch"
+                } else if node.node_type.custom_worker.is_some() {
+                    "custom_worker"
+                } else {
+                    "unknown"
+                };
+
+                events.push(WorkflowRunEvent {
+                    step_id: node.id.clone(),
+                    step_type: step_type.to_string(),
+                    status: "started".to_string(),
+                });
+
+                if let Some(llm) = node.node_type.llm_call.as_ref() {
+                    let model = llm
+                        .model
+                        .clone()
+                        .or_else(|| graph_doc.model.clone())
+                        .or_else(|| context.get("model").and_then(JsonValue::as_str).map(str::to_string))
+                        .ok_or_else(|| {
+                            config_error(format!(
+                                "llm_call node '{}' requires node_type.llm_call.model",
+                                node.id
+                            ))
+                        })?;
+
+                    let prompt = interpolate_graph_prompt(
+                        node.config
+                            .as_ref()
+                            .and_then(|config| config.prompt.as_deref())
+                            .unwrap_or_default(),
+                        &graph_context,
+                    );
+
+                    let prompt_js = if llm.messages_path.as_deref() == Some("input.messages") {
+                        let mut history: Vec<MessageInput> = get_path_value(&graph_context, "input.messages")
+                            .and_then(|value| serde_json::from_value::<Vec<MessageInput>>(value.clone()).ok())
+                            .unwrap_or_default();
+                        if llm.append_prompt_as_user.unwrap_or(true) {
+                            history.push(MessageInput {
+                                role: "user".to_string(),
+                                content: prompt,
+                                name: None,
+                                tool_call_id: None,
+                                tool_calls: None,
+                            });
+                        }
+                        serde_wasm_bindgen::to_value(&history)
+                            .map_err(|_| js_error("failed to serialize graph llm messages"))?
+                    } else {
+                        JsValue::from_str(&prompt)
+                    };
+
+                    let opts = json!({ "temperature": llm.temperature });
+                    let completion_js = self
+                        .complete(
+                            model,
+                            prompt_js,
+                            Some(
+                                serde_wasm_bindgen::to_value(&opts)
+                                    .map_err(|_| js_error("failed to serialize completion options"))?,
+                            ),
+                        )
+                        .await?;
+                    let completion: JsonValue = serde_wasm_bindgen::from_value(completion_js)
+                        .map_err(|_| js_error("failed to parse completion result"))?;
+
+                    let raw_content = completion
+                        .get("content")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or_default();
+                    let parsed_output = parse_json_from_text(raw_content);
+
+                    if let Some(nodes_map) = graph_context
+                        .get_mut("nodes")
+                        .and_then(JsonValue::as_object_mut)
+                    {
+                        nodes_map.insert(
+                            node.id.clone(),
+                            json!({
+                                "output": parsed_output,
+                                "raw": raw_content
+                            }),
+                        );
+                    }
+
+                    output = Some(parsed_output);
+                    pointer = edge_map
+                        .get(&node.id)
+                        .and_then(|targets| targets.first())
+                        .cloned()
+                        .unwrap_or_default();
+                } else if let Some(switch) = node.node_type.switch.as_ref() {
+                    let mut next_pointer = switch.default.clone().unwrap_or_default();
+                    if let Some(branches) = switch.branches.as_ref() {
+                        for branch in branches {
+                            let matches = branch
+                                .condition
+                                .as_ref()
+                                .map(|condition| evaluate_switch_condition(condition, &graph_context))
+                                .unwrap_or(false);
+                            if matches {
+                                next_pointer = branch.target.clone().unwrap_or_default();
+                                break;
+                            }
+                        }
+                    }
+                    pointer = next_pointer;
+                } else if let Some(custom_worker) = node.node_type.custom_worker.as_ref() {
+                    let worker_output = json!({
+                        "handler": custom_worker.handler.clone().unwrap_or_else(|| "custom_worker".to_string()),
+                        "payload": node.config.as_ref().and_then(|config| config.payload.clone()).unwrap_or(JsonValue::Null)
+                    });
+
+                    if let Some(nodes_map) = graph_context
+                        .get_mut("nodes")
+                        .and_then(JsonValue::as_object_mut)
+                    {
+                        nodes_map.insert(node.id.clone(), json!({ "output": worker_output }));
+                    }
+
+                    output = Some(worker_output);
+                    pointer = edge_map
+                        .get(&node.id)
+                        .and_then(|targets| targets.first())
+                        .cloned()
+                        .unwrap_or_default();
+                } else {
+                    return Err(config_error(
+                        "unsupported node_type in simple-agents-wasm graph workflow",
+                    ));
+                }
+
+                events.push(WorkflowRunEvent {
+                    step_id: node.id,
+                    step_type: step_type.to_string(),
+                    status: "completed".to_string(),
+                });
+            }
+
+            let result = WorkflowRunResult {
+                status: "ok".to_string(),
+                context: graph_context,
+                output,
+                events,
+            };
+            return serde_wasm_bindgen::to_value(&result)
+                .map_err(|_| js_error("failed to serialize workflow result"));
+        }
+
+        let doc: WorkflowDoc = serde_json::from_value(raw_doc)
+            .map_err(|error| config_error(format!("invalid workflow YAML: {error}")))?;
+        if doc.steps.is_empty() {
+            return Err(config_error(
+                "workflow YAML must contain a non-empty steps array",
+            ));
         }
 
         let mut index_by_id = HashMap::new();
