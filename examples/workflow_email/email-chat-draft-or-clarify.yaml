@@ -22,7 +22,7 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -71,7 +71,7 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -100,7 +100,7 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -127,7 +127,7 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
