@@ -1,0 +1,27 @@
+{
+  "completionResultKeys": [
+    "id",
+    "model",
+    "role",
+    "content",
+    "toolCalls",
+    "finishReason",
+    "usage",
+    "usageAvailable",
+    "latencyMs",
+    "raw",
+    "healed",
+    "coerced"
+  ],
+  "usageKeys": ["promptTokens", "completionTokens", "totalTokens"],
+  "streamEventTypes": ["delta", "error", "done"],
+  "streamDeltaKeys": [
+    "id",
+    "model",
+    "index",
+    "role",
+    "content",
+    "finishReason",
+    "raw"
+  ]
+}
