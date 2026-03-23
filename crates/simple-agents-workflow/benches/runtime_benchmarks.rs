@@ -176,6 +176,46 @@ fn concurrent_comparison_workflow() -> WorkflowDefinition {
     }
 }
 
+fn dense_scope_workflow(node_count: usize) -> WorkflowDefinition {
+    let mut nodes = Vec::with_capacity(node_count + 2);
+    let first = if node_count == 0 {
+        "end".to_string()
+    } else {
+        "tool_0".to_string()
+    };
+    nodes.push(Node {
+        id: "start".to_string(),
+        kind: NodeKind::Start { next: first },
+    });
+
+    for index in 0..node_count {
+        let next = if index + 1 >= node_count {
+            Some("end".to_string())
+        } else {
+            Some(format!("tool_{}", index + 1))
+        };
+        nodes.push(Node {
+            id: format!("tool_{index}"),
+            kind: NodeKind::Tool {
+                tool: "echo".to_string(),
+                input: json!({"i": index}),
+                next,
+            },
+        });
+    }
+
+    nodes.push(Node {
+        id: "end".to_string(),
+        kind: NodeKind::End,
+    });
+
+    WorkflowDefinition {
+        version: "v0".to_string(),
+        name: "bench-dense-scope".to_string(),
+        nodes,
+    }
+}
+
 fn assert_concurrency_regression_guard(rt: &tokio::runtime::Runtime) {
     let llm = BenchLlm;
     let tool = DelayEchoTool {
@@ -263,6 +303,7 @@ fn runtime_benchmarks(c: &mut Criterion) {
     let workflow = benchmark_workflow();
     let sequential_workflow = sequential_comparison_workflow();
     let concurrent_workflow = concurrent_comparison_workflow();
+    let dense_scope = dense_scope_workflow(32);
     let runtime_options = WorkflowRuntimeOptions {
         enable_trace_recording: false,
         ..WorkflowRuntimeOptions::default()
@@ -340,6 +381,21 @@ fn runtime_benchmarks(c: &mut Criterion) {
 
             assert!(matches!(response.result, WorkerResult::Success { .. }));
             pool.shutdown().await;
+        })
+    });
+
+    group.bench_function("dense_scope_execute", |b| {
+        b.to_async(&rt).iter(|| async {
+            let runtime = WorkflowRuntime::new(
+                dense_scope.clone(),
+                &llm,
+                Some(&tool),
+                runtime_options.clone(),
+            );
+            let _ = runtime
+                .execute(json!({"request_id": "dense"}), None)
+                .await
+                .expect("dense scope benchmark run should succeed");
         })
     });
 

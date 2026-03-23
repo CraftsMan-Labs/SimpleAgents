@@ -21,6 +21,7 @@ By the end, you will be able to run local benchmark guards, inspect hot paths, a
 - Benchmark target: `crates/simple-agents-workflow/benches/runtime_benchmarks.rs`
 - CI workflow: `.github/workflows/workflow-benches.yml`
 - Regression guard: median concurrent gain must exceed configured minimum
+- Dense scope benchmark: `dense_scope_execute` validates large node-output execution paths
 
 Guard environment overrides:
 

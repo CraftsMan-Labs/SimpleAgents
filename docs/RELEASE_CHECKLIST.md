@@ -7,6 +7,7 @@ Use this checklist before cutting a release that includes workflow runtime chang
 - [ ] `cargo test -p simple-agents-workflow`
 - [ ] `cargo check --workspace`
 - [ ] `./scripts/run-binding-contracts.sh`
+- [ ] `./scripts/run-binding-tests-layered.sh`
 
 ## 2. Performance and Regression Gates
 
@@ -19,6 +20,7 @@ Use this checklist before cutting a release that includes workflow runtime chang
 - [ ] Expression complexity limits validated
 - [ ] Runtime scope/fan-out limits validated
 - [ ] Worker request contract enforcement validated
+- [ ] YAML file loader rejection checks validated (`.yaml/.yml`, size/depth/path policy)
 - [ ] Secret handling policy reviewed for workflow examples/docs
 
 ## 4. Docs and Examples
@@ -32,4 +34,5 @@ Use this checklist before cutting a release that includes workflow runtime chang
 
 - [ ] Verify no credentials in committed files
 - [ ] Verify CI workflows include workflow bench and binding gates
+- [ ] Verify OTLP HTTP/protobuf trace configuration tests are green
 - [ ] Tag release after all checks are green

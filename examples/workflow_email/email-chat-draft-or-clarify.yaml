@@ -17,12 +17,12 @@ nodes:
     name: "Detect Scenario Context"
     node_type:
       llm_call:
-        model: ollama-lfm2.5-thinking
+        model: azure/gpt-4.1-mini
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -66,12 +66,12 @@ nodes:
     name: "Explain Capabilities"
     node_type:
       llm_call:
-        model: ollama-lfm2.5-thinking
+        model: azure/gpt-4.1-mini
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -95,12 +95,12 @@ nodes:
     name: "Ask For Scenario"
     node_type:
       llm_call:
-        model: ollama-lfm2.5-thinking
+        model: azure/gpt-4.1-mini
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:
@@ -122,12 +122,12 @@ nodes:
     name: "Generate Draft Email"
     node_type:
       llm_call:
-        model: ollama-lfm2.5-thinking
+        model: azure/gpt-4.1-mini
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: false
     config:
       output_schema:

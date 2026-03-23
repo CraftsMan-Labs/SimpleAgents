@@ -1,8 +1,8 @@
-//! HTTP client wrapper with connection pooling and HTTP/2 support.
+//! HTTP client wrapper with connection pooling and protocol negotiation.
 //!
 //! This module provides a configured HTTP client optimized for LLM API calls:
 //! - Connection pooling (max 10 idle connections per host)
-//! - HTTP/2 multiplexing enabled
+//! - HTTP protocol negotiated per endpoint
 //! - Configurable timeouts
 //! - Idle connection timeout (90 seconds)
 
@@ -18,7 +18,7 @@ use crate::utils::DEFAULT_TIMEOUT;
 /// - **Timeout**: 30 seconds default (configurable)
 /// - **Connection Pooling**: Max 10 idle connections per host
 /// - **Idle Timeout**: 90 seconds before connection cleanup
-/// - **HTTP/2**: Enabled via prior knowledge
+/// - **HTTP/2**: Negotiated when supported by the endpoint
 ///
 /// # Examples
 ///
@@ -39,7 +39,7 @@ impl HttpClient {
     ///
     /// Default configuration:
     /// - 30 second timeout
-    /// - HTTP/2 enabled
+    /// - HTTP protocol negotiation enabled
     /// - Connection pooling (10 idle per host, 90s timeout)
     ///
     /// # Errors
@@ -72,7 +72,6 @@ impl HttpClient {
             .timeout(timeout)
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(Duration::from_secs(90))
-            .http2_prior_knowledge()
             .build()?;
 
         Ok(Self { inner })

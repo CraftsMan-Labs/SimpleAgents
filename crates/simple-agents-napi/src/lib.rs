@@ -912,7 +912,8 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions"
+        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions",
+        ts_return_type = "Promise<CompletionResult>"
     )]
     pub fn complete(
         &self,
@@ -934,7 +935,8 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions"
+        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions",
+        ts_return_type = "Promise<CompletionResult>"
     )]
     pub fn stream(
         &self,
@@ -971,7 +973,8 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions"
+        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions",
+        ts_return_type = "Promise<CompletionResult>"
     )]
     pub fn stream_events(
         &self,

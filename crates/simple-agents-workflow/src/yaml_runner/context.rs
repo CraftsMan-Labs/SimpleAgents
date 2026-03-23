@@ -1,0 +1,180 @@
+use serde_json::{json, Value};
+use simple_agent_type::message::{Message, Role};
+
+use super::{WorkflowMessage, YamlTemplateBinding, YamlWorkflowRunError};
+
+pub(super) fn build_yaml_context_from_ir_scope(scoped_input: &Value) -> Value {
+    let input = scoped_input.get("input").cloned().unwrap_or(Value::Null);
+
+    let mut nodes = serde_json::Map::new();
+    if let Some(node_outputs) = scoped_input.get("node_outputs").and_then(Value::as_object) {
+        for (node_id, output) in node_outputs {
+            nodes.insert(node_id.clone(), json!({"output": output.clone()}));
+        }
+    }
+
+    json!({
+        "input": input,
+        "nodes": Value::Object(nodes),
+        "globals": Value::Object(serde_json::Map::new())
+    })
+}
+
+pub(super) fn evaluate_switch_condition(
+    condition: &str,
+    context: &Value,
+) -> Result<bool, YamlWorkflowRunError> {
+    let (left, right) =
+        condition
+            .split_once("==")
+            .ok_or_else(|| YamlWorkflowRunError::UnsupportedCondition {
+                condition: condition.to_string(),
+            })?;
+
+    let left_path = left.trim().trim_start_matches("$.");
+    let right_literal = right.trim().trim_matches('"').trim_matches('\'');
+    let left_value = resolve_path(context, left_path);
+    Ok(left_value
+        .and_then(Value::as_str)
+        .map(|value| value == right_literal)
+        .unwrap_or(false))
+}
+
+pub(super) fn parse_messages_from_context(
+    path: &str,
+    context: &Value,
+) -> Result<Vec<Message>, String> {
+    let normalized_path = path.trim().trim_start_matches("$.");
+    let value = resolve_path(context, normalized_path)
+        .ok_or_else(|| format!("messages_path not found: {path}"))?;
+    let list: Vec<WorkflowMessage> = serde_json::from_value(value.clone()).map_err(|err| {
+        format!("messages_path must resolve to a list of messages: {path}; {err}")
+    })?;
+    if list.is_empty() {
+        return Err(format!(
+            "messages_path must not resolve to an empty list: {path}"
+        ));
+    }
+
+    let mut messages = Vec::with_capacity(list.len());
+    for (index, item) in list.into_iter().enumerate() {
+        let mut message = match item.role {
+            Role::System => Message::system(item.content),
+            Role::User => Message::user(item.content),
+            Role::Assistant => Message::assistant(item.content),
+            Role::Tool => {
+                let tool_call_id = item
+                    .tool_call_id
+                    .ok_or_else(|| format!("tool message at index {index} missing tool_call_id"))?;
+                Message::tool(item.content, tool_call_id)
+            }
+        };
+
+        if let Some(name) = item.name {
+            message = message.with_name(name);
+        }
+
+        messages.push(message);
+    }
+
+    Ok(messages)
+}
+
+pub(super) fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    path.split('.')
+        .filter(|segment| !segment.is_empty())
+        .try_fold(value, |current, segment| {
+            if let Ok(index) = segment.parse::<usize>() {
+                return current.get(index);
+            }
+            current.get(segment)
+        })
+}
+
+pub(super) fn interpolate_template(template: &str, context: &Value) -> String {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+
+    loop {
+        let Some(start) = rest.find("{{") else {
+            out.push_str(rest);
+            break;
+        };
+
+        out.push_str(&rest[..start]);
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            out.push_str(&rest[start..]);
+            break;
+        };
+
+        let expr = after_start[..end].trim();
+        let source_path = expr.trim_start_matches("$.");
+        let replacement = resolve_path(context, source_path)
+            .map(value_to_template_string)
+            .unwrap_or_default();
+        out.push_str(replacement.as_str());
+
+        rest = &after_start[end + 2..];
+    }
+
+    out
+}
+
+pub(super) fn collect_template_bindings(
+    template: &str,
+    context: &Value,
+) -> Vec<YamlTemplateBinding> {
+    let mut bindings = Vec::new();
+    let mut rest = template;
+
+    loop {
+        let Some(start) = rest.find("{{") else {
+            break;
+        };
+
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            break;
+        };
+
+        let expr = after_start[..end].trim();
+        let source_path = expr.trim_start_matches("$.").to_string();
+        let resolved = resolve_path(context, source_path.as_str()).cloned();
+        let missing = resolved.is_none();
+        let resolved_value = resolved.unwrap_or(Value::Null);
+        bindings.push(YamlTemplateBinding {
+            index: bindings.len(),
+            expression: expr.to_string(),
+            source_path,
+            resolved_type: json_type_name(&resolved_value).to_string(),
+            missing,
+            resolved: resolved_value,
+        });
+
+        rest = &after_start[end + 2..];
+    }
+
+    bindings
+}
+
+pub(super) fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "bool",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn value_to_template_string(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(v) => v.to_string(),
+        Value::Number(v) => v.to_string(),
+        Value::String(v) => v.clone(),
+        Value::Array(_) | Value::Object(_) => serde_json::to_string(value).unwrap_or_default(),
+    }
+}

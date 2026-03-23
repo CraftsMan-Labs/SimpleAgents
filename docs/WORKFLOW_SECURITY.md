@@ -23,6 +23,8 @@ By the end, you should know which limits are enforced, what errors they raise, a
 | Expression engine | `crates/simple-agents-workflow/src/expressions.rs` | `max_expression_chars`, `max_operator_count`, `max_depth`, `max_path_segments`, `max_cache_entries` |
 | Runtime resource guards | `crates/simple-agents-workflow/src/runtime.rs` | `max_expression_scope_bytes`, `max_map_items`, `max_parallel_branches`, `max_filter_items` |
 | Worker request contract | `crates/simple-agents-workflow/src/worker.rs` | `max_request_timeout_ms`, `max_request_payload_bytes`, `max_identifier_length` |
+| YAML file load guardrails | `crates/simple-agents-workflow/src/yaml_runner.rs` | canonical path check, regular-file check, `.yaml/.yml` extension allowlist, file-size and depth bounds |
+| Sensitive provider serialization | `crates/simple-agent-type/src/config.rs` | `ProviderConfig.api_key` serialization is redacted |
 
 ## Expression Engine Controls
 

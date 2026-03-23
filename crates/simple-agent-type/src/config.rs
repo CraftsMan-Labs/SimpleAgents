@@ -167,7 +167,10 @@ pub struct ProviderConfig {
     /// Base URL for API
     pub base_url: String,
     /// API key (optional for some providers)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_optional_secret"
+    )]
     pub api_key: Option<String>,
     /// Default model
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -181,6 +184,16 @@ pub struct ProviderConfig {
     /// Provider capabilities
     #[serde(default)]
     pub capabilities: Capabilities,
+}
+
+fn serialize_optional_secret<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match value {
+        Some(_) => serializer.serialize_some("<redacted>"),
+        None => serializer.serialize_none(),
+    }
 }
 
 impl ProviderConfig {
@@ -472,6 +485,17 @@ mod tests {
         let parsed: ProviderConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config.name, parsed.name);
         assert_eq!(config.base_url, parsed.base_url);
+    }
+
+    #[test]
+    fn test_provider_config_serialization_redacts_api_key() {
+        let config = ProviderConfig::new("test", "https://example.com").with_api_key("secret-key");
+        let json = serde_json::to_string(&config).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            value.get("api_key"),
+            Some(&serde_json::Value::String("<redacted>".to_string()))
+        );
     }
 
     #[test]
