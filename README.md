@@ -17,6 +17,12 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 [![simple-agents-core](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-core)
 [![simple-agents-core downloads](https://img.shields.io/crates/d/simple-agents-core?style=flat-square)](https://crates.io/crates/simple-agents-core)
 
+## Links
+
+- Docs: https://docs.simpleagents.craftsmanlabs.net/
+- Playground: https://yamslam.craftsmanlabs.net/playground
+- Public skills: `skills/`
+
 ## Package Registry Stats
 
 | Package | Registry | Version | Downloads |
