@@ -37,6 +37,7 @@ WASM/browser flow support is string/object based:
 
 - Implemented: `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
   - Supports step DSL (`steps`) and graph YAML (`entry_node` + `nodes` + `edges`) for `llm_call`, `switch`, and `custom_worker` node types.
+  - `custom_worker` requires a matching `workflowOptions.functions[handler]` implementation in browser/WASM execution.
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
 
 ## Security and deployment notes
@@ -44,3 +45,22 @@ WASM/browser flow support is string/object based:
 - BYOK credentials are provided at runtime and must not be persisted by default.
 - Browser mode still depends on provider CORS behavior.
 - Use server fallback only when CORS/provider constraints require it.
+
+## Local development workflow
+
+- Install package deps: `cd bindings/wasm/simple-agents-wasm && npm install`
+- Build wasm + JS package: `make build-wasm`
+- Run wasm binding tests: `make test-wasm`
+- Run repository contract/parity checks: `make test-binding-contracts` and `make test-binding-layers`
+
+## Rust + JavaScript quality gates
+
+- Rust formatting: `cargo fmt --manifest-path bindings/wasm/simple-agents-wasm/rust/Cargo.toml -- --check`
+- Rust linting: `cargo clippy --manifest-path bindings/wasm/simple-agents-wasm/rust/Cargo.toml --all-targets`
+- JS tests (Node runtime fallback + parity): `cd bindings/wasm/simple-agents-wasm && npm test`
+
+## Type-checking and editor support
+
+- Public TS surface is maintained in `bindings/wasm/simple-agents-wasm/index.d.ts`.
+- Keep `index.d.ts` aligned with runtime behavior for both Rust-backed and JS fallback execution.
+- Use TypeScript-aware editors (`tsserver`) to validate consumer-facing types and callback signatures when updating APIs.
