@@ -105,7 +105,10 @@ export interface WorkflowRunOptions {
   trace?: Record<string, unknown>;
   functions?: Record<
     string,
-    (args: Record<string, unknown>, context: Record<string, unknown>) => unknown
+    (
+      args: Record<string, unknown>,
+      context: Record<string, unknown>
+    ) => unknown | Promise<unknown>
   >;
 }
 

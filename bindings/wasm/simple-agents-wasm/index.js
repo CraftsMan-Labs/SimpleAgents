@@ -201,6 +201,220 @@ function maybeParseJson(text) {
   }
 }
 
+function matchesJsonSchemaType(expectedType, value) {
+  if (expectedType === "null") {
+    return value === null;
+  }
+  if (expectedType === "array") {
+    return Array.isArray(value);
+  }
+  if (expectedType === "object") {
+    return value !== null && typeof value === "object" && !Array.isArray(value);
+  }
+  if (expectedType === "integer") {
+    return typeof value === "number" && Number.isInteger(value);
+  }
+  return typeof value === expectedType;
+}
+
+function jsonValueType(value) {
+  if (value === null) {
+    return "null";
+  }
+  if (Array.isArray(value)) {
+    return "array";
+  }
+  return typeof value;
+}
+
+function equalJsonValue(left, right) {
+  if (left === right) {
+    return true;
+  }
+  if (
+    left === null ||
+    right === null ||
+    left === undefined ||
+    right === undefined ||
+    typeof left !== "object" ||
+    typeof right !== "object"
+  ) {
+    return false;
+  }
+
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function schemaValidationError(schema, value, path = "$") {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return null;
+  }
+
+  if (Array.isArray(schema.anyOf) && schema.anyOf.length > 0) {
+    const anyOfErrors = schema.anyOf
+      .map((nested) => schemaValidationError(nested, value, path))
+      .filter((entry) => typeof entry === "string");
+    if (anyOfErrors.length === schema.anyOf.length) {
+      return `${path} did not satisfy anyOf`;
+    }
+  }
+
+  if (Array.isArray(schema.oneOf) && schema.oneOf.length > 0) {
+    let matched = 0;
+    for (const nested of schema.oneOf) {
+      if (schemaValidationError(nested, value, path) === null) {
+        matched += 1;
+      }
+    }
+    if (matched !== 1) {
+      return `${path} must satisfy exactly one oneOf schema`;
+    }
+  }
+
+  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
+    for (const nested of schema.allOf) {
+      const error = schemaValidationError(nested, value, path);
+      if (error !== null) {
+        return error;
+      }
+    }
+  }
+
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    const matched = schema.enum.some((candidate) => equalJsonValue(candidate, value));
+    if (!matched) {
+      return `${path} must be one of enum values`;
+    }
+  }
+
+  if (schema.type !== undefined) {
+    const expectedTypes = Array.isArray(schema.type) ? schema.type : [schema.type];
+    const matchedType = expectedTypes.some((expectedType) => {
+      return typeof expectedType === "string" && matchesJsonSchemaType(expectedType, value);
+    });
+    if (!matchedType) {
+      return `${path} expected type ${expectedTypes.join(" | ")}, got ${jsonValueType(value)}`;
+    }
+  }
+
+  if (typeof value === "string") {
+    if (typeof schema.minLength === "number" && value.length < schema.minLength) {
+      return `${path} must have minLength ${schema.minLength}`;
+    }
+    if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
+      return `${path} must have maxLength ${schema.maxLength}`;
+    }
+    if (typeof schema.pattern === "string") {
+      const pattern = new RegExp(schema.pattern);
+      if (!pattern.test(value)) {
+        return `${path} must match pattern ${schema.pattern}`;
+      }
+    }
+  }
+
+  if (typeof value === "number") {
+    if (typeof schema.minimum === "number" && value < schema.minimum) {
+      return `${path} must be >= ${schema.minimum}`;
+    }
+    if (typeof schema.maximum === "number" && value > schema.maximum) {
+      return `${path} must be <= ${schema.maximum}`;
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (typeof schema.minItems === "number" && value.length < schema.minItems) {
+      return `${path} must have at least ${schema.minItems} items`;
+    }
+    if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
+      return `${path} must have at most ${schema.maxItems} items`;
+    }
+    if (schema.items !== undefined) {
+      for (let index = 0; index < value.length; index += 1) {
+        const error = schemaValidationError(schema.items, value[index], `${path}[${index}]`);
+        if (error !== null) {
+          return error;
+        }
+      }
+    }
+  }
+
+  const isObjectValue = value !== null && typeof value === "object" && !Array.isArray(value);
+  if (isObjectValue) {
+    const properties =
+      schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)
+        ? schema.properties
+        : {};
+
+    if (Array.isArray(schema.required)) {
+      for (const key of schema.required) {
+        if (typeof key !== "string") {
+          continue;
+        }
+        if (!(key in value)) {
+          return `${path}.${key} is required`;
+        }
+      }
+    }
+
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      if (!(key in value)) {
+        continue;
+      }
+      const error = schemaValidationError(propertySchema, value[key], `${path}.${key}`);
+      if (error !== null) {
+        return error;
+      }
+    }
+
+    const knownKeys = new Set(Object.keys(properties));
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!knownKeys.has(key)) {
+          return `${path}.${key} is not allowed`;
+        }
+      }
+    } else if (
+      schema.additionalProperties !== undefined &&
+      schema.additionalProperties !== true
+    ) {
+      for (const key of Object.keys(value)) {
+        if (knownKeys.has(key)) {
+          continue;
+        }
+        const error = schemaValidationError(
+          schema.additionalProperties,
+          value[key],
+          `${path}.${key}`
+        );
+        if (error !== null) {
+          return error;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function llmOutputSchema(node) {
+  const schema = node?.config?.output_schema;
+  if (schema && typeof schema === "object" && !Array.isArray(schema)) {
+    return schema;
+  }
+  return {
+    type: "object",
+    additionalProperties: true
+  };
+}
+
+function normalizeSseChunk(chunk) {
+  return chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 function evaluateSwitchCondition(condition, context) {
   if (typeof condition !== "string") {
     return false;
@@ -261,7 +475,7 @@ async function* iterateSse(response) {
       break;
     }
 
-    buffer += decoder.decode(value, { stream: true });
+    buffer += normalizeSseChunk(decoder.decode(value, { stream: true }));
     let delimiterIndex = buffer.indexOf("\n\n");
     while (delimiterIndex !== -1) {
       const block = buffer.slice(0, delimiterIndex).trim();
@@ -272,6 +486,8 @@ async function* iterateSse(response) {
       delimiterIndex = buffer.indexOf("\n\n");
     }
   }
+
+  buffer += normalizeSseChunk(decoder.decode());
 
   const trailing = buffer.trim();
   if (trailing.length > 0) {
@@ -633,6 +849,12 @@ class BrowserJsClient {
             temperature: llm.temperature
           });
           const parsedOutput = maybeParseJson(completion.content ?? "");
+          const validationError = schemaValidationError(llmOutputSchema(node), parsedOutput);
+          if (validationError !== null) {
+            throw runtimeError(
+              `llm_call node '${node.id}' output failed schema validation: ${validationError}`
+            );
+          }
           graphContext.nodes[node.id] = {
             output: parsedOutput,
             raw: completion.content ?? ""
@@ -650,10 +872,20 @@ class BrowserJsClient {
           pointer = matched?.target ?? switchSpec.default ?? "";
         } else if (nodeType.custom_worker) {
           const handler = nodeType.custom_worker.handler ?? "custom_worker";
-          const workerOutput = {
-            handler,
-            payload: node.config?.payload ?? null
-          };
+          const fn = functions[handler];
+          if (typeof fn !== "function") {
+            throw runtimeError(
+              `custom_worker node '${node.id}' requires workflowOptions.functions['${handler}']`
+            );
+          }
+          const workerOutput = await fn(
+            {
+              handler,
+              payload: node.config?.payload ?? null,
+              nodeId: node.id
+            },
+            graphContext
+          );
           graphContext.nodes[node.id] = {
             output: workerOutput
           };
@@ -737,7 +969,7 @@ class BrowserJsClient {
         }
 
         const args = interpolate(step.args ?? {}, context);
-        context[step.id] = fn(args, context);
+        context[step.id] = await fn(args, context);
       } else if (step.type === "output") {
         output = interpolate(step.text ?? step.value ?? "", context);
         context[step.id] = output;

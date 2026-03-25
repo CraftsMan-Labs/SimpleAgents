@@ -59,7 +59,7 @@ steps:
     { model: "gpt-4o-mini" },
     {
       functions: {
-        slugify: ({ input }) => String(input).toLowerCase().replace(/\s+/g, "-")
+        slugify: async ({ input }) => String(input).toLowerCase().replace(/\s+/g, "-")
       }
     }
   );
@@ -121,6 +121,15 @@ nodes:
         messages_path: input.messages
         append_prompt_as_user: true
     config:
+      output_schema:
+        type: object
+        properties:
+          state:
+            type: string
+          reason:
+            type: string
+        required: [state, reason]
+        additionalProperties: false
       prompt: "Classify state"
 
   - id: route
@@ -154,6 +163,13 @@ edges:
 
   const result = await client.runWorkflowYamlString(yaml, {
     messages: [{ role: "user", content: "Help me draft an email" }]
+  }, {
+    functions: {
+      GetRagData: ({ payload }) => ({
+        topic: payload.topic,
+        decision: "handled"
+      })
+    }
   });
 
   assert.equal(requestBody.model, "gpt-4o-mini");
@@ -162,5 +178,82 @@ edges:
   assert.equal(requestBody.messages[1].content, "Classify state");
   assert.equal(result.status, "ok");
   assert.equal(result.context.nodes.detect.output.state, "ready");
-  assert.equal(result.context.nodes.done.output.payload.topic, "ready");
+  assert.equal(result.context.nodes.done.output.topic, "ready");
+});
+
+test("runWorkflowYamlString graph llm_call enforces output_schema", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse('{"state":"ready"}')
+  });
+
+  const yaml = `
+entry_node: detect
+nodes:
+  - id: detect
+    node_type:
+      llm_call:
+        model: gpt-4o-mini
+    config:
+      output_schema:
+        type: object
+        properties:
+          state:
+            type: string
+          reason:
+            type: string
+        required: [state, reason]
+        additionalProperties: false
+      prompt: "Classify state"
+`;
+
+  await assert.rejects(
+    async () => {
+      await client.runWorkflowYamlString(yaml, { messages: [] });
+    },
+    /output failed schema validation/
+  );
+});
+
+test("runWorkflowYamlString graph custom_worker requires registered handler", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse('{"state":"ready","reason":"ok"}')
+  });
+
+  const yaml = `
+entry_node: detect
+nodes:
+  - id: detect
+    node_type:
+      llm_call:
+        model: gpt-4o-mini
+    config:
+      output_schema:
+        type: object
+        properties:
+          state:
+            type: string
+          reason:
+            type: string
+        required: [state, reason]
+        additionalProperties: false
+      prompt: "Classify state"
+  - id: next
+    node_type:
+      custom_worker:
+        handler: GetRagData
+edges:
+  - from: detect
+    to: next
+`;
+
+  await assert.rejects(
+    async () => {
+      await client.runWorkflowYamlString(yaml, { messages: [] });
+    },
+    /requires workflowOptions\.functions\['GetRagData'\]/
+  );
 });
