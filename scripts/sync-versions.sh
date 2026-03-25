@@ -24,6 +24,15 @@ rm -f crates/simple-agents-py/pyproject.toml.bak
 echo "✓ Python package version updated"
 echo ""
 
+# Update WASM Rust package version
+if [ -f bindings/wasm/simple-agents-wasm/rust/Cargo.toml ]; then
+    echo "Updating WASM Rust Cargo version..."
+    sed -i.bak "s/^version = \".*\"/version = \"$WORKSPACE_VERSION\"/" bindings/wasm/simple-agents-wasm/rust/Cargo.toml
+    rm -f bindings/wasm/simple-agents-wasm/rust/Cargo.toml.bak
+    echo "✓ WASM Rust Cargo.toml updated"
+    echo ""
+fi
+
 # Update examples package versions
 if [ -f examples/pyproject.toml ]; then
     echo "Updating examples pyproject version..."
