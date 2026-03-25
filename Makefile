@@ -316,6 +316,11 @@ publish-node: version-sync build-node
 	@set -e; \
 	cd $(NAPI_PROJECT_DIR); \
 	token=$${NPM_TOKEN:-$$NODE_AUTH_TOKEN}; \
+	otp=$${NPM_OTP:-$$NPM_CONFIG_OTP}; \
+	package_name=$$(node -p "require('./package.json').name"); \
+	package_version=$$(node -p "require('./package.json').version"); \
+	otp_flag=""; \
+	if [ -n "$$otp" ]; then otp_flag="--otp=$$otp"; fi; \
 	if [ -n "$$token" ]; then \
 		tmp_npmrc=$$(mktemp); \
 		trap 'rm -f "$$tmp_npmrc"' EXIT; \
@@ -326,13 +331,22 @@ publish-node: version-sync build-node
 			echo '==> Refresh token (npm Automation token) and retry'; \
 			exit 1; \
 		fi; \
-		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public; \
+		if NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping Node publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public $$otp_flag; \
 	else \
 		echo '==> No token provided; using local npm session (~/.npmrc)'; \
 		echo '==> If this fails, run: make npm-login'; \
 		npm whoami; \
-		npm publish --access public; \
-	fi
+		if npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping Node publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		npm publish --access public $$otp_flag; \
+	fi; \
+	echo '==> Node package published successfully'
 
 publish-node-doppler:
 	@$(DOPPLER_RUN) "$(MAKE) --no-print-directory publish-node"
@@ -341,6 +355,11 @@ publish-wasm: version-sync test-wasm
 	@set -e; \
 	cd $(WASM_PACKAGE_DIR); \
 	token=$${NPM_TOKEN:-$$NODE_AUTH_TOKEN}; \
+	otp=$${NPM_OTP:-$$NPM_CONFIG_OTP}; \
+	package_name=$$(node -p "require('./package.json').name"); \
+	package_version=$$(node -p "require('./package.json').version"); \
+	otp_flag=""; \
+	if [ -n "$$otp" ]; then otp_flag="--otp=$$otp"; fi; \
 	if [ -n "$$token" ]; then \
 		tmp_npmrc=$$(mktemp); \
 		trap 'rm -f "$$tmp_npmrc"' EXIT; \
@@ -351,13 +370,22 @@ publish-wasm: version-sync test-wasm
 			echo '==> Refresh token (npm Automation token) and retry'; \
 			exit 1; \
 		fi; \
-		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public; \
+		if NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping WASM publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public $$otp_flag; \
 	else \
 		echo '==> No token provided; using local npm session (~/.npmrc)'; \
 		echo '==> If this fails, run: make npm-login'; \
 		npm whoami; \
-		npm publish --access public; \
-	fi
+		if npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping WASM publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		npm publish --access public $$otp_flag; \
+	fi; \
+	echo '==> WASM package published successfully'
 
 npm-login:
 	cd $(NAPI_PROJECT_DIR) && npm login
