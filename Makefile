@@ -1,12 +1,12 @@
 .PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history run-rust-chat-history \
 	release-ffi release-python release-go release-node release-all \
-	build-node test-node publish-node test-go-bindings \
+	build-node test-node build-wasm test-wasm publish-node publish-wasm test-go-bindings \
 	publish-node-doppler \
 	npm-login \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry \
 	version-get version-sync version-patch version-minor version-major version-set \
-	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-binding-lockfiles sync-readme-version
+	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
 EXAMPLE ?= openai_basic
 RUST_RELEASE_DIR ?= target/release
@@ -18,6 +18,9 @@ NAPI_CRATE ?= simple-agents-napi
 NAPI_PROJECT_DIR ?= crates/simple-agents-napi
 NAPI_PACKAGE_JSON ?= $(NAPI_PROJECT_DIR)/package.json
 NAPI_PACKAGE_LOCK ?= $(NAPI_PROJECT_DIR)/package-lock.json
+WASM_PACKAGE_DIR ?= bindings/wasm/simple-agents-wasm
+WASM_PACKAGE_JSON ?= $(WASM_PACKAGE_DIR)/package.json
+WASM_PACKAGE_LOCK ?= $(WASM_PACKAGE_DIR)/package-lock.json
 PYTHON_UV_LOCK ?= crates/simple-agents-py/uv.lock
 EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
@@ -60,10 +63,12 @@ help:
 	@echo "  make release-go            - Build Go bindings against release FFI"
 	@echo "  make release-node          - Build Node napi module (Rust cdylib)"
 	@echo "  make build-node            - npm install + napi build (Node package)"
+	@echo "  make build-wasm            - npm install for wasm JS package"
 	@echo "  make release-all           - Build all language artifacts"
 	@echo ""
 	@echo "Testing:"
 	@echo "  make test-node             - Build Node addon then run node --test"
+	@echo "  make test-wasm             - Run WASM JS binding tests"
 	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
 	@echo "  make test-binding-contracts - Run cross-language contract gates"
 	@echo "  make test-binding-layers   - Run unit/contract/live test layers"
@@ -74,9 +79,10 @@ help:
 	@echo "  make publish-crates        - Publish Rust crates with Doppler env"
 	@echo "  make publish-python        - Publish Python package with Doppler env"
 	@echo "  make publish-node          - Publish Node package (current env token or local npm session)"
+	@echo "  make publish-wasm          - Publish WASM JS package (current env token or local npm session)"
 	@echo "  make publish-node-doppler  - Publish Node package using Doppler-injected env"
 	@echo "  make npm-login             - Login to npm locally for on-demand auth"
-	@echo "  make publish-all           - Publish Rust crates + Python + Node package"
+	@echo "  make publish-all           - Publish Rust crates + Python + Node + WASM packages"
 	@echo ""
 	@echo "Versioning:"
 	@echo "  make version-get           - Show current version"
@@ -183,6 +189,9 @@ release-node:
 build-node:
 	cd $(NAPI_PROJECT_DIR) && npm install && npm run build
 
+build-wasm:
+	cd $(WASM_PACKAGE_DIR) && npm install && npm run build
+
 release-all: release-ffi release-python release-go release-node
 
 test-node: build-node
@@ -190,6 +199,9 @@ test-node: build-node
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
 	cd $(NAPI_PROJECT_DIR) && npm test
+
+test-wasm: build-wasm
+	cd $(WASM_PACKAGE_DIR) && npm test
 
 test-go-bindings: release-ffi
 	cd $(GO_BINDINGS_DIR) && \
@@ -246,7 +258,7 @@ publish-python:
 		echo \"[publish-python] token_source=\$$TOKEN_SOURCE token_len=\$${#TOKEN_VALUE}\"; \
 		UV_PUBLISH_TOKEN=\$$TOKEN_VALUE uv publish $(CURDIR)/$(PYTHON_PROJECT_DIR)/dist/simple_agents_py-\$$VERSION.tar.gz"
 
-publish-all: publish-crates publish-python publish-node
+publish-all: publish-crates publish-python publish-node publish-wasm
 
 # ============================================================================
 # Pre-publish checks
@@ -260,6 +272,9 @@ check-publish:
 	@echo ""
 	@echo "==> Running Node binding contract test..."
 	@cd $(NAPI_PROJECT_DIR) && npm run test:contract
+	@echo ""
+	@echo "==> Running WASM binding tests..."
+	@cd $(WASM_PACKAGE_DIR) && npm test
 	@echo ""
 	@echo "==> Running clippy..."
 	@$(MAKE) clippy
@@ -301,6 +316,11 @@ publish-node: version-sync build-node
 	@set -e; \
 	cd $(NAPI_PROJECT_DIR); \
 	token=$${NPM_TOKEN:-$$NODE_AUTH_TOKEN}; \
+	otp=$${NPM_OTP:-$$NPM_CONFIG_OTP}; \
+	package_name=$$(node -p "require('./package.json').name"); \
+	package_version=$$(node -p "require('./package.json').version"); \
+	otp_flag=""; \
+	if [ -n "$$otp" ]; then otp_flag="--otp=$$otp"; fi; \
 	if [ -n "$$token" ]; then \
 		tmp_npmrc=$$(mktemp); \
 		trap 'rm -f "$$tmp_npmrc"' EXIT; \
@@ -311,16 +331,61 @@ publish-node: version-sync build-node
 			echo '==> Refresh token (npm Automation token) and retry'; \
 			exit 1; \
 		fi; \
-		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public; \
+		if NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping Node publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public $$otp_flag; \
 	else \
 		echo '==> No token provided; using local npm session (~/.npmrc)'; \
 		echo '==> If this fails, run: make npm-login'; \
 		npm whoami; \
-		npm publish --access public; \
-	fi
+		if npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping Node publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		npm publish --access public $$otp_flag; \
+	fi; \
+	echo '==> Node package published successfully'
 
 publish-node-doppler:
 	@$(DOPPLER_RUN) "$(MAKE) --no-print-directory publish-node"
+
+publish-wasm: version-sync test-wasm
+	@set -e; \
+	cd $(WASM_PACKAGE_DIR); \
+	token=$${NPM_TOKEN:-$$NODE_AUTH_TOKEN}; \
+	otp=$${NPM_OTP:-$$NPM_CONFIG_OTP}; \
+	package_name=$$(node -p "require('./package.json').name"); \
+	package_version=$$(node -p "require('./package.json').version"); \
+	otp_flag=""; \
+	if [ -n "$$otp" ]; then otp_flag="--otp=$$otp"; fi; \
+	if [ -n "$$token" ]; then \
+		tmp_npmrc=$$(mktemp); \
+		trap 'rm -f "$$tmp_npmrc"' EXIT; \
+		printf 'registry=https://registry.npmjs.org/\n//registry.npmjs.org/:_authToken=%s\n' "$$token" > "$$tmp_npmrc"; \
+		echo '==> Using token-based npm auth (NPM_TOKEN/NODE_AUTH_TOKEN)'; \
+		if ! NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm whoami; then \
+			echo '==> npm authentication failed for provided token'; \
+			echo '==> Refresh token (npm Automation token) and retry'; \
+			exit 1; \
+		fi; \
+		if NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping WASM publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		NPM_CONFIG_USERCONFIG="$$tmp_npmrc" npm publish --access public $$otp_flag; \
+	else \
+		echo '==> No token provided; using local npm session (~/.npmrc)'; \
+		echo '==> If this fails, run: make npm-login'; \
+		npm whoami; \
+		if npm view "$$package_name@$$package_version" version >/dev/null 2>&1; then \
+			echo '==> Skipping WASM publish (version already exists)'; \
+			exit 0; \
+		fi; \
+		npm publish --access public $$otp_flag; \
+	fi; \
+	echo '==> WASM package published successfully'
 
 npm-login:
 	cd $(NAPI_PROJECT_DIR) && npm login
@@ -335,6 +400,7 @@ version-get:
 version-sync:
 	@./scripts/sync-versions.sh
 	@$(MAKE) --no-print-directory sync-napi-version
+	@$(MAKE) --no-print-directory sync-wasm-version
 	@$(MAKE) --no-print-directory sync-binding-lockfiles
 	@$(MAKE) --no-print-directory sync-readme-version
 
@@ -352,6 +418,20 @@ sync-napi-version:
 		exit 1; \
 	fi
 
+sync-wasm-version:
+	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
+		echo "Error: sync-wasm-version cannot run with -n/--dry-run"; \
+		exit 1; \
+	esac; \
+	version=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
+	if [ -f "$(WASM_PACKAGE_JSON)" ]; then \
+		node -e "const fs=require('fs'); const p=process.argv[1]; const v=process.argv[2]; const j=JSON.parse(fs.readFileSync(p,'utf8')); j.version=v; fs.writeFileSync(p, JSON.stringify(j, null, 2)+'\n');" "$(WASM_PACKAGE_JSON)" "$$version"; \
+		echo "✓ WASM package version updated ($(WASM_PACKAGE_JSON) -> $$version)"; \
+	else \
+		echo "⚠ WASM package.json not found at $(WASM_PACKAGE_JSON)"; \
+		exit 1; \
+	fi
+
 sync-binding-lockfiles:
 	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
 		echo "Error: sync-binding-lockfiles cannot run with -n/--dry-run"; \
@@ -363,6 +443,15 @@ sync-binding-lockfiles:
 			echo "✓ Node package lock refreshed ($(NAPI_PACKAGE_LOCK))"; \
 		else \
 			echo "Error: npm is required to refresh $(NAPI_PACKAGE_LOCK)"; \
+			exit 1; \
+		fi; \
+	fi; \
+	if [ -f "$(WASM_PACKAGE_DIR)/package.json" ]; then \
+		if command -v npm >/dev/null 2>&1; then \
+			( cd "$(WASM_PACKAGE_DIR)" && npm install --package-lock-only --ignore-scripts >/dev/null ); \
+			echo "✓ WASM package lock refreshed ($(WASM_PACKAGE_LOCK))"; \
+		else \
+			echo "Error: npm is required to refresh $(WASM_PACKAGE_LOCK)"; \
 			exit 1; \
 		fi; \
 	fi; \
@@ -429,7 +518,7 @@ version-patch:
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
 	sleep 1; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -454,7 +543,7 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -479,7 +568,7 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -506,7 +595,7 @@ version-set:
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $(VERSION)"; \
 	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
 	git push origin HEAD --follow-tags; \

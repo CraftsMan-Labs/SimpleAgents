@@ -34,6 +34,7 @@ features:
 - New to SimpleAgents: [Quick Start](/QUICKSTART)
 - Building production flows: [Usage Guide](/USAGE)
 - Integrating another language: [Bindings](/BINDINGS_PYTHON)
+- Browser integration path: [Browser/WASM Binding](/BINDINGS_WASM)
 - Extending internals: [Architecture](/ARCHITECTURE)
 - Cross-language parity baseline: [Capability Matrix](/CAPABILITY_MATRIX)
 - Need help debugging setup/tests: [Troubleshooting](/TROUBLESHOOTING)

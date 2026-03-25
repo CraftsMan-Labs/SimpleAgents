@@ -1,0 +1,28 @@
+{
+  "name": "simple-agents-wasm",
+  "version": "0.2.30",
+  "description": "Browser-compatible SimpleAgents client for OpenAI-compatible providers",
+  "type": "module",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "scripts": {
+    "build": "npm run build:rust",
+    "build:rust": "cargo build --manifest-path rust/Cargo.toml --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir pkg --out-name simple_agents_wasm rust/target/wasm32-unknown-unknown/release/simple_agents_wasm_rust.wasm",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "yaml": "^2.5.1"
+  },
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "README.md",
+    "pkg",
+    "rust/Cargo.toml",
+    "rust/src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT OR Apache-2.0"
+}
