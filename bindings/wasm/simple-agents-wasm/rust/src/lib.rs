@@ -20,7 +20,9 @@ struct MessageInput {
     role: String,
     content: String,
     name: Option<String>,
+    #[serde(alias = "tool_call_id")]
     tool_call_id: Option<String>,
+    #[serde(alias = "tool_calls")]
     tool_calls: Option<Vec<JsToolCall>>,
 }
 
@@ -28,12 +30,39 @@ struct MessageInput {
 #[serde(rename_all = "camelCase")]
 struct JsToolCall {
     id: String,
+    #[serde(alias = "type")]
     tool_type: Option<String>,
     function: JsToolCallFunction,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct JsToolCallFunction {
+    name: String,
+    arguments: String,
+}
+
+#[derive(Serialize, Clone)]
+struct OpenAiMessageInput {
+    role: String,
+    content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OpenAiToolCall>>,
+}
+
+#[derive(Serialize, Clone)]
+struct OpenAiToolCall {
+    id: String,
+    #[serde(rename = "type")]
+    tool_type: String,
+    function: OpenAiToolCallFunction,
+}
+
+#[derive(Serialize, Clone)]
+struct OpenAiToolCallFunction {
     name: String,
     arguments: String,
 }
@@ -78,6 +107,7 @@ struct GraphWorkflowNode {
 struct GraphNodeConfig {
     prompt: Option<String>,
     payload: Option<JsonValue>,
+    output_schema: Option<JsonValue>,
 }
 
 #[derive(Deserialize, Clone, Default)]
@@ -260,6 +290,33 @@ fn to_messages(prompt_or_messages: JsValue) -> Result<Vec<MessageInput>, JsValue
     Ok(messages)
 }
 
+fn to_openai_messages(messages: Vec<MessageInput>) -> Vec<OpenAiMessageInput> {
+    messages
+        .into_iter()
+        .map(|message| OpenAiMessageInput {
+            role: message.role,
+            content: message.content,
+            name: message.name,
+            tool_call_id: message.tool_call_id,
+            tool_calls: message.tool_calls.map(|tool_calls| {
+                tool_calls
+                    .into_iter()
+                    .map(|tool_call| OpenAiToolCall {
+                        id: tool_call.id,
+                        tool_type: tool_call
+                            .tool_type
+                            .unwrap_or_else(|| "function".to_string()),
+                        function: OpenAiToolCallFunction {
+                            name: tool_call.function.name,
+                            arguments: tool_call.function.arguments,
+                        },
+                    })
+                    .collect()
+            }),
+        })
+        .collect()
+}
+
 fn normalize_base_url(base_url: &str) -> String {
     base_url.trim_end_matches('/').to_string()
 }
@@ -287,6 +344,33 @@ async fn call_method0(target: &JsValue, method: &str) -> Result<JsValue, JsValue
     JsFuture::from(promise)
         .await
         .map_err(|_| js_error(format!("await failed for method: {method}")))
+}
+
+fn call_method0_sync(target: &JsValue, method: &str) -> Result<JsValue, JsValue> {
+    let method_value = Reflect::get(target, &JsValue::from_str(method))
+        .map_err(|_| js_error(format!("missing method: {method}")))?;
+    let method_fn = method_value
+        .dyn_into::<Function>()
+        .map_err(|_| js_error(format!("method is not callable: {method}")))?;
+    method_fn
+        .call0(target)
+        .map_err(|_| js_error(format!("failed to call method: {method}")))
+}
+
+fn call_method2_sync(
+    target: &JsValue,
+    method: &str,
+    arg1: &JsValue,
+    arg2: &JsValue,
+) -> Result<JsValue, JsValue> {
+    let method_value = Reflect::get(target, &JsValue::from_str(method))
+        .map_err(|_| js_error(format!("missing method: {method}")))?;
+    let method_fn = method_value
+        .dyn_into::<Function>()
+        .map_err(|_| js_error(format!("method is not callable: {method}")))?;
+    method_fn
+        .call2(target, arg1, arg2)
+        .map_err(|_| js_error(format!("failed to call method: {method}")))
 }
 
 async fn js_fetch(
@@ -478,7 +562,12 @@ fn evaluate_switch_condition(condition: &str, context: &JsonValue) -> bool {
         let left_path = left.trim();
         let right_value = right.trim().trim_matches('"');
         let left_value = get_path_value(context, left_path)
-            .map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()))
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string())
+            })
             .unwrap_or_default();
         return left_value == right_value;
     }
@@ -487,7 +576,12 @@ fn evaluate_switch_condition(condition: &str, context: &JsonValue) -> bool {
         let left_path = left.trim();
         let right_value = right.trim().trim_matches('"');
         let left_value = get_path_value(context, left_path)
-            .map(|value| value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string()))
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string())
+            })
             .unwrap_or_default();
         return left_value != right_value;
     }
@@ -495,18 +589,279 @@ fn evaluate_switch_condition(condition: &str, context: &JsonValue) -> bool {
     false
 }
 
-fn parse_sse_blocks(text: &str) -> Vec<String> {
-    text.split("\n\n")
-        .map(str::trim)
-        .filter(|block| !block.is_empty())
-        .map(str::to_string)
-        .collect()
+fn graph_llm_output_schema(config: Option<&GraphNodeConfig>) -> JsonValue {
+    if let Some(schema) = config.and_then(|cfg| cfg.output_schema.clone()) {
+        return schema;
+    }
+    json!({
+        "type": "object",
+        "additionalProperties": true
+    })
+}
+
+fn matches_json_schema_type(expected: &str, value: &JsonValue) -> bool {
+    match expected {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "number" => value.is_number(),
+        "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        _ => false,
+    }
+}
+
+fn json_value_type_name(value: &JsonValue) -> &'static str {
+    match value {
+        JsonValue::Null => "null",
+        JsonValue::Bool(_) => "boolean",
+        JsonValue::Number(_) => "number",
+        JsonValue::String(_) => "string",
+        JsonValue::Array(_) => "array",
+        JsonValue::Object(_) => "object",
+    }
+}
+
+fn validate_schema_instance(
+    schema: &JsonValue,
+    value: &JsonValue,
+    path: &str,
+) -> Result<(), String> {
+    let Some(schema_obj) = schema.as_object() else {
+        return Ok(());
+    };
+
+    if let Some(any_of) = schema_obj.get("anyOf").and_then(JsonValue::as_array) {
+        if !any_of.is_empty()
+            && !any_of
+                .iter()
+                .any(|nested| validate_schema_instance(nested, value, path).is_ok())
+        {
+            return Err(format!("{path} did not satisfy anyOf"));
+        }
+    }
+
+    if let Some(one_of) = schema_obj.get("oneOf").and_then(JsonValue::as_array) {
+        if !one_of.is_empty() {
+            let matched = one_of
+                .iter()
+                .filter(|nested| validate_schema_instance(nested, value, path).is_ok())
+                .count();
+            if matched != 1 {
+                return Err(format!("{path} must satisfy exactly one oneOf schema"));
+            }
+        }
+    }
+
+    if let Some(all_of) = schema_obj.get("allOf").and_then(JsonValue::as_array) {
+        for nested in all_of {
+            validate_schema_instance(nested, value, path)?;
+        }
+    }
+
+    if let Some(enum_values) = schema_obj.get("enum").and_then(JsonValue::as_array) {
+        if !enum_values.is_empty() && !enum_values.iter().any(|candidate| candidate == value) {
+            return Err(format!("{path} must be one of enum values"));
+        }
+    }
+
+    if let Some(schema_type) = schema_obj.get("type") {
+        let matches = match schema_type {
+            JsonValue::String(t) => matches_json_schema_type(t, value),
+            JsonValue::Array(types) => types.iter().any(|item| {
+                item.as_str()
+                    .map(|t| matches_json_schema_type(t, value))
+                    .unwrap_or(false)
+            }),
+            _ => true,
+        };
+        if !matches {
+            return Err(format!(
+                "{path} expected type {schema_type}, got {}",
+                json_value_type_name(value)
+            ));
+        }
+    }
+
+    if let Some(text) = value.as_str() {
+        if let Some(min_length) = schema_obj.get("minLength").and_then(JsonValue::as_u64) {
+            if text.chars().count() < min_length as usize {
+                return Err(format!("{path} must have minLength {min_length}"));
+            }
+        }
+        if let Some(max_length) = schema_obj.get("maxLength").and_then(JsonValue::as_u64) {
+            if text.chars().count() > max_length as usize {
+                return Err(format!("{path} must have maxLength {max_length}"));
+            }
+        }
+    }
+
+    if let Some(number) = value.as_f64() {
+        if let Some(minimum) = schema_obj.get("minimum").and_then(JsonValue::as_f64) {
+            if number < minimum {
+                return Err(format!("{path} must be >= {minimum}"));
+            }
+        }
+        if let Some(maximum) = schema_obj.get("maximum").and_then(JsonValue::as_f64) {
+            if number > maximum {
+                return Err(format!("{path} must be <= {maximum}"));
+            }
+        }
+    }
+
+    if let Some(items) = value.as_array() {
+        if let Some(min_items) = schema_obj.get("minItems").and_then(JsonValue::as_u64) {
+            if items.len() < min_items as usize {
+                return Err(format!("{path} must have at least {min_items} items"));
+            }
+        }
+        if let Some(max_items) = schema_obj.get("maxItems").and_then(JsonValue::as_u64) {
+            if items.len() > max_items as usize {
+                return Err(format!("{path} must have at most {max_items} items"));
+            }
+        }
+        if let Some(item_schema) = schema_obj.get("items") {
+            for (index, item) in items.iter().enumerate() {
+                validate_schema_instance(item_schema, item, &format!("{path}[{index}]"))?;
+            }
+        }
+    }
+
+    if let Some(object) = value.as_object() {
+        let properties = schema_obj
+            .get("properties")
+            .and_then(JsonValue::as_object)
+            .cloned()
+            .unwrap_or_default();
+
+        if let Some(required) = schema_obj.get("required").and_then(JsonValue::as_array) {
+            for key in required.iter().filter_map(JsonValue::as_str) {
+                if !object.contains_key(key) {
+                    return Err(format!("{path}.{key} is required"));
+                }
+            }
+        }
+
+        for (key, property_schema) in &properties {
+            if let Some(property_value) = object.get(key) {
+                validate_schema_instance(
+                    property_schema,
+                    property_value,
+                    &format!("{path}.{key}"),
+                )?;
+            }
+        }
+
+        if let Some(additional) = schema_obj.get("additionalProperties") {
+            if additional == &JsonValue::Bool(false) {
+                for key in object.keys() {
+                    if !properties.contains_key(key) {
+                        return Err(format!("{path}.{key} is not allowed"));
+                    }
+                }
+            } else if additional != &JsonValue::Bool(true) {
+                for (key, property_value) in object {
+                    if properties.contains_key(key) {
+                        continue;
+                    }
+                    validate_schema_instance(additional, property_value, &format!("{path}.{key}"))?;
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn normalize_sse_text(input: &str) -> String {
+    input.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+fn pop_next_sse_block(buffer: &mut String) -> Option<String> {
+    let delimiter_index = buffer.find("\n\n")?;
+    let block = buffer[..delimiter_index].trim().to_string();
+    let remaining = buffer[delimiter_index + 2..].to_string();
+    *buffer = remaining;
+    Some(block)
+}
+
+async fn consume_sse_blocks<F>(response: &JsValue, mut on_block: F) -> Result<(), JsValue>
+where
+    F: FnMut(String) -> Result<bool, JsValue>,
+{
+    let body = Reflect::get(response, &JsValue::from_str("body"))
+        .map_err(|_| js_error("stream response body is unavailable"))?;
+    if body.is_null() || body.is_undefined() {
+        return Err(js_error("stream response had no body"));
+    }
+
+    let reader = call_method0_sync(&body, "getReader")?;
+
+    let global = js_sys::global();
+    let text_decoder_ctor = Reflect::get(&global, &JsValue::from_str("TextDecoder"))
+        .map_err(|_| js_error("TextDecoder is unavailable"))?;
+    let text_decoder_fn = text_decoder_ctor
+        .dyn_into::<Function>()
+        .map_err(|_| js_error("TextDecoder constructor is not callable"))?;
+    let decoder = js_sys::Reflect::construct(&text_decoder_fn, &Array::new())
+        .map_err(|_| js_error("failed to construct TextDecoder"))?;
+
+    let mut buffer = String::new();
+
+    loop {
+        let read_result = call_method0(&reader, "read").await?;
+        let done = Reflect::get(&read_result, &JsValue::from_str("done"))
+            .ok()
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        if done {
+            break;
+        }
+
+        let value = Reflect::get(&read_result, &JsValue::from_str("value"))
+            .map_err(|_| js_error("stream chunk missing value"))?;
+
+        let decode_options = Object::new();
+        Reflect::set(
+            &decode_options,
+            &JsValue::from_str("stream"),
+            &JsValue::TRUE,
+        )
+        .map_err(|_| js_error("failed to configure stream decoder"))?;
+
+        let chunk_js = call_method2_sync(&decoder, "decode", &value, &decode_options)?;
+        let chunk = chunk_js.as_string().unwrap_or_default();
+        buffer.push_str(&normalize_sse_text(&chunk));
+
+        while let Some(block) = pop_next_sse_block(&mut buffer) {
+            if block.is_empty() {
+                continue;
+            }
+            let should_continue = on_block(block)?;
+            if !should_continue {
+                return Ok(());
+            }
+        }
+    }
+
+    let trailing_js = call_method0_sync(&decoder, "decode")?;
+    let trailing = trailing_js.as_string().unwrap_or_default();
+    buffer.push_str(&normalize_sse_text(&trailing));
+
+    let trailing_block = buffer.trim().to_string();
+    if !trailing_block.is_empty() {
+        let _ = on_block(trailing_block)?;
+    }
+
+    Ok(())
 }
 
 fn parse_sse_data_line(block: &str) -> Option<String> {
     let mut data_lines = Vec::new();
     for line in block.lines() {
-        if let Some(rest) = line.strip_prefix("data:") {
+        let normalized = line.trim_end_matches('\r');
+        if let Some(rest) = normalized.strip_prefix("data:") {
             data_lines.push(rest.trim_start().to_string());
         }
     }
@@ -580,7 +935,7 @@ impl WasmClient {
             }
         }
 
-        let messages = to_messages(prompt_or_messages)?;
+        let messages = to_openai_messages(to_messages(prompt_or_messages)?);
         let messages_value = serde_json::to_value(messages)
             .map_err(|_| js_error("failed to serialize request messages"))?;
         let body = json!({
@@ -749,7 +1104,7 @@ impl WasmClient {
             CompleteOptions::default()
         };
 
-        let messages = to_messages(prompt_or_messages)?;
+        let messages = to_openai_messages(to_messages(prompt_or_messages)?);
         let messages_value = serde_json::to_value(messages)
             .map_err(|_| js_error("failed to serialize request messages"))?;
         let body = json!({
@@ -806,24 +1161,21 @@ impl WasmClient {
             return Err(js_error(message));
         }
 
-        let text_js = call_method0(&response, "text").await?;
-        let text = text_js.as_string().unwrap_or_default();
-
         let mut aggregate = String::new();
         let mut response_id = String::new();
         let mut response_model = model.clone();
         let mut finish_reason: Option<String> = None;
 
-        for block in parse_sse_blocks(&text) {
+        consume_sse_blocks(&response, |block| {
             let Some(data) = parse_sse_data_line(&block) else {
-                continue;
+                return Ok(true);
             };
             if data == "[DONE]" {
-                break;
+                return Ok(false);
             }
 
             let Ok(chunk) = serde_json::from_str::<JsonValue>(&data) else {
-                continue;
+                return Ok(true);
             };
             let choice = chunk
                 .get("choices")
@@ -864,7 +1216,7 @@ impl WasmClient {
                 .get("finish_reason")
                 .and_then(JsonValue::as_str)
                 .map(str::to_string)
-                .or(finish_reason);
+                .or(finish_reason.clone());
 
             let delta_event = json!({
                 "eventType": "delta",
@@ -883,7 +1235,10 @@ impl WasmClient {
             on_event
                 .call1(&JsValue::NULL, &event_js)
                 .map_err(|_| js_error("failed to call stream callback"))?;
-        }
+
+            Ok(true)
+        })
+        .await?;
 
         let done_event = json!({ "eventType": "done" });
         let done_js = serde_wasm_bindgen::to_value(&done_event)
@@ -980,10 +1335,9 @@ impl WasmClient {
                     return Err(js_error("workflow exceeded maximum step iterations"));
                 }
 
-                let node = node_by_id
-                    .get(&pointer)
-                    .cloned()
-                    .ok_or_else(|| config_error(format!("workflow references unknown node '{}'", pointer)))?;
+                let node = node_by_id.get(&pointer).cloned().ok_or_else(|| {
+                    config_error(format!("workflow references unknown node '{}'", pointer))
+                })?;
 
                 let step_type = if node.node_type.llm_call.is_some() {
                     "llm_call"
@@ -1006,7 +1360,12 @@ impl WasmClient {
                         .model
                         .clone()
                         .or_else(|| graph_doc.model.clone())
-                        .or_else(|| context.get("model").and_then(JsonValue::as_str).map(str::to_string))
+                        .or_else(|| {
+                            context
+                                .get("model")
+                                .and_then(JsonValue::as_str)
+                                .map(str::to_string)
+                        })
                         .ok_or_else(|| {
                             config_error(format!(
                                 "llm_call node '{}' requires node_type.llm_call.model",
@@ -1023,9 +1382,12 @@ impl WasmClient {
                     );
 
                     let prompt_js = if llm.messages_path.as_deref() == Some("input.messages") {
-                        let mut history: Vec<MessageInput> = get_path_value(&graph_context, "input.messages")
-                            .and_then(|value| serde_json::from_value::<Vec<MessageInput>>(value.clone()).ok())
-                            .unwrap_or_default();
+                        let mut history: Vec<MessageInput> =
+                            get_path_value(&graph_context, "input.messages")
+                                .and_then(|value| {
+                                    serde_json::from_value::<Vec<MessageInput>>(value.clone()).ok()
+                                })
+                                .unwrap_or_default();
                         if llm.append_prompt_as_user.unwrap_or(true) {
                             history.push(MessageInput {
                                 role: "user".to_string(),
@@ -1047,8 +1409,9 @@ impl WasmClient {
                             model,
                             prompt_js,
                             Some(
-                                serde_wasm_bindgen::to_value(&opts)
-                                    .map_err(|_| js_error("failed to serialize completion options"))?,
+                                serde_wasm_bindgen::to_value(&opts).map_err(|_| {
+                                    js_error("failed to serialize completion options")
+                                })?,
                             ),
                         )
                         .await?;
@@ -1060,6 +1423,15 @@ impl WasmClient {
                         .and_then(JsonValue::as_str)
                         .unwrap_or_default();
                     let parsed_output = parse_json_from_text(raw_content);
+                    let output_schema = graph_llm_output_schema(node.config.as_ref());
+                    validate_schema_instance(&output_schema, &parsed_output, "$").map_err(
+                        |message| {
+                            js_error(format!(
+                                "llm_call node '{}' output failed schema validation: {}",
+                                node.id, message
+                            ))
+                        },
+                    )?;
 
                     if let Some(nodes_map) = graph_context
                         .get_mut("nodes")
@@ -1087,7 +1459,9 @@ impl WasmClient {
                             let matches = branch
                                 .condition
                                 .as_ref()
-                                .map(|condition| evaluate_switch_condition(condition, &graph_context))
+                                .map(|condition| {
+                                    evaluate_switch_condition(condition, &graph_context)
+                                })
                                 .unwrap_or(false);
                             if matches {
                                 next_pointer = branch.target.clone().unwrap_or_default();
@@ -1097,10 +1471,65 @@ impl WasmClient {
                     }
                     pointer = next_pointer;
                 } else if let Some(custom_worker) = node.node_type.custom_worker.as_ref() {
-                    let worker_output = json!({
-                        "handler": custom_worker.handler.clone().unwrap_or_else(|| "custom_worker".to_string()),
-                        "payload": node.config.as_ref().and_then(|config| config.payload.clone()).unwrap_or(JsonValue::Null)
+                    let handler = custom_worker
+                        .handler
+                        .clone()
+                        .unwrap_or_else(|| "custom_worker".to_string());
+                    let functions_js = options.functions_js.clone().ok_or_else(|| {
+                        config_error(format!(
+                            "custom_worker node '{}' requires workflowOptions.functions",
+                            node.id
+                        ))
+                    })?;
+                    let function_value = Reflect::get(&functions_js, &JsValue::from_str(&handler))
+                        .map_err(|_| {
+                            config_error(format!(
+                                "failed to resolve custom worker handler '{}' from workflowOptions.functions",
+                                handler
+                            ))
+                        })?;
+                    let function = function_value.dyn_into::<Function>().map_err(|_| {
+                        config_error(format!(
+                            "custom_worker node '{}' requires workflowOptions.functions['{}']",
+                            node.id, handler
+                        ))
+                    })?;
+
+                    let worker_args = json!({
+                        "handler": handler,
+                        "payload": node
+                            .config
+                            .as_ref()
+                            .and_then(|config| config.payload.clone())
+                            .unwrap_or(JsonValue::Null),
+                        "nodeId": node.id.clone()
                     });
+                    let args_js = serde_wasm_bindgen::to_value(&worker_args)
+                        .map_err(|_| js_error("failed to serialize custom_worker args"))?;
+                    let context_js = serde_wasm_bindgen::to_value(&graph_context)
+                        .map_err(|_| js_error("failed to serialize graph context"))?;
+                    let worker_call_output = function
+                        .call2(&JsValue::NULL, &args_js, &context_js)
+                        .map_err(|_| {
+                            js_error(format!(
+                                "custom_worker node '{}' handler call failed",
+                                node.id
+                            ))
+                        })?;
+                    let resolved_output = if worker_call_output.is_instance_of::<Promise>() {
+                        JsFuture::from(worker_call_output.unchecked_into::<Promise>())
+                            .await
+                            .map_err(|_| {
+                                js_error(format!(
+                                    "custom_worker node '{}' async handler promise rejected",
+                                    node.id
+                                ))
+                            })?
+                    } else {
+                        worker_call_output
+                    };
+                    let worker_output =
+                        serde_wasm_bindgen::from_value(resolved_output).unwrap_or(JsonValue::Null);
 
                     if let Some(nodes_map) = graph_context
                         .get_mut("nodes")
