@@ -73,6 +73,42 @@ function createExecuteHandler(workerId: string) {
     }
 
     const payload = request.payload_json ? JSON.parse(request.payload_json) : {};
+    if (request.operation === "GetRagData") {
+      const topic = typeof payload?.topic === "string" ? payload.topic : "clarification";
+      let output;
+      if (topic === "terminated") {
+        output = {
+          handler: "GetRagData",
+          topic,
+          decision: "terminated",
+          message: "Interview terminated due to process/policy violation.",
+        };
+      } else if (topic === "already_terminated") {
+        output = {
+          handler: "GetRagData",
+          topic,
+          decision: "terminated",
+          message: "Interview session is already terminated.",
+        };
+      } else {
+        output = {
+          handler: "GetRagData",
+          topic,
+          decision: "continue",
+          message: "Provide the next interview question based on candidate progress.",
+        };
+      }
+
+      callback(null, {
+        request_id: request.request_id,
+        worker_id: workerId,
+        elapsed_ms: "1",
+        ok: true,
+        output_json: JSON.stringify(output),
+      });
+      return;
+    }
+
     callback(null, {
       request_id: request.request_id,
       worker_id: workerId,
