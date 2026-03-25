@@ -19,9 +19,9 @@ futures-util.workspace = true
 tracing = "0.1"
 
 simple-agent-type = { workspace = true }
-simple-agents-router = { path = "../simple-agents-router", version = "0.2.29" }
-simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.29" }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.29" }
+simple-agents-router = { path = "../simple-agents-router", version = "0.2.30" }
+simple-agents-cache = { path = "../simple-agents-cache", version = "0.2.30" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.2.30" }
 futures-core = "0.3"
 
 [dev-dependencies]
