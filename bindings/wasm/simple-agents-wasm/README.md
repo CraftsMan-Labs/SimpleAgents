@@ -50,4 +50,5 @@ console.log(result.content);
 - `runWorkflowYamlString(...)` supports string-based workflow execution for:
   - step workflows (`steps` DSL)
   - graph workflows (`entry_node` + `nodes` + `edges`) with `llm_call`, `switch`, and `custom_worker`.
+- Graph `custom_worker` nodes call `workflowOptions.functions[handler]` and throw a runtime error when the handler is missing.
 - Use `hasRustBackend()` to check whether Rust wasm backend was loaded.
