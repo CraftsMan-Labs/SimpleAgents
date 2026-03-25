@@ -70,13 +70,37 @@ class WorkerService(worker_pb2_grpc.WorkerServiceServicer):
             )
 
         payload = json.loads(request.payload_json or "{}")
-        output = {
-            "language": "python",
-            "worker_id": self.worker_id,
-            "operation": request.operation,
-            "target": request.target,
-            "payload": payload,
-        }
+        if request.operation == "GetRagData":
+            topic = payload.get("topic", "clarification")
+            if topic == "terminated":
+                output = {
+                    "handler": "GetRagData",
+                    "topic": topic,
+                    "decision": "terminated",
+                    "message": "Interview terminated due to process/policy violation.",
+                }
+            elif topic == "already_terminated":
+                output = {
+                    "handler": "GetRagData",
+                    "topic": topic,
+                    "decision": "terminated",
+                    "message": "Interview session is already terminated.",
+                }
+            else:
+                output = {
+                    "handler": "GetRagData",
+                    "topic": topic,
+                    "decision": "continue",
+                    "message": "Provide the next interview question based on candidate progress.",
+                }
+        else:
+            output = {
+                "language": "python",
+                "worker_id": self.worker_id,
+                "operation": request.operation,
+                "target": request.target,
+                "payload": payload,
+            }
         return worker_pb2.ExecuteResponse(
             request_id=request.request_id,
             worker_id=self.worker_id,
