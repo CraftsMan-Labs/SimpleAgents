@@ -10,7 +10,7 @@ Helpful links:
 Install from this repository:
 
 ```bash
-npx skills add craftsmanlabs/SimpleAgents
+npx skills add CraftsMan-Labs/SimpleAgents
 ```
 
 Current skills:
