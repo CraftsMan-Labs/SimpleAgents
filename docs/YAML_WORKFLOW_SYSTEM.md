@@ -1,21 +1,32 @@
 # YAML Workflow System Guide
 
-This guide shows how to design, run, and troubleshoot YAML workflows in SimpleAgents.
-By the end, you will understand the workflow file model, supported node behavior, schema contracts, runtime telemetry, and practical production checks.
+This guide explains how YAML workflows fit together after you have a first run working.
+If you want the fastest setup path, start with [Workflow Quickstart](/WORKFLOW_QUICKSTART).
 
-## Prerequisites
+## Before You Read This
 
-- Familiarity with [Quick Start](/QUICKSTART) and [Usage Guide](/USAGE)
+Use this guide when you want to move beyond "just make one workflow run" and learn how to:
+
+- add branching
+- add deterministic worker logic
+- use globals and node outputs safely
+- debug runtime behavior
+
+Prerequisites:
+
+- Familiarity with [Workflow Quickstart](/WORKFLOW_QUICKSTART)
 - A runnable workspace with `cargo` and optional `uv` for Python examples
 - Basic JSON schema knowledge for `llm_call` output contracts
 
-## Quick Path
+## Recommended Build Order
 
-1. Create a minimal YAML workflow with one `llm_call` node.
-2. Add explicit `config.output_schema` for structured output stability.
-3. Run workflow via Rust API or examples runner.
-4. Render the workflow graph to Mermaid for fast wiring validation.
-5. Inspect trace/timing fields and iterate.
+Keep your workflow development in this order:
+
+1. Start with one `llm_call` node.
+2. Add strict `config.output_schema`.
+3. Validate graph shape with Mermaid output.
+4. Add `switch` routing only when branching is needed.
+5. Add `custom_worker` only for deterministic external logic.
 
 Minimal workflow skeleton:
 
@@ -39,12 +50,10 @@ nodes:
       prompt: |
         Return {"status":"ok"}
 
-edges:
-  - from: first_node
-    to: first_node
 ```
 
 Required top-level fields are `id`, `entry_node`, and non-empty `nodes`.
+Add `edges` when your workflow has more than one execution step.
 
 ## Mental Model
 
@@ -54,7 +63,13 @@ Required top-level fields are `id`, `entry_node`, and non-empty `nodes`.
 | Runtime model | Converts YAML to canonical IR when compatible, otherwise runs YAML-specific path |
 | Execution + telemetry | Runs node-by-node and emits trace, timings, and event diagnostics |
 
-Keep product logic in YAML; treat runtime output as verification and observability material.
+Keep product logic in YAML and use runtime output for verification and debugging.
+
+The simplest pattern to reuse is:
+
+1. classifier node
+2. `switch` router
+3. action node
 
 ## Supported Node Types
 
@@ -62,7 +77,7 @@ Keep product logic in YAML; treat runtime output as verification and observabili
 - `switch`: condition-driven routing with deterministic default
 - `custom_worker`: deterministic external logic handler
 
-### `llm_call` essentials
+### `llm_call`
 
 ```yaml
 node_type:
@@ -78,6 +93,8 @@ config:
     ...
 ```
 
+Use `llm_call` when the model should generate or classify something.
+
 Behavior notes:
 
 - `model` is required.
@@ -92,7 +109,7 @@ Tool calling (per-node strict format):
 - Mixed tool declaration formats in one node fail validation.
 - Tool output schema mismatch hard-fails node execution.
 
-### `switch` essentials
+### `switch`
 
 ```yaml
 node_type:
@@ -103,9 +120,11 @@ node_type:
     default: fallback_node
 ```
 
+Use `switch` when routing should depend on a stable value from a previous node.
+
 Always define deterministic `default` behavior.
 
-### `custom_worker` essentials
+### `custom_worker`
 
 ```yaml
 node_type:
@@ -116,7 +135,20 @@ config:
     topic: termination
 ```
 
+Use `custom_worker` when code must run deterministically outside the model.
+
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
+
+## A Good First Multi-Node Pattern
+
+Use this when you want a workflow that decides whether to act or ask a follow-up question:
+
+1. `detect_*` node classifies state
+2. `switch` routes from that state
+3. one branch asks a question
+4. one branch performs the main action
+
+Good example: `examples/workflow_email/email-chat-draft-or-clarify.yaml`
 
 ## Prompt Context and Run Memory
 
@@ -198,6 +230,8 @@ cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/pytho
 ```
 
 ## Telemetry and Diagnostics
+
+You do not need telemetry to get started. Use it after the workflow already runs.
 
 Workflow outputs include:
 

@@ -2,6 +2,15 @@
 
 This folder contains an LLM-driven email intake classification demo in both Python and YAML forms.
 
+## Start Here
+
+If you want the easiest first workflow run, use this order:
+
+1. Read `docs/WORKFLOW_QUICKSTART.md`
+2. Run `examples/workflow_email/hr-warning-email-subgraph.yaml`
+3. Move to `email-chat-draft-or-clarify.yaml` when you want branching
+4. Move to `email-chat-draft-with-tool-calling.yaml` when you want tool calling
+
 Primary workflow file:
 
 - `email-unified-chat-intake-classification.yaml` (recommended: chat + classification + RAG + drafting)

@@ -1,18 +1,19 @@
-# Single-step warning-email workflow with native llm_call tool-calling
-# Input: employee name + complaint in chat history
-# Tool: returns employee_id + location by name
+# Starter tool-calling example.
+# Pattern: one llm_call node with one declared tool.
+# Input: employee name + complaint in input.messages.
 
 id: email-chat-draft-with-tool-calling
 version: 1.0.0
 
 metadata:
   name: "Warning Email Draft With Tool Calling"
-  description: "Draft warning email using complaint + tool-fetched employee metadata"
-  tags: ["example", "chat-history", "warning-email", "tool-calling"]
+  description: "Beginner-friendly tool-calling workflow that enriches a warning email with employee metadata"
+  tags: ["example", "starter", "tool-calling", "chat-history", "warning-email"]
 
 entry_node: draft_warning_email
 
 nodes:
+  # The model can either ask for missing details or call the tool and draft the email.
   - id: draft_warning_email
     name: "Draft Warning Email"
     node_type:

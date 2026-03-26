@@ -10,6 +10,9 @@ hero:
       text: Get Started
       link: /QUICKSTART
     - theme: alt
+      text: YAML Quickstart
+      link: /WORKFLOW_QUICKSTART
+    - theme: alt
       text: Find the Right Doc
       link: /DOCS_MAP
     - theme: alt
@@ -32,6 +35,7 @@ features:
 ## Start Here
 
 - New to SimpleAgents: [Quick Start](/QUICKSTART)
+- New to YAML workflows: [Workflow Quickstart](/WORKFLOW_QUICKSTART)
 - Building production flows: [Usage Guide](/USAGE)
 - Integrating another language: [Bindings](/BINDINGS_PYTHON)
 - Browser integration path: [Browser/WASM Binding](/BINDINGS_WASM)
