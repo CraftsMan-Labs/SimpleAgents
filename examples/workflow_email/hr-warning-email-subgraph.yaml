@@ -1,16 +1,19 @@
-# Subgraph: draft HR warning email from full chat context
+# Starter workflow: one node, one schema, no routing.
+# Use this file first when learning how SimpleAgents YAML works.
+# Input lives in input.messages and the node returns { subject, body }.
 
 id: hr-warning-email-subgraph
 version: 1.0.0
 
 metadata:
-  name: "HR Warning Email Subgraph"
-  description: "Draft a formal HR warning email from employee complaint context"
-  tags: ["example", "subgraph", "hr", "warning-email"]
+  name: "Starter HR Warning Email"
+  description: "Beginner-friendly single-node workflow that drafts a formal HR warning email"
+  tags: ["example", "starter", "single-node", "hr", "warning-email"]
 
 entry_node: draft_hr_warning_email
 
 nodes:
+  # One llm_call node is the easiest place to start.
   - id: draft_hr_warning_email
     name: "Draft HR Warning Email"
     node_type:

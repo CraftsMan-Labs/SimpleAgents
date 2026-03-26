@@ -1,18 +1,19 @@
-# Chat-based Email Draft Workflow
-# Uses chat history in input.messages. If scenario context is missing,
-# workflow asks for scenario details instead of drafting an email.
+# Beginner branching example.
+# Pattern: classify -> switch -> ask follow-up OR draft email.
+# Uses chat history from input.messages.
 
 id: email-chat-draft-or-clarify
 version: 1.0.0
 
 metadata:
   name: "Email Chat Draft Or Clarify"
-  description: "Draft email when scenario exists, otherwise ask for scenario"
-  tags: ["example", "chat-history", "email-draft", "clarification"]
+  description: "Starter branching workflow that either asks for missing details or drafts an email"
+  tags: ["example", "starter", "branching", "chat-history", "email-draft", "clarification"]
 
 entry_node: detect_scenario_context
 
 nodes:
+  # Step 1: classify whether the user is ready, missing details, or just exploring.
   - id: detect_scenario_context
     name: "Detect Scenario Context"
     node_type:
@@ -51,6 +52,7 @@ nodes:
           relevant facts, desired outcome).
         - state="ready" when there is enough scenario context to draft.
 
+  # Step 2: route deterministically from the classifier result.
   - id: route_scenario_state
     name: "Route By Scenario State"
     node_type:
@@ -62,6 +64,7 @@ nodes:
             target: generate_email_draft
         default: ask_for_scenario
 
+  # Branch A: user wants to know what the assistant can do.
   - id: explain_capabilities
     name: "Explain Capabilities"
     node_type:
@@ -91,6 +94,7 @@ nodes:
 
         Include examples such as support replies, replacement/refund emails, internal updates, and formal HR communication.
 
+  # Branch B: user wants a draft but has not given enough context yet.
   - id: ask_for_scenario
     name: "Ask For Scenario"
     node_type:
@@ -118,6 +122,7 @@ nodes:
           "question": "One concise follow-up question asking for missing scenario details"
         }
 
+  # Branch C: enough context exists, so draft the email.
   - id: generate_email_draft
     name: "Generate Draft Email"
     node_type:
@@ -154,5 +159,6 @@ nodes:
         }
 
 edges:
+  # Execution starts at the classifier, then moves into the switch node.
   - from: detect_scenario_context
     to: route_scenario_state
