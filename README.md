@@ -84,6 +84,8 @@ cargo test --all
 cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/email-chat-draft-or-clarify.yaml
 ```
 
+Want the simplest YAML setup path? Start with `docs/WORKFLOW_QUICKSTART.md`.
+
 ### 3) Run a Rust example (requires provider API key)
 
 ```bash
@@ -158,6 +160,7 @@ Cross-language capability baseline and parity details: `docs/CAPABILITY_MATRIX.m
 - Docs home: `docs/index.md`
 - Docs map: `docs/DOCS_MAP.md`
 - Quick start: `docs/QUICKSTART.md`
+- Workflow quickstart: `docs/WORKFLOW_QUICKSTART.md`
 - Usage: `docs/USAGE.md`
 - Architecture: `docs/ARCHITECTURE.md`
 - Rust core systems: `docs/RUST_CORE_SYSTEMS.md`

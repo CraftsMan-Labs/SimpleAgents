@@ -11,7 +11,14 @@ Use this page to jump to the right guide by role and task.
 3. [Examples](/EXAMPLES)
 4. [Troubleshooting](/TROUBLESHOOTING)
 
-### Path B: Integrator (language bindings)
+### Path B: YAML Workflow Builder (10 minutes to first run)
+
+1. [Workflow Quickstart](/WORKFLOW_QUICKSTART)
+2. [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM)
+3. [Examples](/EXAMPLES)
+4. [Troubleshooting](/TROUBLESHOOTING)
+
+### Path C: Integrator (language bindings)
 
 1. [Usage Guide](/USAGE)
 2. [API Surface](/API)
@@ -22,7 +29,7 @@ Use this page to jump to the right guide by role and task.
    - [Browser/WASM Binding](/BINDINGS_WASM)
 4. [Cross-Language Capability Matrix](/CAPABILITY_MATRIX)
 
-### Path C: Contributor / Maintainer
+### Path D: Contributor / Maintainer
 
 1. [Development Guide](/DEVELOPMENT)
 2. [Architecture](/ARCHITECTURE)
@@ -40,6 +47,7 @@ Use this page to jump to the right guide by role and task.
 
 ## Workflow System
 
+- Fastest path to first YAML run: [Workflow Quickstart](/WORKFLOW_QUICKSTART)
 - YAML authoring and execution model: [YAML Workflow System Guide](/YAML_WORKFLOW_SYSTEM)
 - Capability boundaries and contracts: [Workflow Capability Contract](/WORKFLOW_CAPABILITY_CONTRACT)
 - Debugging and timeline inspection: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
@@ -58,6 +66,7 @@ Use this page to jump to the right guide by role and task.
 
 - Setup and commands: [Development Guide](/DEVELOPMENT)
 - First run path: [Quick Start](/QUICKSTART)
+- First workflow path: [Workflow Quickstart](/WORKFLOW_QUICKSTART)
 - Provider/routing/streaming patterns: [Usage Guide](/USAGE)
 - End-to-end snippets: [Examples](/EXAMPLES)
 - Binding entry points: [Python](/BINDINGS_PYTHON), [Node](/BINDINGS_NODE), [Go](/BINDINGS_GO), [WASM](/BINDINGS_WASM)
