@@ -1,6 +1,15 @@
 # Code Examples
 
-Practical examples for using SimpleAgents with the unified client.
+Use this page as a learning path instead of a dump of snippets.
+If you are new, go in this order:
+
+1. basic completion
+2. simple YAML workflow
+3. branching workflow
+4. tool-calling workflow
+5. multi-turn chat workflow
+
+If you want the fastest workflow setup path, start with [Workflow Quickstart](/WORKFLOW_QUICKSTART).
 
 ## Basic Completion
 
@@ -150,7 +159,93 @@ let client = SimpleAgentsClientBuilder::new()
     .build()?;
 ```
 
-## Workflow YAML + Step Timings
+## Workflow Learning Path
+
+These examples are ordered from easiest to more advanced.
+
+### 1. Start Simple: Single-Node Workflow
+
+Use this first:
+
+- YAML: `examples/workflow_email/hr-warning-email-subgraph.yaml`
+- Why start here: one `llm_call`, one schema, no routing, easy to read
+
+Validate the graph shape first:
+
+```bash
+cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/hr-warning-email-subgraph.yaml
+```
+
+Run it with the Python example runner:
+
+```bash
+uv run --directory examples python workflow_email/run_with_python_package.py \
+  --workflow examples/workflow_email/hr-warning-email-subgraph.yaml \
+  --email "Please draft a warning email for repeated tardiness."
+```
+
+### 2. Add Branching: Classifier -> Switch -> Action
+
+Use this next:
+
+- YAML: `examples/workflow_email/email-chat-draft-or-clarify.yaml`
+- Pattern: detect state -> route with `switch` -> ask a question or draft an email
+- Why it matters: this is the most reusable workflow pattern in the repo
+
+Run it:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
+
+### 3. Add Tool Calling
+
+Use this after you understand branching:
+
+- YAML: `examples/workflow_email/email-chat-draft-with-tool-calling.yaml`
+- Pattern: one `llm_call` node with a declared tool
+- Why it matters: shows how to keep structured tool input/output inside YAML
+
+Run it:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
+```
+
+Example prompt:
+
+```text
+Draft a warning email for Priya Sharma for repeated late submissions.
+```
+
+### 4. Move to Multi-Turn Chat Workflows
+
+Use these when you want a conversation that keeps history across turns:
+
+- Python: `examples/workflow_email/run_with_chat_history.py`
+- Node: `examples/workflow_email/node/run_with_chat_history.js`
+- Rust: `examples/workflow_chat_history_rust.rs`
+- Go: `bindings/go/examples/workflow_chat_history/main.go`
+
+Python runner:
+
+```bash
+make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
+
+Node runner:
+
+```bash
+make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
+
+Go runner:
+
+```bash
+make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+```
+
+### 5. Use the Rust Workflow API Directly
 
 Simple workflow execution from YAML is available through the Rust workflow crate and language bindings.
 
@@ -179,7 +274,7 @@ for step in output.step_timings {
 }
 ```
 
-Cross-language runnable examples:
+### Cross-Language Example Files
 
 - Python: `examples/workflow_email/run_with_python_package.py`
 - Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
@@ -191,7 +286,11 @@ Cross-language runnable examples:
 - Go: `bindings/go/examples/workflow_yaml/main.go`
 - Go (chat history input): `bindings/go/examples/workflow_chat_history/main.go`
 
-Convenience command for Go chat-history workflow runs:
+## Chat Workflow Commands
+
+Use these after you understand the learning path above.
+
+### Go
 
 ```bash
 make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
@@ -200,14 +299,14 @@ make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-
 make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
 ```
 
-Convenience command for Rust chat-history workflow runs:
+### Rust
 
 ```bash
 make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
 make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml RUST_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
 ```
 
-Convenience command for Python chat-history workflow runs:
+### Python
 
 ```bash
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
@@ -225,7 +324,7 @@ make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-or
 make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
 ```
 
-Convenience command for Node/Bun chat-history workflow runs:
+### Node or Bun
 
 ```bash
 make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
