@@ -179,6 +179,35 @@ function interpolatePathTemplate(template, context) {
   });
 }
 
+function interpolatePathValue(value, context) {
+  if (typeof value === "string") {
+    return value.replace(/{{\s*([^}]+)\s*}}/g, (_, token) => {
+      const resolved = getPathValue(context, token);
+      if (resolved === null || resolved === undefined) {
+        return "";
+      }
+      if (typeof resolved === "string") {
+        return resolved;
+      }
+      return JSON.stringify(resolved);
+    });
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((entry) => interpolatePathValue(entry, context));
+  }
+
+  if (value !== null && value !== undefined && typeof value === "object") {
+    const output = {};
+    for (const [key, nested] of Object.entries(value)) {
+      output[key] = interpolatePathValue(nested, context);
+    }
+    return output;
+  }
+
+  return value;
+}
+
 function maybeParseJson(text) {
   if (typeof text !== "string") {
     return text;
@@ -881,7 +910,7 @@ class BrowserJsClient {
           const workerOutput = await fn(
             {
               handler,
-              payload: node.config?.payload ?? null,
+              payload: interpolatePathValue(node.config?.payload ?? null, graphContext),
               nodeId: node.id
             },
             graphContext
