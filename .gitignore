@@ -247,3 +247,7 @@ pkg/
 # Local workflow trace artifacts
 examples/workflow_email/traces/
 examples/examples/
+
+# Local planning files
+TODO.md
+SUBAGENT_TODO.md
