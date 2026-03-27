@@ -216,6 +216,64 @@ nodes:
   );
 });
 
+test("runWorkflowYamlString graph custom_worker interpolates payload from prior nodes", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse('{"company_name":"Google","reason":"seller found"}')
+  });
+
+  const yaml = `
+entry_node: extract_company
+nodes:
+  - id: extract_company
+    node_type:
+      llm_call:
+        model: gpt-4o-mini
+    config:
+      output_schema:
+        type: object
+        properties:
+          company_name:
+            type: string
+          reason:
+            type: string
+        required: [company_name, reason]
+        additionalProperties: false
+      prompt: "Extract company"
+
+  - id: lookup_company
+    node_type:
+      custom_worker:
+        handler: get_seller_name
+    config:
+      payload:
+        company_name: "{{ nodes.extract_company.output.company_name }}"
+
+edges:
+  - from: extract_company
+    to: lookup_company
+`;
+
+  const result = await client.runWorkflowYamlString(
+    yaml,
+    { messages: [] },
+    {
+      functions: {
+        get_seller_name: ({ payload }) => ({
+          company_name: payload.company_name,
+          stakeholder_name: payload.company_name === "Google" ? "Sundar Pichai" : "unknown"
+        })
+      }
+    }
+  );
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.context.nodes.extract_company.output.company_name, "Google");
+  assert.equal(result.context.nodes.lookup_company.output.company_name, "Google");
+  assert.equal(result.context.nodes.lookup_company.output.stakeholder_name, "Sundar Pichai");
+});
+
 test("runWorkflowYamlString graph custom_worker requires registered handler", async () => {
   const client = new Client("openai", {
     apiKey: "test-key",
