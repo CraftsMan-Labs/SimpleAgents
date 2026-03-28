@@ -60,27 +60,13 @@ async function main() {
     if (step.node_kind !== 'custom_worker') continue
     const nodeId = step.node_id
     const topic = nodeId.startsWith('rag_') ? nodeId.slice(4) : 'clarification'
-    const nodeOutput = result.outputs[nodeId]?.output || {}
     const context = {
       input: { email_text: emailText },
       nodes: Object.fromEntries(
         Object.entries(result.outputs || {}).map(([k, v]) => [k, v.output || {}]),
       ),
     }
-    let handled
-    if (nodeId === 'lookup_seller_owner') {
-      handled = {
-        seller_name: nodeOutput.seller_name || 'unknown',
-        owner_name: get_seller_owner(nodeOutput.seller_name || 'unknown'),
-      }
-    } else if (nodeId === 'lookup_invoice_stakeholder') {
-      handled = {
-        company_name: nodeOutput.company_name || 'unknown',
-        stakeholder_name: get_seller_name(nodeOutput.company_name || 'unknown'),
-      }
-    } else {
-      handled = getRagData(topic, { emailText, context })
-    }
+    const handled = getRagData(topic, { emailText, context })
     result.outputs[nodeId] = { output: handled }
     if (result.terminal_node === nodeId) {
       result.terminal_output = handled
@@ -135,38 +121,6 @@ function getRagData(topic, { emailText, context }) {
     email_preview: emailText.slice(0, 120),
     context_nodes: String(Object.keys(context.nodes || {}).length),
   }
-}
-
-function get_seller_owner(seller_name) {
-  const sellerOwnerMap = {
-    google: 'sundar pichai',
-    microsoft: 'satya nadella',
-    apple: 'tim cook',
-    amazon: 'andy jassy',
-  }
-
-  if (typeof seller_name !== 'string' || seller_name.trim() === '') {
-    return 'unknown'
-  }
-
-  const normalizedSellerName = seller_name.trim().toLowerCase()
-  return sellerOwnerMap[normalizedSellerName] || 'unknown'
-}
-
-function get_seller_name(company_name) {
-  const stakeholderMap = {
-    google: 'sundar pichai',
-    microsoft: 'satya nadella',
-    apple: 'tim cook',
-    amazon: 'andy jassy',
-  }
-
-  if (typeof company_name !== 'string' || company_name.trim() === '') {
-    return 'unknown'
-  }
-
-  const normalizedCompanyName = company_name.trim().toLowerCase()
-  return stakeholderMap[normalizedCompanyName] || 'unknown'
 }
 
 main().catch((error) => {
