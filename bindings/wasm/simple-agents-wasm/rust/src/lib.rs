@@ -538,6 +538,24 @@ fn interpolate_graph_prompt(input: &str, context: &JsonValue) -> String {
     output
 }
 
+fn interpolate_graph_json(value: &JsonValue, context: &JsonValue) -> JsonValue {
+    match value {
+        JsonValue::String(s) => JsonValue::String(interpolate_graph_prompt(s, context)),
+        JsonValue::Array(items) => JsonValue::Array(
+            items
+                .iter()
+                .map(|item| interpolate_graph_json(item, context))
+                .collect(),
+        ),
+        JsonValue::Object(map) => JsonValue::Object(
+            map.iter()
+                .map(|(key, value)| (key.clone(), interpolate_graph_json(value, context)))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 fn parse_json_from_text(value: &str) -> JsonValue {
     if let Ok(parsed) = serde_json::from_str::<JsonValue>(value) {
         return parsed;
@@ -1500,7 +1518,8 @@ impl WasmClient {
                         "payload": node
                             .config
                             .as_ref()
-                            .and_then(|config| config.payload.clone())
+                            .and_then(|config| config.payload.as_ref())
+                            .map(|payload| interpolate_graph_json(payload, &graph_context))
                             .unwrap_or(JsonValue::Null),
                         "nodeId": node.id.clone()
                     });
