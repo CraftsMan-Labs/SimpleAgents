@@ -21,6 +21,8 @@ jobs:
             exit 1
           fi
           echo "OK: no vendored docs dependencies are tracked."
+      - name: Guard SimpleAgentsBuilder mirror drift
+        run: ./scripts/check-simpleagentsbuilder-skill-links.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-go@v5
         with:
