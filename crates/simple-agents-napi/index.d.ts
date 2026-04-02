@@ -86,6 +86,28 @@ export interface StreamEvent {
   delta?: StreamDelta
   error?: StreamErrorEvent
 }
+export interface WorkflowRunOutput {
+  workflow_id: string
+  entry_node: string
+  email_text: string
+  trace: Array<string>
+  outputs: Record<string, unknown>
+  terminal_node: string
+  terminal_output?: unknown
+  step_timings: Array<unknown>
+  llm_node_metrics: Record<string, unknown>
+  llm_node_models: Record<string, string>
+  total_elapsed_ms: number
+  ttft_ms?: number
+  total_input_tokens: number
+  total_output_tokens: number
+  total_tokens: number
+  total_reasoning_tokens?: number
+  tokens_per_second: number
+  trace_id?: string
+  metadata?: unknown
+  events?: Array<unknown>
+}
 export declare class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
