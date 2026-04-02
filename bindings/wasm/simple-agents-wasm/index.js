@@ -62,6 +62,63 @@ function toToolCalls(toolCalls) {
     }));
 }
 
+function createStreamEventBridge(model, onChunk) {
+  let aggregate = "";
+  let finalId = "";
+  let finalModel = model;
+  let finalFinishReason;
+
+  return {
+    onEvent(event) {
+      if (event.eventType === "delta") {
+        const delta = event.delta;
+        if (!delta) {
+          return;
+        }
+
+        if (!finalId && delta.id) {
+          finalId = delta.id;
+        }
+        if (delta.model) {
+          finalModel = delta.model;
+        }
+        if (delta.content) {
+          aggregate += delta.content;
+        }
+        if (delta.finishReason) {
+          finalFinishReason = delta.finishReason;
+        }
+
+        onChunk({
+          id: delta.id,
+          model: delta.model,
+          content: delta.content,
+          finishReason: delta.finishReason,
+          raw: delta.raw
+        });
+      }
+
+      if (event.eventType === "error") {
+        onChunk({
+          id: finalId || "error",
+          model: finalModel,
+          error: event.error?.message ?? "stream error"
+        });
+      }
+    },
+    mergeResult(result, started) {
+      return {
+        ...result,
+        id: result.id || finalId,
+        model: result.model || finalModel,
+        content: result.content ?? aggregate,
+        finishReason: result.finishReason ?? finalFinishReason,
+        latencyMs: Math.max(0, Math.round(performance.now() - started))
+      };
+    }
+  };
+}
+
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/$/, "");
 }
@@ -613,63 +670,17 @@ class BrowserJsClient {
       throw configError("onChunk callback is required");
     }
 
-    let aggregate = "";
-    let finalId = "";
-    let finalModel = model;
-    let finalFinishReason;
     const started = performance.now();
+    const streamBridge = createStreamEventBridge(model, onChunk);
 
     const result = await this.streamEvents(
       model,
       promptOrMessages,
-      (event) => {
-        if (event.eventType === "delta") {
-          const delta = event.delta;
-          if (!delta) {
-            return;
-          }
-
-          if (delta.id && finalId.length === 0) {
-            finalId = delta.id;
-          }
-          if (delta.model) {
-            finalModel = delta.model;
-          }
-          if (delta.content) {
-            aggregate += delta.content;
-          }
-          if (delta.finishReason) {
-            finalFinishReason = delta.finishReason;
-          }
-
-          onChunk({
-            id: delta.id,
-            model: delta.model,
-            content: delta.content,
-            finishReason: delta.finishReason,
-            raw: delta.raw
-          });
-        }
-
-        if (event.eventType === "error") {
-          onChunk({
-            id: finalId || "error",
-            model: finalModel,
-            error: event.error?.message ?? "stream error"
-          });
-        }
-      },
+      (event) => streamBridge.onEvent(event),
       options
     );
 
-    return {
-      ...result,
-      id: result.id || finalId,
-      model: result.model || finalModel,
-      content: result.content ?? aggregate,
-      finishReason: result.finishReason ?? finalFinishReason,
-      latencyMs: Math.max(0, Math.round(performance.now() - started))
-    };
+    return streamBridge.mergeResult(result, started);
   }
 
   async streamEvents(model, promptOrMessages, onEvent, options = {}) {
@@ -1108,56 +1119,17 @@ export class Client {
   async stream(model, promptOrMessages, onChunk, options = {}) {
     const rust = await this.ensureBackend();
     if (rust) {
-      let aggregate = "";
-      let finalId = "";
-      let finalModel = model;
-      let finalFinishReason;
       const started = performance.now();
+      const streamBridge = createStreamEventBridge(model, onChunk);
 
-      const result = await rust.streamEvents(model, promptOrMessages, (event) => {
-        if (event.eventType === "delta") {
-          const delta = event.delta;
-          if (!delta) {
-            return;
-          }
-          if (!finalId && delta.id) {
-            finalId = delta.id;
-          }
-          if (delta.model) {
-            finalModel = delta.model;
-          }
-          if (delta.content) {
-            aggregate += delta.content;
-          }
-          if (delta.finishReason) {
-            finalFinishReason = delta.finishReason;
-          }
-          onChunk({
-            id: delta.id,
-            model: delta.model,
-            content: delta.content,
-            finishReason: delta.finishReason,
-            raw: delta.raw
-          });
-        }
+      const result = await rust.streamEvents(
+        model,
+        promptOrMessages,
+        (event) => streamBridge.onEvent(event),
+        options
+      );
 
-        if (event.eventType === "error") {
-          onChunk({
-            id: finalId || "error",
-            model: finalModel,
-            error: event.error?.message ?? "stream error"
-          });
-        }
-      }, options);
-
-      return {
-        ...result,
-        id: result.id || finalId,
-        model: result.model || finalModel,
-        content: result.content ?? aggregate,
-        finishReason: result.finishReason ?? finalFinishReason,
-        latencyMs: Math.max(0, Math.round(performance.now() - started))
-      };
+      return streamBridge.mergeResult(result, started);
     }
 
     return this.fallbackClient.stream(model, promptOrMessages, onChunk, options);
