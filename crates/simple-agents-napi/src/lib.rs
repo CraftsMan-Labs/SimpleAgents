@@ -1030,7 +1030,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }",
-        ts_return_type = "any"
+        ts_return_type = "WorkflowRunOutput"
     )]
     pub fn run_workflow_yaml(
         &self,
@@ -1042,7 +1042,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "any"
+        ts_return_type = "WorkflowRunOutput"
     )]
     pub fn run_workflow_yaml_with_events(
         &self,
@@ -1093,7 +1093,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "any"
+        ts_return_type = "WorkflowRunOutput"
     )]
     pub fn run_email_workflow_yaml_with_events(
         &self,
@@ -1110,7 +1110,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "Promise<any>"
+        ts_return_type = "Promise<WorkflowRunOutput>"
     )]
     pub fn run_workflow_yaml_stream(
         &self,
@@ -1159,7 +1159,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, emailText: string, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "Promise<any>"
+        ts_return_type = "Promise<WorkflowRunOutput>"
     )]
     pub fn run_email_workflow_yaml_stream(
         &self,
@@ -1178,7 +1178,7 @@ impl Client {
 
     #[napi(
         ts_args_type = "workflowPath: string, workflowInput: { email_text?: string; messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
-        ts_return_type = "any"
+        ts_return_type = "WorkflowRunOutput"
     )]
     pub fn run_workflow_yaml_with_options(
         &self,

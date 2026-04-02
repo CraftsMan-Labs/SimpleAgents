@@ -276,3 +276,58 @@ func TestRunWorkflowYAMLStreamWithRunOptionsUninitializedClient(t *testing.T) {
 		t.Fatal("expected uninitialized client error")
 	}
 }
+
+func TestWorkflowOutputToTypedOutputProjectsNodeOutputs(t *testing.T) {
+	output := WorkflowYAMLOutput{
+		WorkflowID:   "wf-1",
+		EntryNode:    "start",
+		Trace:        []string{"start", "classify"},
+		TerminalNode: "classify",
+		TerminalOutput: map[string]any{
+			"state": "ready",
+		},
+		Outputs: map[string]map[string]any{
+			"start":    map[string]any{"ok": true},
+			"classify": map[string]any{"state": "ready"},
+		},
+	}
+
+	typed := output.ToTypedOutput()
+	if typed.WorkflowID != "wf-1" {
+		t.Fatalf("expected workflow id wf-1, got %s", typed.WorkflowID)
+	}
+	if len(typed.NodeOutputs) != 2 {
+		t.Fatalf("expected 2 node outputs, got %d", len(typed.NodeOutputs))
+	}
+	if typed.TerminalOutput == nil {
+		t.Fatal("expected terminal output record")
+	}
+	if typed.TerminalOutput.NodeKind != WorkflowNodeKindUnknown {
+		t.Fatalf("expected unknown terminal node kind, got %s", typed.TerminalOutput.NodeKind)
+	}
+}
+
+func TestWorkflowEventToTypedEventMapsKnownAndUnknown(t *testing.T) {
+	nodeID := "classify"
+	event := WorkflowEvent{EventType: "node_completed", NodeID: &nodeID}
+	typed := event.ToTypedEvent()
+	if typed.EventType != WorkflowEventTypeNodeCompleted {
+		t.Fatalf("expected node_completed type, got %s", typed.EventType)
+	}
+	if typed.RawEventType != "node_completed" {
+		t.Fatalf("expected raw event type node_completed, got %s", typed.RawEventType)
+	}
+
+	unknown := WorkflowEvent{EventType: "custom_event"}.ToTypedEvent()
+	if unknown.EventType != WorkflowEventTypeUnknown {
+		t.Fatalf("expected unknown event type, got %s", unknown.EventType)
+	}
+}
+
+func TestRunWorkflowYAMLTypedUninitializedClient(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLTyped(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"})
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}

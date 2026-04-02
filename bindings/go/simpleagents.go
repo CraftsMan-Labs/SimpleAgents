@@ -138,6 +138,7 @@ import (
 	"errors"
 	"fmt"
 	"runtime/cgo"
+	"sort"
 	"sync"
 	"unsafe"
 )
@@ -279,12 +280,121 @@ type WorkflowEvent struct {
 	Metadata            map[string]any `json:"metadata,omitempty"`
 }
 
+type WorkflowNodeKind string
+
+const (
+	WorkflowNodeKindLlmCall      WorkflowNodeKind = "llm_call"
+	WorkflowNodeKindSwitch       WorkflowNodeKind = "switch"
+	WorkflowNodeKindCustomWorker WorkflowNodeKind = "custom_worker"
+	WorkflowNodeKindUnknown      WorkflowNodeKind = "unknown"
+)
+
+type WorkflowNodeOutputRecord struct {
+	NodeID   string           `json:"node_id"`
+	NodeKind WorkflowNodeKind `json:"node_kind"`
+	Value    any              `json:"value"`
+}
+
+type WorkflowRunTypedOutput struct {
+	WorkflowID     string                     `json:"workflow_id"`
+	EntryNode      string                     `json:"entry_node"`
+	Trace          []string                   `json:"trace"`
+	TerminalNode   string                     `json:"terminal_node"`
+	TerminalOutput *WorkflowNodeOutputRecord  `json:"terminal_output,omitempty"`
+	NodeOutputs    []WorkflowNodeOutputRecord `json:"node_outputs"`
+}
+
+type WorkflowEventType string
+
+const (
+	WorkflowEventTypeWorkflowStarted       WorkflowEventType = "workflow_started"
+	WorkflowEventTypeWorkflowCompleted     WorkflowEventType = "workflow_completed"
+	WorkflowEventTypeNodeStarted           WorkflowEventType = "node_started"
+	WorkflowEventTypeNodeCompleted         WorkflowEventType = "node_completed"
+	WorkflowEventTypeNodeLlmInputResolved  WorkflowEventType = "node_llm_input_resolved"
+	WorkflowEventTypeNodeStreamDelta       WorkflowEventType = "node_stream_delta"
+	WorkflowEventTypeNodeStreamThinking    WorkflowEventType = "node_stream_thinking_delta"
+	WorkflowEventTypeNodeStreamOutput      WorkflowEventType = "node_stream_output_delta"
+	WorkflowEventTypeNodeToolCallRequested WorkflowEventType = "node_tool_call_requested"
+	WorkflowEventTypeNodeToolCallCompleted WorkflowEventType = "node_tool_call_completed"
+	WorkflowEventTypeNodeToolCallFailed    WorkflowEventType = "node_tool_call_failed"
+	WorkflowEventTypeNodeToolRoundtrip     WorkflowEventType = "node_tool_roundtrip_completed"
+	WorkflowEventTypeNodeHealed            WorkflowEventType = "node_healed"
+	WorkflowEventTypeUnknown               WorkflowEventType = "unknown"
+)
+
+type WorkflowTypedEvent struct {
+	EventType           WorkflowEventType `json:"event_type"`
+	RawEventType        string            `json:"raw_event_type"`
+	NodeID              *string           `json:"node_id,omitempty"`
+	StepID              *string           `json:"step_id,omitempty"`
+	NodeKind            *string           `json:"node_kind,omitempty"`
+	Streamable          *bool             `json:"streamable,omitempty"`
+	Message             *string           `json:"message,omitempty"`
+	Delta               *string           `json:"delta,omitempty"`
+	TokenKind           *string           `json:"token_kind,omitempty"`
+	IsTerminalNodeToken *bool             `json:"is_terminal_node_token,omitempty"`
+	ElapsedMS           *uint64           `json:"elapsed_ms,omitempty"`
+	Metadata            map[string]any    `json:"metadata,omitempty"`
+}
+
+func workflowEventTypeFromString(value string) WorkflowEventType {
+	switch value {
+	case string(WorkflowEventTypeWorkflowStarted):
+		return WorkflowEventTypeWorkflowStarted
+	case string(WorkflowEventTypeWorkflowCompleted):
+		return WorkflowEventTypeWorkflowCompleted
+	case string(WorkflowEventTypeNodeStarted):
+		return WorkflowEventTypeNodeStarted
+	case string(WorkflowEventTypeNodeCompleted):
+		return WorkflowEventTypeNodeCompleted
+	case string(WorkflowEventTypeNodeLlmInputResolved):
+		return WorkflowEventTypeNodeLlmInputResolved
+	case string(WorkflowEventTypeNodeStreamDelta):
+		return WorkflowEventTypeNodeStreamDelta
+	case string(WorkflowEventTypeNodeStreamThinking):
+		return WorkflowEventTypeNodeStreamThinking
+	case string(WorkflowEventTypeNodeStreamOutput):
+		return WorkflowEventTypeNodeStreamOutput
+	case string(WorkflowEventTypeNodeToolCallRequested):
+		return WorkflowEventTypeNodeToolCallRequested
+	case string(WorkflowEventTypeNodeToolCallCompleted):
+		return WorkflowEventTypeNodeToolCallCompleted
+	case string(WorkflowEventTypeNodeToolCallFailed):
+		return WorkflowEventTypeNodeToolCallFailed
+	case string(WorkflowEventTypeNodeToolRoundtrip):
+		return WorkflowEventTypeNodeToolRoundtrip
+	case string(WorkflowEventTypeNodeHealed):
+		return WorkflowEventTypeNodeHealed
+	default:
+		return WorkflowEventTypeUnknown
+	}
+}
+
+func (event WorkflowEvent) ToTypedEvent() WorkflowTypedEvent {
+	return WorkflowTypedEvent{
+		EventType:           workflowEventTypeFromString(event.EventType),
+		RawEventType:        event.EventType,
+		NodeID:              event.NodeID,
+		StepID:              event.StepID,
+		NodeKind:            event.NodeKind,
+		Streamable:          event.Streamable,
+		Message:             event.Message,
+		Delta:               event.Delta,
+		TokenKind:           event.TokenKind,
+		IsTerminalNodeToken: event.IsTerminalNodeToken,
+		ElapsedMS:           event.ElapsedMS,
+		Metadata:            event.Metadata,
+	}
+}
+
 type WorkflowYAMLOutput struct {
 	WorkflowID           string                            `json:"workflow_id"`
 	EntryNode            string                            `json:"entry_node"`
 	EmailText            string                            `json:"email_text"`
 	Trace                []string                          `json:"trace"`
 	Outputs              map[string]map[string]any         `json:"outputs"`
+	NodeOutputs          []WorkflowNodeOutputRecord        `json:"node_outputs,omitempty"`
 	TerminalNode         string                            `json:"terminal_node"`
 	TerminalOutput       any                               `json:"terminal_output"`
 	StepTimings          []WorkflowStepTiming              `json:"step_timings"`
@@ -299,6 +409,41 @@ type WorkflowYAMLOutput struct {
 	TraceID              string                            `json:"trace_id,omitempty"`
 	Metadata             map[string]any                    `json:"metadata,omitempty"`
 	Events               []WorkflowEvent                   `json:"events,omitempty"`
+}
+
+func (out WorkflowYAMLOutput) ToTypedOutput() WorkflowRunTypedOutput {
+	nodeOutputs := out.NodeOutputs
+	if len(nodeOutputs) == 0 {
+		nodeOutputs = make([]WorkflowNodeOutputRecord, 0, len(out.Outputs))
+		for nodeID, value := range out.Outputs {
+			nodeOutputs = append(nodeOutputs, WorkflowNodeOutputRecord{
+				NodeID:   nodeID,
+				NodeKind: WorkflowNodeKindUnknown,
+				Value:    value,
+			})
+		}
+		sort.Slice(nodeOutputs, func(i, j int) bool {
+			return nodeOutputs[i].NodeID < nodeOutputs[j].NodeID
+		})
+	}
+
+	var terminalOutput *WorkflowNodeOutputRecord
+	if out.TerminalOutput != nil {
+		terminalOutput = &WorkflowNodeOutputRecord{
+			NodeID:   out.TerminalNode,
+			NodeKind: WorkflowNodeKindUnknown,
+			Value:    out.TerminalOutput,
+		}
+	}
+
+	return WorkflowRunTypedOutput{
+		WorkflowID:     out.WorkflowID,
+		EntryNode:      out.EntryNode,
+		Trace:          out.Trace,
+		TerminalNode:   out.TerminalNode,
+		TerminalOutput: terminalOutput,
+		NodeOutputs:    nodeOutputs,
+	}
 }
 
 type WorkflowRunOptions struct {
@@ -472,6 +617,19 @@ func (c *Client) RunEmailWorkflowYAML(
 	return c.RunWorkflowYAML(ctx, workflowPath, map[string]any{"email_text": emailText})
 }
 
+// RunEmailWorkflowYAMLTyped executes email workflow YAML and projects output into typed records.
+func (c *Client) RunEmailWorkflowYAMLTyped(
+	ctx context.Context,
+	workflowPath string,
+	emailText string,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunEmailWorkflowYAML(ctx, workflowPath, emailText)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
+}
+
 // RunEmailWorkflowYAMLWithRunOptions executes email workflow YAML with typed workflow options.
 func (c *Client) RunEmailWorkflowYAMLWithRunOptions(
 	ctx context.Context,
@@ -492,6 +650,20 @@ func (c *Client) RunEmailWorkflowYAMLWithRunOptions(
 	)
 }
 
+// RunEmailWorkflowYAMLWithRunOptionsTyped executes email workflow YAML with typed run options and typed output projection.
+func (c *Client) RunEmailWorkflowYAMLWithRunOptionsTyped(
+	ctx context.Context,
+	workflowPath string,
+	emailText string,
+	options *TypedWorkflowRunOptions,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunEmailWorkflowYAMLWithRunOptions(ctx, workflowPath, emailText, options)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
+}
+
 // RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.
 func (c *Client) RunWorkflowYAML(
 	ctx context.Context,
@@ -499,6 +671,19 @@ func (c *Client) RunWorkflowYAML(
 	workflowInput map[string]any,
 ) (WorkflowYAMLOutput, error) {
 	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, nil)
+}
+
+// RunWorkflowYAMLTyped executes workflow YAML and projects output into typed records.
+func (c *Client) RunWorkflowYAMLTyped(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunWorkflowYAML(ctx, workflowPath, workflowInput)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
 }
 
 // RunWorkflowYAMLWithRunOptions executes workflow YAML with typed workflow options.
@@ -514,6 +699,20 @@ func (c *Client) RunWorkflowYAMLWithRunOptions(
 	}
 
 	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
+}
+
+// RunWorkflowYAMLWithRunOptionsTyped executes workflow YAML with typed run options and typed output projection.
+func (c *Client) RunWorkflowYAMLWithRunOptionsTyped(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options *TypedWorkflowRunOptions,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunWorkflowYAMLWithRunOptions(ctx, workflowPath, workflowInput, options)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
 }
 
 // RunWorkflowYAMLWithOptions executes the Rust workflow YAML runner with telemetry options.
@@ -592,6 +791,20 @@ func (c *Client) RunWorkflowYAMLWithOptions(
 		}
 		return result.value, nil
 	}
+}
+
+// RunWorkflowYAMLWithOptionsTyped executes workflow YAML with options and returns typed output records.
+func (c *Client) RunWorkflowYAMLWithOptionsTyped(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput map[string]any,
+	options map[string]any,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, options)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
 }
 
 // RunWorkflowYAMLWithEvents executes workflow YAML and includes recorded runtime events in output.events.

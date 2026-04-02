@@ -29,6 +29,67 @@ class WorkflowRunOptions(TypedDict, total=False):
     trace: Mapping[str, Any]
     model: str
 
+WorkflowNodeKind = Literal["llm_call", "switch", "custom_worker", "unknown"]
+
+class WorkflowNodeOutputRecord(TypedDict):
+    node_id: str
+    node_kind: WorkflowNodeKind
+    value: Any
+
+class WorkflowStepTiming(TypedDict, total=False):
+    node_id: str
+    node_kind: str
+    model_name: str
+    elapsed_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    reasoning_tokens: int
+    tokens_per_second: float
+
+class WorkflowLlmNodeMetrics(TypedDict, total=False):
+    elapsed_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    reasoning_tokens: int
+    tokens_per_second: float
+
+class WorkflowEvent(TypedDict, total=False):
+    event_type: str
+    node_id: str
+    step_id: str
+    node_kind: str
+    streamable: bool
+    message: str
+    delta: str
+    token_kind: str
+    is_terminal_node_token: bool
+    elapsed_ms: int
+    metadata: Mapping[str, Any] | Any
+
+class WorkflowRunOutput(TypedDict, total=False):
+    workflow_id: str
+    entry_node: str
+    email_text: str
+    trace: list[str]
+    outputs: dict[str, Any]
+    terminal_node: str
+    terminal_output: Any
+    step_timings: list[WorkflowStepTiming]
+    llm_node_metrics: dict[str, WorkflowLlmNodeMetrics]
+    llm_node_models: dict[str, str]
+    total_elapsed_ms: int
+    ttft_ms: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_reasoning_tokens: int
+    tokens_per_second: float
+    trace_id: str
+    metadata: Mapping[str, Any] | Any
+    events: list[WorkflowEvent]
+
 class ParseResult:
     value: Any
     confidence: float
@@ -327,28 +388,28 @@ class Client:
         email_text: str,
         include_events: bool = False,
         workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> WorkflowRunOutput: ...
     def run_email_workflow_yaml_stream(
         self,
         workflow_path: str,
         email_text: str,
-        on_event: Callable[[dict[str, Any]], object] | None = None,
+        on_event: Callable[[WorkflowEvent], object] | None = None,
         workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> WorkflowRunOutput: ...
     def run_workflow_yaml(
         self,
         workflow_path: str,
         workflow_input: WorkflowInput | Mapping[str, Any],
         include_events: bool = False,
         workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> WorkflowRunOutput: ...
     def run_workflow_yaml_stream(
         self,
         workflow_path: str,
         workflow_input: WorkflowInput | Mapping[str, Any],
-        on_event: Callable[[dict[str, Any]], object] | None = None,
+        on_event: Callable[[WorkflowEvent], object] | None = None,
         workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
+    ) -> WorkflowRunOutput: ...
 
 class ProviderConfig:
     def __init__(
