@@ -7,27 +7,79 @@ pub(super) struct NodeExecutionOutcome {
     pub(super) node_model_name: Option<String>,
 }
 
+pub(super) struct LlmNodeEnv<'a> {
+    pub(super) node: &'a YamlNode,
+    pub(super) llm: &'a YamlLlmCall,
+    pub(super) is_terminal_node: bool,
+    pub(super) workflow_input: &'a Value,
+    pub(super) edge_map: &'a HashMap<&'a str, &'a str>,
+    pub(super) executor: &'a dyn YamlWorkflowLlmExecutor,
+    pub(super) event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    pub(super) options: &'a YamlWorkflowRunOptions,
+    pub(super) email_text: &'a str,
+    pub(super) telemetry_context: &'a ResolvedTelemetryContext,
+    pub(super) node_span_context: Option<TraceContext>,
+    pub(super) node_span: Option<&'a mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
+    pub(super) workflow_elapsed_before_node_ms: u128,
+    pub(super) started: &'a Instant,
+}
+
+pub(super) struct LlmNodeState<'a> {
+    pub(super) outputs: &'a mut BTreeMap<String, Value>,
+    pub(super) globals: &'a mut serde_json::Map<String, Value>,
+    pub(super) token_totals: &'a mut YamlTokenTotals,
+    pub(super) workflow_ttft_ms: &'a mut Option<u128>,
+    pub(super) llm_node_models: &'a mut BTreeMap<String, String>,
+}
+
+pub(super) struct CustomWorkerEnv<'a> {
+    pub(super) node: &'a YamlNode,
+    pub(super) custom: &'a YamlCustomWorker,
+    pub(super) workflow_input: &'a Value,
+    pub(super) edge_map: &'a HashMap<&'a str, &'a str>,
+    pub(super) custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    pub(super) options: &'a YamlWorkflowRunOptions,
+    pub(super) email_text: &'a str,
+    pub(super) telemetry_context: &'a ResolvedTelemetryContext,
+    pub(super) workflow_span_context: Option<&'a TraceContext>,
+    pub(super) tracer: &'a dyn crate::observability::tracing::WorkflowTracer,
+    pub(super) node_span: Option<&'a mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
+    pub(super) event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+}
+
+pub(super) struct CustomWorkerState<'a> {
+    pub(super) outputs: &'a mut BTreeMap<String, Value>,
+    pub(super) globals: &'a mut serde_json::Map<String, Value>,
+}
+
 pub(super) async fn execute_llm_node(
-    node: &YamlNode,
-    llm: &YamlLlmCall,
-    is_terminal_node: bool,
-    workflow_input: &Value,
-    edge_map: &HashMap<&str, &str>,
-    outputs: &mut BTreeMap<String, Value>,
-    globals: &mut serde_json::Map<String, Value>,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-    email_text: &str,
-    telemetry_context: &ResolvedTelemetryContext,
-    node_span_context: Option<TraceContext>,
-    node_span: Option<&mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
-    workflow_elapsed_before_node_ms: u128,
-    started: &Instant,
-    token_totals: &mut YamlTokenTotals,
-    workflow_ttft_ms: &mut Option<u128>,
-    llm_node_models: &mut BTreeMap<String, String>,
+    env: LlmNodeEnv<'_>,
+    state: LlmNodeState<'_>,
 ) -> Result<NodeExecutionOutcome, YamlWorkflowRunError> {
+    let LlmNodeEnv {
+        node,
+        llm,
+        is_terminal_node,
+        workflow_input,
+        edge_map,
+        executor,
+        event_sink,
+        options,
+        email_text,
+        telemetry_context,
+        node_span_context,
+        node_span,
+        workflow_elapsed_before_node_ms,
+        started,
+    } = env;
+    let LlmNodeState {
+        outputs,
+        globals,
+        token_totals,
+        workflow_ttft_ms,
+        llm_node_models,
+    } = state;
+
     let mut node_span = node_span;
     let prompt_template = node
         .config
@@ -159,20 +211,25 @@ pub(super) async fn execute_llm_node(
 }
 
 pub(super) async fn execute_custom_worker_node(
-    node: &YamlNode,
-    custom: &YamlCustomWorker,
-    workflow_input: &Value,
-    edge_map: &HashMap<&str, &str>,
-    outputs: &mut BTreeMap<String, Value>,
-    globals: &mut serde_json::Map<String, Value>,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    options: &YamlWorkflowRunOptions,
-    email_text: &str,
-    telemetry_context: &ResolvedTelemetryContext,
-    workflow_span_context: Option<&TraceContext>,
-    tracer: &dyn crate::observability::tracing::WorkflowTracer,
-    node_span: Option<&mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
+    env: CustomWorkerEnv<'_>,
+    state: CustomWorkerState<'_>,
 ) -> Result<Option<String>, YamlWorkflowRunError> {
+    let CustomWorkerEnv {
+        node,
+        custom,
+        workflow_input,
+        edge_map,
+        custom_worker,
+        options,
+        email_text,
+        telemetry_context,
+        workflow_span_context,
+        tracer,
+        node_span,
+        event_sink,
+    } = env;
+    let CustomWorkerState { outputs, globals } = state;
+
     let mut node_span = node_span;
     let payload = node
         .config
@@ -209,6 +266,8 @@ pub(super) async fn execute_custom_worker_node(
     );
     let worker_context =
         custom_worker_context_with_trace(&context, &worker_trace_context, &options.trace.tenant);
+
+    ensure_event_sink_active(event_sink)?;
 
     let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
         custom_worker_executor

@@ -653,6 +653,14 @@ pub enum WorkflowRuntimeError {
         /// Failing node id.
         node_id: String,
     },
+    /// Runtime dispatch invariant failed.
+    #[error("runtime dispatch invariant failed for node '{node_id}': {reason}")]
+    DispatchInvariant {
+        /// Node id involved in the invariant failure.
+        node_id: String,
+        /// Human-readable invariant failure reason.
+        reason: String,
+    },
     /// Scoped state boundary check failed.
     #[error("scope access failed on node '{node_id}': {source}")]
     ScopeAccess {

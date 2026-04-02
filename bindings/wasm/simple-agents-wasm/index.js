@@ -135,6 +135,42 @@ function assertWorkflowResultShape(result) {
   return result;
 }
 
+function normalizeWorkflowResult(result) {
+  if (result === null || typeof result !== "object") {
+    return result;
+  }
+  if ("workflow_id" in result && "outputs" in result) {
+    return result;
+  }
+  if (!("context" in result) || !result.context || typeof result.context !== "object") {
+    return result;
+  }
+
+  const context = result.context;
+  const nodeOutputs =
+    context && typeof context === "object" && context.nodes && typeof context.nodes === "object"
+      ? context.nodes
+      : context;
+  const trace = Array.isArray(result.events)
+    ? result.events
+        .filter((event) => event && event.status === "completed" && typeof event.stepId === "string")
+        .map((event) => event.stepId)
+    : [];
+  const terminalNode = trace.at(-1) ?? "";
+
+  return {
+    workflow_id: typeof result.workflow_id === "string" ? result.workflow_id : "wasm_workflow",
+    entry_node: typeof result.entry_node === "string" ? result.entry_node : trace[0] ?? "",
+    email_text: typeof context?.input?.email_text === "string" ? context.input.email_text : "",
+    trace,
+    outputs: nodeOutputs,
+    terminal_node: typeof result.terminal_node === "string" ? result.terminal_node : terminalNode,
+    terminal_output: result.output,
+    events: Array.isArray(result.events) ? result.events : [],
+    status: typeof result.status === "string" ? result.status : "ok"
+  };
+}
+
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/$/, "");
 }
@@ -1229,24 +1265,24 @@ export class Client {
     const rust = await this.ensureBackend();
     if (rust) {
       const result = await rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
-      return assertWorkflowResultShape(result);
+      return assertWorkflowResultShape(normalizeWorkflowResult(result));
     }
     const result = await this.fallbackClient.runWorkflowYamlString(
       yamlText,
       workflowInput,
       workflowOptions
     );
-    return assertWorkflowResultShape(result);
+    return assertWorkflowResultShape(normalizeWorkflowResult(result));
   }
 
   async runWorkflowYaml(workflowPath, workflowInput) {
     const rust = await this.ensureBackend();
     if (rust) {
       const result = await rust.runWorkflowYaml(workflowPath, workflowInput);
-      return assertWorkflowResultShape(result);
+      return assertWorkflowResultShape(normalizeWorkflowResult(result));
     }
     const result = await this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
-    return assertWorkflowResultShape(result);
+    return assertWorkflowResultShape(normalizeWorkflowResult(result));
   }
 }
 

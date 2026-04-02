@@ -359,3 +359,31 @@ edges:
   assert.equal(result.status, "ok");
   assert.equal(result.context.nodes.next.output.topic, "default");
 });
+
+test("runWorkflowYamlString normalizes legacy rust workflow result shape", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse("unused")
+  });
+
+  client.ensureBackend = async () => ({
+    runWorkflowYamlString: async () => ({
+      status: "ok",
+      context: {
+        input: { email_text: "Need help" },
+        nodes: {
+          classify: { output: { state: "ready" } }
+        }
+      },
+      output: { state: "ready" },
+      events: [{ stepId: "classify", status: "completed" }]
+    })
+  });
+
+  const result = await client.runWorkflowYamlString("steps: []", {});
+  assert.equal(result.workflow_id, "wasm_workflow");
+  assert.equal(result.outputs.classify.output.state, "ready");
+  assert.equal(result.terminal_node, "classify");
+  assert.equal(result.terminal_output.state, "ready");
+});

@@ -2,7 +2,10 @@ use super::events::{
     emit_node_completed, emit_node_started, emit_workflow_completed, emit_workflow_started,
     ensure_event_sink_active,
 };
-use super::node_execution::{execute_custom_worker_node, execute_llm_node};
+use super::node_execution::{
+    execute_custom_worker_node, execute_llm_node, CustomWorkerEnv, CustomWorkerState, LlmNodeEnv,
+    LlmNodeState,
+};
 use super::spans::{finish_node_span, finish_workflow_span, start_node_span, start_workflow_span};
 use super::*;
 
@@ -60,259 +63,294 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
         options,
     );
 
-    if workflow.nodes.is_empty() {
-        return Err(YamlWorkflowRunError::EmptyNodes {
-            workflow_id: workflow.id.clone(),
-        });
-    }
+    let run_result = async {
+        if workflow.nodes.is_empty() {
+            return Err(YamlWorkflowRunError::EmptyNodes {
+                workflow_id: workflow.id.clone(),
+            });
+        }
 
-    let node_map: HashMap<&str, &YamlNode> = workflow
-        .nodes
-        .iter()
-        .map(|node| (node.id.as_str(), node))
-        .collect();
-    if !node_map.contains_key(workflow.entry_node.as_str()) {
-        return Err(YamlWorkflowRunError::MissingEntry {
-            entry_node: workflow.entry_node.clone(),
-        });
-    }
+        let node_map: HashMap<&str, &YamlNode> = workflow
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
+        if !node_map.contains_key(workflow.entry_node.as_str()) {
+            return Err(YamlWorkflowRunError::MissingEntry {
+                entry_node: workflow.entry_node.clone(),
+            });
+        }
 
-    let edge_map: HashMap<&str, &str> = workflow
-        .edges
-        .iter()
-        .map(|edge| (edge.from.as_str(), edge.to.as_str()))
-        .collect();
+        let edge_map: HashMap<&str, &str> = workflow
+            .edges
+            .iter()
+            .map(|edge| (edge.from.as_str(), edge.to.as_str()))
+            .collect();
 
-    let mut current = workflow.entry_node.clone();
-    let mut trace = Vec::new();
-    let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
-    let mut globals = serde_json::Map::new();
-    let mut step_timings = Vec::new();
-    let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
-    let mut llm_node_models: BTreeMap<String, String> = BTreeMap::new();
-    let mut token_totals = YamlTokenTotals::default();
-    let mut workflow_ttft_ms: Option<u128> = None;
-    let started = Instant::now();
+        let mut current = workflow.entry_node.clone();
+        let mut trace = Vec::new();
+        let mut outputs: BTreeMap<String, Value> = BTreeMap::new();
+        let mut globals = serde_json::Map::new();
+        let mut step_timings = Vec::new();
+        let mut llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics> = BTreeMap::new();
+        let mut llm_node_models: BTreeMap<String, String> = BTreeMap::new();
+        let mut token_totals = YamlTokenTotals::default();
+        let mut workflow_ttft_ms: Option<u128> = None;
+        let started = Instant::now();
 
-    emit_workflow_started(event_sink, workflow.id.as_str());
-    ensure_event_sink_active(event_sink)?;
-
-    loop {
+        emit_workflow_started(event_sink, workflow.id.as_str());
         ensure_event_sink_active(event_sink)?;
 
-        let node =
-            *node_map
-                .get(current.as_str())
-                .ok_or_else(|| YamlWorkflowRunError::MissingNode {
+        loop {
+            ensure_event_sink_active(event_sink)?;
+
+            let node = *node_map.get(current.as_str()).ok_or_else(|| {
+                YamlWorkflowRunError::MissingNode {
                     node_id: current.clone(),
-                })?;
+                }
+            })?;
 
-        trace.push(node.id.clone());
-        let step_started = Instant::now();
+            trace.push(node.id.clone());
+            let step_started = Instant::now();
 
-        let (node_span_context, mut node_span) = start_node_span(
-            tracer,
-            &telemetry_context,
-            workflow_span_context.as_ref(),
-            options,
-            node.id.as_str(),
-            node.kind_name(),
-        );
-
-        let node_streamable = node
-            .node_type
-            .llm_call
-            .as_ref()
-            .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
-        let workflow_elapsed_before_node_ms = started.elapsed().as_millis();
-
-        emit_node_started(
-            event_sink,
-            node.id.as_str(),
-            node.kind_name(),
-            node_streamable,
-            workflow_elapsed_before_node_ms,
-        );
-        ensure_event_sink_active(event_sink)?;
-
-        let mut node_usage: Option<YamlLlmTokenUsage> = None;
-        let mut node_model_name: Option<String> = None;
-        let is_terminal_node = !edge_map.contains_key(node.id.as_str());
-        let next = if let Some(llm) = &node.node_type.llm_call {
-            let outcome = execute_llm_node(
-                node,
-                llm,
-                is_terminal_node,
-                workflow_input,
-                &edge_map,
-                &mut outputs,
-                &mut globals,
-                executor,
-                event_sink,
-                options,
-                email_text,
-                &telemetry_context,
-                node_span_context.clone(),
-                node_span.as_mut(),
-                workflow_elapsed_before_node_ms,
-                &started,
-                &mut token_totals,
-                &mut workflow_ttft_ms,
-                &mut llm_node_models,
-            )
-            .await?;
-            node_usage = outcome.node_usage;
-            node_model_name = outcome.node_model_name;
-            outcome.next
-        } else if let Some(switch) = &node.node_type.switch {
-            let context = build_execution_context(workflow_input, &outputs, &globals);
-            Some(resolve_switch_target(node.id.as_str(), switch, &context)?)
-        } else if let Some(custom) = &node.node_type.custom_worker {
-            execute_custom_worker_node(
-                node,
-                custom,
-                workflow_input,
-                &edge_map,
-                &mut outputs,
-                &mut globals,
-                custom_worker,
-                options,
-                email_text,
+            let (node_span_context, mut node_span) = start_node_span(
+                tracer,
                 &telemetry_context,
                 workflow_span_context.as_ref(),
-                tracer,
-                node_span.as_mut(),
-            )
-            .await?
-        } else {
-            return Err(YamlWorkflowRunError::UnsupportedNodeType {
+                options,
+                node.id.as_str(),
+                node.kind_name(),
+            );
+
+            let node_streamable = node
+                .node_type
+                .llm_call
+                .as_ref()
+                .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
+            let workflow_elapsed_before_node_ms = started.elapsed().as_millis();
+
+            emit_node_started(
+                event_sink,
+                node.id.as_str(),
+                node.kind_name(),
+                node_streamable,
+                workflow_elapsed_before_node_ms,
+            );
+            ensure_event_sink_active(event_sink)?;
+
+            let mut node_usage: Option<YamlLlmTokenUsage> = None;
+            let mut node_model_name: Option<String> = None;
+            let is_terminal_node = !edge_map.contains_key(node.id.as_str());
+            let node_result: Result<Option<String>, YamlWorkflowRunError> =
+                if let Some(llm) = &node.node_type.llm_call {
+                    execute_llm_node(
+                        LlmNodeEnv {
+                            node,
+                            llm,
+                            is_terminal_node,
+                            workflow_input,
+                            edge_map: &edge_map,
+                            executor,
+                            event_sink,
+                            options,
+                            email_text,
+                            telemetry_context: &telemetry_context,
+                            node_span_context: node_span_context.clone(),
+                            node_span: node_span.as_mut(),
+                            workflow_elapsed_before_node_ms,
+                            started: &started,
+                        },
+                        LlmNodeState {
+                            outputs: &mut outputs,
+                            globals: &mut globals,
+                            token_totals: &mut token_totals,
+                            workflow_ttft_ms: &mut workflow_ttft_ms,
+                            llm_node_models: &mut llm_node_models,
+                        },
+                    )
+                    .await
+                    .map(|outcome| {
+                        node_usage = outcome.node_usage;
+                        node_model_name = outcome.node_model_name;
+                        outcome.next
+                    })
+                } else if let Some(switch) = &node.node_type.switch {
+                    let context = build_execution_context(workflow_input, &outputs, &globals);
+                    resolve_switch_target(node.id.as_str(), switch, &context).map(Some)
+                } else if let Some(custom) = &node.node_type.custom_worker {
+                    execute_custom_worker_node(
+                        CustomWorkerEnv {
+                            node,
+                            custom,
+                            workflow_input,
+                            edge_map: &edge_map,
+                            custom_worker,
+                            options,
+                            email_text,
+                            telemetry_context: &telemetry_context,
+                            workflow_span_context: workflow_span_context.as_ref(),
+                            tracer,
+                            node_span: node_span.as_mut(),
+                            event_sink,
+                        },
+                        CustomWorkerState {
+                            outputs: &mut outputs,
+                            globals: &mut globals,
+                        },
+                    )
+                    .await
+                } else {
+                    Err(YamlWorkflowRunError::UnsupportedNodeType {
+                        node_id: node.id.clone(),
+                    })
+                };
+
+            let elapsed_ms = step_started.elapsed().as_millis();
+            finish_node_span(
+                node_span.take(),
+                node_model_name.as_deref(),
+                node_usage.as_ref(),
+                elapsed_ms,
+            );
+
+            let next = node_result?;
+
+            let node_kind = node.kind_name().to_string();
+            step_timings.push(YamlStepTiming {
                 node_id: node.id.clone(),
+                node_kind,
+                model_name: node_model_name.clone(),
+                elapsed_ms,
+                prompt_tokens: node_usage.as_ref().map(|usage| usage.prompt_tokens),
+                completion_tokens: node_usage.as_ref().map(|usage| usage.completion_tokens),
+                total_tokens: node_usage.as_ref().map(|usage| usage.total_tokens),
+                reasoning_tokens: node_usage.as_ref().and_then(|usage| usage.reasoning_tokens),
+                tokens_per_second: node_usage
+                    .as_ref()
+                    .map(|usage| completion_tokens_per_second(usage.completion_tokens, elapsed_ms)),
             });
+
+            if let Some(usage) = node_usage.as_ref() {
+                llm_node_metrics.insert(
+                    node.id.clone(),
+                    YamlLlmNodeMetrics {
+                        elapsed_ms,
+                        prompt_tokens: usage.prompt_tokens,
+                        completion_tokens: usage.completion_tokens,
+                        total_tokens: usage.total_tokens,
+                        reasoning_tokens: usage.reasoning_tokens,
+                        tokens_per_second: completion_tokens_per_second(
+                            usage.completion_tokens,
+                            elapsed_ms,
+                        ),
+                    },
+                );
+            }
+
+            emit_node_completed(
+                event_sink,
+                node.id.as_str(),
+                node.kind_name(),
+                node_streamable,
+                elapsed_ms,
+            );
+            ensure_event_sink_active(event_sink)?;
+
+            if let Some(next) = next {
+                current = next;
+                continue;
+            }
+            break;
+        }
+
+        let terminal_node =
+            trace
+                .last()
+                .cloned()
+                .ok_or_else(|| YamlWorkflowRunError::EmptyNodes {
+                    workflow_id: workflow.id.clone(),
+                })?;
+
+        let terminal_output = outputs
+            .get(terminal_node.as_str())
+            .and_then(|value| value.get("output"))
+            .cloned();
+
+        let total_elapsed_ms = started.elapsed().as_millis();
+        let output = YamlWorkflowRunOutput {
+            workflow_id: workflow.id.clone(),
+            entry_node: workflow.entry_node.clone(),
+            email_text: email_text.to_string(),
+            trace,
+            outputs,
+            terminal_node,
+            terminal_output,
+            step_timings,
+            llm_node_metrics,
+            llm_node_models,
+            total_elapsed_ms,
+            ttft_ms: workflow_ttft_ms,
+            total_input_tokens: token_totals.input_tokens,
+            total_output_tokens: token_totals.output_tokens,
+            total_tokens: token_totals.total_tokens,
+            total_reasoning_tokens: token_totals.reasoning_tokens,
+            tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
+            trace_id: telemetry_context.trace_id.clone(),
+            metadata: telemetry_context.trace_id.as_ref().map(|value| {
+                workflow_metadata_with_trace(
+                    options,
+                    value,
+                    telemetry_context.sampled,
+                    telemetry_context.trace_id_source,
+                )
+            }),
         };
 
-        let node_kind = node.kind_name().to_string();
-        let elapsed_ms = step_started.elapsed().as_millis();
-        step_timings.push(YamlStepTiming {
-            node_id: node.id.clone(),
-            node_kind,
-            model_name: node_model_name.clone(),
-            elapsed_ms,
-            prompt_tokens: node_usage.as_ref().map(|usage| usage.prompt_tokens),
-            completion_tokens: node_usage.as_ref().map(|usage| usage.completion_tokens),
-            total_tokens: node_usage.as_ref().map(|usage| usage.total_tokens),
-            reasoning_tokens: node_usage.as_ref().and_then(|usage| usage.reasoning_tokens),
-            tokens_per_second: node_usage
-                .as_ref()
-                .map(|usage| completion_tokens_per_second(usage.completion_tokens, elapsed_ms)),
-        });
-
-        if let Some(usage) = node_usage.as_ref() {
-            llm_node_metrics.insert(
-                node.id.clone(),
-                YamlLlmNodeMetrics {
-                    elapsed_ms,
-                    prompt_tokens: usage.prompt_tokens,
-                    completion_tokens: usage.completion_tokens,
-                    total_tokens: usage.total_tokens,
-                    reasoning_tokens: usage.reasoning_tokens,
-                    tokens_per_second: completion_tokens_per_second(
-                        usage.completion_tokens,
-                        elapsed_ms,
-                    ),
-                },
-            );
-        }
-
-        finish_node_span(
-            node_span.take(),
-            node_model_name.as_deref(),
-            node_usage.as_ref(),
-            elapsed_ms,
-        );
-
-        emit_node_completed(
+        let event_metadata = if options.telemetry.nerdstats {
+            Some(json!({
+                "nerdstats": workflow_nerdstats(&output),
+            }))
+        } else {
+            None
+        };
+        emit_workflow_completed(
             event_sink,
-            node.id.as_str(),
-            node.kind_name(),
-            node_streamable,
-            elapsed_ms,
+            output.terminal_node.as_str(),
+            output.total_elapsed_ms,
+            event_metadata,
         );
         ensure_event_sink_active(event_sink)?;
-
-        if let Some(next) = next {
-            current = next;
-            continue;
-        }
-        break;
+        Ok(output)
     }
+    .await;
 
-    let terminal_node = trace
-        .last()
-        .cloned()
-        .ok_or_else(|| YamlWorkflowRunError::EmptyNodes {
-            workflow_id: workflow.id.clone(),
-        })?;
-
-    let terminal_output = outputs
-        .get(terminal_node.as_str())
-        .and_then(|value| value.get("output"))
-        .cloned();
-
-    let total_elapsed_ms = started.elapsed().as_millis();
-    let output = YamlWorkflowRunOutput {
-        workflow_id: workflow.id.clone(),
-        entry_node: workflow.entry_node.clone(),
-        email_text: email_text.to_string(),
-        trace,
-        outputs,
-        terminal_node,
-        terminal_output,
-        step_timings,
-        llm_node_metrics,
-        llm_node_models,
-        total_elapsed_ms,
-        ttft_ms: workflow_ttft_ms,
-        total_input_tokens: token_totals.input_tokens,
-        total_output_tokens: token_totals.output_tokens,
-        total_tokens: token_totals.total_tokens,
-        total_reasoning_tokens: token_totals.reasoning_tokens,
-        tokens_per_second: token_totals.tokens_per_second(total_elapsed_ms),
-        trace_id: telemetry_context.trace_id.clone(),
-        metadata: telemetry_context.trace_id.as_ref().map(|value| {
-            workflow_metadata_with_trace(
+    match run_result {
+        Ok(output) => {
+            finish_workflow_span(
+                workflow_span.take(),
+                workflow,
+                &telemetry_context,
+                workflow_input,
+                &output,
                 options,
-                value,
-                telemetry_context.sampled,
-                telemetry_context.trace_id_source,
-            )
-        }),
-    };
-
-    let event_metadata = if options.telemetry.nerdstats {
-        Some(json!({
-            "nerdstats": workflow_nerdstats(&output),
-        }))
-    } else {
-        None
-    };
-    emit_workflow_completed(
-        event_sink,
-        output.terminal_node.as_str(),
-        output.total_elapsed_ms,
-        event_metadata,
-    );
-    ensure_event_sink_active(event_sink)?;
-
-    finish_workflow_span(
-        workflow_span.take(),
-        workflow,
-        &telemetry_context,
-        workflow_input,
-        &output,
-        options,
-    );
-
-    Ok(output)
+            );
+            Ok(output)
+        }
+        Err(error) => {
+            if let Some(mut span) = workflow_span.take() {
+                span.set_attribute("workflow_id", workflow.id.as_str());
+                apply_trace_identity_attributes(
+                    span.as_mut(),
+                    telemetry_context.trace_id.as_deref(),
+                );
+                span.add_event("workflow.error");
+                span.set_attribute("error", error.to_string().as_str());
+                span.end();
+                flush_workflow_tracer();
+            }
+            Err(error)
+        }
+    }
 }
 
 fn validate_custom_worker_handler_files(

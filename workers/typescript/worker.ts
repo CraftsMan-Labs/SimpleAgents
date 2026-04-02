@@ -87,6 +87,15 @@ function createExecuteHandler(workerId: string) {
     return parseJsonText(request.payload_json);
   }
 
+  function readStringField(value: unknown, key: string): string | undefined {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    const candidate = record[key];
+    return typeof candidate === "string" ? candidate : undefined;
+  }
+
   return function execute(
     call: grpc.ServerUnaryCall<ExecuteRequest, any>,
     callback: grpc.sendUnaryData<any>,
@@ -109,7 +118,7 @@ function createExecuteHandler(workerId: string) {
 
     const payload = parsePayload(request);
     if (request.operation === "GetRagData") {
-      const topic = typeof payload?.topic === "string" ? payload.topic : "clarification";
+      const topic = readStringField(payload, "topic") ?? "clarification";
       let output;
       if (topic === "terminated") {
         output = {

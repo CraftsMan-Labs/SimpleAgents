@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{YamlWorkflow, YamlWorkflowEvent, YamlWorkflowRunOutput, YamlWorkflowTokenKind};
 
@@ -111,7 +111,7 @@ impl YamlWorkflowRunOutput {
             })
             .collect();
 
-        let node_outputs = self
+        let node_outputs: Vec<YamlWorkflowNodeOutputRecord> = self
             .outputs
             .iter()
             .map(|(node_id, value)| YamlWorkflowNodeOutputRecord {
@@ -124,17 +124,22 @@ impl YamlWorkflowRunOutput {
             })
             .collect();
 
-        let terminal_output =
-            self.terminal_output
-                .as_ref()
-                .map(|value| YamlWorkflowNodeOutputRecord {
-                    node_id: self.terminal_node.clone(),
-                    node_kind: node_kind_by_id
-                        .get(self.terminal_node.as_str())
-                        .copied()
-                        .unwrap_or(YamlWorkflowNodeKind::Unknown),
-                    value: value.clone(),
-                });
+        let terminal_output = node_outputs
+            .iter()
+            .find(|record| record.node_id == self.terminal_node)
+            .cloned()
+            .or_else(|| {
+                self.terminal_output
+                    .as_ref()
+                    .map(|value| YamlWorkflowNodeOutputRecord {
+                        node_id: self.terminal_node.clone(),
+                        node_kind: node_kind_by_id
+                            .get(self.terminal_node.as_str())
+                            .copied()
+                            .unwrap_or(YamlWorkflowNodeKind::Unknown),
+                        value: json!({ "output": value.clone() }),
+                    })
+            });
 
         YamlWorkflowRunTypedOutput {
             workflow_id: self.workflow_id.clone(),

@@ -34,7 +34,12 @@ impl NodeExecutor for StartNodeExecutor {
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
         let next = match &ctx.node.kind {
             NodeKind::Start { next } => next,
-            _ => unreachable!("start node executor only handles start nodes"),
+            _ => {
+                return Err(WorkflowRuntimeError::DispatchInvariant {
+                    node_id: ctx.node.id.clone(),
+                    reason: "start executor received non-start node".to_string(),
+                });
+            }
         };
         Ok(ctx.runtime.execute_start_node(ctx.step, ctx.node, next))
     }
@@ -58,7 +63,12 @@ impl NodeExecutor for ConditionNodeExecutor {
                 on_true,
                 on_false,
             } => (expression, on_true, on_false),
-            _ => unreachable!("condition node executor only handles condition nodes"),
+            _ => {
+                return Err(WorkflowRuntimeError::DispatchInvariant {
+                    node_id: ctx.node.id.clone(),
+                    reason: "condition executor received non-condition node".to_string(),
+                });
+            }
         };
         ctx.runtime.execute_condition_node(
             ctx.step,
@@ -847,7 +857,10 @@ impl NodeExecutor for GeneralNodeExecutor {
                 .runtime
                 .execute_filter_node(ctx.step, ctx.node, items_path, expression, next, ctx.scope),
             NodeKind::Start { .. } | NodeKind::Condition { .. } | NodeKind::End => {
-                unreachable!("specific strategy executors should handle start/condition/end")
+                Err(WorkflowRuntimeError::DispatchInvariant {
+                    node_id: ctx.node.id.clone(),
+                    reason: "general executor received start/condition/end node".to_string(),
+                })
             }
         }
     }
@@ -1040,5 +1053,8 @@ pub(super) async fn execute_node(
         return Ok(execution);
     }
 
-    unreachable!("no strategy executor registered for node kind")
+    Err(WorkflowRuntimeError::DispatchInvariant {
+        node_id: node.id.clone(),
+        reason: "no strategy executor registered for node kind".to_string(),
+    })
 }

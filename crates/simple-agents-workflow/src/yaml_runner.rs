@@ -1888,6 +1888,9 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
                         "stream": llm.stream.unwrap_or(false),
                         "stream_json_as_text": llm.stream_json_as_text.unwrap_or(false),
                         "heal": llm.heal.unwrap_or(false),
+                        "max_tokens": llm.max_tokens,
+                        "temperature": llm.temperature,
+                        "top_p": llm.top_p,
                         "messages_path": llm.messages_path,
                         "append_prompt_as_user": llm.append_prompt_as_user.unwrap_or(true),
                         "output_schema": node
@@ -1926,11 +1929,24 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
                 id: node.id.clone(),
                 kind: NodeKind::Tool {
                     tool: worker.handler.clone(),
-                    input: node
-                        .config
-                        .as_ref()
-                        .and_then(|c| c.payload.clone())
-                        .unwrap_or_else(|| json!({})),
+                    input: {
+                        let mut payload = node
+                            .config
+                            .as_ref()
+                            .and_then(|c| c.payload.clone())
+                            .unwrap_or_else(|| json!({}));
+                        if let Some(payload_obj) = payload.as_object_mut() {
+                            payload_obj.insert(
+                                "__handler_file".to_string(),
+                                worker
+                                    .handler_file
+                                    .as_ref()
+                                    .map(|value| Value::String(value.clone()))
+                                    .unwrap_or(Value::Null),
+                            );
+                        }
+                        payload
+                    },
                     next,
                 },
             });
@@ -2417,7 +2433,11 @@ async fn try_run_yaml_via_ir_runtime(
                     tool: input.tool.clone(),
                 })?;
 
-            let payload = input.input.clone();
+            let mut payload = input.input.clone();
+            let handler_file = payload
+                .as_object_mut()
+                .and_then(|obj| obj.remove("__handler_file"))
+                .and_then(|value| value.as_str().map(ToString::to_string));
             let email_text = context
                 .get("input")
                 .and_then(|v| v.get("email_text"))
@@ -2465,7 +2485,13 @@ async fn try_run_yaml_via_ir_runtime(
             );
 
             let output_result = worker
-                .execute(&input.tool, None, &payload, email_text, &worker_context)
+                .execute(
+                    &input.tool,
+                    handler_file.as_deref(),
+                    &payload,
+                    email_text,
+                    &worker_context,
+                )
                 .await
                 .map_err(ToolExecutionError::Failed);
 
@@ -2969,6 +2995,10 @@ mod tests {
         context: Mutex<Option<Value>>,
     }
 
+    struct HandlerFileCapturingWorker {
+        handler_file: Mutex<Option<String>>,
+    }
+
     struct ToolLoopProvider;
 
     struct UnknownToolProvider;
@@ -3326,6 +3356,25 @@ mod tests {
                 .lock()
                 .map_err(|_| "capturing worker lock should not be poisoned".to_string())?;
             *guard = Some(context.clone());
+            Ok(json!({"ok": true}))
+        }
+    }
+
+    #[async_trait]
+    impl YamlWorkflowCustomWorkerExecutor for HandlerFileCapturingWorker {
+        async fn execute(
+            &self,
+            _handler: &str,
+            handler_file: Option<&str>,
+            _payload: &Value,
+            _email_text: &str,
+            _context: &Value,
+        ) -> Result<Value, String> {
+            let mut guard = self
+                .handler_file
+                .lock()
+                .map_err(|_| "handler-file lock should not be poisoned".to_string())?;
+            *guard = handler_file.map(ToString::to_string);
             Ok(json!({"ok": true}))
         }
     }
@@ -4852,6 +4901,94 @@ nodes:
             node.kind,
             crate::ir::NodeKind::Tool { ref tool, .. } if tool == "__yaml_llm_call"
         )));
+    }
+
+    #[test]
+    fn yaml_to_ir_preserves_llm_sampling_controls() {
+        let yaml = r#"
+id: llm-controls
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        max_tokens: 120
+        temperature: 0.3
+        top_p: 0.9
+    config:
+      prompt: "classify"
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let ir = yaml_workflow_to_ir(&workflow).expect("yaml should convert to ir");
+        let llm_tool_input = ir
+            .nodes
+            .iter()
+            .find_map(|node| {
+                if let crate::ir::NodeKind::Tool { tool, input, .. } = &node.kind {
+                    if tool == "__yaml_llm_call" {
+                        return Some(input);
+                    }
+                }
+                None
+            })
+            .expect("expected __yaml_llm_call tool node");
+
+        assert_eq!(
+            llm_tool_input.get("max_tokens").and_then(Value::as_u64),
+            Some(120)
+        );
+        let temperature = llm_tool_input
+            .get("temperature")
+            .and_then(Value::as_f64)
+            .expect("temperature should be preserved");
+        assert!((temperature - 0.3).abs() < 1e-6);
+        let top_p = llm_tool_input
+            .get("top_p")
+            .and_then(Value::as_f64)
+            .expect("top_p should be preserved");
+        assert!((top_p - 0.9).abs() < 1e-6);
+    }
+
+    #[tokio::test]
+    async fn ir_custom_worker_path_preserves_handler_file() {
+        let yaml = r#"
+id: worker-handler-file
+entry_node: worker
+nodes:
+  - id: worker
+    node_type:
+      custom_worker:
+        handler: GetRagData
+        handler_file: handlers.py
+    config:
+      payload:
+        topic: clarification
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let worker = HandlerFileCapturingWorker {
+            handler_file: Mutex::new(None),
+        };
+
+        run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text":"hello"}),
+            &MockExecutor,
+            Some(&worker),
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("workflow should execute");
+
+        let captured = worker
+            .handler_file
+            .lock()
+            .expect("handler-file lock should not be poisoned")
+            .clone();
+        assert_eq!(captured.as_deref(), Some("handlers.py"));
     }
 
     #[tokio::test]
