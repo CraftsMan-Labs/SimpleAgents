@@ -1,5 +1,117 @@
 use super::*;
 
+struct NodeExecutorContext<'a> {
+    runtime: &'a WorkflowRuntime<'a>,
+    node: &'a Node,
+    _node_index: &'a HashMap<&'a str, &'a Node>,
+    step: usize,
+    scope: &'a mut RuntimeScope,
+    cancellation: Option<&'a dyn CancellationSignal>,
+    _retry_events: &'a mut Vec<WorkflowRetryEvent>,
+}
+
+#[async_trait]
+trait NodeExecutor: Send + Sync {
+    fn supports(&self, kind: &NodeKind) -> bool;
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError>;
+}
+
+struct StartNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for StartNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Start { .. })
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let next = match &ctx.node.kind {
+            NodeKind::Start { next } => next,
+            _ => unreachable!("start node executor only handles start nodes"),
+        };
+        Ok(ctx.runtime.execute_start_node(ctx.step, ctx.node, next))
+    }
+}
+
+struct ConditionNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for ConditionNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Condition { .. })
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        let (expression, on_true, on_false) = match &ctx.node.kind {
+            NodeKind::Condition {
+                expression,
+                on_true,
+                on_false,
+            } => (expression, on_true, on_false),
+            _ => unreachable!("condition node executor only handles condition nodes"),
+        };
+        ctx.runtime.execute_condition_node(
+            ctx.step,
+            ctx.node,
+            ConditionNodeSpec {
+                expression,
+                on_true,
+                on_false,
+            },
+            ctx.scope,
+            ctx.cancellation,
+        )
+    }
+}
+
+struct EndNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for EndNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::End)
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        Ok(NodeExecution {
+            step: ctx.step,
+            node_id: ctx.node.id.clone(),
+            data: NodeExecutionData::End,
+        })
+    }
+}
+
+fn strategy_executors() -> [&'static dyn NodeExecutor; 3] {
+    static START: StartNodeExecutor = StartNodeExecutor;
+    static CONDITION: ConditionNodeExecutor = ConditionNodeExecutor;
+    static END: EndNodeExecutor = EndNodeExecutor;
+    [&START, &CONDITION, &END]
+}
+
+async fn execute_node_via_strategy(
+    ctx: NodeExecutorContext<'_>,
+) -> Result<Option<NodeExecution>, WorkflowRuntimeError> {
+    for executor in strategy_executors() {
+        if executor.supports(&ctx.node.kind) {
+            return executor.execute(ctx).await.map(Some);
+        }
+    }
+    Ok(None)
+}
+
 pub(super) async fn execute_from_node(
     runtime: &WorkflowRuntime<'_>,
     workflow: WorkflowDefinition,
@@ -154,8 +266,21 @@ pub(super) async fn execute_node(
     cancellation: Option<&dyn CancellationSignal>,
     retry_events: &mut Vec<WorkflowRetryEvent>,
 ) -> Result<NodeExecution, WorkflowRuntimeError> {
+    if let Some(execution) = execute_node_via_strategy(NodeExecutorContext {
+        runtime,
+        node,
+        _node_index: node_index,
+        step,
+        scope,
+        cancellation,
+        _retry_events: retry_events,
+    })
+    .await?
+    {
+        return Ok(execution);
+    }
+
     match &node.kind {
-        NodeKind::Start { next } => Ok(runtime.execute_start_node(step, node, next)),
         NodeKind::Llm {
             model,
             prompt,
@@ -188,21 +313,6 @@ pub(super) async fn execute_node(
                 )
                 .await
         }
-        NodeKind::Condition {
-            expression,
-            on_true,
-            on_false,
-        } => runtime.execute_condition_node(
-            step,
-            node,
-            ConditionNodeSpec {
-                expression,
-                on_true,
-                on_false,
-            },
-            scope,
-            cancellation,
-        ),
         NodeKind::Debounce {
             key_path,
             window_steps,
@@ -887,10 +997,8 @@ pub(super) async fn execute_node(
             expression,
             next,
         } => runtime.execute_filter_node(step, node, items_path, expression, next, scope),
-        NodeKind::End => Ok(NodeExecution {
-            step,
-            node_id: node.id.clone(),
-            data: NodeExecutionData::End,
-        }),
+        NodeKind::Start { .. } | NodeKind::Condition { .. } | NodeKind::End => {
+            unreachable!("strategy dispatch should handle start/condition/end nodes")
+        }
     }
 }
