@@ -8,7 +8,15 @@ version: 1.0.0
 metadata:
   name: "Email Chat Draft Or Clarify"
   description: "Starter branching workflow that either asks for missing details or drafts an email"
-  tags: ["example", "starter", "branching", "chat-history", "email-draft", "clarification"]
+  tags:
+    [
+      "example",
+      "starter",
+      "branching",
+      "chat-history",
+      "email-draft",
+      "clarification",
+    ]
 
 entry_node: detect_scenario_context
 
@@ -18,7 +26,7 @@ nodes:
     name: "Detect Scenario Context"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -69,7 +77,7 @@ nodes:
     name: "Explain Capabilities"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -99,7 +107,7 @@ nodes:
     name: "Ask For Scenario"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -127,7 +135,7 @@ nodes:
     name: "Generate Draft Email"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true

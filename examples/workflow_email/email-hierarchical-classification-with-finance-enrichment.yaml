@@ -8,7 +8,15 @@ version: 1.0.0
 metadata:
   name: "Email Hierarchical Classification With Finance Enrichment"
   description: "Deterministic email classification with finance subtype routing and invoice stakeholder lookup"
-  tags: ["example", "email-classification", "hierarchical-classification", "finance", "hr", "education"]
+  tags:
+    [
+      "example",
+      "email-classification",
+      "hierarchical-classification",
+      "finance",
+      "hr",
+      "education",
+    ]
 
 entry_node: detect_email_domain
 
@@ -17,7 +25,7 @@ nodes:
     name: "Detect Email Domain"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -66,7 +74,7 @@ nodes:
     name: "Detect Finance Subtype"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -115,7 +123,7 @@ nodes:
     name: "Extract Invoice Company Name"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -161,7 +169,7 @@ nodes:
     name: "Finalize HR Classification"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -205,7 +213,7 @@ nodes:
     name: "Finalize Education Classification"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -249,7 +257,7 @@ nodes:
     name: "Finalize Finance Classification"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -293,7 +301,7 @@ nodes:
     name: "Finalize Invoice Classification"
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         temperature: 0.0
         messages_path: input.messages
         append_prompt_as_user: true
@@ -316,7 +324,15 @@ nodes:
             type: string
           reason:
             type: string
-        required: [top_level_category, subtype, label, company_name, stakeholder_name, reason]
+        required:
+          [
+            top_level_category,
+            subtype,
+            label,
+            company_name,
+            stakeholder_name,
+            reason,
+          ]
         additionalProperties: false
       prompt: |
         Produce the final normalized classification for an invoice email.
