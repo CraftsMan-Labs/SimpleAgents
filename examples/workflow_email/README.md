@@ -226,7 +226,7 @@ Pass a custom email inline:
 uv run --directory examples python workflow_email/run_yaml.py email-intake-classification.yaml --email "Termination request, second warning already issued"
 ```
 
-`custom_worker.handler: GetRagData` is executed by the real Python function `handlers.get_rag_data(...)` in `examples/workflow_email/handlers.py`.
+`custom_worker.handler: get_rag_data` is executed by the exact Python function `handlers.get_rag_data(...)` in `examples/workflow_email/handlers.py`.
 
 ## Node.js / TypeScript (package API)
 

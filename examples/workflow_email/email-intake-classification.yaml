@@ -16,7 +16,6 @@ nodes:
     name: "Classify Top Level Category"
     node_type:
       llm_call:
-        provider: openai
         model: ollama-lfm2.5-thinking
         stream: true
         heal: true
@@ -65,7 +64,6 @@ nodes:
     name: "Classify Supply Chain Subtype"
     node_type:
       llm_call:
-        provider: openai
         model: ollama-lfm2.5-thinking
         stream: true
         heal: true
@@ -101,7 +99,6 @@ nodes:
     name: "Classify Termination Subtype"
     node_type:
       llm_call:
-        provider: openai
         model: ollama-lfm2.5-thinking
         stream: true
         heal: true
@@ -137,8 +134,7 @@ nodes:
     name: "Mock RAG: Probation"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: probation
@@ -151,8 +147,7 @@ nodes:
     name: "Mock RAG: Leave Request"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: leave_request
@@ -165,8 +160,7 @@ nodes:
     name: "Mock RAG: Supply Chain Order Assessment"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: supply_chain_order_assessment
@@ -179,8 +173,7 @@ nodes:
     name: "Mock RAG: Supply Chain Order Replacement"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: supply_chain_order_replacement
@@ -193,8 +186,7 @@ nodes:
     name: "Mock RAG: Termination First Time Offense"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: termination_first_time_offense
@@ -207,8 +199,7 @@ nodes:
     name: "Mock RAG: Termination Repeated Offense"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: termination_repeated_offense
@@ -221,8 +212,7 @@ nodes:
     name: "Mock RAG: Clarification"
     node_type:
       custom_worker:
-        language: python
-        handler: GetRagData
+        handler: get_rag_data
     config:
       payload:
         topic: clarification
@@ -235,7 +225,6 @@ nodes:
     name: "Generate Draft Email"
     node_type:
       llm_call:
-        provider: openai
         model: ollama-glm-4.7-flash
         stream: true
         heal: true

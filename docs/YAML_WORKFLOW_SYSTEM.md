@@ -129,13 +129,19 @@ Always define deterministic `default` behavior.
 ```yaml
 node_type:
   custom_worker:
-    handler: GetRagData
+    handler: get_rag_data
+    handler_file: handlers.py
 config:
   payload:
     topic: termination
 ```
 
 Use `custom_worker` when code must run deterministically outside the model.
+
+- `handler`: exact function name to invoke (no name normalization).
+- `handler_file` (optional): path to the handler module; defaults to `handlers.py` relative to the workflow YAML directory.
+- `llm_call.provider` is not supported in YAML and is rejected.
+- `custom_worker.language` is not supported in YAML and is rejected.
 
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
 

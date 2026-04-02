@@ -157,6 +157,11 @@ print(result["events"][0]["event_type"])
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
+For `custom_worker` nodes in Python workflow execution:
+
+- `handler` must exactly match the Python function name in the handler module.
+- `handler_file` is optional; when omitted it defaults to `handlers.py` relative to the workflow YAML directory.
+
 For chat-history workflows, use `run_workflow_yaml(...)` with structured workflow input:
 
 ```python

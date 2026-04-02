@@ -37,8 +37,12 @@ WASM/browser flow support is string/object based:
 
 - Implemented: `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
   - Supports step DSL (`steps`) and graph YAML (`entry_node` + `nodes` + `edges`) for `llm_call`, `switch`, and `custom_worker` node types.
-  - `custom_worker` requires a matching `workflowOptions.functions[handler]` implementation in browser/WASM execution.
+  - `custom_worker` requires exact handler lookup in `workflowOptions.functions`:
+    - without `handler_file`: `workflowOptions.functions[handler]`
+    - with `handler_file`: `workflowOptions.functions["<handler_file>#<handler>"]`
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
+
+Workflow result contract is strict: `runWorkflowYamlString` expects outputs containing `workflow_id` and `outputs`, and throws if the backend response shape is incompatible.
 
 ## Security and deployment notes
 
