@@ -103,6 +103,7 @@ export interface ClientConfig {
 export interface WorkflowRunOptions {
   telemetry?: Record<string, unknown>;
   trace?: Record<string, unknown>;
+  onEvent?: (event: Record<string, unknown>) => void;
   functions?: Record<
     string,
     (

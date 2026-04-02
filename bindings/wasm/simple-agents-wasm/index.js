@@ -901,10 +901,36 @@ class BrowserJsClient {
             promptOrMessages = history;
           }
 
-          const completion = await this.complete(model, promptOrMessages, {
-            temperature: llm.temperature
-          });
-          const parsedOutput = maybeParseJson(completion.content ?? "");
+          let rawContent = "";
+          if (llm.stream === true) {
+            await this.streamEvents(
+              model,
+              promptOrMessages,
+              (event) => {
+                if (event && event.eventType === "delta" && typeof event.delta?.content === "string") {
+                  rawContent += event.delta.content;
+                  if (typeof workflowOptions?.onEvent === "function") {
+                    workflowOptions.onEvent({
+                      eventType: "node_stream_delta",
+                      nodeId: node.id,
+                      delta: event.delta.content,
+                      model: event.delta.model ?? model
+                    });
+                  }
+                }
+              },
+              {
+                temperature: llm.temperature
+              }
+            );
+          } else {
+            const completion = await this.complete(model, promptOrMessages, {
+              temperature: llm.temperature
+            });
+            rawContent = completion.content ?? "";
+          }
+
+          const parsedOutput = maybeParseJson(rawContent);
           const validationError = schemaValidationError(llmOutputSchema(node), parsedOutput);
           if (validationError !== null) {
             throw runtimeError(
@@ -913,7 +939,7 @@ class BrowserJsClient {
           }
           graphContext.nodes[node.id] = {
             output: parsedOutput,
-            raw: completion.content ?? ""
+            raw: rawContent
           };
           output = parsedOutput;
 
@@ -1110,7 +1136,7 @@ async function loadRustModule() {
       try {
         const moduleValue = await import("./pkg/simple_agents_wasm.js");
         const wasmUrl = new URL("./pkg/simple_agents_wasm_bg.wasm", import.meta.url);
-        await moduleValue.default(wasmUrl);
+        await moduleValue.default({ module_or_path: wasmUrl });
         return moduleValue;
       } catch {
         return null;
