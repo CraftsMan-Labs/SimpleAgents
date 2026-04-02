@@ -30,6 +30,9 @@ use simple_agents_workflow::{
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+mod workflow_helpers;
+use workflow_helpers::{parse_workflow_options, validate_workflow_request};
+
 type Runtime = tokio::runtime::Runtime;
 
 fn provider_from_env(provider_name: &str) -> SaResult<Arc<dyn Provider>> {
@@ -1050,25 +1053,8 @@ impl Client {
         workflow_input: JsonValue,
         workflow_options: Option<JsonValue>,
     ) -> Result<JsonValue> {
-        if workflow_path.trim().is_empty() {
-            return Err(Error::from_reason(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        if !workflow_input.is_object() {
-            return Err(Error::from_reason(
-                "workflowInput must be a JSON object".to_string(),
-            ));
-        }
-
-        let options = workflow_options
-            .map(|value| {
-                serde_json::from_value::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    Error::from_reason(format!("invalid workflowOptions: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+        let options = parse_workflow_options(workflow_options)?;
 
         let event_sink = RecordingWorkflowEventSink::new();
         let output = self
@@ -1119,25 +1105,8 @@ impl Client {
         on_event: JsFunction,
         workflow_options: Option<JsonValue>,
     ) -> Result<AsyncTask<WorkflowStreamTask>> {
-        if workflow_path.trim().is_empty() {
-            return Err(Error::from_reason(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        if !workflow_input.is_object() {
-            return Err(Error::from_reason(
-                "workflowInput must be a JSON object".to_string(),
-            ));
-        }
-
-        let options = workflow_options
-            .map(|value| {
-                serde_json::from_value::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    Error::from_reason(format!("invalid workflowOptions: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+        let options = parse_workflow_options(workflow_options)?;
 
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
@@ -1186,25 +1155,8 @@ impl Client {
         workflow_input: JsonValue,
         workflow_options: Option<JsonValue>,
     ) -> Result<JsonValue> {
-        if workflow_path.trim().is_empty() {
-            return Err(Error::from_reason(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        if !workflow_input.is_object() {
-            return Err(Error::from_reason(
-                "workflowInput must be a JSON object".to_string(),
-            ));
-        }
-
-        let options = workflow_options
-            .map(|value| {
-                serde_json::from_value::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    Error::from_reason(format!("invalid workflowOptions: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+        let options = parse_workflow_options(workflow_options)?;
 
         let output = self
             .runtime

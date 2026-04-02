@@ -2346,6 +2346,30 @@ fn attach_workflow_events(
     Ok(())
 }
 
+fn parse_workflow_run_options(
+    workflow_options: Option<&Bound<'_, PyAny>>,
+) -> PyResult<YamlWorkflowRunOptions> {
+    workflow_options
+        .map(|value| {
+            pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+            })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or_default())
+}
+
+fn parse_workflow_input_value(workflow_input: &Bound<'_, PyAny>) -> PyResult<Value> {
+    let workflow_input_value: Value = pythonize::depythonize(workflow_input)
+        .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
+    if !workflow_input_value.is_object() {
+        return Err(PyRuntimeError::new_err(
+            "workflow_input must be a dict/object".to_string(),
+        ));
+    }
+    Ok(workflow_input_value)
+}
+
 struct PythonWorkflowEventSink {
     callback: Option<Py<PyAny>>,
 }
@@ -2885,14 +2909,7 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
@@ -2956,24 +2973,11 @@ impl Client {
             ));
         }
 
-        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-        if !workflow_input_value.is_object() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input must be a dict/object".to_string(),
-            ));
-        }
+        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
@@ -3047,14 +3051,7 @@ impl Client {
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
@@ -3099,24 +3096,11 @@ impl Client {
             ));
         }
 
-        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-        if !workflow_input_value.is_object() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input must be a dict/object".to_string(),
-            ));
-        }
+        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
         let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
