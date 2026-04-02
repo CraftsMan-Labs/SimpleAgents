@@ -29,6 +29,10 @@ async def main():
                 operation="tool",
                 target="echo",
                 payload_json=json.dumps({"input": {"x": 1}}),
+                tool_payload=worker.worker_pb2.ToolPayload(
+                    input_json=json.dumps({"x": 1}),
+                    scoped_input_json=json.dumps({"input": {"x": 1}}),
+                ),
             )
         )
         assert response.ok

@@ -14,3 +14,8 @@ This crate provides the Phase 4 worker gRPC contract and a Rust client-side work
 - `GrpcWorkerPool`: round-robin worker pool with retry support
 - Implements `simple_agents_workflow::WorkerPoolClient`, so it plugs into
   `simple_agents_workflow::WorkerPoolToolExecutor` without replacing the existing in-process pool.
+
+## Payload compatibility
+
+`ExecuteRequest` now carries typed payload fields (`llm_payload` / `tool_payload`) while
+still populating `payload_json` as a compatibility fallback for older workers.

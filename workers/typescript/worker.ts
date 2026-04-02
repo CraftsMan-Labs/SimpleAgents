@@ -24,6 +24,14 @@ type ExecuteRequest = {
   operation: string;
   target: string;
   payload_json: string;
+  llm_payload?: {
+    prompt?: string;
+    scoped_input_json?: string;
+  };
+  tool_payload?: {
+    input_json?: string;
+    scoped_input_json?: string;
+  };
 };
 
 type RuntimeConfig = {
@@ -52,6 +60,33 @@ function parseRuntimeConfig(argv: string[] = process.argv, env: NodeJS.ProcessEn
 }
 
 function createExecuteHandler(workerId: string) {
+  function parseJsonText(raw: string | undefined): unknown {
+    if (!raw) {
+      return {};
+    }
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return { raw };
+    }
+  }
+
+  function parsePayload(request: ExecuteRequest): unknown {
+    if (request.operation === "llm" && request.llm_payload) {
+      return {
+        prompt: request.llm_payload.prompt ?? "",
+        scoped_input: parseJsonText(request.llm_payload.scoped_input_json),
+      };
+    }
+    if (request.operation === "tool" && request.tool_payload) {
+      return {
+        input: parseJsonText(request.tool_payload.input_json),
+        scoped_input: parseJsonText(request.tool_payload.scoped_input_json),
+      };
+    }
+    return parseJsonText(request.payload_json);
+  }
+
   return function execute(
     call: grpc.ServerUnaryCall<ExecuteRequest, any>,
     callback: grpc.sendUnaryData<any>,
@@ -72,7 +107,7 @@ function createExecuteHandler(workerId: string) {
       return;
     }
 
-    const payload = request.payload_json ? JSON.parse(request.payload_json) : {};
+    const payload = parsePayload(request);
     if (request.operation === "GetRagData") {
       const topic = typeof payload?.topic === "string" ? payload.topic : "clarification";
       let output;
