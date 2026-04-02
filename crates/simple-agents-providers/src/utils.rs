@@ -1,6 +1,8 @@
 //! Shared utilities for provider implementations.
 
+use crate::SimpleAgentsError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use simple_agent_type::ProviderError;
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
@@ -40,6 +42,47 @@ pub fn parse_retry_after(header_value: &str) -> Option<Duration> {
     }
 
     None
+}
+
+/// Extract and parse retry-after header from response headers.
+pub fn retry_after_from_headers(headers: &HeaderMap) -> Option<Duration> {
+    headers
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(parse_retry_after)
+}
+
+/// Send a JSON HTTP POST request.
+pub async fn send_json_request(
+    client: &reqwest::Client,
+    url: &str,
+    headers: HeaderMap,
+    body: &serde_json::Value,
+) -> std::result::Result<reqwest::Response, reqwest::Error> {
+    client.post(url).headers(headers).json(body).send().await
+}
+
+/// Map reqwest transport errors to unified provider errors.
+pub fn map_transport_error(error: reqwest::Error) -> SimpleAgentsError {
+    if error.is_timeout() {
+        SimpleAgentsError::Provider(ProviderError::Timeout(DEFAULT_TIMEOUT))
+    } else {
+        SimpleAgentsError::Network(format!("Network error: {}", error))
+    }
+}
+
+/// Map reqwest transport errors and record request timer metrics.
+pub fn map_transport_error_with_timer(
+    error: reqwest::Error,
+    timer: crate::metrics::RequestTimer,
+) -> SimpleAgentsError {
+    if error.is_timeout() {
+        timer.complete_timeout();
+    } else {
+        timer.complete_error("network");
+    }
+
+    map_transport_error(error)
 }
 
 #[cfg(test)]
@@ -107,6 +150,16 @@ mod tests {
     fn test_parse_retry_after_large_numeric_value() {
         let duration = parse_retry_after("18446744073709551615").expect("u64 max should parse");
         assert_eq!(duration.as_secs(), u64::MAX);
+    }
+
+    #[test]
+    fn test_retry_after_from_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(reqwest::header::RETRY_AFTER, HeaderValue::from_static("5"));
+        assert_eq!(
+            retry_after_from_headers(&headers),
+            Some(Duration::from_secs(5))
+        );
     }
 
     #[test]

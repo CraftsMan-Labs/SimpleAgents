@@ -129,7 +129,7 @@ If your external handler emits its own logs/metrics/spans, forward IDs in payloa
 - id: rag_lookup
   node_type:
     custom_worker:
-      handler: GetRagData
+      handler: get_rag_data
   config:
     payload:
       topic: termination_repeated_offense

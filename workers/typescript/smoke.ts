@@ -51,6 +51,10 @@ async function runSmoke() {
     operation: "tool",
     target: "echo",
     payload_json: JSON.stringify({ input: { x: 1 } }),
+    tool_payload: {
+      input_json: JSON.stringify({ x: 1 }),
+      scoped_input_json: JSON.stringify({ input: { x: 1 } }),
+    },
   });
 
   if (!response.ok) {

@@ -306,34 +306,12 @@ impl Provider for AnthropicProvider {
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
         // Make HTTP request
-        let response = match self
-            .client
-            .post(&req.url)
-            .headers(headers)
-            .json(&req.body)
-            .send()
+        let response = crate::utils::send_json_request(&self.client, &req.url, headers, &req.body)
             .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                if e.is_timeout() {
-                    timer.complete_timeout();
-                    return Err(SimpleAgentsError::Provider(ProviderError::Timeout(
-                        DEFAULT_TIMEOUT,
-                    )));
-                } else {
-                    timer.complete_error("network");
-                    return Err(SimpleAgentsError::Network(format!("Network error: {}", e)));
-                }
-            }
-        };
+            .map_err(|e| crate::utils::map_transport_error_with_timer(e, timer.clone()))?;
 
         let status = response.status();
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(crate::utils::parse_retry_after);
+        let retry_after = crate::utils::retry_after_from_headers(response.headers());
 
         // Handle error responses
         if !status.is_success() {
@@ -613,27 +591,12 @@ impl AnthropicProvider {
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
         // Make HTTP request with streaming
-        let response = self
-            .client
-            .post(&req.url)
-            .headers(headers)
-            .json(&req.body)
-            .send()
+        let response = crate::utils::send_json_request(&self.client, &req.url, headers, &req.body)
             .await
-            .map_err(|e| {
-                if e.is_timeout() {
-                    SimpleAgentsError::Provider(ProviderError::Timeout(DEFAULT_TIMEOUT))
-                } else {
-                    SimpleAgentsError::Network(format!("Network error: {}", e))
-                }
-            })?;
+            .map_err(crate::utils::map_transport_error)?;
 
         let status = response.status();
-        let retry_after = response
-            .headers()
-            .get(reqwest::header::RETRY_AFTER)
-            .and_then(|v| v.to_str().ok())
-            .and_then(crate::utils::parse_retry_after);
+        let retry_after = crate::utils::retry_after_from_headers(response.headers());
 
         // Handle error responses
         if !status.is_success() {

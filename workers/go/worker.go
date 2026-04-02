@@ -35,6 +35,21 @@ message ExecuteRequest {
   string payload_json = 6;
   optional uint64 timeout_ms = 7;
   map<string, string> metadata = 8;
+
+  oneof typed_payload {
+    LlmPayload llm_payload = 9;
+    ToolPayload tool_payload = 10;
+  }
+}
+
+message LlmPayload {
+  string prompt = 1;
+  string scoped_input_json = 2;
+}
+
+message ToolPayload {
+  string input_json = 1;
+  string scoped_input_json = 2;
 }
 
 message WorkerError {
@@ -93,7 +108,6 @@ func (s *workerServer) execute(_ context.Context, req *dynamicpb.Message) (*dyna
 	requestID := req.Get(s.executeReqDesc.Fields().ByName("request_id")).String()
 	operation := req.Get(s.executeReqDesc.Fields().ByName("operation")).String()
 	target := req.Get(s.executeReqDesc.Fields().ByName("target")).String()
-	payloadJSON := req.Get(s.executeReqDesc.Fields().ByName("payload_json")).String()
 
 	resp := dynamicpb.NewMessage(s.executeRespDesc)
 	resp.Set(s.executeRespDesc.Fields().ByName("request_id"), protoreflect.ValueOfString(requestID))
@@ -111,12 +125,7 @@ func (s *workerServer) execute(_ context.Context, req *dynamicpb.Message) (*dyna
 		return resp, nil
 	}
 
-	var payload any
-	if payloadJSON != "" {
-		if err := json.Unmarshal([]byte(payloadJSON), &payload); err != nil {
-			payload = map[string]any{"raw": payloadJSON}
-		}
-	}
+	payload := parsePayload(req, operation)
 
 	output := map[string]any{
 		"language":  "go",
@@ -130,6 +139,46 @@ func (s *workerServer) execute(_ context.Context, req *dynamicpb.Message) (*dyna
 	resp.Set(s.executeRespDesc.Fields().ByName("ok"), protoreflect.ValueOfBool(true))
 	resp.Set(s.executeRespDesc.Fields().ByName("output_json"), protoreflect.ValueOfString(string(body)))
 	return resp, nil
+}
+
+func parsePayload(req *dynamicpb.Message, operation string) any {
+	if operation == "llm" {
+		if llmField := req.Descriptor().Fields().ByName("llm_payload"); llmField != nil && req.Has(llmField) {
+			llmMsg := req.Get(llmField).Message()
+			prompt := llmMsg.Get(llmMsg.Descriptor().Fields().ByName("prompt")).String()
+			scopedInput := decodeJSONText(llmMsg.Get(llmMsg.Descriptor().Fields().ByName("scoped_input_json")).String())
+			return map[string]any{
+				"prompt":       prompt,
+				"scoped_input": scopedInput,
+			}
+		}
+	}
+
+	if operation == "tool" {
+		if toolField := req.Descriptor().Fields().ByName("tool_payload"); toolField != nil && req.Has(toolField) {
+			toolMsg := req.Get(toolField).Message()
+			input := decodeJSONText(toolMsg.Get(toolMsg.Descriptor().Fields().ByName("input_json")).String())
+			scopedInput := decodeJSONText(toolMsg.Get(toolMsg.Descriptor().Fields().ByName("scoped_input_json")).String())
+			return map[string]any{
+				"input":        input,
+				"scoped_input": scopedInput,
+			}
+		}
+	}
+
+	payloadJSON := req.Get(req.Descriptor().Fields().ByName("payload_json")).String()
+	return decodeJSONText(payloadJSON)
+}
+
+func decodeJSONText(raw string) any {
+	if raw == "" {
+		return map[string]any{}
+	}
+	var payload any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return map[string]any{"raw": raw}
+	}
+	return payload
 }
 
 func (s *workerServer) health() *dynamicpb.Message {

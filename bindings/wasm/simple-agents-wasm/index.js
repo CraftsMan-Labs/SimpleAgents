@@ -62,8 +62,154 @@ function toToolCalls(toolCalls) {
     }));
 }
 
+function createStreamEventBridge(model, onChunk) {
+  let aggregate = "";
+  let finalId = "";
+  let finalModel = model;
+  let finalFinishReason;
+
+  return {
+    onEvent(event) {
+      if (event.eventType === "delta") {
+        const delta = event.delta;
+        if (!delta) {
+          return;
+        }
+
+        if (!finalId && delta.id) {
+          finalId = delta.id;
+        }
+        if (delta.model) {
+          finalModel = delta.model;
+        }
+        if (delta.content) {
+          aggregate += delta.content;
+        }
+        if (delta.finishReason) {
+          finalFinishReason = delta.finishReason;
+        }
+
+        onChunk({
+          id: delta.id,
+          model: delta.model,
+          content: delta.content,
+          finishReason: delta.finishReason,
+          raw: delta.raw
+        });
+      }
+
+      if (event.eventType === "error") {
+        onChunk({
+          id: finalId || "error",
+          model: finalModel,
+          error: event.error?.message ?? "stream error"
+        });
+      }
+    },
+    mergeResult(result, started) {
+      return {
+        ...result,
+        id: result.id || finalId,
+        model: result.model || finalModel,
+        content: result.content ?? aggregate,
+        finishReason: result.finishReason ?? finalFinishReason,
+        latencyMs: Math.max(0, Math.round(performance.now() - started))
+      };
+    }
+  };
+}
+
+function assertWorkflowResultShape(result) {
+  if (result === null || typeof result !== "object") {
+    throw runtimeError(
+      "workflow result contract mismatch: expected an object with workflow_id and outputs"
+    );
+  }
+
+  if (!("workflow_id" in result) || !("outputs" in result)) {
+    throw runtimeError(
+      "workflow result contract mismatch: expected keys 'workflow_id' and 'outputs'"
+    );
+  }
+
+  return result;
+}
+
+function normalizeWorkflowResult(result) {
+  if (result === null || typeof result !== "object") {
+    return result;
+  }
+  if ("workflow_id" in result && "outputs" in result) {
+    return result;
+  }
+  if (!("context" in result) || !result.context || typeof result.context !== "object") {
+    return result;
+  }
+
+  const context = result.context;
+  const nodeOutputs =
+    context && typeof context === "object" && context.nodes && typeof context.nodes === "object"
+      ? context.nodes
+      : context;
+  const trace = Array.isArray(result.events)
+    ? result.events
+        .filter((event) => event && event.status === "completed" && typeof event.stepId === "string")
+        .map((event) => event.stepId)
+    : [];
+  const terminalNode = trace.at(-1) ?? "";
+
+  return {
+    workflow_id: typeof result.workflow_id === "string" ? result.workflow_id : "wasm_workflow",
+    entry_node: typeof result.entry_node === "string" ? result.entry_node : trace[0] ?? "",
+    email_text: typeof context?.input?.email_text === "string" ? context.input.email_text : "",
+    trace,
+    outputs: nodeOutputs,
+    terminal_node: typeof result.terminal_node === "string" ? result.terminal_node : terminalNode,
+    terminal_output: result.output,
+    events: Array.isArray(result.events) ? result.events : [],
+    status: typeof result.status === "string" ? result.status : "ok"
+  };
+}
+
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/$/, "");
+}
+
+function finiteNumberOrNull(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function buildStepDetail(step) {
+  return {
+    node_id: step.nodeId,
+    node_kind: step.nodeKind,
+    model_name: step.modelName ?? null,
+    elapsed_ms: step.elapsedMs,
+    prompt_tokens: finiteNumberOrNull(step.promptTokens),
+    completion_tokens: finiteNumberOrNull(step.completionTokens),
+    total_tokens: finiteNumberOrNull(step.totalTokens),
+    reasoning_tokens: 0,
+    tokens_per_second: finiteNumberOrNull(step.tokensPerSecond)
+  };
+}
+
+function buildWorkflowNerdstats(summary) {
+  return {
+    workflow_id: summary.workflowId,
+    terminal_node: summary.terminalNode,
+    total_elapsed_ms: summary.totalElapsedMs,
+    ttft_ms: summary.ttftMs,
+    step_details: summary.stepDetails,
+    total_input_tokens: summary.totalInputTokens,
+    total_output_tokens: summary.totalOutputTokens,
+    total_tokens: summary.totalTokens,
+    total_reasoning_tokens: summary.totalReasoningTokens,
+    tokens_per_second: summary.tokensPerSecond,
+    trace_id: summary.traceId,
+    token_metrics_available: summary.tokenMetricsAvailable,
+    token_metrics_source: summary.tokenMetricsSource,
+    llm_nodes_without_usage: summary.llmNodesWithoutUsage
+  };
 }
 
 function interpolate(value, context) {
@@ -613,63 +759,17 @@ class BrowserJsClient {
       throw configError("onChunk callback is required");
     }
 
-    let aggregate = "";
-    let finalId = "";
-    let finalModel = model;
-    let finalFinishReason;
     const started = performance.now();
+    const streamBridge = createStreamEventBridge(model, onChunk);
 
     const result = await this.streamEvents(
       model,
       promptOrMessages,
-      (event) => {
-        if (event.eventType === "delta") {
-          const delta = event.delta;
-          if (!delta) {
-            return;
-          }
-
-          if (delta.id && finalId.length === 0) {
-            finalId = delta.id;
-          }
-          if (delta.model) {
-            finalModel = delta.model;
-          }
-          if (delta.content) {
-            aggregate += delta.content;
-          }
-          if (delta.finishReason) {
-            finalFinishReason = delta.finishReason;
-          }
-
-          onChunk({
-            id: delta.id,
-            model: delta.model,
-            content: delta.content,
-            finishReason: delta.finishReason,
-            raw: delta.raw
-          });
-        }
-
-        if (event.eventType === "error") {
-          onChunk({
-            id: finalId || "error",
-            model: finalModel,
-            error: event.error?.message ?? "stream error"
-          });
-        }
-      },
+      (event) => streamBridge.onEvent(event),
       options
     );
 
-    return {
-      ...result,
-      id: result.id || finalId,
-      model: result.model || finalModel,
-      content: result.content ?? aggregate,
-      finishReason: result.finishReason ?? finalFinishReason,
-      latencyMs: Math.max(0, Math.round(performance.now() - started))
-    };
+    return streamBridge.mergeResult(result, started);
   }
 
   async streamEvents(model, promptOrMessages, onEvent, options = {}) {
@@ -694,7 +794,10 @@ class BrowserJsClient {
         max_tokens: options.maxTokens,
         temperature: options.temperature,
         top_p: options.topP,
-        stream: true
+        stream: true,
+        stream_options: {
+          include_usage: true
+        }
       })
     });
 
@@ -711,6 +814,12 @@ class BrowserJsClient {
     let responseModel = model;
     let aggregate = "";
     let finishReason;
+    let usage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0
+    };
+    let usageAvailable = false;
 
     try {
       for await (const block of iterateSse(response)) {
@@ -751,6 +860,10 @@ class BrowserJsClient {
         if (delta.finishReason) {
           finishReason = delta.finishReason;
         }
+        if (chunk?.usage && typeof chunk.usage === "object") {
+          usage = toUsage(chunk.usage);
+          usageAvailable = true;
+        }
 
         onEvent({ eventType: "delta", delta });
       }
@@ -771,11 +884,9 @@ class BrowserJsClient {
       content: aggregate,
       finishReason,
       usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0
+        ...usage
       },
-      usageAvailable: false,
+      usageAvailable,
       latencyMs,
       raw: undefined,
       healed: undefined,
@@ -826,9 +937,17 @@ class BrowserJsClient {
         nodes: {}
       };
 
+      const workflowStarted = performance.now();
+      let workflowTtftMs = 0;
       let pointer = doc.entry_node;
       let output;
       let iterations = 0;
+      const stepDetails = [];
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalTokens = 0;
+      const totalReasoningTokens = 0;
+      const llmNodesWithoutUsage = [];
 
       while (typeof pointer === "string" && pointer.length > 0) {
         iterations += 1;
@@ -843,6 +962,11 @@ class BrowserJsClient {
 
         const nodeType = node.node_type ?? {};
         const nodeTypeName = Object.keys(nodeType)[0] ?? "unknown";
+        const nodeStarted = performance.now();
+        let stepModelName;
+        let stepPromptTokens;
+        let stepCompletionTokens;
+        let stepTotalTokens;
         events.push({ stepId: node.id, stepType: nodeTypeName, status: "started" });
 
         if (nodeType.llm_call) {
@@ -874,10 +998,57 @@ class BrowserJsClient {
             promptOrMessages = history;
           }
 
-          const completion = await this.complete(model, promptOrMessages, {
-            temperature: llm.temperature
-          });
-          const parsedOutput = maybeParseJson(completion.content ?? "");
+          let rawContent = "";
+          let completion;
+          if (llm.stream === true) {
+            completion = await this.streamEvents(
+              model,
+              promptOrMessages,
+              (event) => {
+                if (event && event.eventType === "delta" && typeof event.delta?.content === "string") {
+                  if (workflowTtftMs === 0) {
+                    const measured = Math.max(0, Math.round(performance.now() - workflowStarted));
+                    workflowTtftMs = measured === 0 ? 1 : measured;
+                  }
+                  rawContent += event.delta.content;
+                  if (typeof workflowOptions?.onEvent === "function") {
+                    workflowOptions.onEvent({
+                      eventType: "node_stream_delta",
+                      nodeId: node.id,
+                      delta: event.delta.content,
+                      model: event.delta.model ?? model
+                    });
+                  }
+                }
+              },
+              {
+                temperature: llm.temperature
+              }
+            );
+            rawContent = completion.content ?? rawContent;
+          } else {
+            completion = await this.complete(model, promptOrMessages, {
+              temperature: llm.temperature
+            });
+            rawContent = completion.content ?? "";
+          }
+
+          stepModelName = completion?.model ?? model;
+          if (completion?.usageAvailable === true && completion?.usage && typeof completion.usage === "object") {
+            const usage = completion.usage;
+            stepPromptTokens = Number.isFinite(usage.promptTokens) ? usage.promptTokens : 0;
+            stepCompletionTokens = Number.isFinite(usage.completionTokens)
+              ? usage.completionTokens
+              : 0;
+            stepTotalTokens = Number.isFinite(usage.totalTokens) ? usage.totalTokens : 0;
+            totalInputTokens += stepPromptTokens;
+            totalOutputTokens += stepCompletionTokens;
+            totalTokens += stepTotalTokens;
+          } else {
+            llmNodesWithoutUsage.push(node.id);
+          }
+
+          const parsedOutput = maybeParseJson(rawContent);
           const validationError = schemaValidationError(llmOutputSchema(node), parsedOutput);
           if (validationError !== null) {
             throw runtimeError(
@@ -886,7 +1057,7 @@ class BrowserJsClient {
           }
           graphContext.nodes[node.id] = {
             output: parsedOutput,
-            raw: completion.content ?? ""
+            raw: rawContent
           };
           output = parsedOutput;
 
@@ -901,15 +1072,22 @@ class BrowserJsClient {
           pointer = matched?.target ?? switchSpec.default ?? "";
         } else if (nodeType.custom_worker) {
           const handler = nodeType.custom_worker.handler ?? "custom_worker";
-          const fn = functions[handler];
+          const handlerFile = nodeType.custom_worker.handler_file;
+          const lookupKey =
+            typeof handlerFile === "string" && handlerFile.length > 0
+              ? `${handlerFile}#${handler}`
+              : handler;
+          const fn = functions[lookupKey];
           if (typeof fn !== "function") {
             throw runtimeError(
-              `custom_worker node '${node.id}' requires workflowOptions.functions['${handler}']`
+              `custom_worker node '${node.id}' requires workflowOptions.functions['${lookupKey}']`
             );
           }
           const workerOutput = await fn(
             {
               handler,
+              handler_file: handlerFile,
+              handler_lookup_key: lookupKey,
               payload: interpolatePathValue(node.config?.payload ?? null, graphContext),
               nodeId: node.id
             },
@@ -926,13 +1104,92 @@ class BrowserJsClient {
         }
 
         events.push({ stepId: node.id, stepType: nodeTypeName, status: "completed" });
+        const elapsedMs = Math.max(0, Math.round(performance.now() - nodeStarted));
+        const stepTokensPerSecond =
+          Number.isFinite(stepCompletionTokens) && elapsedMs > 0
+            ? Math.round((stepCompletionTokens / (elapsedMs / 1000)) * 100) / 100
+            : null;
+        stepDetails.push(
+          buildStepDetail({
+            nodeId: node.id,
+            nodeKind: nodeTypeName,
+            modelName: stepModelName,
+            elapsedMs,
+            promptTokens: stepPromptTokens,
+            completionTokens: stepCompletionTokens,
+            totalTokens: stepTotalTokens,
+            tokensPerSecond: stepTokensPerSecond
+          })
+        );
+      }
+
+      const trace = events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId);
+      const terminalNode = trace.at(-1) ?? "";
+      const totalElapsedMs = Math.max(0, Math.round(performance.now() - workflowStarted));
+      const tokenMetricsAvailable = llmNodesWithoutUsage.length === 0;
+      const overallTokensPerSecond =
+        totalElapsedMs > 0 ? Math.round((totalOutputTokens / (totalElapsedMs / 1000)) * 100) / 100 : 0;
+      const workflowId =
+        typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow";
+      const nerdstats = buildWorkflowNerdstats({
+        workflowId,
+        terminalNode,
+        totalElapsedMs,
+        ttftMs: workflowTtftMs,
+        stepDetails,
+        totalInputTokens,
+        totalOutputTokens,
+        totalTokens,
+        totalReasoningTokens,
+        tokensPerSecond: overallTokensPerSecond,
+        traceId: "",
+        tokenMetricsAvailable,
+        tokenMetricsSource: tokenMetricsAvailable ? "provider_usage" : "unavailable",
+        llmNodesWithoutUsage
+      });
+      if (typeof workflowOptions?.onEvent === "function") {
+        workflowOptions.onEvent({
+          event_type: "workflow_completed",
+          metadata: {
+            nerdstats
+          }
+        });
+      }
+
+      const outputs = {};
+      for (const [nodeId, nodeValue] of Object.entries(graphContext.nodes ?? {})) {
+        if (nodeValue && typeof nodeValue === "object" && "output" in nodeValue) {
+          outputs[nodeId] = nodeValue.output;
+        } else {
+          outputs[nodeId] = nodeValue;
+        }
       }
 
       return {
-        status: "ok",
+        workflow_id: workflowId,
+        entry_node: doc.entry_node,
+        email_text: typeof graphContext.input?.email_text === "string" ? graphContext.input.email_text : "",
+        trace,
+        outputs,
+        terminal_node: terminalNode,
+        terminal_output: output,
+        step_timings: stepDetails,
+        total_elapsed_ms: totalElapsedMs,
+        ttft_ms: workflowTtftMs,
+        total_input_tokens: totalInputTokens,
+        total_output_tokens: totalOutputTokens,
+        total_tokens: totalTokens,
+        total_reasoning_tokens: totalReasoningTokens,
+        tokens_per_second: overallTokensPerSecond,
+        trace_id: "",
+        metadata: {
+          nerdstats
+        },
+        events,
         context: graphContext,
-        output,
-        events
+        status: "ok"
       };
     }
 
@@ -1021,10 +1278,22 @@ class BrowserJsClient {
     }
 
     return {
-      status: "ok",
+      workflow_id:
+        typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow",
+      entry_node: typeof doc.steps?.[0]?.id === "string" ? doc.steps[0].id : "",
+      email_text: typeof workflowInput?.email_text === "string" ? workflowInput.email_text : "",
+      trace: events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId),
+      outputs: { ...context },
+      terminal_node: events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId)
+        .at(-1) ?? "",
+      terminal_output: output,
+      events,
       context,
-      output,
-      events
+      status: "ok"
     };
   }
 
@@ -1043,7 +1312,7 @@ async function loadRustModule() {
       try {
         const moduleValue = await import("./pkg/simple_agents_wasm.js");
         const wasmUrl = new URL("./pkg/simple_agents_wasm_bg.wasm", import.meta.url);
-        await moduleValue.default(wasmUrl);
+        await moduleValue.default({ module_or_path: wasmUrl });
         return moduleValue;
       } catch {
         return null;
@@ -1108,56 +1377,17 @@ export class Client {
   async stream(model, promptOrMessages, onChunk, options = {}) {
     const rust = await this.ensureBackend();
     if (rust) {
-      let aggregate = "";
-      let finalId = "";
-      let finalModel = model;
-      let finalFinishReason;
       const started = performance.now();
+      const streamBridge = createStreamEventBridge(model, onChunk);
 
-      const result = await rust.streamEvents(model, promptOrMessages, (event) => {
-        if (event.eventType === "delta") {
-          const delta = event.delta;
-          if (!delta) {
-            return;
-          }
-          if (!finalId && delta.id) {
-            finalId = delta.id;
-          }
-          if (delta.model) {
-            finalModel = delta.model;
-          }
-          if (delta.content) {
-            aggregate += delta.content;
-          }
-          if (delta.finishReason) {
-            finalFinishReason = delta.finishReason;
-          }
-          onChunk({
-            id: delta.id,
-            model: delta.model,
-            content: delta.content,
-            finishReason: delta.finishReason,
-            raw: delta.raw
-          });
-        }
+      const result = await rust.streamEvents(
+        model,
+        promptOrMessages,
+        (event) => streamBridge.onEvent(event),
+        options
+      );
 
-        if (event.eventType === "error") {
-          onChunk({
-            id: finalId || "error",
-            model: finalModel,
-            error: event.error?.message ?? "stream error"
-          });
-        }
-      }, options);
-
-      return {
-        ...result,
-        id: result.id || finalId,
-        model: result.model || finalModel,
-        content: result.content ?? aggregate,
-        finishReason: result.finishReason ?? finalFinishReason,
-        latencyMs: Math.max(0, Math.round(performance.now() - started))
-      };
+      return streamBridge.mergeResult(result, started);
     }
 
     return this.fallbackClient.stream(model, promptOrMessages, onChunk, options);
@@ -1174,17 +1404,25 @@ export class Client {
   async runWorkflowYamlString(yamlText, workflowInput, workflowOptions) {
     const rust = await this.ensureBackend();
     if (rust) {
-      return rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+      const result = await rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+      return assertWorkflowResultShape(normalizeWorkflowResult(result));
     }
-    return this.fallbackClient.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+    const result = await this.fallbackClient.runWorkflowYamlString(
+      yamlText,
+      workflowInput,
+      workflowOptions
+    );
+    return assertWorkflowResultShape(normalizeWorkflowResult(result));
   }
 
   async runWorkflowYaml(workflowPath, workflowInput) {
     const rust = await this.ensureBackend();
     if (rust) {
-      return rust.runWorkflowYaml(workflowPath, workflowInput);
+      const result = await rust.runWorkflowYaml(workflowPath, workflowInput);
+      return assertWorkflowResultShape(normalizeWorkflowResult(result));
     }
-    return this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
+    const result = await this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
+    return assertWorkflowResultShape(normalizeWorkflowResult(result));
   }
 }
 

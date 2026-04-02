@@ -44,6 +44,29 @@ def load_generated_modules():
 worker_pb2, worker_pb2_grpc = load_generated_modules()
 
 
+def _parse_json_text(raw: str):
+    if raw == "":
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return {"raw": raw}
+
+
+def _parse_execute_payload(request):
+    if request.operation == "llm" and request.HasField("llm_payload"):
+        return {
+            "prompt": request.llm_payload.prompt,
+            "scoped_input": _parse_json_text(request.llm_payload.scoped_input_json),
+        }
+    if request.operation == "tool" and request.HasField("tool_payload"):
+        return {
+            "input": _parse_json_text(request.tool_payload.input_json),
+            "scoped_input": _parse_json_text(request.tool_payload.scoped_input_json),
+        }
+    return _parse_json_text(request.payload_json)
+
+
 class WorkerService(worker_pb2_grpc.WorkerServiceServicer):
     def __init__(self, worker_id: str):
         self.worker_id = worker_id
@@ -69,7 +92,7 @@ class WorkerService(worker_pb2_grpc.WorkerServiceServicer):
                 ),
             )
 
-        payload = json.loads(request.payload_json or "{}")
+        payload = _parse_execute_payload(request)
         if request.operation == "GetRagData":
             topic = payload.get("topic", "clarification")
             if topic == "terminated":

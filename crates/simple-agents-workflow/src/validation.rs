@@ -253,72 +253,160 @@ fn validate_node_kind_fields(
     start_ids: &mut Vec<String>,
     end_count: &mut usize,
 ) {
+    fn emit_empty_field(diagnostics: &mut Vec<Diagnostic>, node_id: &str, message: &str) {
+        diagnostics.push(Diagnostic::error(
+            DiagnosticCode::EmptyField,
+            message,
+            Some(node_id.to_string()),
+        ));
+    }
+
+    fn require_non_empty(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        value: &str,
+        message: &str,
+    ) {
+        if value.is_empty() {
+            emit_empty_field(diagnostics, node_id, message);
+        }
+    }
+
+    fn require_optional_non_empty(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        value: Option<&str>,
+        message: &str,
+    ) {
+        if value.is_some_and(str::is_empty) {
+            emit_empty_field(diagnostics, node_id, message);
+        }
+    }
+
+    fn require_non_empty_fields(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        fields: &[(&str, &str)],
+    ) {
+        for (value, message) in fields {
+            require_non_empty(diagnostics, node_id, value, message);
+        }
+    }
+
+    fn require_optional_non_empty_fields(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        fields: &[(Option<&str>, &str)],
+    ) {
+        for (value, message) in fields {
+            require_optional_non_empty(diagnostics, node_id, *value, message);
+        }
+    }
+
+    fn require_positive_when_present<T>(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        value: Option<T>,
+        message: &str,
+    ) where
+        T: Copy + PartialEq + From<u8>,
+    {
+        if value.is_some_and(|limit| limit == T::from(0u8)) {
+            emit_empty_field(diagnostics, node_id, message);
+        }
+    }
+
+    fn require_non_empty_collection<T>(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        values: &[T],
+        message: &str,
+    ) {
+        if values.is_empty() {
+            emit_empty_field(diagnostics, node_id, message);
+        }
+    }
+
+    fn require_no_empty_string_entries(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        values: &[String],
+        message: &str,
+    ) {
+        if values.iter().any(String::is_empty) {
+            emit_empty_field(diagnostics, node_id, message);
+        }
+    }
+
+    fn require_merge_quorum_matches_policy(
+        diagnostics: &mut Vec<Diagnostic>,
+        node_id: &str,
+        policy: &MergePolicy,
+        quorum: Option<usize>,
+        source_len: usize,
+    ) {
+        match policy {
+            MergePolicy::Quorum => {
+                let invalid_quorum = match quorum {
+                    Some(value) => value == 0 || value > source_len,
+                    None => true,
+                };
+                if invalid_quorum {
+                    emit_empty_field(
+                        diagnostics,
+                        node_id,
+                        "merge.quorum must be between 1 and merge.sources length for quorum policy",
+                    );
+                }
+            }
+            _ => {
+                if quorum.is_some() {
+                    emit_empty_field(
+                        diagnostics,
+                        node_id,
+                        "merge.quorum is only valid with quorum policy",
+                    );
+                }
+            }
+        }
+    }
+
     match &node.kind {
         NodeKind::Start { next } => {
             start_ids.push(node.id.clone());
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "start.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty(diagnostics, &node.id, next, "start.next must not be empty");
         }
         NodeKind::Llm {
             model,
             prompt,
             next: _,
         } => {
-            if model.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "llm.model must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if prompt.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "llm.prompt must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (model, "llm.model must not be empty"),
+                    (prompt, "llm.prompt must not be empty"),
+                ],
+            );
         }
         NodeKind::Tool { tool, .. } => {
-            if tool.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "tool.tool must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty(diagnostics, &node.id, tool, "tool.tool must not be empty");
         }
         NodeKind::Condition {
             expression,
             on_true,
             on_false,
         } => {
-            if expression.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "condition.expression must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_true.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "condition.on_true must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_false.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "condition.on_false must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (expression, "condition.expression must not be empty"),
+                    (on_true, "condition.on_true must not be empty"),
+                    (on_false, "condition.on_false must not be empty"),
+                ],
+            );
         }
         NodeKind::Debounce {
             key_path,
@@ -326,34 +414,29 @@ fn validate_node_kind_fields(
             next,
             on_suppressed,
         } => {
-            if key_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "debounce.key_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (key_path, "debounce.key_path must not be empty"),
+                    (next, "debounce.next must not be empty"),
+                ],
+            );
             if *window_steps == 0 {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+                emit_empty_field(
+                    diagnostics,
+                    &node.id,
                     "debounce.window_steps must be greater than zero",
-                    Some(node.id.clone()),
-                ));
+                );
             }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "debounce.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_suppressed.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    on_suppressed.as_deref(),
                     "debounce.on_suppressed must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::Throttle {
             key_path,
@@ -361,34 +444,29 @@ fn validate_node_kind_fields(
             next,
             on_throttled,
         } => {
-            if key_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "throttle.key_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (key_path, "throttle.key_path must not be empty"),
+                    (next, "throttle.next must not be empty"),
+                ],
+            );
             if *window_steps == 0 {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+                emit_empty_field(
+                    diagnostics,
+                    &node.id,
                     "throttle.window_steps must be greater than zero",
-                    Some(node.id.clone()),
-                ));
+                );
             }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "throttle.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_throttled.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    on_throttled.as_deref(),
                     "throttle.on_throttled must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::RetryCompensate {
             tool,
@@ -399,34 +477,26 @@ fn validate_node_kind_fields(
             next,
             on_compensated,
         } => {
-            if tool.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "retry_compensate.tool must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if compensate_tool.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "retry_compensate.compensate_tool must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "retry_compensate.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_compensated.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (tool, "retry_compensate.tool must not be empty"),
+                    (
+                        compensate_tool,
+                        "retry_compensate.compensate_tool must not be empty",
+                    ),
+                    (next, "retry_compensate.next must not be empty"),
+                ],
+            );
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    on_compensated.as_deref(),
                     "retry_compensate.on_compensated must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::HumanInTheLoop {
             decision_path,
@@ -434,88 +504,63 @@ fn validate_node_kind_fields(
             on_approve,
             on_reject,
         } => {
-            if decision_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "human_in_the_loop.decision_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if response_path.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (
+                        decision_path,
+                        "human_in_the_loop.decision_path must not be empty",
+                    ),
+                    (on_approve, "human_in_the_loop.on_approve must not be empty"),
+                    (on_reject, "human_in_the_loop.on_reject must not be empty"),
+                ],
+            );
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    response_path.as_deref(),
                     "human_in_the_loop.response_path must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_approve.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "human_in_the_loop.on_approve must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_reject.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "human_in_the_loop.on_reject must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::CacheWrite {
             key_path,
             value_path,
             next,
         } => {
-            if key_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "cache_write.key_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if value_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "cache_write.value_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "cache_write.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (key_path, "cache_write.key_path must not be empty"),
+                    (value_path, "cache_write.value_path must not be empty"),
+                    (next, "cache_write.next must not be empty"),
+                ],
+            );
         }
         NodeKind::CacheRead {
             key_path,
             next,
             on_miss,
         } => {
-            if key_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "cache_read.key_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "cache_read.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_miss.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (key_path, "cache_read.key_path must not be empty"),
+                    (next, "cache_read.next must not be empty"),
+                ],
+            );
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    on_miss.as_deref(),
                     "cache_read.on_miss must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::EventTrigger {
             event,
@@ -523,76 +568,57 @@ fn validate_node_kind_fields(
             next,
             on_mismatch,
         } => {
-            if event.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "event_trigger.event must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if event_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "event_trigger.event_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "event_trigger.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if on_mismatch.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (event, "event_trigger.event must not be empty"),
+                    (event_path, "event_trigger.event_path must not be empty"),
+                    (next, "event_trigger.next must not be empty"),
+                ],
+            );
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    on_mismatch.as_deref(),
                     "event_trigger.on_mismatch must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::Router { routes, default } => {
-            if routes.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "router.routes must contain at least one route",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_collection(
+                diagnostics,
+                &node.id,
+                routes,
+                "router.routes must contain at least one route",
+            );
             if routes
                 .iter()
                 .any(|route| route.when.is_empty() || route.next.is_empty())
             {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+                emit_empty_field(
+                    diagnostics,
+                    &node.id,
                     "router.routes entries must include non-empty when and next",
-                    Some(node.id.clone()),
-                ));
+                );
             }
-            if default.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "router.default must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty(
+                diagnostics,
+                &node.id,
+                default,
+                "router.default must not be empty",
+            );
         }
         NodeKind::Transform { expression, next } => {
-            if expression.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "transform.expression must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "transform.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (expression, "transform.expression must not be empty"),
+                    (next, "transform.next must not be empty"),
+                ],
+            );
         }
         NodeKind::Loop {
             condition,
@@ -600,130 +626,93 @@ fn validate_node_kind_fields(
             next,
             max_iterations,
         } => {
-            if condition.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "loop.condition must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if body.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "loop.body must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "loop.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if max_iterations.is_some_and(|limit| limit == 0) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "loop.max_iterations must be greater than zero when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (condition, "loop.condition must not be empty"),
+                    (body, "loop.body must not be empty"),
+                    (next, "loop.next must not be empty"),
+                ],
+            );
+            require_positive_when_present(
+                diagnostics,
+                &node.id,
+                *max_iterations,
+                "loop.max_iterations must be greater than zero when provided",
+            );
         }
         NodeKind::End => {
             *end_count += 1;
         }
         NodeKind::Subgraph { graph, next } => {
-            if graph.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "subgraph.graph must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.as_ref().is_some_and(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(graph, "subgraph.graph must not be empty")],
+            );
+            require_optional_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(
+                    next.as_deref(),
                     "subgraph.next must not be empty when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+                )],
+            );
         }
         NodeKind::Batch { items_path, next } => {
-            if items_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "batch.items_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "batch.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (items_path, "batch.items_path must not be empty"),
+                    (next, "batch.next must not be empty"),
+                ],
+            );
         }
         NodeKind::Filter {
             items_path,
             expression,
             next,
         } => {
-            if items_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "filter.items_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if expression.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "filter.expression must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "filter.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (items_path, "filter.items_path must not be empty"),
+                    (expression, "filter.expression must not be empty"),
+                    (next, "filter.next must not be empty"),
+                ],
+            );
         }
         NodeKind::Parallel {
             branches,
             next,
             max_in_flight,
         } => {
-            if branches.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "parallel.branches must contain at least one node id",
-                    Some(node.id.clone()),
-                ));
-            }
-            if branches.iter().any(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "parallel.branches must not contain empty node ids",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "parallel.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if max_in_flight.is_some_and(|limit| limit == 0) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "parallel.max_in_flight must be greater than zero when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_collection(
+                diagnostics,
+                &node.id,
+                branches,
+                "parallel.branches must contain at least one node id",
+            );
+            require_no_empty_string_entries(
+                diagnostics,
+                &node.id,
+                branches,
+                "parallel.branches must not contain empty node ids",
+            );
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[(next, "parallel.next must not be empty")],
+            );
+            require_positive_when_present(
+                diagnostics,
+                &node.id,
+                *max_in_flight,
+                "parallel.max_in_flight must be greater than zero when provided",
+            );
         }
         NodeKind::Merge {
             sources,
@@ -731,51 +720,26 @@ fn validate_node_kind_fields(
             quorum,
             next,
         } => {
-            if sources.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "merge.sources must contain at least one node id",
-                    Some(node.id.clone()),
-                ));
-            }
-            if sources.iter().any(String::is_empty) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "merge.sources must not contain empty node ids",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "merge.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            match policy {
-                MergePolicy::Quorum => {
-                    let invalid_quorum = match quorum {
-                        Some(value) => *value == 0 || *value > sources.len(),
-                        None => true,
-                    };
-                    if invalid_quorum {
-                        diagnostics.push(Diagnostic::error(
-                            DiagnosticCode::EmptyField,
-                            "merge.quorum must be between 1 and merge.sources length for quorum policy",
-                            Some(node.id.clone()),
-                        ));
-                    }
-                }
-                _ => {
-                    if quorum.is_some() {
-                        diagnostics.push(Diagnostic::error(
-                            DiagnosticCode::EmptyField,
-                            "merge.quorum is only valid with quorum policy",
-                            Some(node.id.clone()),
-                        ));
-                    }
-                }
-            }
+            require_non_empty_collection(
+                diagnostics,
+                &node.id,
+                sources,
+                "merge.sources must contain at least one node id",
+            );
+            require_no_empty_string_entries(
+                diagnostics,
+                &node.id,
+                sources,
+                "merge.sources must not contain empty node ids",
+            );
+            require_non_empty(diagnostics, &node.id, next, "merge.next must not be empty");
+            require_merge_quorum_matches_policy(
+                diagnostics,
+                &node.id,
+                policy,
+                *quorum,
+                sources.len(),
+            );
         }
         NodeKind::Map {
             tool,
@@ -783,54 +747,35 @@ fn validate_node_kind_fields(
             next,
             max_in_flight,
         } => {
-            if tool.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "map.tool must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if items_path.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "map.items_path must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "map.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if max_in_flight.is_some_and(|limit| limit == 0) {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "map.max_in_flight must be greater than zero when provided",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (tool, "map.tool must not be empty"),
+                    (items_path, "map.items_path must not be empty"),
+                    (next, "map.next must not be empty"),
+                ],
+            );
+            require_positive_when_present(
+                diagnostics,
+                &node.id,
+                *max_in_flight,
+                "map.max_in_flight must be greater than zero when provided",
+            );
         }
         NodeKind::Reduce {
             source,
             operation: _,
             next,
         } => {
-            if source.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "reduce.source must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
-            if next.is_empty() {
-                diagnostics.push(Diagnostic::error(
-                    DiagnosticCode::EmptyField,
-                    "reduce.next must not be empty",
-                    Some(node.id.clone()),
-                ));
-            }
+            require_non_empty_fields(
+                diagnostics,
+                &node.id,
+                &[
+                    (source, "reduce.source must not be empty"),
+                    (next, "reduce.next must not be empty"),
+                ],
+            );
         }
     }
 }

@@ -9,7 +9,8 @@ use simple_agents_workflow::{
 use tonic::transport::Channel;
 
 use crate::proto::{
-    worker_service_client::WorkerServiceClient, ExecuteRequest, HealthRequest, HealthStatus,
+    execute_request::TypedPayload, worker_service_client::WorkerServiceClient, ExecuteRequest,
+    HealthRequest, HealthStatus, LlmPayload, ToolPayload,
 };
 
 /// gRPC client wrapper for one language worker endpoint.
@@ -103,33 +104,48 @@ impl GrpcWorkerClient {
 }
 
 fn to_execute_request(request: WorkerRequest) -> Result<ExecuteRequest, WorkerPoolError> {
-    let (operation, target, payload_json) = match request.operation {
+    let (operation, target, payload_json, typed_payload) = match request.operation {
         WorkerOperation::Llm {
             model,
             prompt,
             scoped_input,
-        } => (
-            "llm".to_string(),
-            model,
-            serde_json::to_string(&serde_json::json!({
-                "prompt": prompt,
-                "scoped_input": scoped_input,
-            }))
-            .map_err(|error| serialization_error(error.to_string()))?,
-        ),
+        } => {
+            let scoped_input_json = serialize_json_value(&scoped_input)?;
+            (
+                "llm".to_string(),
+                model,
+                serde_json::to_string(&serde_json::json!({
+                    "prompt": prompt,
+                    "scoped_input": scoped_input,
+                }))
+                .map_err(|error| serialization_error(error.to_string()))?,
+                Some(TypedPayload::LlmPayload(LlmPayload {
+                    prompt,
+                    scoped_input_json,
+                })),
+            )
+        }
         WorkerOperation::Tool {
             tool,
             input,
             scoped_input,
-        } => (
-            "tool".to_string(),
-            tool,
-            serde_json::to_string(&serde_json::json!({
-                "input": input,
-                "scoped_input": scoped_input,
-            }))
-            .map_err(|error| serialization_error(error.to_string()))?,
-        ),
+        } => {
+            let input_json = serialize_json_value(&input)?;
+            let scoped_input_json = serialize_json_value(&scoped_input)?;
+            (
+                "tool".to_string(),
+                tool,
+                serde_json::to_string(&serde_json::json!({
+                    "input": input,
+                    "scoped_input": scoped_input,
+                }))
+                .map_err(|error| serialization_error(error.to_string()))?,
+                Some(TypedPayload::ToolPayload(ToolPayload {
+                    input_json,
+                    scoped_input_json,
+                })),
+            )
+        }
     };
 
     Ok(ExecuteRequest {
@@ -141,7 +157,12 @@ fn to_execute_request(request: WorkerRequest) -> Result<ExecuteRequest, WorkerPo
         payload_json,
         timeout_ms: request.timeout_ms,
         metadata: HashMap::new(),
+        typed_payload,
     })
+}
+
+fn serialize_json_value(value: &Value) -> Result<String, WorkerPoolError> {
+    serde_json::to_string(value).map_err(|error| serialization_error(error.to_string()))
 }
 
 fn from_execute_response(
@@ -217,4 +238,68 @@ fn serialization_error(message: String) -> WorkerPoolError {
         message,
         retryable: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use simple_agents_workflow::{WorkerOperation, WorkerRequest};
+
+    use super::to_execute_request;
+    use crate::proto::execute_request::TypedPayload;
+
+    #[test]
+    fn to_execute_request_sets_tool_typed_payload_and_legacy_fallback() {
+        let request = WorkerRequest {
+            request_id: "req-1".to_string(),
+            workflow_name: "wf".to_string(),
+            node_id: "node-1".to_string(),
+            timeout_ms: Some(1000),
+            operation: WorkerOperation::Tool {
+                tool: "echo".to_string(),
+                input: json!({"x": 1}),
+                scoped_input: json!({"input": {"y": 2}}),
+            },
+        };
+
+        let grpc_request = to_execute_request(request).expect("conversion should succeed");
+
+        assert!(!grpc_request.payload_json.is_empty());
+        match grpc_request.typed_payload {
+            Some(TypedPayload::ToolPayload(payload)) => {
+                assert_eq!(payload.input_json, "{\"x\":1}");
+                assert_eq!(payload.scoped_input_json, "{\"input\":{\"y\":2}}");
+            }
+            other => panic!("unexpected typed payload: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn to_execute_request_sets_llm_typed_payload_and_legacy_fallback() {
+        let request = WorkerRequest {
+            request_id: "req-2".to_string(),
+            workflow_name: "wf".to_string(),
+            node_id: "node-2".to_string(),
+            timeout_ms: None,
+            operation: WorkerOperation::Llm {
+                model: "gpt-4.1-mini".to_string(),
+                prompt: "hello".to_string(),
+                scoped_input: json!({"input": {"topic": "rust"}}),
+            },
+        };
+
+        let grpc_request = to_execute_request(request).expect("conversion should succeed");
+
+        assert!(!grpc_request.payload_json.is_empty());
+        match grpc_request.typed_payload {
+            Some(TypedPayload::LlmPayload(payload)) => {
+                assert_eq!(payload.prompt, "hello");
+                assert_eq!(
+                    payload.scoped_input_json,
+                    "{\"input\":{\"topic\":\"rust\"}}"
+                );
+            }
+            other => panic!("unexpected typed payload: {other:?}"),
+        }
+    }
 }

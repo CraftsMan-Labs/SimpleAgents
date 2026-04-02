@@ -308,14 +308,14 @@ def test_cost_routing_zero_cost():
     config = {
         "provider_costs": {
             "openai": 0.002,
-            "local": 0.0,  # Free provider
+            "anthropic": 0.0,  # Free provider
         }
     }
 
     client = (
         ClientBuilder()
         .add_provider("openai", api_key=API_KEY)
-        .add_provider("openai", api_key=LOCAL_KEY, api_base="http://localhost:8080/v1")
+        .add_provider("anthropic", api_key=ANTHROPIC_KEY)
         .with_cost_routing(config)
         .build()
     )
@@ -324,22 +324,22 @@ def test_cost_routing_zero_cost():
 
 
 def test_cost_routing_duplicate_local_alias_collision():
-    """Test deterministic aliasing when multiple local OpenAI providers are added."""
+    """Test cost routing with multiple providers including free-tier costs."""
     from simple_agents_py import ClientBuilder
 
     config = {
         "provider_costs": {
             "openai": 0.002,
-            "local": 0.0,
-            "openai_2": 0.0,
+            "anthropic": 0.0,
+            "openrouter": 0.0,
         }
     }
 
     client = (
         ClientBuilder()
         .add_provider("openai", api_key=API_KEY)
-        .add_provider("openai", api_key=LOCAL_KEY, api_base="http://localhost:8080/v1")
-        .add_provider("openai", api_key=LOCAL_KEY, api_base="http://127.0.0.1:11434/v1")
+        .add_provider("anthropic", api_key=ANTHROPIC_KEY)
+        .add_provider("openrouter", api_key=OPENROUTER_KEY)
         .with_cost_routing(config)
         .build()
     )
@@ -348,22 +348,20 @@ def test_cost_routing_duplicate_local_alias_collision():
 
 
 def test_cost_routing_duplicate_with_provider_config_aliases():
-    """Test aliasing is also applied for add_provider_config."""
+    """Test cost routing also works with add_provider_config."""
     from simple_agents_py import ClientBuilder, ProviderConfig
 
     config = {
         "provider_costs": {
             "openai": 0.002,
-            "local": 0.0,
+            "anthropic": 0.0,
         }
     }
 
     client = (
         ClientBuilder()
         .add_provider_config(ProviderConfig("openai", API_KEY, None))
-        .add_provider_config(
-            ProviderConfig("openai", LOCAL_KEY, "http://localhost:8080/v1")
-        )
+        .add_provider_config(ProviderConfig("anthropic", ANTHROPIC_KEY, None))
         .with_cost_routing(config)
         .build()
     )

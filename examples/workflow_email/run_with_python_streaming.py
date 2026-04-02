@@ -4,9 +4,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 from simple_agents_py import Client
+
+if TYPE_CHECKING:
+    from simple_agents_py import WorkflowEvent
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,7 +63,7 @@ def resolve_workflow_path(raw_path: str) -> Path:
     raise FileNotFoundError(f"Workflow file not found: {raw_path}")
 
 
-def on_event(event: dict[str, object]) -> None:
+def on_event(event: WorkflowEvent) -> None:
     event_type = event.get("event_type")
     node_id = event.get("node_id")
     message = event.get("message")

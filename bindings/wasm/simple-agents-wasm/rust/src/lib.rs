@@ -140,6 +140,7 @@ struct GraphSwitchBranch {
 #[derive(Deserialize, Clone)]
 struct GraphCustomWorker {
     handler: Option<String>,
+    handler_file: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -223,6 +224,40 @@ struct WorkflowRunResult {
     context: JsonValue,
     output: Option<JsonValue>,
     events: Vec<WorkflowRunEvent>,
+    #[serde(rename = "workflow_id", skip_serializing_if = "Option::is_none")]
+    workflow_id: Option<String>,
+    #[serde(rename = "entry_node", skip_serializing_if = "Option::is_none")]
+    entry_node: Option<String>,
+    #[serde(rename = "email_text", skip_serializing_if = "Option::is_none")]
+    email_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    trace: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outputs: Option<JsonValue>,
+    #[serde(rename = "terminal_node", skip_serializing_if = "Option::is_none")]
+    terminal_node: Option<String>,
+    #[serde(rename = "terminal_output", skip_serializing_if = "Option::is_none")]
+    terminal_output: Option<JsonValue>,
+    #[serde(rename = "step_timings", skip_serializing_if = "Option::is_none")]
+    step_timings: Option<JsonValue>,
+    #[serde(rename = "total_elapsed_ms", skip_serializing_if = "Option::is_none")]
+    total_elapsed_ms: Option<u64>,
+    #[serde(rename = "ttft_ms", skip_serializing_if = "Option::is_none")]
+    ttft_ms: Option<u64>,
+    #[serde(rename = "total_input_tokens", skip_serializing_if = "Option::is_none")]
+    total_input_tokens: Option<u64>,
+    #[serde(rename = "total_output_tokens", skip_serializing_if = "Option::is_none")]
+    total_output_tokens: Option<u64>,
+    #[serde(rename = "total_tokens", skip_serializing_if = "Option::is_none")]
+    total_tokens: Option<u64>,
+    #[serde(rename = "total_reasoning_tokens", skip_serializing_if = "Option::is_none")]
+    total_reasoning_tokens: Option<u64>,
+    #[serde(rename = "tokens_per_second", skip_serializing_if = "Option::is_none")]
+    tokens_per_second: Option<f64>,
+    #[serde(rename = "trace_id", skip_serializing_if = "Option::is_none")]
+    trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    metadata: Option<JsonValue>,
 }
 
 #[derive(Deserialize)]
@@ -1316,7 +1351,7 @@ impl WasmClient {
         }
 
         if raw_doc.get("entry_node").is_some() && raw_doc.get("nodes").is_some() {
-            let graph_doc: GraphWorkflowDoc = serde_json::from_value(raw_doc)
+            let graph_doc: GraphWorkflowDoc = serde_json::from_value(raw_doc.clone())
                 .map_err(|error| config_error(format!("invalid graph workflow YAML: {error}")))?;
 
             let mut node_by_id: HashMap<String, GraphWorkflowNode> = HashMap::new();
@@ -1342,10 +1377,19 @@ impl WasmClient {
                 "nodes": JsonValue::Object(JsonMap::new())
             });
 
+            let workflow_started = now_millis();
             let mut events = Vec::new();
             let mut output: Option<JsonValue> = None;
             let mut pointer = graph_doc.entry_node.clone();
             let mut iterations = 0usize;
+            let mut workflow_ttft_ms: Option<u64> = None;
+            let mut trace: Vec<String> = Vec::new();
+            let mut step_timings: Vec<JsonValue> = Vec::new();
+            let mut total_input_tokens: u64 = 0;
+            let mut total_output_tokens: u64 = 0;
+            let mut total_tokens: u64 = 0;
+            let total_reasoning_tokens: u64 = 0;
+            let mut llm_nodes_without_usage: Vec<String> = Vec::new();
 
             while !pointer.is_empty() {
                 iterations += 1;
@@ -1372,6 +1416,12 @@ impl WasmClient {
                     step_type: step_type.to_string(),
                     status: "started".to_string(),
                 });
+
+                let node_started = now_millis();
+                let mut model_name: Option<String> = None;
+                let mut prompt_tokens: Option<u64> = None;
+                let mut completion_tokens: Option<u64> = None;
+                let mut total_node_tokens: Option<u64> = None;
 
                 if let Some(llm) = node.node_type.llm_call.as_ref() {
                     let model = llm
@@ -1436,6 +1486,32 @@ impl WasmClient {
                     let completion: JsonValue = serde_wasm_bindgen::from_value(completion_js)
                         .map_err(|_| js_error("failed to parse completion result"))?;
 
+                    if workflow_ttft_ms.is_none() {
+                        let measured = (now_millis() - workflow_started).max(0.0) as u64;
+                        workflow_ttft_ms = Some(if measured == 0 { 1 } else { measured });
+                    }
+
+                    model_name = completion
+                        .get("model")
+                        .and_then(JsonValue::as_str)
+                        .map(ToString::to_string);
+                    let usage = completion.get("usage");
+                    let usage_available = completion
+                        .get("usage_available")
+                        .and_then(JsonValue::as_bool)
+                        .unwrap_or(false);
+                    if usage_available {
+                        prompt_tokens = usage
+                            .and_then(|value| value.get("prompt_tokens"))
+                            .and_then(JsonValue::as_u64);
+                        completion_tokens = usage
+                            .and_then(|value| value.get("completion_tokens"))
+                            .and_then(JsonValue::as_u64);
+                        total_node_tokens = usage
+                            .and_then(|value| value.get("total_tokens"))
+                            .and_then(JsonValue::as_u64);
+                    }
+
                     let raw_content = completion
                         .get("content")
                         .and_then(JsonValue::as_str)
@@ -1493,28 +1569,35 @@ impl WasmClient {
                         .handler
                         .clone()
                         .unwrap_or_else(|| "custom_worker".to_string());
+                    let lookup_key = custom_worker
+                        .handler_file
+                        .as_deref()
+                        .map(|file| format!("{}#{}", file, handler.as_str()))
+                        .unwrap_or_else(|| handler.clone());
                     let functions_js = options.functions_js.clone().ok_or_else(|| {
                         config_error(format!(
                             "custom_worker node '{}' requires workflowOptions.functions",
                             node.id
                         ))
                     })?;
-                    let function_value = Reflect::get(&functions_js, &JsValue::from_str(&handler))
+                    let function_value = Reflect::get(&functions_js, &JsValue::from_str(&lookup_key))
                         .map_err(|_| {
                             config_error(format!(
-                                "failed to resolve custom worker handler '{}' from workflowOptions.functions",
-                                handler
+                                "failed to resolve custom worker handler key '{}' from workflowOptions.functions",
+                                lookup_key
                             ))
                         })?;
                     let function = function_value.dyn_into::<Function>().map_err(|_| {
                         config_error(format!(
                             "custom_worker node '{}' requires workflowOptions.functions['{}']",
-                            node.id, handler
+                            node.id, lookup_key
                         ))
                     })?;
 
                     let worker_args = json!({
                         "handler": handler,
+                        "handler_file": custom_worker.handler_file,
+                        "handler_lookup_key": lookup_key,
                         "payload": node
                             .config
                             .as_ref()
@@ -1570,17 +1653,112 @@ impl WasmClient {
                 }
 
                 events.push(WorkflowRunEvent {
-                    step_id: node.id,
+                    step_id: node.id.clone(),
                     step_type: step_type.to_string(),
                     status: "completed".to_string(),
                 });
+                let elapsed_ms = (now_millis() - node_started).max(0.0) as u64;
+                if step_type == "llm_call" {
+                    if prompt_tokens.is_none() || completion_tokens.is_none() || total_node_tokens.is_none() {
+                        llm_nodes_without_usage.push(node.id.clone());
+                    }
+                    total_input_tokens += prompt_tokens.unwrap_or(0);
+                    total_output_tokens += completion_tokens.unwrap_or(0);
+                    total_tokens += total_node_tokens.unwrap_or(0);
+                }
+                let step_tokens_per_second = completion_tokens.map(|tokens| {
+                    if elapsed_ms == 0 {
+                        tokens as f64
+                    } else {
+                        ((tokens as f64 / (elapsed_ms as f64 / 1000.0)) * 100.0).round() / 100.0
+                    }
+                });
+                step_timings.push(json!({
+                    "node_id": node.id.clone(),
+                    "node_kind": step_type,
+                    "model_name": model_name,
+                    "elapsed_ms": elapsed_ms,
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_node_tokens,
+                    "reasoning_tokens": 0,
+                    "tokens_per_second": step_tokens_per_second,
+                }));
+                trace.push(node.id.clone());
             }
+
+            let total_elapsed_ms = (now_millis() - workflow_started).max(0.0) as u64;
+            let terminal_node = trace.last().cloned().unwrap_or_default();
+            let workflow_id = raw_doc
+                .get("id")
+                .and_then(JsonValue::as_str)
+                .unwrap_or("wasm_workflow")
+                .to_string();
+            let email_text = graph_context
+                .get("input")
+                .and_then(|input| input.get("email_text"))
+                .and_then(JsonValue::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let outputs = graph_context
+                .get("nodes")
+                .cloned()
+                .unwrap_or(JsonValue::Object(JsonMap::new()));
+            let token_metrics_available = llm_nodes_without_usage.is_empty();
+            let overall_tokens_per_second = if total_elapsed_ms == 0 {
+                Some(total_output_tokens as f64)
+            } else {
+                Some(
+                    ((total_output_tokens as f64 / (total_elapsed_ms as f64 / 1000.0)) * 100.0)
+                        .round()
+                        / 100.0,
+                )
+            };
+            let nerdstats = json!({
+                "workflow_id": workflow_id,
+                "terminal_node": terminal_node,
+                "total_elapsed_ms": total_elapsed_ms,
+                "ttft_ms": workflow_ttft_ms.unwrap_or(0),
+                "step_details": step_timings,
+                "total_input_tokens": total_input_tokens,
+                "total_output_tokens": total_output_tokens,
+                "total_tokens": total_tokens,
+                "total_reasoning_tokens": total_reasoning_tokens,
+                "tokens_per_second": overall_tokens_per_second,
+                "trace_id": JsonValue::Null,
+                "token_metrics_available": token_metrics_available,
+                "token_metrics_source": if token_metrics_available { "provider_usage" } else { "unavailable" },
+                "llm_nodes_without_usage": llm_nodes_without_usage,
+            });
 
             let result = WorkflowRunResult {
                 status: "ok".to_string(),
                 context: graph_context,
-                output,
+                output: output.clone(),
                 events,
+                workflow_id: Some(
+                    raw_doc
+                        .get("id")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("wasm_workflow")
+                        .to_string(),
+                ),
+                entry_node: Some(graph_doc.entry_node),
+                email_text: Some(email_text),
+                trace: Some(trace),
+                outputs: Some(outputs),
+                terminal_node: Some(terminal_node),
+                terminal_output: output,
+                step_timings: Some(nerdstats.get("step_details").cloned().unwrap_or(JsonValue::Array(vec![]))),
+                total_elapsed_ms: Some(total_elapsed_ms),
+                ttft_ms: Some(workflow_ttft_ms.unwrap_or(0)),
+                total_input_tokens: Some(total_input_tokens),
+                total_output_tokens: Some(total_output_tokens),
+                total_tokens: Some(total_tokens),
+                total_reasoning_tokens: Some(total_reasoning_tokens),
+                tokens_per_second: overall_tokens_per_second,
+                trace_id: None,
+                metadata: Some(json!({"nerdstats": nerdstats})),
             };
             return serde_wasm_bindgen::to_value(&result)
                 .map_err(|_| js_error("failed to serialize workflow result"));
@@ -1790,6 +1968,23 @@ impl WasmClient {
             context: JsonValue::Object(context),
             output,
             events,
+            workflow_id: None,
+            entry_node: None,
+            email_text: None,
+            trace: None,
+            outputs: None,
+            terminal_node: None,
+            terminal_output: None,
+            step_timings: None,
+            total_elapsed_ms: None,
+            ttft_ms: None,
+            total_input_tokens: None,
+            total_output_tokens: None,
+            total_tokens: None,
+            total_reasoning_tokens: None,
+            tokens_per_second: None,
+            trace_id: None,
+            metadata: None,
         };
         serde_wasm_bindgen::to_value(&result)
             .map_err(|_| js_error("failed to serialize workflow result"))

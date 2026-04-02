@@ -7,7 +7,7 @@ nodes:
   - id: detect_scenario_context
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -16,7 +16,14 @@ nodes:
         properties:
           state:
             type: string
-            enum: [ready, missing_scenario, capabilities_query, terminated_already, policy_violation]
+            enum:
+              [
+                ready,
+                missing_scenario,
+                capabilities_query,
+                terminated_already,
+                policy_violation,
+              ]
           reason:
             type: string
         required: [state, reason]
@@ -50,7 +57,7 @@ nodes:
   - id: explain_capabilities
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -68,7 +75,7 @@ nodes:
   - id: ask_for_scenario
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -86,7 +93,7 @@ nodes:
   - id: evaluate_interview_submission
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -95,7 +102,8 @@ nodes:
         properties:
           status:
             type: string
-            enum: [terminate_candidate, continue_interview, need_candidate_attempt]
+            enum:
+              [terminate_candidate, continue_interview, need_candidate_attempt]
           reason:
             type: string
           feedback:
@@ -129,7 +137,7 @@ nodes:
   - id: continue_interview
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -149,7 +157,7 @@ nodes:
   - id: ask_candidate_attempt
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:

@@ -126,6 +126,8 @@ Tracing exporter env configuration is shared across runtimes:
 - `OTEL_EXPORTER_OTLP_HEADERS`
 - `OTEL_SERVICE_NAME`
 
+Workflow YAML execution in Node currently does not execute local custom handler files directly. If a workflow uses `custom_worker.handler_file`, execution fails fast unless a custom worker executor is configured in the runtime layer.
+
 ## Testing Notes
 
 The Node binding tests require the native addon (`index.node`) to be built.

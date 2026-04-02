@@ -105,8 +105,9 @@ pub use yaml_runner::{
     NoopYamlWorkflowEventSink, WorkflowMessage, WorkflowMessageRole, WorkflowRunner,
     YamlLlmExecutionRequest, YamlStepTiming, YamlToIrError, YamlWorkflow,
     YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic, YamlWorkflowDiagnosticSeverity,
-    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowPayloadMode,
+    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowEventType, YamlWorkflowLlmExecutor,
+    YamlWorkflowNodeKind, YamlWorkflowNodeOutputRecord, YamlWorkflowPayloadMode,
     YamlWorkflowRunError, YamlWorkflowRunOptions, YamlWorkflowRunOutput,
-    YamlWorkflowTelemetryConfig, YamlWorkflowTraceContextInput, YamlWorkflowTraceOptions,
-    YamlWorkflowTraceTenantContext,
+    YamlWorkflowRunTypedOutput, YamlWorkflowTelemetryConfig, YamlWorkflowTraceContextInput,
+    YamlWorkflowTraceOptions, YamlWorkflowTraceTenantContext, YamlWorkflowTypedEvent,
 };

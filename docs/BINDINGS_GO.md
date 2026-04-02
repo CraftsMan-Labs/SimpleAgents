@@ -86,6 +86,8 @@ fmt.Println(out.TotalElapsedMS)
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
+`custom_worker.handler_file` is not supported in Go binding YAML execution unless a custom worker executor is configured in the runtime layer; otherwise execution fails fast with a clear error.
+
 Workflow event parity with Python is available via:
 
 - `RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, options)` for collected events in output.

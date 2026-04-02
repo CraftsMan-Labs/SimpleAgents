@@ -54,8 +54,15 @@ func TestWorkerSmoke(t *testing.T) {
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "node_id"), protoreflect.ValueOfString("node-1"))
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "operation"), protoreflect.ValueOfString("tool"))
 	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "target"), protoreflect.ValueOfString("echo"))
-	payload, _ := json.Marshal(map[string]any{"input": map[string]any{"x": 1}})
-	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "payload_json"), protoreflect.ValueOfString(string(payload)))
+	legacyPayload, _ := json.Marshal(map[string]any{"input": map[string]any{"x": 1}})
+	executeReq.Set(fieldByName(t, executeReq.Descriptor(), "payload_json"), protoreflect.ValueOfString(string(legacyPayload)))
+	toolPayloadField := fieldByName(t, executeReq.Descriptor(), "tool_payload")
+	toolPayloadMsg := dynamicpb.NewMessage(toolPayloadField.Message())
+	toolInput, _ := json.Marshal(map[string]any{"x": 1})
+	toolScopedInput, _ := json.Marshal(map[string]any{"input": map[string]any{"x": 1}})
+	toolPayloadMsg.Set(fieldByName(t, toolPayloadMsg.Descriptor(), "input_json"), protoreflect.ValueOfString(string(toolInput)))
+	toolPayloadMsg.Set(fieldByName(t, toolPayloadMsg.Descriptor(), "scoped_input_json"), protoreflect.ValueOfString(string(toolScopedInput)))
+	executeReq.Set(toolPayloadField, protoreflect.ValueOfMessage(toolPayloadMsg))
 
 	executeResp := dynamicpb.NewMessage(svc.Methods().ByName("Execute").Output())
 	if err := conn.Invoke(ctx, "/workflow.worker.v1.WorkerService/Execute", executeReq, executeResp); err != nil {

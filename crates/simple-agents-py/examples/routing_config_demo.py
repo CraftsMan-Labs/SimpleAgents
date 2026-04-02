@@ -295,7 +295,7 @@ def demo_comparison_routing_modes():
     print("=== Routing Mode Comparison ===\n")
 
     # Direct routing
-    direct = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .with_routing("direct")
@@ -307,7 +307,7 @@ def demo_comparison_routing_modes():
     print("  - Use when: You know which provider to use")
 
     # Round-robin routing
-    round_robin = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .add_provider("anthropic", api_key="sk-test")
@@ -320,7 +320,7 @@ def demo_comparison_routing_modes():
     print("  - Use when: All providers are similar")
 
     # Latency routing
-    latency = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .add_provider("anthropic", api_key="sk-test")
@@ -333,7 +333,7 @@ def demo_comparison_routing_modes():
     print("  - Use when: Speed is priority")
 
     # Cost routing
-    cost = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .add_provider("anthropic", api_key="sk-test")
@@ -346,7 +346,7 @@ def demo_comparison_routing_modes():
     print("  - Use when: Budget is priority")
 
     # Fallback routing
-    fallback = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .add_provider("anthropic", api_key="sk-test")
@@ -358,7 +358,7 @@ def demo_comparison_routing_modes():
     print("  - Handles failures gracefully")
     print("  - Use when: Reliability is priority")
 
-    print(f"\nAll clients created successfully!\n")
+    print("\nAll clients created successfully!\n")
 
 
 def demo_latency_vs_cost():
@@ -366,7 +366,7 @@ def demo_latency_vs_cost():
     print("=== Latency vs Cost Routing ===\n")
 
     # Latency routing
-    latency_client = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-fast")
         .add_provider("anthropic", api_key="sk-slow")
@@ -387,7 +387,7 @@ def demo_latency_vs_cost():
             "anthropic": 0.0003,
         }
     }
-    cost_client = (
+    _ = (
         ClientBuilder()
         .add_provider("openai", api_key="sk-fast")
         .add_provider("anthropic", api_key="sk-slow")

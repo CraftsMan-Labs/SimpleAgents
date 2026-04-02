@@ -1,0 +1,32 @@
+# Shared reference fragment for email classification workflow variants.
+#
+# This file is intentionally data-only and acts as a single-source map for
+# route targets and custom-worker topic payloads used by:
+# - email-intake-classification.yaml
+# - email-unified-chat-intake-classification.yaml
+
+top_level_routes:
+  probation: rag_probation
+  termination: classify_termination_subtype
+  leave_request: rag_leave_request
+  supply_chain_request: classify_supply_chain_subtype
+  clarification: rag_clarification
+
+supply_chain_subtype_routes:
+  order_assessment: rag_supply_chain_order_assessment
+  order_replacement: rag_supply_chain_order_replacement
+  clarification: rag_clarification
+
+termination_subtype_routes:
+  first_time_offense: rag_termination_first_time_offense
+  repeated_offense: rag_termination_repeated_offense
+  clarification: rag_clarification
+
+rag_topics:
+  rag_probation: probation
+  rag_leave_request: leave_request
+  rag_supply_chain_order_assessment: supply_chain_order_assessment
+  rag_supply_chain_order_replacement: supply_chain_order_replacement
+  rag_termination_first_time_offense: termination_first_time_offense
+  rag_termination_repeated_offense: termination_repeated_offense
+  rag_clarification: clarification

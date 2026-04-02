@@ -66,7 +66,7 @@ steps:
 
   assert.equal(result.status, "ok");
   assert.equal(result.context.make_slug, "yamslam-playground");
-  assert.equal(result.output, "ok=yamslam-playground");
+  assert.equal(result.terminal_output, "ok=yamslam-playground");
   assert.ok(result.events.length >= 4);
 });
 
@@ -96,7 +96,7 @@ steps:
 
   assert.equal(requestBody.model, "gpt-4o-mini");
   assert.equal(requestBody.messages[0].content, "Say hi to builder");
-  assert.equal(result.output, "hello from model");
+  assert.equal(result.terminal_output, "hello from model");
 });
 
 test("runWorkflowYamlString executes graph workflow with input.messages + switch", async () => {
@@ -314,4 +314,76 @@ edges:
     },
     /requires workflowOptions\.functions\['GetRagData'\]/
   );
+});
+
+test("runWorkflowYamlString graph custom_worker supports handler_file namespaced lookup", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse('{"state":"ready","reason":"ok"}')
+  });
+
+  const yaml = `
+entry_node: detect
+nodes:
+  - id: detect
+    node_type:
+      llm_call:
+        model: gpt-4o-mini
+    config:
+      output_schema:
+        type: object
+        properties:
+          state:
+            type: string
+          reason:
+            type: string
+        required: [state, reason]
+      prompt: "Classify state"
+  - id: next
+    node_type:
+      custom_worker:
+        handler_file: handlers.py
+        handler: get_rag_data
+edges:
+  - from: detect
+    to: next
+`;
+
+  const result = await client.runWorkflowYamlString(yaml, { messages: [] }, {
+    functions: {
+      "handlers.py#get_rag_data": ({ payload }) => ({ topic: payload?.topic ?? "default" })
+    }
+  });
+
+  assert.equal(result.status, "ok");
+  assert.equal(result.context.nodes.next.output.topic, "default");
+});
+
+test("runWorkflowYamlString normalizes legacy rust workflow result shape", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse("unused")
+  });
+
+  client.ensureBackend = async () => ({
+    runWorkflowYamlString: async () => ({
+      status: "ok",
+      context: {
+        input: { email_text: "Need help" },
+        nodes: {
+          classify: { output: { state: "ready" } }
+        }
+      },
+      output: { state: "ready" },
+      events: [{ stepId: "classify", status: "completed" }]
+    })
+  });
+
+  const result = await client.runWorkflowYamlString("steps: []", {});
+  assert.equal(result.workflow_id, "wasm_workflow");
+  assert.equal(result.outputs.classify.output.state, "ready");
+  assert.equal(result.terminal_node, "classify");
+  assert.equal(result.terminal_output.state, "ready");
 });

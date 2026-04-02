@@ -63,7 +63,7 @@ test('runEmailWorkflowYaml declaration supports workflowOptions', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
   assert.ok(
-    declaration.includes('runEmailWorkflowYaml(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): any'),
+    declaration.includes('runEmailWorkflowYaml(workflowPath: string, emailText: string, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): { workflow_id: string;'),
     'runEmailWorkflowYaml should accept optional workflowOptions in TypeScript declaration',
   );
 });

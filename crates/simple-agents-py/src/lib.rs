@@ -45,86 +45,8 @@ type Runtime = tokio::runtime::Runtime;
 type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
 type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
 
-struct NamedProvider {
-    name: String,
-    inner: Arc<dyn Provider>,
-}
-
-impl NamedProvider {
-    fn new(name: String, inner: Arc<dyn Provider>) -> Self {
-        Self { name, inner }
-    }
-}
-
-#[async_trait::async_trait]
-impl Provider for NamedProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-
-    fn transform_request(
-        &self,
-        req: &CompletionRequest,
-    ) -> Result<simple_agent_type::provider::ProviderRequest> {
-        self.inner.transform_request(req)
-    }
-
-    async fn execute(
-        &self,
-        req: simple_agent_type::provider::ProviderRequest,
-    ) -> Result<simple_agent_type::provider::ProviderResponse> {
-        self.inner.execute(req).await
-    }
-
-    fn transform_response(
-        &self,
-        resp: simple_agent_type::provider::ProviderResponse,
-    ) -> Result<CompletionResponse> {
-        self.inner.transform_response(resp)
-    }
-
-    fn retry_config(&self) -> simple_agent_type::config::RetryConfig {
-        self.inner.retry_config()
-    }
-
-    fn capabilities(&self) -> simple_agent_type::config::Capabilities {
-        self.inner.capabilities()
-    }
-
-    fn timeout(&self) -> Duration {
-        self.inner.timeout()
-    }
-
-    async fn execute_stream(
-        &self,
-        req: simple_agent_type::provider::ProviderRequest,
-    ) -> Result<Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
-        self.inner.execute_stream(req).await
-    }
-}
-
 fn provider_name_exists(providers: &[Arc<dyn Provider>], name: &str) -> bool {
     providers.iter().any(|p| p.name() == name)
-}
-
-fn alias_duplicate_provider_name(
-    providers: &[Arc<dyn Provider>],
-    provider: &str,
-    api_base: Option<&str>,
-) -> String {
-    let prefer_local_alias = provider == "openai" && api_base.map(is_local_base).unwrap_or(false);
-    if prefer_local_alias && !provider_name_exists(providers, "local") {
-        return "local".to_string();
-    }
-
-    let mut suffix = 2usize;
-    loop {
-        let candidate = format!("{}_{}", provider, suffix);
-        if !provider_name_exists(providers, &candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
 }
 
 struct ResponsePlan {
@@ -1478,7 +1400,7 @@ impl ClientBuilder {
         api_base: Option<String>,
     ) -> PyResult<PyRefMut<'a, Self>> {
         // Enable healing by default for providers added through ClientBuilder
-        let mut provider = provider_from_params(
+        let provider = provider_from_params(
             provider,
             api_key.as_deref(),
             api_base.as_deref(),
@@ -1488,9 +1410,10 @@ impl ClientBuilder {
         .map_err(py_err)?;
 
         if provider_name_exists(&slf.providers, provider.name()) {
-            let alias =
-                alias_duplicate_provider_name(&slf.providers, provider.name(), api_base.as_deref());
-            provider = Arc::new(NamedProvider::new(alias, provider));
+            return Err(PyRuntimeError::new_err(format!(
+                "duplicate provider name '{}' is not allowed; configure a distinct provider identity",
+                provider.name()
+            )));
         }
 
         slf.providers.push(provider);
@@ -1502,7 +1425,7 @@ impl ClientBuilder {
         mut slf: PyRefMut<'a, Self>,
         config: &ProviderConfig,
     ) -> PyResult<PyRefMut<'a, Self>> {
-        let mut provider = provider_from_params(
+        let provider = provider_from_params(
             &config.provider,
             config.api_key.as_deref(),
             config.api_base.as_deref(),
@@ -1512,12 +1435,10 @@ impl ClientBuilder {
         .map_err(py_err)?;
 
         if provider_name_exists(&slf.providers, provider.name()) {
-            let alias = alias_duplicate_provider_name(
-                &slf.providers,
-                provider.name(),
-                config.api_base.as_deref(),
-            );
-            provider = Arc::new(NamedProvider::new(alias, provider));
+            return Err(PyRuntimeError::new_err(format!(
+                "duplicate provider name '{}' is not allowed; configure a distinct provider identity",
+                provider.name()
+            )));
         }
 
         slf.providers.push(provider);
@@ -2187,30 +2108,15 @@ fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
     parse_messages_value(&value).map_err(SimpleAgentsError::Config)
 }
 
-fn handler_to_python_function_name(handler: &str) -> String {
-    let mut out = String::new();
-    for (idx, ch) in handler.chars().enumerate() {
-        if ch.is_ascii_uppercase() {
-            if idx != 0 {
-                out.push('_');
-            }
-            out.push(ch.to_ascii_lowercase());
-        } else {
-            out.push(ch);
-        }
-    }
-    out
-}
-
-fn workflow_handlers_path(workflow_path: &std::path::Path) -> std::path::PathBuf {
+fn workflow_root_path(workflow_path: &std::path::Path) -> std::path::PathBuf {
     workflow_path
         .parent()
-        .map(|parent| parent.join("handlers.py"))
-        .unwrap_or_else(|| std::path::PathBuf::from("handlers.py"))
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 struct PythonCustomWorkerExecutor {
-    handlers_path: std::path::PathBuf,
+    workflow_root: std::path::PathBuf,
 }
 
 #[async_trait::async_trait]
@@ -2218,22 +2124,31 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
     async fn execute(
         &self,
         handler: &str,
+        handler_file: Option<&str>,
         payload: &Value,
         _email_text: &str,
         context: &Value,
     ) -> std::result::Result<Value, String> {
         Python::with_gil(|py| {
-            if !self.handlers_path.exists() {
+            let configured_handler_file = handler_file.unwrap_or("handlers.py");
+            let configured_path = std::path::PathBuf::from(configured_handler_file);
+            let handlers_path = if configured_path.is_absolute() {
+                configured_path
+            } else {
+                self.workflow_root.join(configured_path)
+            };
+
+            if !handlers_path.exists() {
                 return Err(format!(
                     "custom worker handlers file not found: {}",
-                    self.handlers_path.display()
+                    handlers_path.display()
                 ));
             }
 
             let importlib_util = py
                 .import_bound("importlib.util")
                 .map_err(|error| error.to_string())?;
-            let module_path = self.handlers_path.to_string_lossy().to_string();
+            let module_path = handlers_path.to_string_lossy().to_string();
             let spec = importlib_util
                 .call_method1(
                     "spec_from_file_location",
@@ -2243,7 +2158,7 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
             if spec.is_none() {
                 return Err(format!(
                     "failed to load module spec from {}",
-                    self.handlers_path.display()
+                    handlers_path.display()
                 ));
             }
 
@@ -2258,10 +2173,7 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
                 .call_method1("exec_module", (&module,))
                 .map_err(|error| error.to_string())?;
 
-            let function_name = handler_to_python_function_name(handler);
-            let function = module
-                .getattr(function_name.as_str())
-                .map_err(|error| error.to_string())?;
+            let function = module.getattr(handler).map_err(|error| error.to_string())?;
             let topic = payload
                 .get("topic")
                 .and_then(Value::as_str)
@@ -2284,21 +2196,14 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
                 .set_item("payload", payload_obj)
                 .map_err(|error| error.to_string())?;
 
-            let result = match function.call((topic,), Some(&kwargs)) {
-                Ok(result) => result,
-                Err(with_payload_error) => {
-                    if kwargs.del_item("payload").is_err() {
-                        return Err(with_payload_error.to_string());
-                    }
-                    function
-                        .call((topic,), Some(&kwargs))
-                        .map_err(|fallback_error| {
-                            format!(
-                                "handler call with payload failed: {with_payload_error}; fallback without payload failed: {fallback_error}"
-                            )
-                        })?
-                }
-            };
+            let result = function.call((topic,), Some(&kwargs)).map_err(|error| {
+                format!(
+                    "custom worker handler '{}' in '{}' failed: {}",
+                    handler,
+                    handlers_path.display(),
+                    error
+                )
+            })?;
             pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
         })
     }
@@ -2344,6 +2249,30 @@ fn attach_workflow_events(
         object.insert("events".to_string(), events_value);
     }
     Ok(())
+}
+
+fn parse_workflow_run_options(
+    workflow_options: Option<&Bound<'_, PyAny>>,
+) -> PyResult<YamlWorkflowRunOptions> {
+    workflow_options
+        .map(|value| {
+            pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
+                PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+            })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or_default())
+}
+
+fn parse_workflow_input_value(workflow_input: &Bound<'_, PyAny>) -> PyResult<Value> {
+    let workflow_input_value: Value = pythonize::depythonize(workflow_input)
+        .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
+    if !workflow_input_value.is_object() {
+        return Err(PyRuntimeError::new_err(
+            "workflow_input must be a dict/object".to_string(),
+        ));
+    }
+    Ok(workflow_input_value)
 }
 
 struct PythonWorkflowEventSink {
@@ -2884,21 +2813,14 @@ impl Client {
         let workflow_input = json!({ "email_text": email_text });
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let event_sink = RecordingWorkflowEventSink::new();
         let output = if include_events {
             py.allow_threads(|| {
@@ -2956,30 +2878,17 @@ impl Client {
             ));
         }
 
-        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-        if !workflow_input_value.is_object() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input must be a dict/object".to_string(),
-            ));
-        }
+        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let event_sink = RecordingWorkflowEventSink::new();
 
         let output = if include_events {
@@ -3046,21 +2955,14 @@ impl Client {
         let workflow_input = json!({ "email_text": email_text });
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let event_sink = PythonWorkflowEventSink { callback: on_event };
         let output = py
             .allow_threads(|| {
@@ -3099,30 +3001,17 @@ impl Client {
             ));
         }
 
-        let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-            .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-        if !workflow_input_value.is_object() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input must be a dict/object".to_string(),
-            ));
-        }
+        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
 
         let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let handlers_path = workflow_handlers_path(workflow_path_buf.as_path());
-        let run_options = workflow_options
-            .map(|value| {
-                pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let run_options = parse_workflow_run_options(workflow_options)?;
 
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { handlers_path };
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let event_sink = PythonWorkflowEventSink { callback: on_event };
         let output = py
             .allow_threads(|| {

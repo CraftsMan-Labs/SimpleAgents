@@ -6,6 +6,15 @@ pub(super) struct BorrowedClientExecutor<'a> {
     pub(super) run_options: YamlWorkflowRunOptions,
 }
 
+fn elapsed_millis_with_min_one(started: &Instant) -> u128 {
+    let elapsed = started.elapsed().as_millis();
+    if elapsed == 0 {
+        1
+    } else {
+        elapsed
+    }
+}
+
 #[async_trait]
 impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
     async fn complete_structured(
@@ -36,6 +45,16 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     .model(&request.model)
                     .messages(conversation.clone())
                     .tools(request.tools.iter().map(|t| t.definition.clone()).collect());
+
+                if let Some(max_tokens) = request.max_tokens {
+                    builder = builder.max_tokens(max_tokens);
+                }
+                if let Some(temperature) = request.temperature {
+                    builder = builder.temperature(temperature);
+                }
+                if let Some(top_p) = request.top_p {
+                    builder = builder.top_p(top_p);
+                }
 
                 if request.heal && expects_object {
                     builder = builder.json_schema("workflow_step", request.schema.clone());
@@ -491,6 +510,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         custom_worker
                             .execute(
                                 tool_name.as_str(),
+                                None,
                                 &arguments,
                                 request.email_text.as_str(),
                                 &request.execution_context,
@@ -648,6 +668,16 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             .model(&request.model)
             .messages(messages);
 
+        if let Some(max_tokens) = request.max_tokens {
+            builder = builder.max_tokens(max_tokens);
+        }
+        if let Some(temperature) = request.temperature {
+            builder = builder.temperature(temperature);
+        }
+        if let Some(top_p) = request.top_p {
+            builder = builder.top_p(top_p);
+        }
+
         if request.heal && !request.stream && expects_object {
             builder = builder.json_schema("workflow_step", request.schema.clone());
         }
@@ -668,6 +698,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             CompletionOptions::default()
         };
 
+        let request_started = Instant::now();
         let outcome = self
             .client
             .complete(&completion_request, completion_options)
@@ -678,7 +709,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             CompletionOutcome::Stream(mut stream) => {
                 let mut aggregated = String::new();
                 let mut final_stream_usage: Option<simple_agent_type::response::Usage> = None;
-                let stream_started = Instant::now();
+                let stream_started = request_started;
                 let mut ttft_ms: Option<u128> = None;
                 let mut delta_filter = StructuredJsonDeltaFilter::default();
                 let include_raw_debug = include_raw_stream_debug_events();
@@ -708,7 +739,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     .as_ref()
                                     .is_some_and(|delta| !delta.is_empty()))
                         {
-                            ttft_ms = Some(stream_started.elapsed().as_millis());
+                            ttft_ms = Some(elapsed_millis_with_min_one(&stream_started));
                         }
                         if include_raw_debug {
                             if let Some(reasoning_delta) = choice.delta.reasoning_content.as_ref() {
