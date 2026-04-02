@@ -119,6 +119,39 @@ function createStreamEventBridge(model, onChunk) {
   };
 }
 
+function normalizeWorkflowResultShape(result) {
+  if (result === null || typeof result !== "object") {
+    return result;
+  }
+
+  if ("workflow_id" in result && "outputs" in result) {
+    return result;
+  }
+
+  const context = result.context && typeof result.context === "object" ? result.context : {};
+  const nodeContext =
+    context.nodes && typeof context.nodes === "object" ? context.nodes : {};
+  const outputs = {};
+
+  for (const [nodeId, nodeValue] of Object.entries(nodeContext)) {
+    if (nodeValue && typeof nodeValue === "object" && "output" in nodeValue) {
+      outputs[nodeId] = nodeValue.output;
+      continue;
+    }
+    outputs[nodeId] = nodeValue;
+  }
+
+  return {
+    ...result,
+    workflow_id: result.workflow_id ?? "browser_js_workflow",
+    entry_node: result.entry_node ?? null,
+    trace: Array.isArray(result.trace) ? result.trace : [],
+    outputs,
+    terminal_node: result.terminal_node ?? null,
+    terminal_output: result.terminal_output ?? result.output ?? null
+  };
+}
+
 function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/$/, "");
 }
@@ -1146,17 +1179,25 @@ export class Client {
   async runWorkflowYamlString(yamlText, workflowInput, workflowOptions) {
     const rust = await this.ensureBackend();
     if (rust) {
-      return rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+      const result = await rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+      return normalizeWorkflowResultShape(result);
     }
-    return this.fallbackClient.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+    const result = await this.fallbackClient.runWorkflowYamlString(
+      yamlText,
+      workflowInput,
+      workflowOptions
+    );
+    return normalizeWorkflowResultShape(result);
   }
 
   async runWorkflowYaml(workflowPath, workflowInput) {
     const rust = await this.ensureBackend();
     if (rust) {
-      return rust.runWorkflowYaml(workflowPath, workflowInput);
+      const result = await rust.runWorkflowYaml(workflowPath, workflowInput);
+      return normalizeWorkflowResultShape(result);
     }
-    return this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
+    const result = await this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
+    return normalizeWorkflowResultShape(result);
   }
 }
 
