@@ -3,7 +3,7 @@
 This guide explains how YAML workflows fit together after you have a first run working.
 If you want the fastest setup path, start with [Workflow Quickstart](/WORKFLOW_QUICKSTART).
 
-## Before You Read This
+## Prerequisites
 
 Use this guide when you want to move beyond "just make one workflow run" and learn how to:
 
@@ -18,7 +18,7 @@ Prerequisites:
 - A runnable workspace with `cargo` and optional `uv` for Python examples
 - Basic JSON schema knowledge for `llm_call` output contracts
 
-## Recommended Build Order
+## Quick Path
 
 Keep your workflow development in this order:
 
