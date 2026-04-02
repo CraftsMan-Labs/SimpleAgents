@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history run-rust-chat-history \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history run-wasm-chat-history run-rust-chat-history ensure-wasm-bindgen \
 	release-ffi release-python release-go release-node release-all \
 	build-node test-node build-wasm test-wasm publish-node publish-wasm test-go-bindings \
 	publish-node-doppler \
@@ -35,8 +35,11 @@ WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
 GO_CHAT_FLAGS ?= --stream --show-thinking
 PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
 NODE_CHAT_FLAGS ?= --stream --show-thinking
+WASM_CHAT_FLAGS ?= --max-turns 3
 RUST_CHAT_FLAGS ?= --max-turns 8
 JS_RUNTIME ?= node
+WASM_BINDGEN_CLI_VERSION ?= 0.2.114
+CARGO_HOME ?= $(HOME)/.cargo
 
 help:
 	@echo "Testing & Quality:"
@@ -54,6 +57,7 @@ help:
 	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
 	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
 	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
+	@echo "  make run-wasm-chat-history - Run WASM chat-history workflow quick check (WORKFLOW_YAML=... WASM_CHAT_FLAGS='...')"
 	@echo "  make run-rust-chat-history - Run Rust chat-history workflow example (WORKFLOW_YAML=... RUST_CHAT_FLAGS='...')"
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
@@ -162,6 +166,13 @@ run-node-chat-history: build-node
 	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
 	esac
 
+run-wasm-chat-history: build-wasm
+	@set -a; \
+	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	node examples/workflow_email/node/run_with_wasm_chat_history.mjs --workflow $(WORKFLOW_YAML) $(WASM_CHAT_FLAGS)
+
 run-rust-chat-history:
 	@set -a; \
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
@@ -189,8 +200,15 @@ release-node:
 build-node:
 	cd $(NAPI_PROJECT_DIR) && npm install && npm run build
 
-build-wasm:
-	cd $(WASM_PACKAGE_DIR) && npm install && npm run build
+ensure-wasm-bindgen:
+	@PATH="$(CARGO_HOME)/bin:$$PATH"; \
+	command -v wasm-bindgen >/dev/null 2>&1 || { \
+		echo "wasm-bindgen not found; installing wasm-bindgen-cli $(WASM_BINDGEN_CLI_VERSION)"; \
+		cargo install --locked wasm-bindgen-cli --version $(WASM_BINDGEN_CLI_VERSION); \
+	}
+
+build-wasm: ensure-wasm-bindgen
+	cd $(WASM_PACKAGE_DIR) && PATH="$(CARGO_HOME)/bin:$$PATH" npm install && PATH="$(CARGO_HOME)/bin:$$PATH" npm run build
 
 release-all: release-ffi release-python release-go release-node
 
