@@ -71,7 +71,7 @@ nodes:
     name: "Already Terminated"
     node_type:
       custom_worker:
-        handler: get_rag_data
+        handler: GetRagData
     config:
       payload:
         topic: already_terminated
@@ -197,7 +197,7 @@ nodes:
     name: "Terminate Candidate"
     node_type:
       custom_worker:
-        handler: get_rag_data
+        handler: GetRagData
     config:
       payload:
         topic: terminated

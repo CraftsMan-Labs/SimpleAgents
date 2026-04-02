@@ -4,9 +4,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
-from simple_agents_py import Client, WorkflowEvent
+from simple_agents_py import Client
+
+if TYPE_CHECKING:
+    from simple_agents_py import WorkflowEvent
 
 
 def parse_args() -> argparse.Namespace:

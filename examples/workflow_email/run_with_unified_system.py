@@ -5,9 +5,13 @@ import json
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
-from simple_agents_py import Client, WorkflowRunOutput
+from simple_agents_py import Client
+
+if TYPE_CHECKING:
+    from simple_agents_py import WorkflowRunOutput
 
 
 def parse_args() -> argparse.Namespace:
