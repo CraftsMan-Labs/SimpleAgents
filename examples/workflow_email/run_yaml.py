@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 from simple_agents_py import Client, ResponseWithMetadata
 
+from common import resolve_workflow_path
 from handlers import get_rag_data
 from python_email_workflow_demo import load_llm_settings
 
@@ -33,18 +34,6 @@ def parse_args() -> argparse.Namespace:
         help="Incoming email text",
     )
     return parser.parse_args()
-
-
-def resolve_workflow_path(raw_path: str) -> Path:
-    candidate = Path(raw_path)
-    if candidate.exists():
-        return candidate
-
-    local = Path(__file__).resolve().parent / raw_path
-    if local.exists():
-        return local
-
-    raise FileNotFoundError(f"Workflow file not found: {raw_path}")
 
 
 def load_workflow(path: Path) -> dict[str, Any]:
@@ -417,7 +406,7 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
 def main() -> None:
     args = parse_args()
-    workflow_path = resolve_workflow_path(args.workflow)
+    workflow_path = resolve_workflow_path(args.workflow, caller_file=__file__)
     workflow = load_workflow(workflow_path)
     result = run_workflow(workflow, args.email)
     print(json.dumps(result, indent=2))

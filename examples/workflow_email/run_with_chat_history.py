@@ -11,6 +11,8 @@ from typing import Any, TypedDict, cast
 from dotenv import load_dotenv
 from simple_agents_py import Client
 
+from common import resolve_workflow_path
+
 
 class WorkflowStepDetails(TypedDict, total=False):
     node_id: str
@@ -182,24 +184,6 @@ def load_config() -> tuple[str, str, str]:
             "Set WORKFLOW_API_BASE and WORKFLOW_API_KEY (or CUSTOM_API_BASE/CUSTOM_API_KEY)."
         )
     return provider, api_base, api_key
-
-
-def resolve_workflow_path(workflow: str) -> Path:
-    workflow_path = Path(workflow)
-    if workflow_path.exists():
-        return workflow_path
-
-    repo_relative = Path(__file__).resolve().parents[2] / workflow
-    if repo_relative.exists():
-        return repo_relative
-
-    if workflow.startswith("examples/"):
-        trimmed = workflow[len("examples/") :]
-        trimmed_path = Path(__file__).resolve().parents[1] / trimmed
-        if trimmed_path.exists():
-            return trimmed_path
-
-    raise FileNotFoundError(f"workflow file not found: {workflow}")
 
 
 def default_workflow_registry(workflow_path: Path) -> dict[str, str]:
@@ -526,7 +510,7 @@ def main() -> None:
     provider, api_base, api_key = load_config()
     client = Client(provider, api_base=api_base, api_key=api_key)
 
-    workflow_path = resolve_workflow_path(args.workflow)
+    workflow_path = resolve_workflow_path(args.workflow, caller_file=__file__)
     workflow_registry = default_workflow_registry(workflow_path)
     node_names = load_workflow_node_names(workflow_path)
     messages = initial_messages()

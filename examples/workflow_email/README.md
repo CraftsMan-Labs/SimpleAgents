@@ -25,6 +25,8 @@ Primary workflow file:
 - `run_with_chat_history.py`: workflow_input/messages example (draft vs ask-scenario)
 - `run_with_unified_system.py`: separate unified system (chat + classification + RAG + draft)
 - `handlers.py`: real Python custom worker handlers (e.g. `GetRagData`)
+- `fragments/classification_rag_topics.yaml`: shared route/topic mapping reference for YAML variants
+- `check_fragments.py`: validates variant workflows stay aligned with shared mapping fragment
 - `python/`: Python run docs
 - `node/`: Node/npm run docs (`npm_email_workflow_example.js`)
 - `go/`: Go run docs (uses `bindings/go/examples/workflow_email/main.go`)
@@ -146,47 +148,9 @@ uv run --directory examples python workflow_email/run_with_chat_history.py
 make run-python-chat-history
 ```
 
-Node equivalent:
+Node/Go/chat parity command snippets are maintained in one place:
 
-```bash
-make run-node-chat-history
-
-# Optional: run with bun runtime
-make run-node-chat-history JS_RUNTIME=bun
-
-# Optional: pick a workflow YAML
-make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
-
-# Optional parity flags: --include-events --stream --show-thinking --show-step-json
-make run-node-chat-history NODE_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
-```
-
-Go equivalent:
-
-```bash
-WORKFLOW_PROVIDER=openai \
-WORKFLOW_API_BASE=https://api.openai.com/v1 \
-WORKFLOW_API_KEY=your_key_here \
-make run-go-chat-history
-
-# Optional: pick a workflow YAML
-make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/python-intern-fun-interview-system.yaml
-
-# Optional parity flags: --include-events --stream --show-thinking --show-step-json
-make run-go-chat-history GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
-```
-
-Cross-language parity check (same YAML, same flags):
-
-```bash
-make run-python-chat-history \
-  WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml \
-  PY_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
-
-make run-go-chat-history \
-  WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml \
-  GO_CHAT_FLAGS="--include-events --stream --show-thinking --show-step-json"
-```
+- `examples/workflow_email/snippets/chat_history_commands.md`
 
 Run the separate unified system:
 
