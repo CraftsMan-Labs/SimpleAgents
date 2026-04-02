@@ -5,9 +5,8 @@ import json
 import re
 from pathlib import Path
 from typing import Any
-from dotenv import load_dotenv
 
-load_dotenv()
+from dotenv import load_dotenv
 from simple_agents_py import Client, ResponseWithMetadata
 
 from common import resolve_workflow_path
@@ -405,6 +404,7 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
 
 def main() -> None:
+    load_dotenv()
     args = parse_args()
     workflow_path = resolve_workflow_path(args.workflow, caller_file=__file__)
     workflow = load_workflow(workflow_path)

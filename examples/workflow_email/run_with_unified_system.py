@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
-from simple_agents_py import Client
+from simple_agents_py import Client, WorkflowRunOutput
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,7 +84,7 @@ def initial_messages() -> list[dict[str, str]]:
     ]
 
 
-def render_assistant_reply(result: dict) -> str:
+def render_assistant_reply(result: WorkflowRunOutput) -> str:
     terminal = result.get("terminal_node")
     terminal_output = result.get("terminal_output") or {}
 

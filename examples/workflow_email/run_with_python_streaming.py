@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from simple_agents_py import Client
+from simple_agents_py import Client, WorkflowEvent
 
 
 def parse_args() -> argparse.Namespace:
@@ -59,7 +59,7 @@ def resolve_workflow_path(raw_path: str) -> Path:
     raise FileNotFoundError(f"Workflow file not found: {raw_path}")
 
 
-def on_event(event: dict[str, object]) -> None:
+def on_event(event: WorkflowEvent) -> None:
     event_type = event.get("event_type")
     node_id = event.get("node_id")
     message = event.get("message")
