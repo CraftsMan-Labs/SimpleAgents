@@ -40,6 +40,8 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
         });
     }
 
+    validate_custom_worker_handler_files(workflow, custom_worker)?;
+
     if let Some(output) =
         try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
             .await?
@@ -311,6 +313,32 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     );
 
     Ok(output)
+}
+
+fn validate_custom_worker_handler_files(
+    workflow: &YamlWorkflow,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<(), YamlWorkflowRunError> {
+    if custom_worker.is_some() {
+        return Ok(());
+    }
+
+    for node in &workflow.nodes {
+        let Some(worker) = node.node_type.custom_worker.as_ref() else {
+            continue;
+        };
+
+        if let Some(handler_file) = worker.handler_file.as_deref() {
+            return Err(YamlWorkflowRunError::InvalidInput {
+                message: format!(
+                    "node '{}' sets custom_worker.handler_file='{}', but this runtime has no custom worker executor configured",
+                    node.id, handler_file
+                ),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn build_execution_context(

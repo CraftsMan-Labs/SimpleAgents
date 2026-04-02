@@ -214,6 +214,7 @@ pub(super) async fn execute_custom_worker_node(
         custom_worker_executor
             .execute(
                 custom.handler.as_str(),
+                custom.handler_file.as_deref(),
                 &payload,
                 email_text,
                 &worker_context,

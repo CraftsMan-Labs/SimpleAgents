@@ -1563,18 +1563,19 @@ fn discover_referenced_subgraphs(
     let mut seen = HashSet::new();
 
     for workflow_id in workflow_ids {
-        let normalized = normalize_workflow_lookup_key(&workflow_id);
-        if seen.contains(&normalized) {
+        if seen.contains(&workflow_id) {
             continue;
         }
 
-        if let Some((_, subworkflow)) = sibling_workflows.iter().find(|(key, _)| key == &normalized)
+        if let Some((_, subworkflow)) = sibling_workflows
+            .iter()
+            .find(|(key, _)| key == &workflow_id)
         {
             discovered.push(MermaidSubgraphWorkflow {
                 alias: workflow_id.clone(),
                 workflow: subworkflow.clone(),
             });
-            seen.insert(normalized);
+            seen.insert(workflow_id);
         }
     }
 
@@ -1611,9 +1612,9 @@ fn load_yaml_sibling_workflows(
         let (_, subworkflow) = load_workflow_yaml_file(path.as_path())?;
 
         if let Some(stem) = path.file_stem().and_then(|value| value.to_str()) {
-            results.push((normalize_workflow_lookup_key(stem), subworkflow.clone()));
+            results.push((stem.to_string(), subworkflow.clone()));
         }
-        results.push((normalize_workflow_lookup_key(&subworkflow.id), subworkflow));
+        results.push((subworkflow.id.clone(), subworkflow));
     }
 
     Ok(results)
@@ -1636,16 +1637,14 @@ fn referenced_workflow_ids(workflow: &YamlWorkflow) -> Vec<String> {
                 }
 
                 for workflow_id in referenced_workflow_ids_from_tool(tool) {
-                    let normalized = normalize_workflow_lookup_key(&workflow_id);
-                    if seen.insert(normalized) {
+                    if seen.insert(workflow_id.clone()) {
                         ids.push(workflow_id);
                     }
                 }
 
                 if let Some(prompt_text) = prompt {
                     for workflow_id in referenced_workflow_ids_from_prompt(prompt_text) {
-                        let normalized = normalize_workflow_lookup_key(&workflow_id);
-                        if seen.insert(normalized) {
+                        if seen.insert(workflow_id.clone()) {
                             ids.push(workflow_id);
                         }
                     }
@@ -1713,16 +1712,6 @@ fn referenced_workflow_ids_from_prompt(prompt: &str) -> Vec<String> {
     }
 
     ids
-}
-
-fn normalize_workflow_lookup_key(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| match ch {
-            '-' => '_',
-            _ => ch.to_ascii_lowercase(),
-        })
-        .collect()
 }
 
 fn is_yaml_file(path: &Path) -> bool {
@@ -1949,17 +1938,27 @@ pub fn yaml_workflow_to_ir(workflow: &YamlWorkflow) -> Result<WorkflowDefinition
         }
 
         if let Some(switch) = node.node_type.switch.as_ref() {
+            let mut routes = Vec::with_capacity(switch.branches.len());
+            for branch in &switch.branches {
+                let rewritten =
+                    rewrite_yaml_condition_to_ir(&branch.condition).map_err(|reason| {
+                        YamlToIrError::UnsupportedNode {
+                            node_id: node.id.clone(),
+                            reason: format!(
+                                "failed to rewrite switch condition '{}': {}",
+                                branch.condition, reason
+                            ),
+                        }
+                    })?;
+                routes.push(RouterRoute {
+                    when: rewritten,
+                    next: branch.target.clone(),
+                });
+            }
             nodes.push(Node {
                 id: node.id.clone(),
                 kind: NodeKind::Router {
-                    routes: switch
-                        .branches
-                        .iter()
-                        .map(|b| RouterRoute {
-                            when: rewrite_yaml_condition_to_ir(&b.condition),
-                            next: b.target.clone(),
-                        })
-                        .collect(),
+                    routes,
                     default: switch.default.clone(),
                 },
             });
@@ -1992,14 +1991,78 @@ fn single_next_for_node(
     }
 }
 
-fn rewrite_yaml_condition_to_ir(expr: &str) -> String {
-    let rewritten = expr
-        .replace("$.nodes.", "$.node_outputs.")
-        .replace(".output.", ".");
-    if let Some(prefix) = rewritten.strip_suffix(".output") {
-        prefix.to_string()
-    } else {
-        rewritten
+fn rewrite_yaml_condition_to_ir(expr: &str) -> Result<String, String> {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut out = String::with_capacity(expr.len());
+    let mut index = 0usize;
+    let mut quote_context: Option<char> = None;
+    let mut escaped = false;
+
+    while index < chars.len() {
+        let current = chars[index];
+
+        if let Some(quote) = quote_context {
+            out.push(current);
+            if escaped {
+                escaped = false;
+            } else if current == '\\' {
+                escaped = true;
+            } else if current == quote {
+                quote_context = None;
+            }
+            index += 1;
+            continue;
+        }
+
+        if current == '"' || current == '\'' {
+            quote_context = Some(current);
+            out.push(current);
+            index += 1;
+            continue;
+        }
+
+        if starts_with_chars(&chars, index, "$.nodes.") {
+            out.push_str("$.node_outputs.");
+            index += "$.nodes.".chars().count();
+            continue;
+        }
+
+        if starts_with_chars(&chars, index, ".output")
+            && is_output_segment_boundary(chars.get(index + ".output".chars().count()).copied())
+        {
+            index += ".output".chars().count();
+            continue;
+        }
+
+        out.push(current);
+        index += 1;
+    }
+
+    if quote_context.is_some() {
+        return Err("condition contains an unterminated quoted string".to_string());
+    }
+
+    Ok(out)
+}
+
+fn starts_with_chars(chars: &[char], start: usize, pattern: &str) -> bool {
+    let pattern_chars: Vec<char> = pattern.chars().collect();
+    if start + pattern_chars.len() > chars.len() {
+        return false;
+    }
+    chars[start..start + pattern_chars.len()] == pattern_chars
+}
+
+fn is_output_segment_boundary(next: Option<char>) -> bool {
+    match next {
+        None => true,
+        Some(ch) => {
+            ch.is_whitespace()
+                || matches!(
+                    ch,
+                    '.' | ')' | ']' | '}' | ',' | '=' | '!' | '<' | '>' | '&' | '|'
+                )
+        }
     }
 }
 
@@ -2081,6 +2144,7 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
     async fn execute(
         &self,
         handler: &str,
+        handler_file: Option<&str>,
         payload: &Value,
         email_text: &str,
         context: &Value,
@@ -2401,7 +2465,7 @@ async fn try_run_yaml_via_ir_runtime(
             );
 
             let output_result = worker
-                .execute(&input.tool, &payload, email_text, &worker_context)
+                .execute(&input.tool, None, &payload, email_text, &worker_context)
                 .await
                 .map_err(ToolExecutionError::Failed);
 
@@ -2732,6 +2796,8 @@ impl YamlNode {
             "switch"
         } else if self.node_type.custom_worker.is_some() {
             "custom_worker"
+        } else if self.node_type.end.is_some() {
+            "end"
         } else {
             "unknown"
         }
@@ -2739,13 +2805,16 @@ impl YamlNode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlNodeType {
     pub llm_call: Option<YamlLlmCall>,
     pub switch: Option<YamlSwitch>,
     pub custom_worker: Option<YamlCustomWorker>,
+    pub end: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlLlmCall {
     pub model: String,
     pub max_tokens: Option<u32>,
@@ -2825,8 +2894,10 @@ pub struct YamlSwitchBranch {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlCustomWorker {
     pub handler: String,
+    pub handler_file: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3190,6 +3261,7 @@ mod tests {
         async fn execute(
             &self,
             _handler: &str,
+            _handler_file: Option<&str>,
             _payload: &Value,
             _email_text: &str,
             _context: &Value,
@@ -3203,6 +3275,7 @@ mod tests {
         async fn execute(
             &self,
             _handler: &str,
+            _handler_file: Option<&str>,
             _payload: &Value,
             _email_text: &str,
             _context: &Value,
@@ -3243,6 +3316,7 @@ mod tests {
         async fn execute(
             &self,
             _handler: &str,
+            _handler_file: Option<&str>,
             _payload: &Value,
             _email_text: &str,
             context: &Value,
@@ -4660,7 +4734,7 @@ nodes:
       prompt: |
         Call with:
         {
-          "workflow_id": "hr_warning_email_subgraph"
+          "workflow_id": "hr-warning-email-subgraph"
         }
 edges: []
 "#;
@@ -4683,8 +4757,8 @@ edges: []
             yaml_workflow_file_to_mermaid(&orchestrator_path).expect("mermaid should render");
 
         assert!(mermaid.contains("Main: email-chat-orchestrator-with-subgraph-tool"));
-        assert!(mermaid.contains("Subgraph: hr_warning_email_subgraph"));
-        assert!(mermaid.contains("calls hr_warning_email_subgraph"));
+        assert!(mermaid.contains("Subgraph: hr-warning-email-subgraph"));
+        assert!(mermaid.contains("calls hr-warning-email-subgraph"));
         assert!(mermaid.contains("subgraph_1__draft_hr_warning_email"));
 
         fs::remove_dir_all(base_dir).expect("temp dir removed");
@@ -5594,8 +5668,97 @@ Some trailing explanation"#;
     #[test]
     fn rewrite_yaml_condition_preserves_output_prefix_in_field_names() {
         let expr = "$.nodes.classify.output.output_total == 1";
-        let rewritten = rewrite_yaml_condition_to_ir(expr);
+        let rewritten = rewrite_yaml_condition_to_ir(expr).expect("condition should rewrite");
         assert_eq!(rewritten, "$.node_outputs.classify.output_total == 1");
+    }
+
+    #[test]
+    fn rewrite_yaml_condition_does_not_mutate_paths_in_string_literals() {
+        let expr = "$.nodes.classify.output.state == \"$.nodes.keep.output\"";
+        let rewritten = rewrite_yaml_condition_to_ir(expr).expect("condition should rewrite");
+        assert_eq!(
+            rewritten,
+            "$.node_outputs.classify.state == \"$.nodes.keep.output\""
+        );
+    }
+
+    #[test]
+    fn rewrite_yaml_condition_rejects_unterminated_quotes() {
+        let err = rewrite_yaml_condition_to_ir("$.nodes.classify.output.state == \"broken")
+            .expect_err("unterminated quote should fail");
+        assert!(err.contains("unterminated quoted string"));
+    }
+
+    #[test]
+    fn yaml_llm_call_rejects_unknown_provider_field() {
+        let yaml = r#"
+id: wf
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        provider: openai
+        model: gpt-4.1-mini
+    config:
+      prompt: hi
+"#;
+
+        let err = serde_yaml::from_str::<YamlWorkflow>(yaml)
+            .expect_err("unknown llm_call fields should fail parsing");
+        let message = err.to_string();
+        assert!(message.contains("provider"));
+        assert!(message.contains("unknown field"));
+    }
+
+    #[test]
+    fn yaml_custom_worker_rejects_unknown_language_field() {
+        let yaml = r#"
+id: wf
+entry_node: worker
+nodes:
+  - id: worker
+    node_type:
+      custom_worker:
+        language: python
+        handler: get_rag_data
+"#;
+
+        let err = serde_yaml::from_str::<YamlWorkflow>(yaml)
+            .expect_err("unknown custom_worker fields should fail parsing");
+        let message = err.to_string();
+        assert!(message.contains("language"));
+        assert!(message.contains("unknown field"));
+    }
+
+    #[tokio::test]
+    async fn custom_worker_handler_file_requires_executor() {
+        let yaml = r#"
+id: wf
+entry_node: lookup
+nodes:
+  - id: lookup
+    node_type:
+      custom_worker:
+        handler: get_rag_data
+        handler_file: handlers.py
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let err = run_workflow_yaml_with_custom_worker_and_events_and_options(
+            &workflow,
+            &json!({"email_text": "hello"}),
+            &MockExecutor,
+            None,
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect_err("handler_file without executor should fail");
+
+        let rendered = err.to_string();
+        assert!(rendered.contains("handler_file"));
+        assert!(rendered.contains("no custom worker executor configured"));
     }
 
     #[tokio::test]
