@@ -10,6 +10,7 @@ function parseArgs(argv) {
     maxTurns: 3,
     stream: true,
     includeEvents: false,
+    nerdstats: true,
     message: null,
     model: null,
   }
@@ -31,6 +32,14 @@ function parseArgs(argv) {
     }
     if (arg === '--include-events') {
       options.includeEvents = true
+      continue
+    }
+    if (arg === '--nerdstats') {
+      options.nerdstats = true
+      continue
+    }
+    if (arg === '--no-nerdstats') {
+      options.nerdstats = false
       continue
     }
     if (arg === '--stream') {
@@ -154,14 +163,62 @@ function pickWorkflowTerminalOutput(result) {
   return null
 }
 
-async function runTurn(client, workflowYaml, input, includeEvents, stream) {
+function extractNerdstatsFromEvents(events) {
+  if (!Array.isArray(events)) return null
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]
+    if (!event || event.event_type !== 'workflow_completed') continue
+    if (!event.metadata || typeof event.metadata !== 'object') continue
+    const nerdstats = event.metadata.nerdstats
+    if (nerdstats && typeof nerdstats === 'object') return nerdstats
+  }
+  return null
+}
+
+function fallbackNerdstatsFromResult(result) {
+  if (!result || typeof result !== 'object') return null
+  const stepDetails = Array.isArray(result.step_timings) ? result.step_timings : []
+  const hasTokenMetrics =
+    Number.isFinite(result.total_input_tokens) && Number.isFinite(result.total_output_tokens)
+  const llmNodesWithoutUsage = stepDetails
+    .filter((step) => step && step.node_kind === 'llm_call' && !Number.isFinite(step.total_tokens))
+    .map((step) => step.node_id)
+
+  return {
+    workflow_id: typeof result.workflow_id === 'string' ? result.workflow_id : null,
+    terminal_node: typeof result.terminal_node === 'string' ? result.terminal_node : null,
+    total_elapsed_ms: Number.isFinite(result.total_elapsed_ms) ? result.total_elapsed_ms : null,
+    ttft_ms: Number.isFinite(result.ttft_ms) ? result.ttft_ms : 0,
+    step_details: stepDetails,
+    total_input_tokens: Number.isFinite(result.total_input_tokens) ? result.total_input_tokens : null,
+    total_output_tokens: Number.isFinite(result.total_output_tokens) ? result.total_output_tokens : null,
+    total_tokens: Number.isFinite(result.total_tokens) ? result.total_tokens : null,
+    total_reasoning_tokens: Number.isFinite(result.total_reasoning_tokens)
+      ? result.total_reasoning_tokens
+      : 0,
+    tokens_per_second: Number.isFinite(result.tokens_per_second) ? result.tokens_per_second : null,
+    trace_id: typeof result.trace_id === 'string' ? result.trace_id : null,
+    token_metrics_available: hasTokenMetrics,
+    token_metrics_source: hasTokenMetrics ? 'provider_usage' : 'unavailable',
+    llm_nodes_without_usage: llmNodesWithoutUsage,
+  }
+}
+
+async function runTurn(client, workflowYaml, input, includeEvents, stream, nerdstats) {
   const streamState = { nodeId: null }
+  const streamedEvents = []
   const workflowOptions = {}
   if (includeEvents) {
+    workflowOptions.includeEvents = true
+  }
+  if (nerdstats) {
     workflowOptions.telemetry = { nerdstats: true }
   }
   if (stream) {
     workflowOptions.onEvent = (event) => {
+      if (event && typeof event === 'object') {
+        streamedEvents.push(event)
+      }
       if (!event || event.eventType !== 'node_stream_delta') return
       const delta = typeof event.delta === 'string' ? event.delta : ''
       if (delta.length === 0) return
@@ -185,6 +242,15 @@ async function runTurn(client, workflowYaml, input, includeEvents, stream) {
   if (stream && streamState.nodeId !== null) {
     process.stdout.write('\n')
   }
+
+  if (nerdstats) {
+    const nerdstatsPayload =
+      extractNerdstatsFromEvents(streamedEvents) ?? fallbackNerdstatsFromResult(result)
+    if (nerdstatsPayload !== null) {
+      console.log(`Nerdstats: ${JSON.stringify(nerdstatsPayload)}`)
+    }
+  }
+
   return result
 }
 
@@ -212,6 +278,7 @@ async function main() {
       { messages, model: args.model || undefined, email_text: args.message },
       args.includeEvents,
       args.stream,
+      args.nerdstats,
     )
     const reply = renderAssistantReply(pickWorkflowTerminalOutput(result))
     console.log(`\nAssistant: ${reply}\n`)
@@ -241,6 +308,7 @@ async function main() {
         { messages, model: args.model || undefined, email_text: userInput },
         args.includeEvents,
         args.stream,
+        args.nerdstats,
       )
       const reply = renderAssistantReply(pickWorkflowTerminalOutput(result))
       console.log(`\nAssistant: ${reply}\n`)
