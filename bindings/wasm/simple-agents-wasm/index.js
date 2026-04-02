@@ -175,6 +175,43 @@ function normalizeBaseUrl(baseUrl) {
   return baseUrl.replace(/\/$/, "");
 }
 
+function finiteNumberOrNull(value) {
+  return Number.isFinite(value) ? value : null;
+}
+
+function buildStepDetail(step) {
+  return {
+    node_id: step.nodeId,
+    node_kind: step.nodeKind,
+    model_name: step.modelName ?? null,
+    elapsed_ms: step.elapsedMs,
+    prompt_tokens: finiteNumberOrNull(step.promptTokens),
+    completion_tokens: finiteNumberOrNull(step.completionTokens),
+    total_tokens: finiteNumberOrNull(step.totalTokens),
+    reasoning_tokens: 0,
+    tokens_per_second: finiteNumberOrNull(step.tokensPerSecond)
+  };
+}
+
+function buildWorkflowNerdstats(summary) {
+  return {
+    workflow_id: summary.workflowId,
+    terminal_node: summary.terminalNode,
+    total_elapsed_ms: summary.totalElapsedMs,
+    ttft_ms: summary.ttftMs,
+    step_details: summary.stepDetails,
+    total_input_tokens: summary.totalInputTokens,
+    total_output_tokens: summary.totalOutputTokens,
+    total_tokens: summary.totalTokens,
+    total_reasoning_tokens: summary.totalReasoningTokens,
+    tokens_per_second: summary.tokensPerSecond,
+    trace_id: summary.traceId,
+    token_metrics_available: summary.tokenMetricsAvailable,
+    token_metrics_source: summary.tokenMetricsSource,
+    llm_nodes_without_usage: summary.llmNodesWithoutUsage
+  };
+}
+
 function interpolate(value, context) {
   if (typeof value === "string") {
     return value.replace(/{{\s*([^}]+)\s*}}/g, (_, key) => {
@@ -757,7 +794,10 @@ class BrowserJsClient {
         max_tokens: options.maxTokens,
         temperature: options.temperature,
         top_p: options.topP,
-        stream: true
+        stream: true,
+        stream_options: {
+          include_usage: true
+        }
       })
     });
 
@@ -774,6 +814,12 @@ class BrowserJsClient {
     let responseModel = model;
     let aggregate = "";
     let finishReason;
+    let usage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0
+    };
+    let usageAvailable = false;
 
     try {
       for await (const block of iterateSse(response)) {
@@ -814,6 +860,10 @@ class BrowserJsClient {
         if (delta.finishReason) {
           finishReason = delta.finishReason;
         }
+        if (chunk?.usage && typeof chunk.usage === "object") {
+          usage = toUsage(chunk.usage);
+          usageAvailable = true;
+        }
 
         onEvent({ eventType: "delta", delta });
       }
@@ -834,11 +884,9 @@ class BrowserJsClient {
       content: aggregate,
       finishReason,
       usage: {
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0
+        ...usage
       },
-      usageAvailable: false,
+      usageAvailable,
       latencyMs,
       raw: undefined,
       healed: undefined,
@@ -889,9 +937,17 @@ class BrowserJsClient {
         nodes: {}
       };
 
+      const workflowStarted = performance.now();
+      let workflowTtftMs = 0;
       let pointer = doc.entry_node;
       let output;
       let iterations = 0;
+      const stepDetails = [];
+      let totalInputTokens = 0;
+      let totalOutputTokens = 0;
+      let totalTokens = 0;
+      const totalReasoningTokens = 0;
+      const llmNodesWithoutUsage = [];
 
       while (typeof pointer === "string" && pointer.length > 0) {
         iterations += 1;
@@ -906,6 +962,11 @@ class BrowserJsClient {
 
         const nodeType = node.node_type ?? {};
         const nodeTypeName = Object.keys(nodeType)[0] ?? "unknown";
+        const nodeStarted = performance.now();
+        let stepModelName;
+        let stepPromptTokens;
+        let stepCompletionTokens;
+        let stepTotalTokens;
         events.push({ stepId: node.id, stepType: nodeTypeName, status: "started" });
 
         if (nodeType.llm_call) {
@@ -938,12 +999,17 @@ class BrowserJsClient {
           }
 
           let rawContent = "";
+          let completion;
           if (llm.stream === true) {
-            await this.streamEvents(
+            completion = await this.streamEvents(
               model,
               promptOrMessages,
               (event) => {
                 if (event && event.eventType === "delta" && typeof event.delta?.content === "string") {
+                  if (workflowTtftMs === 0) {
+                    const measured = Math.max(0, Math.round(performance.now() - workflowStarted));
+                    workflowTtftMs = measured === 0 ? 1 : measured;
+                  }
                   rawContent += event.delta.content;
                   if (typeof workflowOptions?.onEvent === "function") {
                     workflowOptions.onEvent({
@@ -959,11 +1025,27 @@ class BrowserJsClient {
                 temperature: llm.temperature
               }
             );
+            rawContent = completion.content ?? rawContent;
           } else {
-            const completion = await this.complete(model, promptOrMessages, {
+            completion = await this.complete(model, promptOrMessages, {
               temperature: llm.temperature
             });
             rawContent = completion.content ?? "";
+          }
+
+          stepModelName = completion?.model ?? model;
+          if (completion?.usageAvailable === true && completion?.usage && typeof completion.usage === "object") {
+            const usage = completion.usage;
+            stepPromptTokens = Number.isFinite(usage.promptTokens) ? usage.promptTokens : 0;
+            stepCompletionTokens = Number.isFinite(usage.completionTokens)
+              ? usage.completionTokens
+              : 0;
+            stepTotalTokens = Number.isFinite(usage.totalTokens) ? usage.totalTokens : 0;
+            totalInputTokens += stepPromptTokens;
+            totalOutputTokens += stepCompletionTokens;
+            totalTokens += stepTotalTokens;
+          } else {
+            llmNodesWithoutUsage.push(node.id);
           }
 
           const parsedOutput = maybeParseJson(rawContent);
@@ -1022,6 +1104,58 @@ class BrowserJsClient {
         }
 
         events.push({ stepId: node.id, stepType: nodeTypeName, status: "completed" });
+        const elapsedMs = Math.max(0, Math.round(performance.now() - nodeStarted));
+        const stepTokensPerSecond =
+          Number.isFinite(stepCompletionTokens) && elapsedMs > 0
+            ? Math.round((stepCompletionTokens / (elapsedMs / 1000)) * 100) / 100
+            : null;
+        stepDetails.push(
+          buildStepDetail({
+            nodeId: node.id,
+            nodeKind: nodeTypeName,
+            modelName: stepModelName,
+            elapsedMs,
+            promptTokens: stepPromptTokens,
+            completionTokens: stepCompletionTokens,
+            totalTokens: stepTotalTokens,
+            tokensPerSecond: stepTokensPerSecond
+          })
+        );
+      }
+
+      const trace = events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId);
+      const terminalNode = trace.at(-1) ?? "";
+      const totalElapsedMs = Math.max(0, Math.round(performance.now() - workflowStarted));
+      const tokenMetricsAvailable = llmNodesWithoutUsage.length === 0;
+      const overallTokensPerSecond =
+        totalElapsedMs > 0 ? Math.round((totalOutputTokens / (totalElapsedMs / 1000)) * 100) / 100 : 0;
+      const workflowId =
+        typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow";
+      const nerdstats = buildWorkflowNerdstats({
+        workflowId,
+        terminalNode,
+        totalElapsedMs,
+        ttftMs: workflowTtftMs,
+        stepDetails,
+        totalInputTokens,
+        totalOutputTokens,
+        totalTokens,
+        totalReasoningTokens,
+        tokensPerSecond: overallTokensPerSecond,
+        traceId: "",
+        tokenMetricsAvailable,
+        tokenMetricsSource: tokenMetricsAvailable ? "provider_usage" : "unavailable",
+        llmNodesWithoutUsage
+      });
+      if (typeof workflowOptions?.onEvent === "function") {
+        workflowOptions.onEvent({
+          event_type: "workflow_completed",
+          metadata: {
+            nerdstats
+          }
+        });
       }
 
       const outputs = {};
@@ -1034,19 +1168,25 @@ class BrowserJsClient {
       }
 
       return {
-        workflow_id:
-          typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow",
+        workflow_id: workflowId,
         entry_node: doc.entry_node,
         email_text: typeof graphContext.input?.email_text === "string" ? graphContext.input.email_text : "",
-        trace: events
-          .filter((event) => event && event.status === "completed")
-          .map((event) => event.stepId),
+        trace,
         outputs,
-        terminal_node: events
-          .filter((event) => event && event.status === "completed")
-          .map((event) => event.stepId)
-          .at(-1) ?? "",
+        terminal_node: terminalNode,
         terminal_output: output,
+        step_timings: stepDetails,
+        total_elapsed_ms: totalElapsedMs,
+        ttft_ms: workflowTtftMs,
+        total_input_tokens: totalInputTokens,
+        total_output_tokens: totalOutputTokens,
+        total_tokens: totalTokens,
+        total_reasoning_tokens: totalReasoningTokens,
+        tokens_per_second: overallTokensPerSecond,
+        trace_id: "",
+        metadata: {
+          nerdstats
+        },
         events,
         context: graphContext,
         status: "ok"

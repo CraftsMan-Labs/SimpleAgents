@@ -170,13 +170,98 @@ function extractNerdstatsFromEvents(events) {
     if (!event || event.event_type !== 'workflow_completed') continue
     if (!event.metadata || typeof event.metadata !== 'object') continue
     const nerdstats = event.metadata.nerdstats
-    if (nerdstats && typeof nerdstats === 'object') return nerdstats
+    if (nerdstats && typeof nerdstats === 'object') return normalizeNerdstatsPayload(nerdstats)
   }
   return null
 }
 
+function normalizeNerdstatsPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return fallbackNerdstatsFromResult(null)
+  }
+
+  const rawStepDetails = Array.isArray(payload.step_details) ? payload.step_details : []
+  const stepDetails = rawStepDetails
+    .filter((step) => step && typeof step === 'object')
+    .map((step) => {
+      const base = {
+        elapsed_ms: Number.isFinite(step.elapsed_ms) ? step.elapsed_ms : 0,
+        node_id: typeof step.node_id === 'string' ? step.node_id : '',
+        node_kind: typeof step.node_kind === 'string' ? step.node_kind : 'unknown',
+      }
+      if (base.node_kind === 'llm_call') {
+        if (typeof step.model_name === 'string') {
+          base.model_name = step.model_name
+        }
+        if (Number.isFinite(step.prompt_tokens)) {
+          base.prompt_tokens = step.prompt_tokens
+        }
+        if (Number.isFinite(step.completion_tokens)) {
+          base.completion_tokens = step.completion_tokens
+        }
+        if (Number.isFinite(step.total_tokens)) {
+          base.total_tokens = step.total_tokens
+        }
+        if (Number.isFinite(step.reasoning_tokens)) {
+          base.reasoning_tokens = step.reasoning_tokens
+        }
+        if (Number.isFinite(step.tokens_per_second)) {
+          base.tokens_per_second = step.tokens_per_second
+        }
+      }
+      return base
+    })
+
+  const traceId = typeof payload.trace_id === 'string' ? payload.trace_id : ''
+
+  const normalized = {
+    llm_nodes_without_usage: Array.isArray(payload.llm_nodes_without_usage)
+      ? payload.llm_nodes_without_usage
+      : [],
+    step_details: stepDetails,
+    terminal_node: typeof payload.terminal_node === 'string' ? payload.terminal_node : '',
+    token_metrics_available: Boolean(payload.token_metrics_available),
+    token_metrics_source:
+      payload.token_metrics_source === 'provider_usage' ? 'provider_usage' : 'unavailable',
+    tokens_per_second: Number.isFinite(payload.tokens_per_second) ? payload.tokens_per_second : 0,
+    total_elapsed_ms: Number.isFinite(payload.total_elapsed_ms) ? payload.total_elapsed_ms : 0,
+    total_input_tokens: Number.isFinite(payload.total_input_tokens) ? payload.total_input_tokens : 0,
+    total_output_tokens: Number.isFinite(payload.total_output_tokens)
+      ? payload.total_output_tokens
+      : 0,
+    total_reasoning_tokens: Number.isFinite(payload.total_reasoning_tokens)
+      ? payload.total_reasoning_tokens
+      : 0,
+    total_tokens: Number.isFinite(payload.total_tokens) ? payload.total_tokens : 0,
+    ttft_ms: Number.isFinite(payload.ttft_ms) ? payload.ttft_ms : 0,
+    workflow_id: typeof payload.workflow_id === 'string' ? payload.workflow_id : '',
+  }
+  if (traceId !== '') {
+    normalized.trace_id = traceId
+  }
+
+  return normalized
+}
+
 function fallbackNerdstatsFromResult(result) {
-  if (!result || typeof result !== 'object') return null
+  if (!result || typeof result !== 'object') {
+    return {
+      workflow_id: '',
+      terminal_node: '',
+      total_elapsed_ms: 0,
+      ttft_ms: 0,
+      step_details: [],
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_tokens: 0,
+      total_reasoning_tokens: 0,
+      tokens_per_second: 0,
+      trace_id: '',
+      token_metrics_available: false,
+      token_metrics_source: 'unavailable',
+      llm_nodes_without_usage: [],
+    }
+  }
   const stepDetails = Array.isArray(result.step_timings) ? result.step_timings : []
   const hasTokenMetrics =
     Number.isFinite(result.total_input_tokens) && Number.isFinite(result.total_output_tokens)
@@ -185,19 +270,19 @@ function fallbackNerdstatsFromResult(result) {
     .map((step) => step.node_id)
 
   return {
-    workflow_id: typeof result.workflow_id === 'string' ? result.workflow_id : null,
-    terminal_node: typeof result.terminal_node === 'string' ? result.terminal_node : null,
-    total_elapsed_ms: Number.isFinite(result.total_elapsed_ms) ? result.total_elapsed_ms : null,
+    workflow_id: typeof result.workflow_id === 'string' ? result.workflow_id : '',
+    terminal_node: typeof result.terminal_node === 'string' ? result.terminal_node : '',
+    total_elapsed_ms: Number.isFinite(result.total_elapsed_ms) ? result.total_elapsed_ms : 0,
     ttft_ms: Number.isFinite(result.ttft_ms) ? result.ttft_ms : 0,
     step_details: stepDetails,
-    total_input_tokens: Number.isFinite(result.total_input_tokens) ? result.total_input_tokens : null,
-    total_output_tokens: Number.isFinite(result.total_output_tokens) ? result.total_output_tokens : null,
-    total_tokens: Number.isFinite(result.total_tokens) ? result.total_tokens : null,
+    total_input_tokens: Number.isFinite(result.total_input_tokens) ? result.total_input_tokens : 0,
+    total_output_tokens: Number.isFinite(result.total_output_tokens) ? result.total_output_tokens : 0,
+    total_tokens: Number.isFinite(result.total_tokens) ? result.total_tokens : 0,
     total_reasoning_tokens: Number.isFinite(result.total_reasoning_tokens)
       ? result.total_reasoning_tokens
       : 0,
-    tokens_per_second: Number.isFinite(result.tokens_per_second) ? result.tokens_per_second : null,
-    trace_id: typeof result.trace_id === 'string' ? result.trace_id : null,
+    tokens_per_second: Number.isFinite(result.tokens_per_second) ? result.tokens_per_second : 0,
+    trace_id: typeof result.trace_id === 'string' ? result.trace_id : '',
     token_metrics_available: hasTokenMetrics,
     token_metrics_source: hasTokenMetrics ? 'provider_usage' : 'unavailable',
     llm_nodes_without_usage: llmNodesWithoutUsage,
@@ -244,8 +329,9 @@ async function runTurn(client, workflowYaml, input, includeEvents, stream, nerds
   }
 
   if (nerdstats) {
-    const nerdstatsPayload =
-      extractNerdstatsFromEvents(streamedEvents) ?? fallbackNerdstatsFromResult(result)
+    const nerdstatsPayload = normalizeNerdstatsPayload(
+      extractNerdstatsFromEvents(streamedEvents) ?? fallbackNerdstatsFromResult(result),
+    )
     if (nerdstatsPayload !== null) {
       console.log(`Nerdstats: ${JSON.stringify(nerdstatsPayload)}`)
     }
@@ -263,7 +349,7 @@ async function main() {
   const client = new Client(provider, {
     apiKey,
     baseUrl,
-    fetchImpl: (...args) => fetch(...args),
+    fetchImpl: globalThis.fetch,
   })
 
   console.log('WASM Chat Email Assistant')
