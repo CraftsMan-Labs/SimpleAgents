@@ -140,6 +140,7 @@ struct GraphSwitchBranch {
 #[derive(Deserialize, Clone)]
 struct GraphCustomWorker {
     handler: Option<String>,
+    handler_file: Option<String>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -1493,28 +1494,35 @@ impl WasmClient {
                         .handler
                         .clone()
                         .unwrap_or_else(|| "custom_worker".to_string());
+                    let lookup_key = custom_worker
+                        .handler_file
+                        .as_deref()
+                        .map(|file| format!("{}#{}", file, handler.as_str()))
+                        .unwrap_or_else(|| handler.clone());
                     let functions_js = options.functions_js.clone().ok_or_else(|| {
                         config_error(format!(
                             "custom_worker node '{}' requires workflowOptions.functions",
                             node.id
                         ))
                     })?;
-                    let function_value = Reflect::get(&functions_js, &JsValue::from_str(&handler))
+                    let function_value = Reflect::get(&functions_js, &JsValue::from_str(&lookup_key))
                         .map_err(|_| {
                             config_error(format!(
-                                "failed to resolve custom worker handler '{}' from workflowOptions.functions",
-                                handler
+                                "failed to resolve custom worker handler key '{}' from workflowOptions.functions",
+                                lookup_key
                             ))
                         })?;
                     let function = function_value.dyn_into::<Function>().map_err(|_| {
                         config_error(format!(
                             "custom_worker node '{}' requires workflowOptions.functions['{}']",
-                            node.id, handler
+                            node.id, lookup_key
                         ))
                     })?;
 
                     let worker_args = json!({
                         "handler": handler,
+                        "handler_file": custom_worker.handler_file,
+                        "handler_lookup_key": lookup_key,
                         "payload": node
                             .config
                             .as_ref()

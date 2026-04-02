@@ -119,37 +119,20 @@ function createStreamEventBridge(model, onChunk) {
   };
 }
 
-function normalizeWorkflowResultShape(result) {
+function assertWorkflowResultShape(result) {
   if (result === null || typeof result !== "object") {
-    return result;
+    throw runtimeError(
+      "workflow result contract mismatch: expected an object with workflow_id and outputs"
+    );
   }
 
-  if ("workflow_id" in result && "outputs" in result) {
-    return result;
+  if (!("workflow_id" in result) || !("outputs" in result)) {
+    throw runtimeError(
+      "workflow result contract mismatch: expected keys 'workflow_id' and 'outputs'"
+    );
   }
 
-  const context = result.context && typeof result.context === "object" ? result.context : {};
-  const nodeContext =
-    context.nodes && typeof context.nodes === "object" ? context.nodes : {};
-  const outputs = {};
-
-  for (const [nodeId, nodeValue] of Object.entries(nodeContext)) {
-    if (nodeValue && typeof nodeValue === "object" && "output" in nodeValue) {
-      outputs[nodeId] = nodeValue.output;
-      continue;
-    }
-    outputs[nodeId] = nodeValue;
-  }
-
-  return {
-    ...result,
-    workflow_id: result.workflow_id ?? "browser_js_workflow",
-    entry_node: result.entry_node ?? null,
-    trace: Array.isArray(result.trace) ? result.trace : [],
-    outputs,
-    terminal_node: result.terminal_node ?? null,
-    terminal_output: result.terminal_output ?? result.output ?? null
-  };
+  return result;
 }
 
 function normalizeBaseUrl(baseUrl) {
@@ -945,15 +928,22 @@ class BrowserJsClient {
           pointer = matched?.target ?? switchSpec.default ?? "";
         } else if (nodeType.custom_worker) {
           const handler = nodeType.custom_worker.handler ?? "custom_worker";
-          const fn = functions[handler];
+          const handlerFile = nodeType.custom_worker.handler_file;
+          const lookupKey =
+            typeof handlerFile === "string" && handlerFile.length > 0
+              ? `${handlerFile}#${handler}`
+              : handler;
+          const fn = functions[lookupKey];
           if (typeof fn !== "function") {
             throw runtimeError(
-              `custom_worker node '${node.id}' requires workflowOptions.functions['${handler}']`
+              `custom_worker node '${node.id}' requires workflowOptions.functions['${lookupKey}']`
             );
           }
           const workerOutput = await fn(
             {
               handler,
+              handler_file: handlerFile,
+              handler_lookup_key: lookupKey,
               payload: interpolatePathValue(node.config?.payload ?? null, graphContext),
               nodeId: node.id
             },
@@ -972,11 +962,32 @@ class BrowserJsClient {
         events.push({ stepId: node.id, stepType: nodeTypeName, status: "completed" });
       }
 
+      const outputs = {};
+      for (const [nodeId, nodeValue] of Object.entries(graphContext.nodes ?? {})) {
+        if (nodeValue && typeof nodeValue === "object" && "output" in nodeValue) {
+          outputs[nodeId] = nodeValue.output;
+        } else {
+          outputs[nodeId] = nodeValue;
+        }
+      }
+
       return {
-        status: "ok",
+        workflow_id:
+          typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow",
+        entry_node: doc.entry_node,
+        email_text: typeof graphContext.input?.email_text === "string" ? graphContext.input.email_text : "",
+        trace: events
+          .filter((event) => event && event.status === "completed")
+          .map((event) => event.stepId),
+        outputs,
+        terminal_node: events
+          .filter((event) => event && event.status === "completed")
+          .map((event) => event.stepId)
+          .at(-1) ?? "",
+        terminal_output: output,
+        events,
         context: graphContext,
-        output,
-        events
+        status: "ok"
       };
     }
 
@@ -1065,10 +1076,22 @@ class BrowserJsClient {
     }
 
     return {
-      status: "ok",
+      workflow_id:
+        typeof doc.id === "string" && doc.id.length > 0 ? doc.id : "browser_js_workflow",
+      entry_node: typeof doc.steps?.[0]?.id === "string" ? doc.steps[0].id : "",
+      email_text: typeof workflowInput?.email_text === "string" ? workflowInput.email_text : "",
+      trace: events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId),
+      outputs: { ...context },
+      terminal_node: events
+        .filter((event) => event && event.status === "completed")
+        .map((event) => event.stepId)
+        .at(-1) ?? "",
+      terminal_output: output,
+      events,
       context,
-      output,
-      events
+      status: "ok"
     };
   }
 
@@ -1180,24 +1203,24 @@ export class Client {
     const rust = await this.ensureBackend();
     if (rust) {
       const result = await rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
-      return normalizeWorkflowResultShape(result);
+      return assertWorkflowResultShape(result);
     }
     const result = await this.fallbackClient.runWorkflowYamlString(
       yamlText,
       workflowInput,
       workflowOptions
     );
-    return normalizeWorkflowResultShape(result);
+    return assertWorkflowResultShape(result);
   }
 
   async runWorkflowYaml(workflowPath, workflowInput) {
     const rust = await this.ensureBackend();
     if (rust) {
       const result = await rust.runWorkflowYaml(workflowPath, workflowInput);
-      return normalizeWorkflowResultShape(result);
+      return assertWorkflowResultShape(result);
     }
     const result = await this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
-    return normalizeWorkflowResultShape(result);
+    return assertWorkflowResultShape(result);
   }
 }
 
