@@ -37,6 +37,16 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     .messages(conversation.clone())
                     .tools(request.tools.iter().map(|t| t.definition.clone()).collect());
 
+                if let Some(max_tokens) = request.max_tokens {
+                    builder = builder.max_tokens(max_tokens);
+                }
+                if let Some(temperature) = request.temperature {
+                    builder = builder.temperature(temperature);
+                }
+                if let Some(top_p) = request.top_p {
+                    builder = builder.top_p(top_p);
+                }
+
                 if request.heal && expects_object {
                     builder = builder.json_schema("workflow_step", request.schema.clone());
                 }
@@ -647,6 +657,16 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
         let mut builder = CompletionRequest::builder()
             .model(&request.model)
             .messages(messages);
+
+        if let Some(max_tokens) = request.max_tokens {
+            builder = builder.max_tokens(max_tokens);
+        }
+        if let Some(temperature) = request.temperature {
+            builder = builder.temperature(temperature);
+        }
+        if let Some(top_p) = request.top_p {
+            builder = builder.top_p(top_p);
+        }
 
         if request.heal && !request.stream && expects_object {
             builder = builder.json_schema("workflow_step", request.schema.clone());

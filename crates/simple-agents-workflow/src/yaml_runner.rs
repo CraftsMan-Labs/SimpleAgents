@@ -2037,6 +2037,9 @@ pub struct YamlLlmExecutionRequest {
     pub is_terminal_node: bool,
     pub stream_json_as_text: bool,
     pub model: String,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
     pub messages: Option<Vec<Message>>,
     pub append_prompt_as_user: bool,
     pub prompt: String,
@@ -2235,6 +2238,21 @@ async fn try_run_yaml_via_ir_runtime(
                     .get("stream")
                     .and_then(Value::as_bool)
                     .unwrap_or(false);
+                let max_tokens = input
+                    .input
+                    .get("max_tokens")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| u32::try_from(value).ok());
+                let temperature = input
+                    .input
+                    .get("temperature")
+                    .and_then(Value::as_f64)
+                    .map(|value| value as f32);
+                let top_p = input
+                    .input
+                    .get("top_p")
+                    .and_then(Value::as_f64)
+                    .map(|value| value as f32);
                 let heal = input
                     .input
                     .get("heal")
@@ -2282,6 +2300,9 @@ async fn try_run_yaml_via_ir_runtime(
                         .and_then(Value::as_bool)
                         .unwrap_or(false),
                     model: resolved_model.clone(),
+                    max_tokens,
+                    temperature,
+                    top_p,
                     messages,
                     append_prompt_as_user,
                     prompt,
@@ -2727,6 +2748,9 @@ pub struct YamlNodeType {
 #[derive(Debug, Clone, Deserialize)]
 pub struct YamlLlmCall {
     pub model: String,
+    pub max_tokens: Option<u32>,
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
     pub stream: Option<bool>,
     pub stream_json_as_text: Option<bool>,
     pub heal: Option<bool>,
