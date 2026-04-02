@@ -5,6 +5,7 @@ package simpleagents
 #cgo LDFLAGS: -lsimple_agents_ffi
 
 #include <stdlib.h>
+#include <stdint.h>
 #include "simple_agents.h"
 
 char *sa_run_email_workflow_yaml(
@@ -42,11 +43,11 @@ char *sa_run_workflow_yaml_stream_events(
     void *user_data
 );
 
-extern int32_t sa_go_stream_callback_export(char *event_json, void *user_data);
-extern int32_t sa_go_workflow_event_callback_export(char *event_json, void *user_data);
+extern int32_t sa_go_stream_callback_export(char *event_json, size_t user_handle);
+extern int32_t sa_go_workflow_event_callback_export(char *event_json, size_t user_handle);
 
 static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
-    return sa_go_stream_callback_export((char *)event_json, user_data);
+    return sa_go_stream_callback_export((char *)event_json, (size_t)user_data);
 }
 
 static int32_t sa_stream_messages_go(
@@ -57,7 +58,7 @@ static int32_t sa_stream_messages_go(
     int32_t max_tokens,
     float temperature,
     float top_p,
-    void *user_data
+    size_t user_handle
 ) {
     return sa_stream_messages(
         client,
@@ -68,7 +69,7 @@ static int32_t sa_stream_messages_go(
         temperature,
         top_p,
         sa_go_stream_callback_bridge,
-        user_data
+        (void *)user_handle
     );
 }
 
@@ -109,7 +110,7 @@ static char *sa_run_workflow_yaml_with_events_go(
 }
 
 static int32_t sa_go_workflow_event_callback_bridge(const char *event_json, void *user_data) {
-    return sa_go_workflow_event_callback_export((char *)event_json, user_data);
+    return sa_go_workflow_event_callback_export((char *)event_json, (size_t)user_data);
 }
 
 static char *sa_run_workflow_yaml_stream_events_go(
@@ -117,7 +118,7 @@ static char *sa_run_workflow_yaml_stream_events_go(
     const char *workflow_path,
     const char *workflow_input_json,
     const char *workflow_options_json,
-    void *user_data
+    size_t user_handle
 ) {
     return sa_run_workflow_yaml_stream_events(
         client,
@@ -125,7 +126,7 @@ static char *sa_run_workflow_yaml_stream_events_go(
         workflow_input_json,
         workflow_options_json,
         sa_go_workflow_event_callback_bridge,
-        user_data
+        (void *)user_handle
     );
 }
 
@@ -972,7 +973,7 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 			cWorkflowPath,
 			cWorkflowInputJSON,
 			cWorkflowOptionsJSON,
-			unsafe.Pointer(uintptr(handle)),
+			C.size_t(handle),
 		)
 		if response == nil {
 			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
@@ -1309,7 +1310,7 @@ func (c *Client) StreamMessages(
 			C.int32_t(maxTokens),
 			C.float(temperature),
 			C.float(topP),
-			unsafe.Pointer(uintptr(handle)),
+			C.size_t(handle),
 		)
 
 		if status != 0 {
@@ -1325,8 +1326,8 @@ func (c *Client) StreamMessages(
 }
 
 //export sa_go_stream_callback_export
-func sa_go_stream_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.int32_t {
-	handle := cgo.Handle(uintptr(userData))
+func sa_go_stream_callback_export(eventJSON *C.char, userHandle C.size_t) C.int32_t {
+	handle := cgo.Handle(uintptr(userHandle))
 	bridge, ok := handle.Value().(*streamBridge)
 	if !ok || bridge == nil {
 		return 1
@@ -1358,8 +1359,8 @@ func sa_go_stream_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.
 }
 
 //export sa_go_workflow_event_callback_export
-func sa_go_workflow_event_callback_export(eventJSON *C.char, userData unsafe.Pointer) C.int32_t {
-	handle := cgo.Handle(uintptr(userData))
+func sa_go_workflow_event_callback_export(eventJSON *C.char, userHandle C.size_t) C.int32_t {
+	handle := cgo.Handle(uintptr(userHandle))
 	bridge, ok := handle.Value().(*workflowEventBridge)
 	if !ok || bridge == nil {
 		return 1
