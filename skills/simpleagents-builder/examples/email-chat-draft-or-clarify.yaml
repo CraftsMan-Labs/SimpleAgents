@@ -7,7 +7,7 @@ nodes:
   - id: detect_scenario_context
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -42,7 +42,7 @@ nodes:
   - id: explain_capabilities
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -61,7 +61,7 @@ nodes:
   - id: ask_for_scenario
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
@@ -80,7 +80,7 @@ nodes:
   - id: generate_email_draft
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:

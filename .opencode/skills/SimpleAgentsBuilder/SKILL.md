@@ -35,7 +35,7 @@ nodes:
   - id: start_node
     node_type:
       llm_call:
-        model: azure/gpt-4.1-mini
+        model: gemini-3-flash
         messages_path: input.messages
         append_prompt_as_user: true
     config:
