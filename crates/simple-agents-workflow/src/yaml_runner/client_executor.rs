@@ -6,6 +6,15 @@ pub(super) struct BorrowedClientExecutor<'a> {
     pub(super) run_options: YamlWorkflowRunOptions,
 }
 
+fn elapsed_millis_with_min_one(started: &Instant) -> u128 {
+    let elapsed = started.elapsed().as_millis();
+    if elapsed == 0 {
+        1
+    } else {
+        elapsed
+    }
+}
+
 #[async_trait]
 impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
     async fn complete_structured(
@@ -689,6 +698,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             CompletionOptions::default()
         };
 
+        let request_started = Instant::now();
         let outcome = self
             .client
             .complete(&completion_request, completion_options)
@@ -699,7 +709,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             CompletionOutcome::Stream(mut stream) => {
                 let mut aggregated = String::new();
                 let mut final_stream_usage: Option<simple_agent_type::response::Usage> = None;
-                let stream_started = Instant::now();
+                let stream_started = request_started;
                 let mut ttft_ms: Option<u128> = None;
                 let mut delta_filter = StructuredJsonDeltaFilter::default();
                 let include_raw_debug = include_raw_stream_debug_events();
@@ -729,7 +739,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     .as_ref()
                                     .is_some_and(|delta| !delta.is_empty()))
                         {
-                            ttft_ms = Some(stream_started.elapsed().as_millis());
+                            ttft_ms = Some(elapsed_millis_with_min_one(&stream_started));
                         }
                         if include_raw_debug {
                             if let Some(reasoning_delta) = choice.delta.reasoning_content.as_ref() {
