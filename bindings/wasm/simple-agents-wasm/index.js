@@ -1,17 +1,18 @@
 import { parse as parseYaml } from "yaml";
+import { configError, runtimeError } from "./runtime/errors.js";
+import {
+  applyDeltaToAggregate,
+  createStreamAggregator,
+  createStreamEventBridge,
+  iterateSse,
+  parseSseEventBlock
+} from "./runtime/stream.js";
+import { loadRustModule } from "./runtime/rust-runtime.js";
 
 const DEFAULT_BASE_URLS = {
   openai: "https://api.openai.com/v1",
   openrouter: "https://openrouter.ai/api/v1"
 };
-
-function configError(message) {
-  return new Error(`simple-agents-wasm config error: ${message}`);
-}
-
-function runtimeError(message) {
-  return new Error(`simple-agents-wasm runtime error: ${message}`);
-}
 
 function toMessages(promptOrMessages) {
   if (typeof promptOrMessages === "string") {
@@ -62,62 +63,6 @@ function toToolCalls(toolCalls) {
     }));
 }
 
-function createStreamEventBridge(model, onChunk) {
-  let aggregate = "";
-  let finalId = "";
-  let finalModel = model;
-  let finalFinishReason;
-
-  return {
-    onEvent(event) {
-      if (event.eventType === "delta") {
-        const delta = event.delta;
-        if (!delta) {
-          return;
-        }
-
-        if (!finalId && delta.id) {
-          finalId = delta.id;
-        }
-        if (delta.model) {
-          finalModel = delta.model;
-        }
-        if (delta.content) {
-          aggregate += delta.content;
-        }
-        if (delta.finishReason) {
-          finalFinishReason = delta.finishReason;
-        }
-
-        onChunk({
-          id: delta.id,
-          model: delta.model,
-          content: delta.content,
-          finishReason: delta.finishReason,
-          raw: delta.raw
-        });
-      }
-
-      if (event.eventType === "error") {
-        onChunk({
-          id: finalId || "error",
-          model: finalModel,
-          error: event.error?.message ?? "stream error"
-        });
-      }
-    },
-    mergeResult(result, started) {
-      return {
-        ...result,
-        id: result.id || finalId,
-        model: result.model || finalModel,
-        content: result.content ?? aggregate,
-        finishReason: result.finishReason ?? finalFinishReason,
-        latencyMs: Math.max(0, Math.round(performance.now() - started))
-      };
-    }
-  };
-}
 
 function assertWorkflowResultShape(result) {
   if (result === null || typeof result !== "object") {
@@ -586,10 +531,6 @@ function llmOutputSchema(node) {
   };
 }
 
-function normalizeSseChunk(chunk) {
-  return chunk.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-}
-
 function evaluateSwitchCondition(condition, context) {
   if (typeof condition !== "string") {
     return false;
@@ -608,66 +549,6 @@ function evaluateSwitchCondition(condition, context) {
   }
 
   return false;
-}
-
-function parseSseEventBlock(block) {
-  const lines = block.split("\n");
-  const dataLines = [];
-  for (const line of lines) {
-    if (line.startsWith("data:")) {
-      dataLines.push(line.slice(5).trimStart());
-    }
-  }
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-
-  const payload = dataLines.join("\n");
-  if (payload === "[DONE]") {
-    return { done: true };
-  }
-
-  try {
-    return { done: false, json: JSON.parse(payload), raw: payload };
-  } catch {
-    return { done: false, raw: payload };
-  }
-}
-
-async function* iterateSse(response) {
-  if (!response.body) {
-    throw runtimeError("stream response had no body");
-  }
-
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += normalizeSseChunk(decoder.decode(value, { stream: true }));
-    let delimiterIndex = buffer.indexOf("\n\n");
-    while (delimiterIndex !== -1) {
-      const block = buffer.slice(0, delimiterIndex).trim();
-      buffer = buffer.slice(delimiterIndex + 2);
-      if (block.length > 0) {
-        yield block;
-      }
-      delimiterIndex = buffer.indexOf("\n\n");
-    }
-  }
-
-  buffer += normalizeSseChunk(decoder.decode());
-
-  const trailing = buffer.trim();
-  if (trailing.length > 0) {
-    yield trailing;
-  }
 }
 
 class BrowserJsClient {
@@ -810,10 +691,7 @@ class BrowserJsClient {
     }
 
     const started = performance.now();
-    let responseId = "";
-    let responseModel = model;
-    let aggregate = "";
-    let finishReason;
+    const aggregateState = createStreamAggregator(model);
     let usage = {
       promptTokens: 0,
       completionTokens: 0,
@@ -848,18 +726,7 @@ class BrowserJsClient {
           raw: parsed.raw
         };
 
-        if (!responseId && delta.id) {
-          responseId = delta.id;
-        }
-        if (delta.model) {
-          responseModel = delta.model;
-        }
-        if (delta.content) {
-          aggregate += delta.content;
-        }
-        if (delta.finishReason) {
-          finishReason = delta.finishReason;
-        }
+        applyDeltaToAggregate(aggregateState, delta);
         if (chunk?.usage && typeof chunk.usage === "object") {
           usage = toUsage(chunk.usage);
           usageAvailable = true;
@@ -878,11 +745,11 @@ class BrowserJsClient {
     const latencyMs = Math.max(0, Math.round(performance.now() - started));
 
     return {
-      id: responseId,
-      model: responseModel,
+      id: aggregateState.responseId,
+      model: aggregateState.responseModel,
       role: "assistant",
-      content: aggregate,
-      finishReason,
+      content: aggregateState.aggregate,
+      finishReason: aggregateState.finishReason,
       usage: {
         ...usage
       },
@@ -1302,25 +1169,6 @@ class BrowserJsClient {
       `workflow file paths are not supported in browser runtime: ${workflowPath}`
     );
   }
-}
-
-let rustModulePromise;
-
-async function loadRustModule() {
-  if (!rustModulePromise) {
-    rustModulePromise = (async () => {
-      try {
-        const moduleValue = await import("./pkg/simple_agents_wasm.js");
-        const wasmUrl = new URL("./pkg/simple_agents_wasm_bg.wasm", import.meta.url);
-        await moduleValue.default({ module_or_path: wasmUrl });
-        return moduleValue;
-      } catch {
-        return null;
-      }
-    })();
-  }
-
-  return rustModulePromise;
 }
 
 export class Client {
