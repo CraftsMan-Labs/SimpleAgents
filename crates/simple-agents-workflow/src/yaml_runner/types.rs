@@ -78,6 +78,7 @@ pub enum YamlToolTraceMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflowTraceContextInput {
     #[serde(default)]
     pub trace_id: Option<String>,
@@ -94,6 +95,7 @@ pub struct YamlWorkflowTraceContextInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflowTraceTenantContext {
     #[serde(default)]
     pub workspace_id: Option<String>,
@@ -108,6 +110,7 @@ pub struct YamlWorkflowTraceTenantContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflowTelemetryConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -140,6 +143,7 @@ impl Default for YamlWorkflowTelemetryConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflowTraceOptions {
     #[serde(default)]
     pub context: Option<YamlWorkflowTraceContextInput>,
@@ -148,6 +152,7 @@ pub struct YamlWorkflowTraceOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflowRunOptions {
     #[serde(default)]
     pub telemetry: YamlWorkflowTelemetryConfig,

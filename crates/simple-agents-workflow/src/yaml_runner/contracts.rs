@@ -19,15 +19,25 @@ pub enum YamlWorkflowTokenKind {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlWorkflowEvent {
     pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub node_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub streamable: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_kind: Option<YamlWorkflowTokenKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub is_terminal_node_token: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub elapsed_ms: Option<u128>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<Value>,
 }
 
@@ -204,6 +214,7 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlGlobalUpdate {
     pub op: String,
     pub from: Option<String>,
@@ -211,6 +222,7 @@ pub struct YamlGlobalUpdate {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlNodeConfig {
     pub prompt: Option<String>,
     #[serde(default, alias = "schema")]
@@ -228,12 +240,14 @@ pub struct YamlCustomWorker {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlSwitchBranch {
     pub condition: String,
     pub target: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlSwitch {
     #[serde(default)]
     pub branches: Vec<YamlSwitchBranch>,
@@ -249,6 +263,7 @@ pub enum YamlToolChoiceConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlSimplifiedToolDeclaration {
     pub name: String,
     pub description: Option<String>,
@@ -257,6 +272,7 @@ pub struct YamlSimplifiedToolDeclaration {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlOpenAiToolFunction {
     pub name: String,
     pub description: Option<String>,
@@ -265,6 +281,7 @@ pub struct YamlOpenAiToolFunction {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlOpenAiToolDeclaration {
     #[serde(rename = "type")]
     pub tool_type: Option<ToolType>,

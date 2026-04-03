@@ -217,6 +217,11 @@ impl<'a> WorkflowRunner<'a> {
         }
     }
 
+    /// Execute the workflow and return the typed projection.
+    ///
+    /// The typed output keeps only workflow identity, traversal, and node
+    /// outputs. Legacy fields on `YamlWorkflowRunOutput` such as telemetry,
+    /// timing, token counters, and `email_text` remain available via `run()`.
     pub async fn run_typed(self) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
         let WorkflowRunner {
             source,

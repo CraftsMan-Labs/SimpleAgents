@@ -263,8 +263,9 @@ impl NodeExecutor for CacheStateNodeExecutor {
                         path: key_path.clone(),
                     }
                 })?;
-                let value = ctx.scope.cache_value(&key).cloned().unwrap_or(Value::Null);
-                let hit = !value.is_null();
+                let cached_value = ctx.scope.cache_value(&key).cloned();
+                let hit = cached_value.is_some();
+                let value = cached_value.unwrap_or(Value::Null);
                 let chosen_next = if hit {
                     next.clone()
                 } else {
@@ -652,11 +653,13 @@ impl NodeExecutor for RetryCompensateNodeExecutor {
                             source,
                         })?;
                 let total_attempts = max_retries.saturating_add(1);
+                let mut executed_attempts = 0usize;
                 let mut last_error = None;
                 let mut output = Value::Null;
                 let mut compensated = false;
 
                 for attempt in 1..=total_attempts {
+                    executed_attempts = attempt;
                     check_cancelled(ctx.cancellation)?;
                     match executor
                         .execute_tool(ToolExecutionInput {
@@ -699,13 +702,13 @@ impl NodeExecutor for RetryCompensateNodeExecutor {
                         .map_err(|compensation_error| {
                             WorkflowRuntimeError::RetryCompensateFailed {
                                 node_id: ctx.node.id.clone(),
-                                attempts: total_attempts,
+                                attempts: executed_attempts,
                                 compensation_error,
                             }
                         })?;
                     output = json!({
                         "status": "compensated",
-                        "attempts": total_attempts,
+                        "attempts": executed_attempts,
                         "last_error": last_error.map(|error| error.to_string()).unwrap_or_default(),
                         "compensation": compensation
                     });
@@ -729,7 +732,7 @@ impl NodeExecutor for RetryCompensateNodeExecutor {
                     node_id: ctx.node.id.clone(),
                     data: NodeExecutionData::RetryCompensate {
                         tool: tool.clone(),
-                        attempts: total_attempts,
+                        attempts: executed_attempts,
                         compensated,
                         output,
                         next: chosen_next,
