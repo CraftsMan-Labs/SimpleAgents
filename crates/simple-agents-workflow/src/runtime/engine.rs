@@ -104,12 +104,19 @@ impl NodeExecutor for EndNodeExecutor {
     }
 }
 
-struct GeneralNodeExecutor;
+struct CacheStateNodeExecutor;
 
 #[async_trait]
-impl NodeExecutor for GeneralNodeExecutor {
-    fn supports(&self, _kind: &NodeKind) -> bool {
-        true
+impl NodeExecutor for CacheStateNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::Debounce { .. }
+                | NodeKind::Throttle { .. }
+                | NodeKind::CacheWrite { .. }
+                | NodeKind::CacheRead { .. }
+                | NodeKind::EventTrigger { .. }
+        )
     }
 
     async fn execute(
@@ -117,51 +124,13 @@ impl NodeExecutor for GeneralNodeExecutor {
         ctx: NodeExecutorContext<'_>,
     ) -> Result<NodeExecution, WorkflowRuntimeError> {
         match &ctx.node.kind {
-            NodeKind::Llm {
-                model,
-                prompt,
-                next,
-            } => {
-                ctx.runtime
-                    .execute_llm_node(
-                        ctx.step,
-                        ctx.node,
-                        LlmNodeSpec {
-                            model,
-                            prompt,
-                            next,
-                        },
-                        ctx.scope,
-                        ctx.cancellation,
-                        ctx.retry_events,
-                    )
-                    .await
-            }
-            NodeKind::Tool { tool, input, next } => {
-                ctx.runtime
-                    .execute_tool_node(
-                        ctx.step,
-                        ctx.node,
-                        ToolNodeSpec { tool, input, next },
-                        ctx.scope,
-                        ctx.cancellation,
-                        ctx.retry_events,
-                    )
-                    .await
-            }
             NodeKind::Debounce {
                 key_path,
                 window_steps,
                 next,
                 on_suppressed,
             } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
+                let scoped_input = scoped_input_for_condition(&ctx)?;
                 let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
                     WorkflowRuntimeError::CacheKeyNotString {
                         node_id: ctx.node.id.clone(),
@@ -204,13 +173,7 @@ impl NodeExecutor for GeneralNodeExecutor {
                 next,
                 on_throttled,
             } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
+                let scoped_input = scoped_input_for_condition(&ctx)?;
                 let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
                     WorkflowRuntimeError::CacheKeyNotString {
                         node_id: ctx.node.id.clone(),
@@ -247,6 +210,426 @@ impl NodeExecutor for GeneralNodeExecutor {
                     },
                 })
             }
+            NodeKind::CacheWrite {
+                key_path,
+                value_path,
+                next,
+            } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: ctx.node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let value = resolve_path(&scoped_input, value_path)
+                    .cloned()
+                    .ok_or_else(|| WorkflowRuntimeError::MissingPath {
+                        node_id: ctx.node.id.clone(),
+                        path: value_path.clone(),
+                    })?;
+
+                ctx.scope.put_cache(&key, value.clone());
+                ctx.scope
+                    .record_node_output(
+                        &ctx.node.id,
+                        json!({"key": key.clone(), "value": value.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::CacheWrite {
+                        key,
+                        value,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::CacheRead {
+                key_path,
+                next,
+                on_miss,
+            } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
+                    WorkflowRuntimeError::CacheKeyNotString {
+                        node_id: ctx.node.id.clone(),
+                        path: key_path.clone(),
+                    }
+                })?;
+                let value = ctx.scope.cache_value(&key).cloned().unwrap_or(Value::Null);
+                let hit = !value.is_null();
+                let chosen_next = if hit {
+                    next.clone()
+                } else {
+                    on_miss.clone().unwrap_or_else(|| next.clone())
+                };
+
+                ctx.scope
+                    .record_node_output(
+                        &ctx.node.id,
+                        json!({"key": key.clone(), "hit": hit, "value": value.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::CacheRead {
+                        key,
+                        hit,
+                        value,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::EventTrigger {
+                event,
+                event_path,
+                next,
+                on_mismatch,
+            } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                let actual = resolve_path(&scoped_input, event_path)
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| WorkflowRuntimeError::InvalidEventValue {
+                        node_id: ctx.node.id.clone(),
+                        path: event_path.clone(),
+                    })?;
+                let matched = actual == event;
+                let chosen_next = if matched {
+                    next.clone()
+                } else {
+                    on_mismatch.clone().unwrap_or_else(|| next.clone())
+                };
+
+                ctx.scope
+                    .record_node_output(
+                        &ctx.node.id,
+                        json!({"event": event.clone(), "matched": matched, "actual": actual}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::EventTrigger {
+                        event: event.clone(),
+                        matched,
+                        next: chosen_next,
+                    },
+                })
+            }
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "cache-state executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
+
+struct RoutingNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for RoutingNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::HumanInTheLoop { .. }
+                | NodeKind::Router { .. }
+                | NodeKind::Transform { .. }
+                | NodeKind::Loop { .. }
+        )
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
+            NodeKind::HumanInTheLoop {
+                decision_path,
+                response_path,
+                on_approve,
+                on_reject,
+            } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                let decision_value =
+                    resolve_path(&scoped_input, decision_path).ok_or_else(|| {
+                        WorkflowRuntimeError::MissingPath {
+                            node_id: ctx.node.id.clone(),
+                            path: decision_path.clone(),
+                        }
+                    })?;
+                let approved = evaluate_human_decision(decision_value).ok_or_else(|| {
+                    WorkflowRuntimeError::InvalidHumanDecision {
+                        node_id: ctx.node.id.clone(),
+                        path: decision_path.clone(),
+                        value: decision_value.to_string(),
+                    }
+                })?;
+                let response = if let Some(path) = response_path {
+                    resolve_path(&scoped_input, path).cloned().ok_or_else(|| {
+                        WorkflowRuntimeError::MissingPath {
+                            node_id: ctx.node.id.clone(),
+                            path: path.clone(),
+                        }
+                    })?
+                } else {
+                    Value::Null
+                };
+                let chosen_next = if approved {
+                    on_approve.clone()
+                } else {
+                    on_reject.clone()
+                };
+
+                ctx.scope
+                    .record_node_output(
+                        &ctx.node.id,
+                        json!({"approved": approved, "response": response.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::HumanInTheLoop {
+                        approved,
+                        response,
+                        next: chosen_next,
+                    },
+                })
+            }
+            NodeKind::Router { routes, default } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                enforce_expression_scope_budget(
+                    &ctx.node.id,
+                    &scoped_input,
+                    ctx.runtime
+                        .options
+                        .security_limits
+                        .max_expression_scope_bytes,
+                )?;
+                let mut selected = default.clone();
+                for route in routes {
+                    let matched = expressions::evaluate_bool(&route.when, &scoped_input).map_err(
+                        |reason| WorkflowRuntimeError::InvalidRouterExpression {
+                            node_id: ctx.node.id.clone(),
+                            expression: route.when.clone(),
+                            reason: reason.to_string(),
+                        },
+                    )?;
+                    if matched {
+                        selected = route.next.clone();
+                        break;
+                    }
+                }
+
+                ctx.scope
+                    .record_node_output(
+                        &ctx.node.id,
+                        json!({"selected": selected.clone()}),
+                        ScopeCapability::MapWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::Router {
+                        selected: selected.clone(),
+                        next: selected,
+                    },
+                })
+            }
+            NodeKind::Transform { expression, next } => {
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                let output =
+                    evaluate_transform_expression(expression, &scoped_input).map_err(|reason| {
+                        WorkflowRuntimeError::InvalidTransformExpression {
+                            node_id: ctx.node.id.clone(),
+                            expression: expression.clone(),
+                            reason,
+                        }
+                    })?;
+
+                ctx.scope
+                    .record_node_output(&ctx.node.id, output.clone(), ScopeCapability::MapWrite)
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::Transform {
+                        expression: expression.clone(),
+                        output,
+                        next: next.clone(),
+                    },
+                })
+            }
+            NodeKind::Loop {
+                condition,
+                body,
+                next,
+                max_iterations,
+            } => {
+                check_cancelled(ctx.cancellation)?;
+                let scoped_input = scoped_input_for_condition(&ctx)?;
+                enforce_expression_scope_budget(
+                    &ctx.node.id,
+                    &scoped_input,
+                    ctx.runtime
+                        .options
+                        .security_limits
+                        .max_expression_scope_bytes,
+                )?;
+                let evaluated =
+                    expressions::evaluate_bool(condition, &scoped_input).map_err(|reason| {
+                        WorkflowRuntimeError::InvalidLoopCondition {
+                            node_id: ctx.node.id.clone(),
+                            expression: condition.clone(),
+                            reason: reason.to_string(),
+                        }
+                    })?;
+
+                let (iteration, chosen_next) = if evaluated {
+                    let iteration = ctx.scope.loop_iteration(&ctx.node.id).saturating_add(1);
+                    if let Some(limit) = max_iterations {
+                        if iteration > *limit {
+                            return Err(WorkflowRuntimeError::LoopIterationLimitExceeded {
+                                node_id: ctx.node.id.clone(),
+                                max_iterations: *limit,
+                            });
+                        }
+                    }
+                    ctx.scope.set_loop_iteration(&ctx.node.id, iteration);
+                    (iteration, body.clone())
+                } else {
+                    ctx.scope.clear_loop_iteration(&ctx.node.id);
+                    (0, next.clone())
+                };
+
+                ctx.scope
+                    .record_condition_output(
+                        &ctx.node.id,
+                        evaluated,
+                        ScopeCapability::ConditionWrite,
+                    )
+                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+                        node_id: ctx.node.id.clone(),
+                        source,
+                    })?;
+
+                Ok(NodeExecution {
+                    step: ctx.step,
+                    node_id: ctx.node.id.clone(),
+                    data: NodeExecutionData::Loop {
+                        condition: condition.clone(),
+                        evaluated,
+                        iteration,
+                        next: chosen_next,
+                    },
+                })
+            }
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "routing executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
+
+struct ModelToolNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for ModelToolNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Llm { .. } | NodeKind::Tool { .. })
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
+            NodeKind::Llm {
+                model,
+                prompt,
+                next,
+            } => {
+                ctx.runtime
+                    .execute_llm_node(
+                        ctx.step,
+                        ctx.node,
+                        LlmNodeSpec {
+                            model,
+                            prompt,
+                            next,
+                        },
+                        ctx.scope,
+                        ctx.cancellation,
+                        ctx.retry_events,
+                    )
+                    .await
+            }
+            NodeKind::Tool { tool, input, next } => {
+                ctx.runtime
+                    .execute_tool_node(
+                        ctx.step,
+                        ctx.node,
+                        ToolNodeSpec { tool, input, next },
+                        ctx.scope,
+                        ctx.cancellation,
+                        ctx.retry_events,
+                    )
+                    .await
+            }
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "model-tool executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
+
+struct RetryCompensateNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for RetryCompensateNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::RetryCompensate { .. })
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
             NodeKind::RetryCompensate {
                 tool,
                 input,
@@ -353,367 +736,35 @@ impl NodeExecutor for GeneralNodeExecutor {
                     },
                 })
             }
-            NodeKind::HumanInTheLoop {
-                decision_path,
-                response_path,
-                on_approve,
-                on_reject,
-            } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                let decision_value =
-                    resolve_path(&scoped_input, decision_path).ok_or_else(|| {
-                        WorkflowRuntimeError::MissingPath {
-                            node_id: ctx.node.id.clone(),
-                            path: decision_path.clone(),
-                        }
-                    })?;
-                let approved = evaluate_human_decision(decision_value).ok_or_else(|| {
-                    WorkflowRuntimeError::InvalidHumanDecision {
-                        node_id: ctx.node.id.clone(),
-                        path: decision_path.clone(),
-                        value: decision_value.to_string(),
-                    }
-                })?;
-                let response = if let Some(path) = response_path {
-                    resolve_path(&scoped_input, path).cloned().ok_or_else(|| {
-                        WorkflowRuntimeError::MissingPath {
-                            node_id: ctx.node.id.clone(),
-                            path: path.clone(),
-                        }
-                    })?
-                } else {
-                    Value::Null
-                };
-                let chosen_next = if approved {
-                    on_approve.clone()
-                } else {
-                    on_reject.clone()
-                };
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "retry-compensate executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
 
-                ctx.scope
-                    .record_node_output(
-                        &ctx.node.id,
-                        json!({"approved": approved, "response": response.clone()}),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
+struct DataflowNodeExecutor;
 
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::HumanInTheLoop {
-                        approved,
-                        response,
-                        next: chosen_next,
-                    },
-                })
-            }
-            NodeKind::CacheWrite {
-                key_path,
-                value_path,
-                next,
-            } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
-                    WorkflowRuntimeError::CacheKeyNotString {
-                        node_id: ctx.node.id.clone(),
-                        path: key_path.clone(),
-                    }
-                })?;
-                let value = resolve_path(&scoped_input, value_path)
-                    .cloned()
-                    .ok_or_else(|| WorkflowRuntimeError::MissingPath {
-                        node_id: ctx.node.id.clone(),
-                        path: value_path.clone(),
-                    })?;
+#[async_trait]
+impl NodeExecutor for DataflowNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(
+            kind,
+            NodeKind::Parallel { .. }
+                | NodeKind::Merge { .. }
+                | NodeKind::Map { .. }
+                | NodeKind::Reduce { .. }
+                | NodeKind::Batch { .. }
+                | NodeKind::Filter { .. }
+        )
+    }
 
-                ctx.scope.put_cache(&key, value.clone());
-                ctx.scope
-                    .record_node_output(
-                        &ctx.node.id,
-                        json!({"key": key.clone(), "value": value.clone()}),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::CacheWrite {
-                        key,
-                        value,
-                        next: next.clone(),
-                    },
-                })
-            }
-            NodeKind::CacheRead {
-                key_path,
-                next,
-                on_miss,
-            } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                let key = resolve_string_path(&scoped_input, key_path).ok_or_else(|| {
-                    WorkflowRuntimeError::CacheKeyNotString {
-                        node_id: ctx.node.id.clone(),
-                        path: key_path.clone(),
-                    }
-                })?;
-                let value = ctx.scope.cache_value(&key).cloned().unwrap_or(Value::Null);
-                let hit = !value.is_null();
-                let chosen_next = if hit {
-                    next.clone()
-                } else {
-                    on_miss.clone().unwrap_or_else(|| next.clone())
-                };
-
-                ctx.scope
-                    .record_node_output(
-                        &ctx.node.id,
-                        json!({"key": key.clone(), "hit": hit, "value": value.clone()}),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::CacheRead {
-                        key,
-                        hit,
-                        value,
-                        next: chosen_next,
-                    },
-                })
-            }
-            NodeKind::EventTrigger {
-                event,
-                event_path,
-                next,
-                on_mismatch,
-            } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                let actual = resolve_path(&scoped_input, event_path)
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| WorkflowRuntimeError::InvalidEventValue {
-                        node_id: ctx.node.id.clone(),
-                        path: event_path.clone(),
-                    })?;
-                let matched = actual == event;
-                let chosen_next = if matched {
-                    next.clone()
-                } else {
-                    on_mismatch.clone().unwrap_or_else(|| next.clone())
-                };
-
-                ctx.scope
-                    .record_node_output(
-                        &ctx.node.id,
-                        json!({"event": event.clone(), "matched": matched, "actual": actual}),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::EventTrigger {
-                        event: event.clone(),
-                        matched,
-                        next: chosen_next,
-                    },
-                })
-            }
-            NodeKind::Router { routes, default } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                enforce_expression_scope_budget(
-                    &ctx.node.id,
-                    &scoped_input,
-                    ctx.runtime
-                        .options
-                        .security_limits
-                        .max_expression_scope_bytes,
-                )?;
-                let mut selected = default.clone();
-                for route in routes {
-                    let matched = expressions::evaluate_bool(&route.when, &scoped_input).map_err(
-                        |reason| WorkflowRuntimeError::InvalidRouterExpression {
-                            node_id: ctx.node.id.clone(),
-                            expression: route.when.clone(),
-                            reason: reason.to_string(),
-                        },
-                    )?;
-                    if matched {
-                        selected = route.next.clone();
-                        break;
-                    }
-                }
-
-                ctx.scope
-                    .record_node_output(
-                        &ctx.node.id,
-                        json!({"selected": selected.clone()}),
-                        ScopeCapability::MapWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::Router {
-                        selected: selected.clone(),
-                        next: selected,
-                    },
-                })
-            }
-            NodeKind::Transform { expression, next } => {
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                let output =
-                    evaluate_transform_expression(expression, &scoped_input).map_err(|reason| {
-                        WorkflowRuntimeError::InvalidTransformExpression {
-                            node_id: ctx.node.id.clone(),
-                            expression: expression.clone(),
-                            reason,
-                        }
-                    })?;
-
-                ctx.scope
-                    .record_node_output(&ctx.node.id, output.clone(), ScopeCapability::MapWrite)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::Transform {
-                        expression: expression.clone(),
-                        output,
-                        next: next.clone(),
-                    },
-                })
-            }
-            NodeKind::Loop {
-                condition,
-                body,
-                next,
-                max_iterations,
-            } => {
-                check_cancelled(ctx.cancellation)?;
-                let scoped_input = ctx
-                    .scope
-                    .scoped_input(ScopeCapability::ConditionRead)
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-                enforce_expression_scope_budget(
-                    &ctx.node.id,
-                    &scoped_input,
-                    ctx.runtime
-                        .options
-                        .security_limits
-                        .max_expression_scope_bytes,
-                )?;
-                let evaluated =
-                    expressions::evaluate_bool(condition, &scoped_input).map_err(|reason| {
-                        WorkflowRuntimeError::InvalidLoopCondition {
-                            node_id: ctx.node.id.clone(),
-                            expression: condition.clone(),
-                            reason: reason.to_string(),
-                        }
-                    })?;
-
-                let (iteration, chosen_next) = if evaluated {
-                    let iteration = ctx.scope.loop_iteration(&ctx.node.id).saturating_add(1);
-                    if let Some(limit) = max_iterations {
-                        if iteration > *limit {
-                            return Err(WorkflowRuntimeError::LoopIterationLimitExceeded {
-                                node_id: ctx.node.id.clone(),
-                                max_iterations: *limit,
-                            });
-                        }
-                    }
-                    ctx.scope.set_loop_iteration(&ctx.node.id, iteration);
-                    (iteration, body.clone())
-                } else {
-                    ctx.scope.clear_loop_iteration(&ctx.node.id);
-                    (0, next.clone())
-                };
-
-                ctx.scope
-                    .record_condition_output(
-                        &ctx.node.id,
-                        evaluated,
-                        ScopeCapability::ConditionWrite,
-                    )
-                    .map_err(|source| WorkflowRuntimeError::ScopeAccess {
-                        node_id: ctx.node.id.clone(),
-                        source,
-                    })?;
-
-                Ok(NodeExecution {
-                    step: ctx.step,
-                    node_id: ctx.node.id.clone(),
-                    data: NodeExecutionData::Loop {
-                        condition: condition.clone(),
-                        evaluated,
-                        iteration,
-                        next: chosen_next,
-                    },
-                })
-            }
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
             NodeKind::Parallel {
                 branches,
                 next,
@@ -780,6 +831,37 @@ impl NodeExecutor for GeneralNodeExecutor {
             } => ctx
                 .runtime
                 .execute_reduce_node(ctx.step, ctx.node, source, operation, next, ctx.scope),
+            NodeKind::Batch { items_path, next } => ctx
+                .runtime
+                .execute_batch_node(ctx.step, ctx.node, items_path, next, ctx.scope),
+            NodeKind::Filter {
+                items_path,
+                expression,
+                next,
+            } => ctx
+                .runtime
+                .execute_filter_node(ctx.step, ctx.node, items_path, expression, next, ctx.scope),
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "dataflow executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
+
+struct SubgraphNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for SubgraphNodeExecutor {
+    fn supports(&self, kind: &NodeKind) -> bool {
+        matches!(kind, NodeKind::Subgraph { .. })
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
             NodeKind::Subgraph { graph, next } => {
                 check_cancelled(ctx.cancellation)?;
                 let next_node =
@@ -846,16 +928,50 @@ impl NodeExecutor for GeneralNodeExecutor {
                     },
                 })
             }
-            NodeKind::Batch { items_path, next } => ctx
-                .runtime
-                .execute_batch_node(ctx.step, ctx.node, items_path, next, ctx.scope),
-            NodeKind::Filter {
-                items_path,
-                expression,
-                next,
-            } => ctx
-                .runtime
-                .execute_filter_node(ctx.step, ctx.node, items_path, expression, next, ctx.scope),
+            _ => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "subgraph executor received unsupported node".to_string(),
+            }),
+        }
+    }
+}
+
+struct GeneralNodeExecutor;
+
+#[async_trait]
+impl NodeExecutor for GeneralNodeExecutor {
+    fn supports(&self, _kind: &NodeKind) -> bool {
+        true
+    }
+
+    async fn execute(
+        &self,
+        ctx: NodeExecutorContext<'_>,
+    ) -> Result<NodeExecution, WorkflowRuntimeError> {
+        match &ctx.node.kind {
+            NodeKind::Debounce { .. }
+            | NodeKind::Throttle { .. }
+            | NodeKind::CacheWrite { .. }
+            | NodeKind::CacheRead { .. }
+            | NodeKind::EventTrigger { .. }
+            | NodeKind::HumanInTheLoop { .. }
+            | NodeKind::Router { .. }
+            | NodeKind::Transform { .. }
+            | NodeKind::Loop { .. }
+            | NodeKind::Llm { .. }
+            | NodeKind::Tool { .. }
+            | NodeKind::RetryCompensate { .. }
+            | NodeKind::Parallel { .. }
+            | NodeKind::Merge { .. }
+            | NodeKind::Map { .. }
+            | NodeKind::Reduce { .. }
+            | NodeKind::Subgraph { .. }
+            | NodeKind::Batch { .. }
+            | NodeKind::Filter { .. } => Err(WorkflowRuntimeError::DispatchInvariant {
+                node_id: ctx.node.id.clone(),
+                reason: "general executor received node handled by specialized executor"
+                    .to_string(),
+            }),
             NodeKind::Start { .. } | NodeKind::Condition { .. } | NodeKind::End => {
                 Err(WorkflowRuntimeError::DispatchInvariant {
                     node_id: ctx.node.id.clone(),
@@ -866,12 +982,40 @@ impl NodeExecutor for GeneralNodeExecutor {
     }
 }
 
-fn strategy_executors() -> [&'static dyn NodeExecutor; 4] {
+fn scoped_input_for_condition(
+    ctx: &NodeExecutorContext<'_>,
+) -> Result<Value, WorkflowRuntimeError> {
+    ctx.scope
+        .scoped_input(ScopeCapability::ConditionRead)
+        .map_err(|source| WorkflowRuntimeError::ScopeAccess {
+            node_id: ctx.node.id.clone(),
+            source,
+        })
+}
+
+fn strategy_executors() -> [&'static dyn NodeExecutor; 10] {
     static START: StartNodeExecutor = StartNodeExecutor;
     static CONDITION: ConditionNodeExecutor = ConditionNodeExecutor;
     static END: EndNodeExecutor = EndNodeExecutor;
+    static CACHE_STATE: CacheStateNodeExecutor = CacheStateNodeExecutor;
+    static ROUTING: RoutingNodeExecutor = RoutingNodeExecutor;
+    static MODEL_TOOL: ModelToolNodeExecutor = ModelToolNodeExecutor;
+    static RETRY_COMPENSATE: RetryCompensateNodeExecutor = RetryCompensateNodeExecutor;
+    static DATAFLOW: DataflowNodeExecutor = DataflowNodeExecutor;
+    static SUBGRAPH: SubgraphNodeExecutor = SubgraphNodeExecutor;
     static GENERAL: GeneralNodeExecutor = GeneralNodeExecutor;
-    [&START, &CONDITION, &END, &GENERAL]
+    [
+        &START,
+        &CONDITION,
+        &END,
+        &CACHE_STATE,
+        &ROUTING,
+        &MODEL_TOOL,
+        &RETRY_COMPENSATE,
+        &DATAFLOW,
+        &SUBGRAPH,
+        &GENERAL,
+    ]
 }
 
 async fn execute_node_via_strategy(

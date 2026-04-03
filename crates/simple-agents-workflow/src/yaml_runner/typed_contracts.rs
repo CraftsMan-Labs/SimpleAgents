@@ -3,7 +3,63 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::{YamlWorkflow, YamlWorkflowEvent, YamlWorkflowRunOutput, YamlWorkflowTokenKind};
+use super::{
+    YamlWorkflow, YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowRunOutput,
+    YamlWorkflowTokenKind,
+};
+
+pub trait YamlWorkflowTypedEventSink: Send + Sync {
+    fn emit_typed(&self, event: &YamlWorkflowTypedEvent);
+
+    fn is_cancelled(&self) -> bool {
+        false
+    }
+}
+
+pub struct YamlWorkflowTypedEventSinkAdapter<'a> {
+    typed_sink: &'a dyn YamlWorkflowTypedEventSink,
+}
+
+impl<'a> YamlWorkflowTypedEventSinkAdapter<'a> {
+    pub fn new(typed_sink: &'a dyn YamlWorkflowTypedEventSink) -> Self {
+        Self { typed_sink }
+    }
+}
+
+impl YamlWorkflowEventSink for YamlWorkflowTypedEventSinkAdapter<'_> {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        self.typed_sink.emit_typed(&event.to_typed_event());
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.typed_sink.is_cancelled()
+    }
+}
+
+pub(super) struct YamlWorkflowEventSinkFanout<'a> {
+    first: &'a dyn YamlWorkflowEventSink,
+    second: &'a dyn YamlWorkflowEventSink,
+}
+
+impl<'a> YamlWorkflowEventSinkFanout<'a> {
+    pub(super) fn new(
+        first: &'a dyn YamlWorkflowEventSink,
+        second: &'a dyn YamlWorkflowEventSink,
+    ) -> Self {
+        Self { first, second }
+    }
+}
+
+impl YamlWorkflowEventSink for YamlWorkflowEventSinkFanout<'_> {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        self.first.emit(event);
+        self.second.emit(event);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.first.is_cancelled() || self.second.is_cancelled()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

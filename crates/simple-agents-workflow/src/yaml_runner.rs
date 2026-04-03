@@ -4,9 +4,8 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use simple_agent_type::message::{Message, Role};
+use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
 use simple_agent_type::response::FinishReason;
 use simple_agent_type::tool::{
@@ -16,7 +15,6 @@ use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 };
 use simple_agents_healing::JsonishParser;
-use thiserror::Error;
 
 use crate::ir::{Node, NodeKind, RouterRoute, WorkflowDefinition, WORKFLOW_IR_V0};
 use crate::observability::tracing::{
@@ -35,6 +33,7 @@ pub use runner::WorkflowRunner;
 mod api;
 mod client_executor;
 mod context;
+mod contracts;
 mod events;
 mod execute;
 mod globals;
@@ -42,21 +41,24 @@ mod llm_tools;
 mod node_execution;
 mod spans;
 mod typed_contracts;
+mod types;
 mod validation;
 pub use api::{
-    run_email_workflow_yaml, run_email_workflow_yaml_file,
+    run_email_workflow_yaml, run_email_workflow_yaml_file, run_email_workflow_yaml_file_typed,
     run_email_workflow_yaml_file_with_client,
     run_email_workflow_yaml_file_with_client_and_custom_worker,
     run_email_workflow_yaml_file_with_client_and_custom_worker_and_events,
-    run_email_workflow_yaml_with_client, run_email_workflow_yaml_with_client_and_custom_worker,
+    run_email_workflow_yaml_typed, run_email_workflow_yaml_with_client,
+    run_email_workflow_yaml_with_client_and_custom_worker,
     run_email_workflow_yaml_with_client_and_custom_worker_and_events,
     run_email_workflow_yaml_with_custom_worker,
     run_email_workflow_yaml_with_custom_worker_and_events, run_workflow_yaml,
-    run_workflow_yaml_file, run_workflow_yaml_file_with_client,
+    run_workflow_yaml_file, run_workflow_yaml_file_typed, run_workflow_yaml_file_with_client,
     run_workflow_yaml_file_with_client_and_custom_worker,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    run_workflow_yaml_with_client, run_workflow_yaml_with_client_and_custom_worker,
+    run_workflow_yaml_typed, run_workflow_yaml_with_client,
+    run_workflow_yaml_with_client_and_custom_worker,
     run_workflow_yaml_with_client_and_custom_worker_and_events,
     run_workflow_yaml_with_custom_worker, run_workflow_yaml_with_custom_worker_and_events,
 };
@@ -65,6 +67,17 @@ use context::{
     build_yaml_context_from_ir_scope, collect_template_bindings, evaluate_switch_condition,
     interpolate_template, json_type_name, parse_messages_from_context, resolve_path,
 };
+use contracts::{event_sink_is_cancelled, workflow_event_sink_cancelled_message};
+pub use contracts::{
+    NoopYamlWorkflowEventSink, WorkflowMessage, WorkflowMessageRole, YamlCustomWorker, YamlEdge,
+    YamlGlobalUpdate, YamlLlmCall, YamlLlmExecutionRequest, YamlNode, YamlNodeConfig, YamlNodeType,
+    YamlOpenAiToolDeclaration, YamlOpenAiToolFunction, YamlResolvedTool,
+    YamlSimplifiedToolDeclaration, YamlSwitch, YamlSwitchBranch, YamlTemplateBinding,
+    YamlToIrError, YamlToolChoiceConfig, YamlToolDeclaration, YamlToolFormat, YamlWorkflow,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic, YamlWorkflowDiagnosticSeverity,
+    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
+    YamlWorkflowTokenKind,
+};
 use globals::{apply_set_globals, apply_update_globals};
 use llm_tools::{
     default_llm_output_schema, llm_output_schema_for_node, normalize_llm_tools,
@@ -72,7 +85,17 @@ use llm_tools::{
 };
 pub use typed_contracts::{
     YamlWorkflowEventType, YamlWorkflowNodeKind, YamlWorkflowNodeOutputRecord,
-    YamlWorkflowRunTypedOutput, YamlWorkflowTypedEvent,
+    YamlWorkflowRunTypedOutput, YamlWorkflowTypedEvent, YamlWorkflowTypedEventSink,
+    YamlWorkflowTypedEventSinkAdapter,
+};
+use types::{
+    completion_tokens_per_second, resolve_requested_model, validate_sample_rate, YamlTokenTotals,
+};
+pub use types::{
+    YamlLlmExecutionResult, YamlLlmNodeMetrics, YamlLlmTokenUsage, YamlStepTiming,
+    YamlToolCallTrace, YamlToolTraceMode, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
+    YamlWorkflowRunOutput, YamlWorkflowTelemetryConfig, YamlWorkflowTraceContextInput,
+    YamlWorkflowTraceOptions, YamlWorkflowTraceTenantContext,
 };
 pub use validation::verify_yaml_workflow;
 
@@ -82,263 +105,6 @@ const MAX_WORKFLOW_YAML_BYTES: u64 = 1024 * 1024;
 const MAX_WORKFLOW_YAML_DEPTH: usize = 64;
 
 static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlStepTiming {
-    pub node_id: String,
-    pub node_kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub model_name: Option<String>,
-    pub elapsed_ms: u128,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub prompt_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub tokens_per_second: Option<f64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlLlmNodeMetrics {
-    pub elapsed_ms: u128,
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reasoning_tokens: Option<u32>,
-    pub tokens_per_second: f64,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlWorkflowRunOutput {
-    pub workflow_id: String,
-    pub entry_node: String,
-    pub email_text: String,
-    pub trace: Vec<String>,
-    pub outputs: BTreeMap<String, Value>,
-    pub terminal_node: String,
-    pub terminal_output: Option<Value>,
-    pub step_timings: Vec<YamlStepTiming>,
-    pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
-    pub llm_node_models: BTreeMap<String, String>,
-    pub total_elapsed_ms: u128,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttft_ms: Option<u128>,
-    pub total_input_tokens: u64,
-    pub total_output_tokens: u64,
-    pub total_tokens: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub total_reasoning_tokens: Option<u64>,
-    pub tokens_per_second: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trace_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<Value>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum YamlWorkflowPayloadMode {
-    #[default]
-    FullPayload,
-    RedactedPayload,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum YamlToolTraceMode {
-    #[default]
-    Full,
-    Redacted,
-    Off,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct YamlWorkflowTraceContextInput {
-    #[serde(default)]
-    pub trace_id: Option<String>,
-    #[serde(default)]
-    pub span_id: Option<String>,
-    #[serde(default)]
-    pub parent_span_id: Option<String>,
-    #[serde(default)]
-    pub traceparent: Option<String>,
-    #[serde(default)]
-    pub tracestate: Option<String>,
-    #[serde(default)]
-    pub baggage: BTreeMap<String, String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct YamlWorkflowTraceTenantContext {
-    #[serde(default)]
-    pub workspace_id: Option<String>,
-    #[serde(default)]
-    pub user_id: Option<String>,
-    #[serde(default)]
-    pub conversation_id: Option<String>,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    #[serde(default)]
-    pub run_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct YamlWorkflowTelemetryConfig {
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default = "default_true")]
-    pub nerdstats: bool,
-    #[serde(default = "default_sample_rate")]
-    pub sample_rate: f32,
-    #[serde(default)]
-    pub payload_mode: YamlWorkflowPayloadMode,
-    #[serde(default = "default_retention_days")]
-    pub retention_days: u32,
-    #[serde(default = "default_true")]
-    pub multi_tenant: bool,
-    #[serde(default)]
-    pub tool_trace_mode: YamlToolTraceMode,
-}
-
-impl Default for YamlWorkflowTelemetryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            nerdstats: true,
-            sample_rate: 1.0,
-            payload_mode: YamlWorkflowPayloadMode::FullPayload,
-            retention_days: 30,
-            multi_tenant: true,
-            tool_trace_mode: YamlToolTraceMode::Full,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct YamlWorkflowTraceOptions {
-    #[serde(default)]
-    pub context: Option<YamlWorkflowTraceContextInput>,
-    #[serde(default)]
-    pub tenant: YamlWorkflowTraceTenantContext,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
-pub struct YamlWorkflowRunOptions {
-    #[serde(default)]
-    pub telemetry: YamlWorkflowTelemetryConfig,
-    #[serde(default)]
-    pub trace: YamlWorkflowTraceOptions,
-    #[serde(default)]
-    pub model: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct YamlLlmTokenUsage {
-    pub prompt_tokens: u32,
-    pub completion_tokens: u32,
-    pub total_tokens: u32,
-    pub reasoning_tokens: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlLlmExecutionResult {
-    pub payload: Value,
-    pub usage: Option<YamlLlmTokenUsage>,
-    pub ttft_ms: Option<u128>,
-    pub tool_calls: Vec<YamlToolCallTrace>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlToolCallTrace {
-    pub id: String,
-    pub name: String,
-    pub arguments: Value,
-    pub output: Option<Value>,
-    pub status: String,
-    pub elapsed_ms: u128,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct YamlTokenTotals {
-    input_tokens: u64,
-    output_tokens: u64,
-    total_tokens: u64,
-    reasoning_tokens: Option<u64>,
-}
-
-impl YamlTokenTotals {
-    fn add_usage(&mut self, usage: &YamlLlmTokenUsage) {
-        self.input_tokens += u64::from(usage.prompt_tokens);
-        self.output_tokens += u64::from(usage.completion_tokens);
-        self.total_tokens += u64::from(usage.total_tokens);
-
-        if let Some(reasoning_tokens) = usage.reasoning_tokens {
-            let next = self.reasoning_tokens.unwrap_or(0) + u64::from(reasoning_tokens);
-            self.reasoning_tokens = Some(next);
-        }
-    }
-
-    fn tokens_per_second(&self, elapsed_ms: u128) -> f64 {
-        if elapsed_ms == 0 {
-            return 0.0;
-        }
-        round_two_decimals((self.output_tokens as f64) * 1000.0 / (elapsed_ms as f64))
-    }
-}
-
-fn round_two_decimals(value: f64) -> f64 {
-    (value * 100.0).round() / 100.0
-}
-
-fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64 {
-    if elapsed_ms == 0 {
-        return 0.0;
-    }
-    round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
-}
-
-fn resolve_requested_model(run_model_override: Option<&str>, node_model: &str) -> String {
-    run_model_override
-        .and_then(|model| {
-            let trimmed = model.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
-        })
-        .unwrap_or_else(|| node_model.to_string())
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_sample_rate() -> f32 {
-    1.0
-}
-
-fn default_retention_days() -> u32 {
-    30
-}
-
-fn validate_sample_rate(sample_rate: f32) -> Result<(), YamlWorkflowRunError> {
-    if sample_rate.is_finite() && (0.0..=1.0).contains(&sample_rate) {
-        return Ok(());
-    }
-
-    Err(YamlWorkflowRunError::InvalidInput {
-        message: format!(
-            "telemetry.sample_rate must be between 0.0 and 1.0 inclusive; received {sample_rate}"
-        ),
-    })
-}
 
 fn should_sample_trace(trace_id: &str, sample_rate: f32) -> bool {
     if sample_rate >= 1.0 {
@@ -955,13 +721,6 @@ fn render_json_object_as_text(raw_json: &str) -> String {
     lines.join("\n")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum YamlWorkflowTokenKind {
-    Output,
-    Thinking,
-}
-
 #[derive(Debug, Default)]
 struct StructuredJsonDeltaFilter {
     started: bool,
@@ -1158,136 +917,6 @@ fn parse_streamed_structured_payload(
         payload: healed.value,
         heal_confidence: Some(healed.confidence),
     })
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlWorkflowEvent {
-    pub event_type: String,
-    pub node_id: Option<String>,
-    pub step_id: Option<String>,
-    pub node_kind: Option<String>,
-    pub streamable: Option<bool>,
-    pub message: Option<String>,
-    pub delta: Option<String>,
-    pub token_kind: Option<YamlWorkflowTokenKind>,
-    pub is_terminal_node_token: Option<bool>,
-    pub elapsed_ms: Option<u128>,
-    pub metadata: Option<Value>,
-}
-
-pub type WorkflowMessageRole = Role;
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkflowMessage {
-    pub role: WorkflowMessageRole,
-    pub content: String,
-    #[serde(default)]
-    pub name: Option<String>,
-    #[serde(default, alias = "toolCallId")]
-    pub tool_call_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize)]
-pub struct YamlTemplateBinding {
-    pub index: usize,
-    pub expression: String,
-    pub source_path: String,
-    pub resolved: Value,
-    pub resolved_type: String,
-    pub missing: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub enum YamlWorkflowDiagnosticSeverity {
-    Error,
-    Warning,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct YamlWorkflowDiagnostic {
-    pub node_id: Option<String>,
-    pub code: String,
-    pub severity: YamlWorkflowDiagnosticSeverity,
-    pub message: String,
-}
-
-#[derive(Debug, Error)]
-pub enum YamlWorkflowRunError {
-    #[error("failed to read workflow yaml '{path}': {source}")]
-    Read {
-        path: String,
-        source: std::io::Error,
-    },
-    #[error("failed to parse workflow yaml '{path}': {source}")]
-    Parse {
-        path: String,
-        source: serde_yaml::Error,
-    },
-    #[error("rejected workflow yaml '{path}': {reason}")]
-    FileRejected { path: String, reason: String },
-    #[error("workflow '{workflow_id}' has no nodes")]
-    EmptyNodes { workflow_id: String },
-    #[error("entry node '{entry_node}' does not exist")]
-    MissingEntry { entry_node: String },
-    #[error("unknown node id '{node_id}'")]
-    MissingNode { node_id: String },
-    #[error("unsupported node type in '{node_id}'")]
-    UnsupportedNodeType { node_id: String },
-    #[error("unsupported switch condition format: {condition}")]
-    UnsupportedCondition { condition: String },
-    #[error("switch node '{node_id}' has no valid next target")]
-    InvalidSwitchTarget { node_id: String },
-    #[error("llm returned non-object payload for node '{node_id}'")]
-    LlmPayloadNotObject { node_id: String },
-    #[error("custom worker handler '{handler}' is not supported")]
-    UnsupportedCustomHandler { handler: String },
-    #[error("llm execution failed for node '{node_id}': {message}")]
-    Llm { node_id: String, message: String },
-    #[error("custom worker execution failed for node '{node_id}': {message}")]
-    CustomWorker { node_id: String, message: String },
-    #[error("workflow validation failed with {diagnostics_count} error(s)")]
-    Validation {
-        diagnostics_count: usize,
-        diagnostics: Vec<YamlWorkflowDiagnostic>,
-    },
-    #[error("invalid workflow input: {message}")]
-    InvalidInput { message: String },
-    #[error("ir runtime execution failed: {message}")]
-    IrRuntime { message: String },
-    #[error("workflow event stream cancelled: {message}")]
-    EventSinkCancelled { message: String },
-}
-
-pub trait YamlWorkflowEventSink: Send + Sync {
-    fn emit(&self, event: &YamlWorkflowEvent);
-
-    fn is_cancelled(&self) -> bool {
-        false
-    }
-}
-
-pub struct NoopYamlWorkflowEventSink;
-
-impl YamlWorkflowEventSink for NoopYamlWorkflowEventSink {
-    fn emit(&self, _event: &YamlWorkflowEvent) {}
-}
-
-fn workflow_event_sink_cancelled_message() -> &'static str {
-    "workflow event callback cancelled"
-}
-
-fn event_sink_is_cancelled(event_sink: Option<&dyn YamlWorkflowEventSink>) -> bool {
-    event_sink.map(|sink| sink.is_cancelled()).unwrap_or(false)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
-pub enum YamlToIrError {
-    #[error("entry node '{entry_node}' does not exist")]
-    MissingEntry { entry_node: String },
-    #[error("node '{node_id}' has multiple outgoing edges in YAML; IR llm/tool nodes require one")]
-    MultipleOutgoingEdge { node_id: String },
-    #[error("node '{node_id}' is unsupported for IR conversion: {reason}")]
-    UnsupportedNode { node_id: String, reason: String },
 }
 
 /// Render a YAML workflow graph as Mermaid flowchart.
@@ -2110,63 +1739,6 @@ fn escape_mermaid_label(label: &str) -> String {
     label.replace('"', "\\\"")
 }
 
-#[derive(Debug, Clone)]
-pub struct YamlLlmExecutionRequest {
-    pub node_id: String,
-    pub is_terminal_node: bool,
-    pub stream_json_as_text: bool,
-    pub model: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-    pub messages: Option<Vec<Message>>,
-    pub append_prompt_as_user: bool,
-    pub prompt: String,
-    pub prompt_template: String,
-    pub prompt_bindings: Vec<YamlTemplateBinding>,
-    pub schema: Value,
-    pub stream: bool,
-    pub heal: bool,
-    pub tools: Vec<YamlResolvedTool>,
-    pub tool_choice: Option<ToolChoice>,
-    pub max_tool_roundtrips: u8,
-    pub tool_calls_global_key: Option<String>,
-    pub tool_trace_mode: YamlToolTraceMode,
-    pub execution_context: Value,
-    pub email_text: String,
-    pub trace_id: Option<String>,
-    pub trace_context: Option<TraceContext>,
-    pub tenant_context: YamlWorkflowTraceTenantContext,
-    pub trace_sampled: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct YamlResolvedTool {
-    pub definition: ToolDefinition,
-    pub output_schema: Option<Value>,
-}
-
-#[async_trait]
-pub trait YamlWorkflowLlmExecutor: Send + Sync {
-    async fn complete_structured(
-        &self,
-        request: YamlLlmExecutionRequest,
-        event_sink: Option<&dyn YamlWorkflowEventSink>,
-    ) -> Result<YamlLlmExecutionResult, String>;
-}
-
-#[async_trait]
-pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
-    async fn execute(
-        &self,
-        handler: &str,
-        handler_file: Option<&str>,
-        payload: &Value,
-        email_text: &str,
-        context: &Value,
-    ) -> Result<Value, String>;
-}
-
 pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -2191,6 +1763,26 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     .await
 }
 
+pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options_typed(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    client: &SimpleAgentsClient,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        client,
+        custom_worker,
+        event_sink,
+        options,
+    )
+    .await
+    .map(|output| output.to_typed_output(workflow))
+}
+
 pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -2208,6 +1800,26 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         options,
     )
     .await
+}
+
+pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options_typed(
+    workflow: &YamlWorkflow,
+    workflow_input: &Value,
+    executor: &dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+    options: &YamlWorkflowRunOptions,
+) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+        options,
+    )
+    .await
+    .map(|output| output.to_typed_output(workflow))
 }
 
 async fn try_run_yaml_via_ir_runtime(
@@ -2797,161 +2409,10 @@ fn build_subworkflow_options(
     subworkflow_options
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlWorkflow {
-    pub id: String,
-    pub entry_node: String,
-    #[serde(default)]
-    pub nodes: Vec<YamlNode>,
-    #[serde(default)]
-    pub edges: Vec<YamlEdge>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlNode {
-    pub id: String,
-    pub node_type: YamlNodeType,
-    pub config: Option<YamlNodeConfig>,
-}
-
-impl YamlNode {
-    fn kind_name(&self) -> &'static str {
-        if self.node_type.llm_call.is_some() {
-            "llm_call"
-        } else if self.node_type.switch.is_some() {
-            "switch"
-        } else if self.node_type.custom_worker.is_some() {
-            "custom_worker"
-        } else if self.node_type.end.is_some() {
-            "end"
-        } else {
-            "unknown"
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YamlNodeType {
-    pub llm_call: Option<YamlLlmCall>,
-    pub switch: Option<YamlSwitch>,
-    pub custom_worker: Option<YamlCustomWorker>,
-    pub end: Option<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YamlLlmCall {
-    pub model: String,
-    pub max_tokens: Option<u32>,
-    pub temperature: Option<f32>,
-    pub top_p: Option<f32>,
-    pub stream: Option<bool>,
-    pub stream_json_as_text: Option<bool>,
-    pub heal: Option<bool>,
-    pub messages_path: Option<String>,
-    pub append_prompt_as_user: Option<bool>,
-    #[serde(default)]
-    pub tools_format: YamlToolFormat,
-    #[serde(default)]
-    pub tools: Vec<YamlToolDeclaration>,
-    pub tool_choice: Option<YamlToolChoiceConfig>,
-    pub max_tool_roundtrips: Option<u8>,
-    pub tool_calls_global_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum YamlToolFormat {
-    #[default]
-    Openai,
-    Simplified,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum YamlToolDeclaration {
-    OpenAi(YamlOpenAiToolDeclaration),
-    Simplified(YamlSimplifiedToolDeclaration),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlOpenAiToolDeclaration {
-    #[serde(rename = "type")]
-    pub tool_type: Option<ToolType>,
-    pub function: YamlOpenAiToolFunction,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlOpenAiToolFunction {
-    pub name: String,
-    pub description: Option<String>,
-    pub parameters: Option<Value>,
-    pub output_schema: Option<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlSimplifiedToolDeclaration {
-    pub name: String,
-    pub description: Option<String>,
-    pub input_schema: Value,
-    pub output_schema: Option<Value>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum YamlToolChoiceConfig {
-    Mode(ToolChoiceMode),
-    Function { function: String },
-    OpenAi(ToolChoiceTool),
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlSwitch {
-    #[serde(default)]
-    pub branches: Vec<YamlSwitchBranch>,
-    pub default: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlSwitchBranch {
-    pub condition: String,
-    pub target: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct YamlCustomWorker {
-    pub handler: String,
-    pub handler_file: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlNodeConfig {
-    pub prompt: Option<String>,
-    #[serde(default, alias = "schema")]
-    pub output_schema: Option<Value>,
-    pub payload: Option<Value>,
-    pub set_globals: Option<HashMap<String, String>>,
-    pub update_globals: Option<HashMap<String, YamlGlobalUpdate>>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlGlobalUpdate {
-    pub op: String,
-    pub from: Option<String>,
-    pub by: Option<f64>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct YamlEdge {
-    pub from: String,
-    pub to: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use simple_agent_type::message::{Message, Role};
     use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
     use simple_agent_type::response::{CompletionChoice, CompletionResponse, Usage};
     use simple_agent_type::tool::{ToolCallFunction, ToolType};
@@ -2971,6 +2432,10 @@ mod tests {
 
     struct RecordingSink {
         events: Mutex<Vec<YamlWorkflowEvent>>,
+    }
+
+    struct RecordingTypedSink {
+        events: Mutex<Vec<YamlWorkflowTypedEvent>>,
     }
 
     struct CancelAfterFirstEventSink {
@@ -3337,6 +2802,15 @@ mod tests {
             self.events
                 .lock()
                 .expect("recording sink lock should not be poisoned")
+                .push(event.clone());
+        }
+    }
+
+    impl YamlWorkflowTypedEventSink for RecordingTypedSink {
+        fn emit_typed(&self, event: &YamlWorkflowTypedEvent) {
+            self.events
+                .lock()
+                .expect("recording typed sink lock should not be poisoned")
                 .push(event.clone());
         }
     }
@@ -6122,5 +5596,46 @@ nodes:
         let typed = event.to_typed_event();
         assert_eq!(typed.event_type, YamlWorkflowEventType::Unknown);
         assert_eq!(typed.raw_event_type, "custom_event_not_recognized");
+    }
+
+    #[tokio::test]
+    async fn workflow_runner_can_emit_typed_events() {
+        let workflow_yaml = r#"
+id: typed-events
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+        let workflow: YamlWorkflow =
+            serde_yaml::from_str(workflow_yaml).expect("workflow should parse");
+        let workflow_input = json!({ "email_text": "hello" });
+        let typed_sink = RecordingTypedSink {
+            events: Mutex::new(Vec::new()),
+        };
+
+        let output = WorkflowRunner::from_workflow(&workflow)
+            .with_input(&workflow_input)
+            .with_executor(&MockExecutor)
+            .with_typed_event_sink(Some(&typed_sink))
+            .run_typed()
+            .await
+            .expect("typed run should succeed");
+
+        assert_eq!(output.workflow_id, "typed-events");
+        let events = typed_sink
+            .events
+            .lock()
+            .expect("typed sink lock should not be poisoned");
+        assert!(!events.is_empty());
+        assert!(events
+            .iter()
+            .any(|event| event.event_type == YamlWorkflowEventType::WorkflowCompleted));
     }
 }
