@@ -343,6 +343,8 @@ pub struct YamlNodeType {
 #[serde(deny_unknown_fields)]
 pub struct YamlNode {
     pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
     pub node_type: YamlNodeType,
     pub config: Option<YamlNodeConfig>,
 }
@@ -376,6 +378,8 @@ pub struct YamlWorkflow {
     pub id: String,
     #[serde(default)]
     pub version: Option<String>,
+    #[serde(default)]
+    pub metadata: Option<HashMap<String, Value>>,
     pub entry_node: String,
     #[serde(default)]
     pub nodes: Vec<YamlNode>,

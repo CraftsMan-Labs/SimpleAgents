@@ -5384,6 +5384,52 @@ nodes:
         assert!(message.contains("unknown field"));
     }
 
+    #[test]
+    fn yaml_workflow_accepts_top_level_metadata_block() {
+        let yaml = r#"
+id: wf
+version: 1.0.0
+metadata:
+  name: Example Workflow
+  tags:
+    - example
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+    config:
+      prompt: hi
+"#;
+
+        let workflow = serde_yaml::from_str::<YamlWorkflow>(yaml)
+            .expect("top-level metadata block should parse");
+        assert_eq!(workflow.id, "wf");
+        assert!(workflow.metadata.is_some());
+    }
+
+    #[test]
+    fn yaml_node_accepts_name_field() {
+        let yaml = r#"
+id: wf
+entry_node: classify
+nodes:
+  - id: classify
+    name: Classify Input
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+    config:
+      prompt: hi
+"#;
+
+        let workflow =
+            serde_yaml::from_str::<YamlWorkflow>(yaml).expect("node name field should parse");
+        assert_eq!(workflow.nodes.len(), 1);
+        assert_eq!(workflow.nodes[0].name.as_deref(), Some("Classify Input"));
+    }
+
     #[tokio::test]
     async fn custom_worker_handler_file_requires_executor() {
         let yaml = r#"
