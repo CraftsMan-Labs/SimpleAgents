@@ -18,7 +18,9 @@ def load_example_env(*, caller_file: str) -> None:
 def load_provider_config(*, caller_file: str) -> tuple[str, str, str]:
     load_example_env(caller_file=caller_file)
 
-    provider = os.getenv("WORKFLOW_PROVIDER", "openai")
+    provider = os.getenv("WORKFLOW_PROVIDER", "openai").strip()
+    if provider == "":
+        raise RuntimeError("WORKFLOW_PROVIDER must be a non-empty provider name.")
     provider_env = provider.strip().upper()
 
     api_base = (
@@ -32,9 +34,16 @@ def load_provider_config(*, caller_file: str) -> tuple[str, str, str]:
         or os.getenv(f"{provider_env}_API_KEY")
     )
 
-    if not api_base or not api_key:
+    if api_base is None or api_key is None:
         raise RuntimeError(
             "Set WORKFLOW_API_BASE and WORKFLOW_API_KEY (or CUSTOM_API_*, or provider-specific <PROVIDER>_API_* env vars)."
+        )
+
+    api_base = api_base.strip()
+    api_key = api_key.strip()
+    if api_base == "" or api_key == "":
+        raise RuntimeError(
+            "WORKFLOW_API_BASE and WORKFLOW_API_KEY must be non-empty values."
         )
     return provider, api_base, api_key
 

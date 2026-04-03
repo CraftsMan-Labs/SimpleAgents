@@ -25,7 +25,7 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
         handler: &str,
         handler_file: Option<&str>,
         payload: &Value,
-        _email_text: &str,
+        input_text: &str,
         context: &Value,
     ) -> std::result::Result<Value, String> {
         Python::with_gil(|py| {
@@ -73,20 +73,20 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
                 .map_err(|error| error.to_string())?;
 
             let function = module.getattr(handler).map_err(|error| error.to_string())?;
-            let topic = payload
+            let Some(topic) = payload
                 .get("topic")
                 .and_then(Value::as_str)
-                .unwrap_or("clarification");
+                .filter(|value| !value.trim().is_empty())
+            else {
+                return Err("custom worker payload.topic must be a non-empty string".to_string());
+            };
             let kwargs = pyo3::types::PyDict::new_bound(py);
             let context_obj =
                 pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
             let payload_obj =
                 pythonize::pythonize(py, payload).map_err(|error| error.to_string())?;
             kwargs
-                .set_item(
-                    "email_text",
-                    context["input"]["email_text"].as_str().unwrap_or_default(),
-                )
+                .set_item("email_text", input_text)
                 .map_err(|error| error.to_string())?;
             kwargs
                 .set_item("context", context_obj)
@@ -155,10 +155,15 @@ pub(crate) fn attach_workflow_events(
     event_sink: &RecordingWorkflowEventSink,
 ) -> PyResult<()> {
     let events_value = event_sink.events_value()?;
-    if let Value::Object(object) = value {
-        object.insert("events".to_string(), events_value);
+    match value {
+        Value::Object(object) => {
+            object.insert("events".to_string(), events_value);
+            Ok(())
+        }
+        _ => Err(PyRuntimeError::new_err(
+            "workflow output must be an object when include_events=true".to_string(),
+        )),
     }
-    Ok(())
 }
 
 pub(crate) fn parse_workflow_run_options(

@@ -7,6 +7,46 @@ use simple_agent_type::prelude::SimpleAgentsError;
 use simple_agents_healing::schema::{Field, ObjectSchema, StreamAnnotation};
 use simple_agents_healing::Schema;
 
+fn unsigned_integer_hint(map: &serde_json::Map<String, Value>) -> bool {
+    let minimum_is_non_negative = map
+        .get("minimum")
+        .and_then(Value::as_f64)
+        .map(|minimum| minimum >= 0.0)
+        .unwrap_or(false);
+    let format_is_unsigned = map
+        .get("format")
+        .and_then(Value::as_str)
+        .map(|format| matches!(format, "uint" | "uint32" | "uint64"))
+        .unwrap_or(false);
+
+    minimum_is_non_negative || format_is_unsigned
+}
+
+fn parse_union_schemas(
+    map: &serde_json::Map<String, Value>,
+    key: &str,
+) -> std::result::Result<Option<Schema>, SimpleAgentsError> {
+    let Some(raw_union) = map.get(key) else {
+        return Ok(None);
+    };
+    let Value::Array(entries) = raw_union else {
+        return Err(SimpleAgentsError::Config(format!(
+            "JSON schema keyword '{key}' must be an array"
+        )));
+    };
+    if entries.is_empty() {
+        return Err(SimpleAgentsError::Config(format!(
+            "JSON schema keyword '{key}' cannot be an empty array"
+        )));
+    }
+
+    let mut variants = Vec::with_capacity(entries.len());
+    for entry in entries {
+        variants.push(schema_from_json_schema_value(entry)?);
+    }
+    Ok(Some(Schema::Union(variants)))
+}
+
 pub(crate) fn parse_schema_from_py(
     field_type: &Bound<'_, PyAny>,
     items: Option<&Bound<'_, PyAny>>,
@@ -90,6 +130,16 @@ pub(crate) fn schema_from_json_schema_value(
             ))),
         },
         serde_json::Value::Object(map) => {
+            if let Some(union) = parse_union_schemas(map, "oneOf")? {
+                return Ok(union);
+            }
+            if let Some(union) = parse_union_schemas(map, "anyOf")? {
+                return Ok(union);
+            }
+            if let Some(union) = parse_union_schemas(map, "allOf")? {
+                return Ok(union);
+            }
+
             if let Some(serde_json::Value::String(type_name)) = map.get("type") {
                 match type_name.as_str() {
                     "object" => {
@@ -120,9 +170,13 @@ pub(crate) fn schema_from_json_schema_value(
                                 });
                             }
                         }
+                        let allow_additional_fields = map
+                            .get("additionalProperties")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(true);
                         Ok(Schema::Object(ObjectSchema {
                             fields,
-                            allow_additional_fields: true,
+                            allow_additional_fields,
                         }))
                     }
                     "array" => {
@@ -136,18 +190,47 @@ pub(crate) fn schema_from_json_schema_value(
                     }
                     "string" => Ok(Schema::String),
                     "number" => Ok(Schema::Float),
-                    "integer" => Ok(Schema::Int),
+                    "integer" => {
+                        if unsigned_integer_hint(map) {
+                            Ok(Schema::UInt)
+                        } else {
+                            Ok(Schema::Int)
+                        }
+                    }
                     "boolean" => Ok(Schema::Bool),
                     "null" => Ok(Schema::Null),
                     _ => Err(SimpleAgentsError::Config(format!(
                         "unsupported JSON schema object type '{type_name}'"
                     ))),
                 }
+            } else if let Some(serde_json::Value::Array(type_names)) = map.get("type") {
+                let mut variants = Vec::with_capacity(type_names.len());
+                for type_name in type_names {
+                    let serde_json::Value::String(type_name) = type_name else {
+                        return Err(SimpleAgentsError::Config(
+                            "JSON schema type array must contain only strings".to_string(),
+                        ));
+                    };
+                    variants.push(schema_from_json_schema_value(&Value::String(
+                        type_name.clone(),
+                    ))?);
+                }
+                if variants.is_empty() {
+                    return Err(SimpleAgentsError::Config(
+                        "JSON schema type array cannot be empty".to_string(),
+                    ));
+                }
+                Ok(Schema::Union(variants))
             } else {
-                Ok(Schema::Any)
+                Err(SimpleAgentsError::Config(
+                    "unsupported JSON schema object: expected 'type', 'oneOf', 'anyOf', or 'allOf'"
+                        .to_string(),
+                ))
             }
         }
-        _ => Ok(Schema::Any),
+        _ => Err(SimpleAgentsError::Config(
+            "unsupported JSON schema value: expected object or type string".to_string(),
+        )),
     }
 }
 
@@ -169,29 +252,8 @@ pub(crate) fn schema_from_python_input(schema: &Bound<'_, PyAny>) -> PyResult<Sc
     };
 
     match schema_value {
-        serde_json::Value::Object(map) => {
-            let mut fields = Vec::new();
-            if let Some(serde_json::Value::Object(props_obj)) = map.get("properties") {
-                let required_fields = map.get("required").and_then(|r| {
-                    if let serde_json::Value::Array(arr) = r {
-                        Some(arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                    } else {
-                        None
-                    }
-                });
-
-                for (key, val) in props_obj {
-                    let is_required = required_fields
-                        .as_ref()
-                        .map(|req| req.contains(&key.as_str()))
-                        .unwrap_or(false);
-                    let schema = schema_from_json_schema_value(val)
-                        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-                    fields.push((key.clone(), schema, is_required));
-                }
-            }
-            Ok(Schema::object(fields))
-        }
+        serde_json::Value::Object(_) => schema_from_json_schema_value(&schema_value)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string())),
         serde_json::Value::Array(arr) if !arr.is_empty() => {
             let schema = schema_from_json_schema_value(&arr[0])
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
