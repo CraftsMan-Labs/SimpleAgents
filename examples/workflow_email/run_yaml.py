@@ -6,12 +6,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
 from simple_agents_py import Client, ResponseWithMetadata
 
 from common import resolve_workflow_path
 from handlers import get_rag_data
 from python_email_workflow_demo import load_llm_settings
+from runner_utils import load_example_env, render_json
 
 try:
     import yaml
@@ -404,12 +404,12 @@ def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
 
 
 def main() -> None:
-    load_dotenv()
+    load_example_env(caller_file=__file__)
     args = parse_args()
     workflow_path = resolve_workflow_path(args.workflow, caller_file=__file__)
     workflow = load_workflow(workflow_path)
     result = run_workflow(workflow, args.email)
-    print(json.dumps(result, indent=2))
+    print(render_json(result))
 
 
 if __name__ == "__main__":

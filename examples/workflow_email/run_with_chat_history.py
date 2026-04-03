@@ -8,10 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypedDict, cast
 
-from dotenv import load_dotenv
 from simple_agents_py import Client
 
 from common import resolve_workflow_path
+from runner_utils import (
+    create_chat_trace_file,
+    default_workflow_registry,
+    load_provider_config,
+    load_workflow_node_names,
+    render_json,
+    render_terminal_output,
+    step_display_name,
+)
 
 
 class WorkflowStepDetails(TypedDict, total=False):
@@ -171,33 +179,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config() -> tuple[str, str, str]:
-    load_dotenv(Path(__file__).resolve().parents[1] / ".env")
-    load_dotenv()
-
-    provider = os.getenv("WORKFLOW_PROVIDER", "openai")
-    api_base = os.getenv("WORKFLOW_API_BASE") or os.getenv("CUSTOM_API_BASE")
-    api_key = os.getenv("WORKFLOW_API_KEY") or os.getenv("CUSTOM_API_KEY")
-
-    if not api_base or not api_key:
-        raise RuntimeError(
-            "Set WORKFLOW_API_BASE and WORKFLOW_API_KEY (or CUSTOM_API_BASE/CUSTOM_API_KEY)."
-        )
-    return provider, api_base, api_key
-
-
-def default_workflow_registry(workflow_path: Path) -> dict[str, str]:
-    candidates = {
-        "hr_warning_email_subgraph": workflow_path.parent
-        / "hr-warning-email-subgraph.yaml",
-    }
-    registry: dict[str, str] = {}
-    for workflow_id, path in candidates.items():
-        if path.exists():
-            registry[workflow_id] = str(path.resolve())
-    return registry
-
-
 def initial_messages() -> list[dict[str, str]]:
     return [
         {
@@ -212,52 +193,8 @@ def initial_messages() -> list[dict[str, str]]:
     ]
 
 
-def load_workflow_node_names(workflow_path: Path) -> dict[str, str]:
-    try:
-        import yaml  # type: ignore
-    except Exception:
-        return {}
-
-    try:
-        raw = workflow_path.read_text(encoding="utf-8")
-        parsed = yaml.safe_load(raw)
-    except Exception:
-        return {}
-
-    if not isinstance(parsed, dict):
-        return {}
-
-    nodes = parsed.get("nodes")
-    if not isinstance(nodes, list):
-        return {}
-
-    names: dict[str, str] = {}
-    for node in nodes:
-        if not isinstance(node, dict):
-            continue
-        node_id = node.get("id")
-        node_name = node.get("name")
-        if isinstance(node_id, str):
-            if isinstance(node_name, str) and node_name.strip():
-                names[node_id] = node_name.strip()
-            else:
-                names[node_id] = node_id.replace("_", " ").title()
-    return names
-
-
-def step_display_name(node_id: str | None, node_names: dict[str, str]) -> str:
-    if node_id is None:
-        return "Workflow"
-    return node_names.get(node_id, node_id.replace("_", " ").title())
-
-
 def render_assistant_reply(result: WorkflowRunResult) -> str:
-    terminal_output = result.get("terminal_output")
-    if terminal_output is None:
-        return ""
-    if isinstance(terminal_output, str):
-        return terminal_output
-    return json.dumps(terminal_output, indent=2, ensure_ascii=True)
+    return render_terminal_output(result.get("terminal_output"))
 
 
 def _print_stream_event(
@@ -346,14 +283,14 @@ def _print_step_json_summary(
             continue
         print(f"\nStep: {step_display_name(node, node_names)}")
         print("JSON")
-        print(json.dumps(payload, indent=2, ensure_ascii=True))
+        print(render_json(payload))
 
     terminal_node = result.get("terminal_node")
     terminal_output = result.get("terminal_output")
     if isinstance(terminal_node, str) and terminal_output is not None:
         print(f"\nTerminal Step: {step_display_name(terminal_node, node_names)}")
         print("JSON")
-        print(json.dumps(terminal_output, indent=2, ensure_ascii=True))
+        print(render_json(terminal_output))
 
 
 def _fallback_nerdstats(request: NerdstatsFallbackRequest) -> NerdstatsFallbackResponse:
@@ -507,18 +444,15 @@ def main() -> None:
     else:
         os.environ.pop("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", None)
 
-    provider, api_base, api_key = load_config()
+    provider, api_base, api_key = load_provider_config(caller_file=__file__)
     client = Client(provider, api_base=api_base, api_key=api_key)
 
     workflow_path = resolve_workflow_path(args.workflow, caller_file=__file__)
     workflow_registry = default_workflow_registry(workflow_path)
     node_names = load_workflow_node_names(workflow_path)
     messages = initial_messages()
-    trace_dir = Path(args.trace_dir)
-    trace_dir.mkdir(parents=True, exist_ok=True)
     conversation_id = args.conversation_id or str(uuid.uuid4())
-    session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    trace_file = trace_dir / f"chat-session-{session_id}-{conversation_id}.jsonl"
+    trace_file = create_chat_trace_file(args.trace_dir, conversation_id)
 
     print("Chat Email Assistant")
     print("Type your request. Type 'exit' to quit.\n")
