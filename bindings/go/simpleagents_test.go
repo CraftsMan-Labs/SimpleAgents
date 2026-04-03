@@ -219,6 +219,38 @@ func TestTypedWorkflowInputToMapRejectsEmptyAdditionalJSON(t *testing.T) {
 	}
 }
 
+func TestTypedWorkflowInputToMapRejectsMalformedAdditionalJSON(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"invalid": json.RawMessage(`{"bad":`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed additional JSON payload")
+	}
+}
+
+func TestTypedWorkflowInputToMapIncludesExplicitEmptyMessages(t *testing.T) {
+	actual, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Messages: []WorkflowInputMessage{},
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	messagesValue, ok := actual["messages"]
+	if !ok {
+		t.Fatal("expected messages key to be present")
+	}
+	messages, ok := messagesValue.([]WorkflowInputMessage)
+	if !ok {
+		t.Fatalf("expected messages slice, got %T", messagesValue)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("expected explicit empty messages slice, got len %d", len(messages))
+	}
+}
+
 func TestTypedWorkflowRunOptionsToMapWithTraceContext(t *testing.T) {
 	traceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	conversationID := "conv-123"

@@ -544,13 +544,16 @@ func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any,
 		if len(rawValue) == 0 {
 			return nil, fmt.Errorf("workflowInput additional field %q has empty JSON payload", key)
 		}
+		if !json.Valid(rawValue) {
+			return nil, fmt.Errorf("workflowInput additional field %q has invalid JSON payload", key)
+		}
 		decoded[key] = json.RawMessage(rawValue)
 	}
 
 	if workflowInput.EmailText != nil {
 		decoded["email_text"] = *workflowInput.EmailText
 	}
-	if len(workflowInput.Messages) > 0 {
+	if workflowInput.Messages != nil {
 		decoded["messages"] = workflowInput.Messages
 	}
 
