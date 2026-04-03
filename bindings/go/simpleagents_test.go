@@ -230,6 +230,28 @@ func TestTypedWorkflowInputToMapRejectsMalformedAdditionalJSON(t *testing.T) {
 	}
 }
 
+func TestTypedWorkflowInputToMapRejectsReservedAdditionalEmailText(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"email_text": json.RawMessage(`"override"`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved additional email_text field")
+	}
+}
+
+func TestTypedWorkflowInputToMapRejectsReservedAdditionalMessages(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"messages": json.RawMessage(`[]`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved additional messages field")
+	}
+}
+
 func TestTypedWorkflowInputToMapIncludesExplicitEmptyMessages(t *testing.T) {
 	actual, err := typedWorkflowInputToMap(&TypedWorkflowInput{
 		Messages: []WorkflowInputMessage{},

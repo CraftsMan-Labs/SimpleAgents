@@ -139,7 +139,6 @@ import (
 	"errors"
 	"fmt"
 	"runtime/cgo"
-	"sort"
 	"sync"
 	"unsafe"
 )
@@ -429,27 +428,30 @@ type WorkflowYAMLOutput struct {
 }
 
 func (out WorkflowYAMLOutput) ToTypedOutput() WorkflowRunTypedOutput {
-	nodeOutputs := out.NodeOutputs
-	if len(nodeOutputs) == 0 {
-		nodeOutputs = make([]WorkflowNodeOutputRecord, 0, len(out.Outputs))
-		for nodeID, value := range out.Outputs {
-			nodeOutputs = append(nodeOutputs, WorkflowNodeOutputRecord{
-				NodeID:   nodeID,
-				NodeKind: WorkflowNodeKindUnknown,
-				Value:    value,
-			})
-		}
-		sort.Slice(nodeOutputs, func(i, j int) bool {
-			return nodeOutputs[i].NodeID < nodeOutputs[j].NodeID
-		})
-	}
+	nodeOutputs := make([]WorkflowNodeOutputRecord, len(out.NodeOutputs))
+	copy(nodeOutputs, out.NodeOutputs)
 
 	var terminalOutput *WorkflowNodeOutputRecord
 	if out.TerminalOutput != nil {
+		nodeKind := WorkflowNodeKindUnknown
+		for _, record := range nodeOutputs {
+			if record.NodeID == out.TerminalNode {
+				nodeKind = record.NodeKind
+				break
+			}
+		}
 		terminalOutput = &WorkflowNodeOutputRecord{
 			NodeID:   out.TerminalNode,
-			NodeKind: WorkflowNodeKindUnknown,
+			NodeKind: nodeKind,
 			Value:    out.TerminalOutput,
+		}
+	} else {
+		for i := range nodeOutputs {
+			if nodeOutputs[i].NodeID == out.TerminalNode {
+				record := nodeOutputs[i]
+				terminalOutput = &record
+				break
+			}
 		}
 	}
 
@@ -541,6 +543,9 @@ func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any,
 
 	decoded := make(map[string]any, len(workflowInput.Additional)+2)
 	for key, rawValue := range workflowInput.Additional {
+		if key == "email_text" || key == "messages" {
+			return nil, fmt.Errorf("workflowInput additional field %q is reserved; use typed fields instead", key)
+		}
 		if len(rawValue) == 0 {
 			return nil, fmt.Errorf("workflowInput additional field %q has empty JSON payload", key)
 		}
