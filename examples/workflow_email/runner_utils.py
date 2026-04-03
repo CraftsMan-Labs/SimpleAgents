@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
@@ -18,12 +19,22 @@ def load_provider_config(*, caller_file: str) -> tuple[str, str, str]:
     load_example_env(caller_file=caller_file)
 
     provider = os.getenv("WORKFLOW_PROVIDER", "openai")
-    api_base = os.getenv("WORKFLOW_API_BASE") or os.getenv("CUSTOM_API_BASE")
-    api_key = os.getenv("WORKFLOW_API_KEY") or os.getenv("CUSTOM_API_KEY")
+    provider_env = provider.strip().upper()
+
+    api_base = (
+        os.getenv("WORKFLOW_API_BASE")
+        or os.getenv("CUSTOM_API_BASE")
+        or os.getenv(f"{provider_env}_API_BASE")
+    )
+    api_key = (
+        os.getenv("WORKFLOW_API_KEY")
+        or os.getenv("CUSTOM_API_KEY")
+        or os.getenv(f"{provider_env}_API_KEY")
+    )
 
     if not api_base or not api_key:
         raise RuntimeError(
-            "Set WORKFLOW_API_BASE and WORKFLOW_API_KEY (or CUSTOM_API_BASE/CUSTOM_API_KEY)."
+            "Set WORKFLOW_API_BASE and WORKFLOW_API_KEY (or CUSTOM_API_*, or provider-specific <PROVIDER>_API_* env vars)."
         )
     return provider, api_base, api_key
 
@@ -95,4 +106,7 @@ def create_chat_trace_file(trace_dir: str | Path, conversation_id: str) -> Path:
     target_dir = Path(trace_dir)
     target_dir.mkdir(parents=True, exist_ok=True)
     session_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return target_dir / f"chat-session-{session_id}-{conversation_id}.jsonl"
+    safe_conversation_id = re.sub(r"[^A-Za-z0-9_.-]", "_", conversation_id).strip("._")
+    if not safe_conversation_id:
+        safe_conversation_id = "session"
+    return target_dir / f"chat-session-{session_id}-{safe_conversation_id}.jsonl"

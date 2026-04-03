@@ -423,7 +423,7 @@ impl Provider for OpenAIProvider {
                 // Log additional context for debugging
                 tracing::debug!(
                     status = %error_context.status,
-                    headers = ?error_context.headers_debug,
+                    headers = ?Self::redacted_headers(&error_context.headers_debug),
                     error_type = ?openai_error,
                     "OpenAI API error details"
                 );
@@ -678,6 +678,29 @@ impl OpenAIProvider {
         serde_json::from_value::<OpenAIUsage>(usage.clone())
             .ok()
             .and_then(|parsed| parsed.reasoning_tokens())
+    }
+
+    fn redacted_headers(headers: &[(String, String)]) -> Vec<(String, String)> {
+        headers
+            .iter()
+            .map(|(name, value)| {
+                let lower = name.to_ascii_lowercase();
+                let redacted = matches!(
+                    lower.as_str(),
+                    "authorization"
+                        | "proxy-authorization"
+                        | "x-api-key"
+                        | "api-key"
+                        | "cookie"
+                        | "set-cookie"
+                );
+                if redacted {
+                    (name.clone(), "<redacted>".to_string())
+                } else {
+                    (name.clone(), value.clone())
+                }
+            })
+            .collect()
     }
 
     async fn execute_stream_impl(

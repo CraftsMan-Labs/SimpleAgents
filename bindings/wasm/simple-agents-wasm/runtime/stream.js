@@ -109,28 +109,32 @@ export async function* iterateSse(response) {
   const decoder = new TextDecoder();
   let buffer = "";
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-
-    buffer += normalizeSseChunk(decoder.decode(value, { stream: true }));
-    let delimiterIndex = buffer.indexOf("\n\n");
-    while (delimiterIndex !== -1) {
-      const block = buffer.slice(0, delimiterIndex).trim();
-      buffer = buffer.slice(delimiterIndex + 2);
-      if (block.length > 0) {
-        yield block;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        break;
       }
-      delimiterIndex = buffer.indexOf("\n\n");
+
+      buffer += normalizeSseChunk(decoder.decode(value, { stream: true }));
+      let delimiterIndex = buffer.indexOf("\n\n");
+      while (delimiterIndex !== -1) {
+        const block = buffer.slice(0, delimiterIndex).trim();
+        buffer = buffer.slice(delimiterIndex + 2);
+        if (block.length > 0) {
+          yield block;
+        }
+        delimiterIndex = buffer.indexOf("\n\n");
+      }
     }
-  }
 
-  buffer += normalizeSseChunk(decoder.decode());
+    buffer += normalizeSseChunk(decoder.decode());
 
-  const trailing = buffer.trim();
-  if (trailing.length > 0) {
-    yield trailing;
+    const trailing = buffer.trim();
+    if (trailing.length > 0) {
+      yield trailing;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
