@@ -161,6 +161,22 @@ type Message struct {
 	ToolCallID string
 }
 
+// WorkflowInputMessage is a typed workflow chat message payload.
+type WorkflowInputMessage struct {
+	Role       MessageRole `json:"role"`
+	Content    string      `json:"content"`
+	Name       string      `json:"name,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+}
+
+// TypedWorkflowInput is a typed workflow input envelope.
+// Additional keeps compatibility for arbitrary JSON fields used by existing workflows.
+type TypedWorkflowInput struct {
+	EmailText  *string                    `json:"email_text,omitempty"`
+	Messages   []WorkflowInputMessage     `json:"messages,omitempty"`
+	Additional map[string]json.RawMessage `json:"-"`
+}
+
 // CompleteOptions controls completion behavior for CompleteMessages.
 type CompleteOptions struct {
 	MaxTokens   *int32
@@ -518,6 +534,29 @@ func typedWorkflowRunOptionsToMap(options *TypedWorkflowRunOptions) (map[string]
 	return decoded, nil
 }
 
+func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any, error) {
+	if workflowInput == nil {
+		return nil, errors.New("workflowInput cannot be nil")
+	}
+
+	decoded := make(map[string]any, len(workflowInput.Additional)+2)
+	for key, rawValue := range workflowInput.Additional {
+		if len(rawValue) == 0 {
+			return nil, fmt.Errorf("workflowInput additional field %q has empty JSON payload", key)
+		}
+		decoded[key] = json.RawMessage(rawValue)
+	}
+
+	if workflowInput.EmailText != nil {
+		decoded["email_text"] = *workflowInput.EmailText
+	}
+	if len(workflowInput.Messages) > 0 {
+		decoded["messages"] = workflowInput.Messages
+	}
+
+	return decoded, nil
+}
+
 type streamBridge struct {
 	ctx context.Context
 	out chan StreamResult
@@ -674,6 +713,20 @@ func (c *Client) RunWorkflowYAML(
 	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, nil)
 }
 
+// RunWorkflowYAMLWithTypedInput executes workflow YAML with typed workflow input.
+func (c *Client) RunWorkflowYAMLWithTypedInput(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput *TypedWorkflowInput,
+) (WorkflowYAMLOutput, error) {
+	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAML(ctx, workflowPath, workflowInputMap)
+}
+
 // RunWorkflowYAMLTyped executes workflow YAML and projects output into typed records.
 func (c *Client) RunWorkflowYAMLTyped(
 	ctx context.Context,
@@ -700,6 +753,35 @@ func (c *Client) RunWorkflowYAMLWithRunOptions(
 	}
 
 	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
+}
+
+// RunWorkflowYAMLWithTypedInputAndRunOptions executes workflow YAML with typed workflow input and options.
+func (c *Client) RunWorkflowYAMLWithTypedInputAndRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput *TypedWorkflowInput,
+	options *TypedWorkflowRunOptions,
+) (WorkflowYAMLOutput, error) {
+	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLWithRunOptions(ctx, workflowPath, workflowInputMap, options)
+}
+
+// RunWorkflowYAMLWithTypedInputAndRunOptionsTyped executes workflow YAML with typed input/options and typed output projection.
+func (c *Client) RunWorkflowYAMLWithTypedInputAndRunOptionsTyped(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput *TypedWorkflowInput,
+	options *TypedWorkflowRunOptions,
+) (WorkflowRunTypedOutput, error) {
+	out, err := c.RunWorkflowYAMLWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options)
+	if err != nil {
+		return WorkflowRunTypedOutput{}, err
+	}
+	return out.ToTypedOutput(), nil
 }
 
 // RunWorkflowYAMLWithRunOptionsTyped executes workflow YAML with typed run options and typed output projection.
@@ -1025,6 +1107,40 @@ func (c *Client) RunWorkflowYAMLStreamWithRunOptions(
 	}
 
 	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, onEvent)
+}
+
+// RunWorkflowYAMLStreamWithTypedInputAndRunOptions emits workflow events with typed input and options.
+func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptions(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput *TypedWorkflowInput,
+	options *TypedWorkflowRunOptions,
+	onEvent func(WorkflowEvent),
+) (WorkflowYAMLOutput, error) {
+	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+
+	return c.RunWorkflowYAMLStreamWithRunOptions(ctx, workflowPath, workflowInputMap, options, onEvent)
+}
+
+// RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents emits typed workflow events with typed input and options.
+func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents(
+	ctx context.Context,
+	workflowPath string,
+	workflowInput *TypedWorkflowInput,
+	options *TypedWorkflowRunOptions,
+	onEvent func(WorkflowTypedEvent),
+) (WorkflowYAMLOutput, error) {
+	callback := func(event WorkflowEvent) {
+		if onEvent == nil {
+			return
+		}
+		onEvent(event.ToTypedEvent())
+	}
+
+	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options, callback)
 }
 
 type completeResult struct {
