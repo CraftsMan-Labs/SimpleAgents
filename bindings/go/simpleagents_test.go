@@ -409,12 +409,12 @@ func TestWorkflowOutputToTypedOutputProjectsNodeOutputs(t *testing.T) {
 		EntryNode:    "start",
 		Trace:        []string{"start", "classify"},
 		TerminalNode: "classify",
+		NodeOutputs: []WorkflowNodeOutputRecord{
+			{NodeID: "start", NodeKind: WorkflowNodeKindCustomWorker, Value: map[string]any{"ok": true}},
+			{NodeID: "classify", NodeKind: WorkflowNodeKindLlmCall, Value: map[string]any{"state": "ready"}},
+		},
 		TerminalOutput: map[string]any{
 			"state": "ready",
-		},
-		Outputs: map[string]map[string]any{
-			"start":    map[string]any{"ok": true},
-			"classify": map[string]any{"state": "ready"},
 		},
 	}
 
@@ -428,8 +428,8 @@ func TestWorkflowOutputToTypedOutputProjectsNodeOutputs(t *testing.T) {
 	if typed.TerminalOutput == nil {
 		t.Fatal("expected terminal output record")
 	}
-	if typed.TerminalOutput.NodeKind != WorkflowNodeKindUnknown {
-		t.Fatalf("expected unknown terminal node kind, got %s", typed.TerminalOutput.NodeKind)
+	if typed.TerminalOutput.NodeKind != WorkflowNodeKindLlmCall {
+		t.Fatalf("expected llm_call terminal node kind, got %s", typed.TerminalOutput.NodeKind)
 	}
 }
 
