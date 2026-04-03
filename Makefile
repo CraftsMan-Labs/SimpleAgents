@@ -22,6 +22,7 @@ NAPI_PACKAGE_LOCK ?= $(NAPI_PROJECT_DIR)/package-lock.json
 WASM_PACKAGE_DIR ?= bindings/wasm/simple-agents-wasm
 WASM_PACKAGE_JSON ?= $(WASM_PACKAGE_DIR)/package.json
 WASM_PACKAGE_LOCK ?= $(WASM_PACKAGE_DIR)/package-lock.json
+WASM_RUST_MANIFEST ?= $(WASM_PACKAGE_DIR)/rust/Cargo.toml
 PYTHON_UV_LOCK ?= crates/simple-agents-py/uv.lock
 EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
@@ -514,6 +515,14 @@ sync-wasm-version:
 	else \
 		echo "⚠ WASM package.json not found at $(WASM_PACKAGE_JSON)"; \
 		exit 1; \
+	fi; \
+	if [ -f "$(WASM_RUST_MANIFEST)" ]; then \
+		sed -i.bak 's/^version = ".*"/version = "'$$version'"/' "$(WASM_RUST_MANIFEST)"; \
+		rm -f "$(WASM_RUST_MANIFEST).bak"; \
+		echo "✓ WASM Rust crate version updated ($(WASM_RUST_MANIFEST) -> $$version)"; \
+	else \
+		echo "⚠ WASM Rust manifest not found at $(WASM_RUST_MANIFEST)"; \
+		exit 1; \
 	fi
 
 sync-binding-lockfiles:
@@ -602,7 +611,7 @@ version-patch:
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
 	sleep 1; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -627,7 +636,7 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -652,7 +661,7 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -679,7 +688,7 @@ version-set:
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $(VERSION)"; \
 	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
 	git push origin HEAD --follow-tags; \
