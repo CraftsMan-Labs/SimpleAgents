@@ -5,7 +5,7 @@ This document records the current, repository-visible performance picture for wo
 This file combines two sources:
 
 - repository-declared metrics surfaces (bench/binding docs and committed trace artifacts)
-- executed command measurements captured on 2026-03-02 in this environment
+- executed command measurements captured on 2026-04-03 in this environment
 
 ## Cross-Language Workflow Performance Coverage
 
@@ -20,10 +20,10 @@ This file combines two sources:
 
 Source scanned: `examples/workflow_email/traces/*.jsonl` (first JSON object per line with `total_elapsed_ms`).
 
-- Sample count: `84` workflow runs
+- Sample count: `104` workflow runs
 - Min total runtime: `318 ms`
-- Median total runtime: `10821 ms`
-- Mean total runtime: `10358.88 ms`
+- Median total runtime: `10244 ms`
+- Mean total runtime: `9600.46 ms`
 - Max total runtime: `27787 ms`
 
 Representative extremes:
@@ -133,7 +133,7 @@ When you want to add true per-language peak memory numbers, run each language en
 
 This will produce comparable wall-clock + peak-memory baselines for Rust, Python, Node.js, and Go.
 
-## Executed Metrics Snapshot (2026-03-02)
+## Executed Metrics Snapshot (2026-04-03)
 
 The following commands were executed in this repository to capture real elapsed time plus sampled process-tree peak RSS (`/proc` polling).
 
@@ -147,15 +147,16 @@ cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-siz
 
 Observed benchmark timings:
 
-- `workflow_runtime/linear_execute`: `5.0435 µs` to `5.0850 µs`
-- `workflow_runtime/sequential_execute`: `33.201 ms` to `33.245 ms`
-- `workflow_runtime/concurrent_execute`: `11.110 ms` to `11.120 ms`
-- `workflow_runtime/worker_pool_submit`: `16.523 µs` to `17.578 µs`
+- `workflow_runtime/linear_execute`: `5.2946 µs` to `5.3529 µs`
+- `workflow_runtime/sequential_execute`: `33.186 ms` to `33.240 ms`
+- `workflow_runtime/concurrent_execute`: `11.084 ms` to `11.097 ms`
+- `workflow_runtime/worker_pool_submit`: `12.324 µs` to `13.202 µs`
+- `workflow_runtime/dense_scope_execute`: `181.55 µs` to `182.26 µs`
 
 Observed command-level resource metrics:
 
-- Wall-clock elapsed: `80365.99 ms`
-- Peak RSS (process tree): `2488472 kB`
+- Wall-clock elapsed: `99312.21 ms`
+- Peak RSS (process tree): `3824836 kB`
 - Exit code: `0`
 
 Note: the command above includes compile/link memory on this run and is not representative of precompiled production runtime.
@@ -163,11 +164,11 @@ Note: the command above includes compile/link memory on this run and is not repr
 Precompiled runtime-only measurement (same benchmark binary, no compile step in measured window):
 
 ```bash
-target/release/deps/runtime_benchmarks-7d4ee8bad5f1dac5 --bench --sample-size 10
+target/release/deps/runtime_benchmarks-4fddb17fecc87652 --bench --sample-size 10
 ```
 
-- Wall-clock elapsed: `61755.37 ms`
-- Peak RSS (process tree): `33380 kB` (~`32.60 MiB`)
+- Wall-clock elapsed: `79579.83 ms`
+- Peak RSS (process tree): `38500 kB` (~`37.60 MiB`)
 - Exit code: `0`
 
 ### Python (run all workflow YAML files)
@@ -180,16 +181,17 @@ uv run --directory examples python workflow_email/python/run_all_yaml_workflows.
 
 Observed command-level resource metrics:
 
-- Wall-clock elapsed: `18945.18 ms`
-- Peak RSS (process tree): `72036 kB`
+- Wall-clock elapsed: `39696.85 ms`
+- Peak RSS (process tree): `2553836 kB`
 - Exit code: `0`
 
-Run summary (7 workflows):
+Run summary (8 workflows):
 
-- `ok`: `2`
-  - `email-chat-draft-with-tool-calling.yaml` (`total_elapsed_ms=3493`)
-  - `hr-warning-email-subgraph.yaml` (`total_elapsed_ms=1769`)
-- `error`: `5` (provider connection and tool wiring issues)
+- `ok`: `3`
+  - `email-chat-draft-or-clarify.yaml` (`total_elapsed_ms=2356`)
+  - `email-chat-draft-with-tool-calling.yaml` (`total_elapsed_ms=2638`)
+  - `hr-warning-email-subgraph.yaml` (`total_elapsed_ms=1976`)
+- `error`: `5` (custom worker wiring and structured output parse issues)
 
 ### Node.js / TypeScript (build + run all workflow YAML files)
 
@@ -199,8 +201,8 @@ Build command:
 npm --prefix crates/simple-agents-napi run build:debug
 ```
 
-- Build elapsed: `3196.41 ms`
-- Build peak RSS (process tree): `1206180 kB`
+- Build elapsed: `7429.76 ms`
+- Build peak RSS (process tree): `1182700 kB`
 - Exit code: `0`
 
 Run command:
@@ -209,15 +211,16 @@ Run command:
 node examples/workflow_email/node/run_all_yaml_workflows.js "Please process damaged order 9921 and suggest next actions"
 ```
 
-- Run elapsed: `17074.0 ms`
-- Run peak RSS (process tree): `68356 kB`
+- Run elapsed: `19714.10 ms`
+- Run peak RSS (process tree): `58044 kB`
 - Exit code: `0`
 
-Run summary (7 workflows):
+Run summary (8 workflows):
 
-- `ok`: `1`
-  - `hr-warning-email-subgraph.yaml` (`total_elapsed_ms=1933`)
-- `error`: `6` (provider connection and missing custom worker/tool registry issues)
+- `ok`: `2`
+  - `email-chat-draft-or-clarify.yaml` (`total_elapsed_ms=2581`)
+  - `hr-warning-email-subgraph.yaml` (`total_elapsed_ms=1533`)
+- `error`: `6` (missing custom worker/tool registry and structured output parse issues)
 
 ### Go (FFI build + run all workflow YAML files)
 
@@ -227,8 +230,8 @@ FFI prerequisite build:
 cargo build -p simple-agents-ffi --release
 ```
 
-- Elapsed: `9838.13 ms`
-- Peak RSS (process tree): `777880 kB`
+- Elapsed: `9784.01 ms`
+- Peak RSS (process tree): `1667832 kB`
 - Exit code: `0`
 
 Go all-workflows binary build:
@@ -240,28 +243,30 @@ LD_LIBRARY_PATH="$PWD/../../target/release:${LD_LIBRARY_PATH:-}" \
 go build -o /tmp/workflow_email_all_bin ./examples/workflow_email_all
 ```
 
-- Elapsed: `405.55 ms`
-- Peak RSS (process tree): `120020 kB`
+- Elapsed: `402.05 ms`
+- Peak RSS (process tree): `122820 kB`
 - Exit code: `0`
 
 Run command (from repository root):
 
 ```bash
-LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" /tmp/workflow_email_all_bin "Please process damaged order 9921 and suggest next actions"
+WORKFLOW_API_KEY=dummy_key_dummy_key_12345 \
+LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
+/tmp/workflow_email_all_bin "Please process damaged order 9921 and suggest next actions"
 ```
 
-- Run elapsed: `16974.5 ms`
-- Run peak RSS (process tree): `21936 kB`
+- Run elapsed: `2561.31 ms`
+- Run peak RSS (process tree): `22140 kB`
 - Exit code: `0`
 
-Run summary (7 workflows):
+Run summary (8 workflows):
 
-- `ok`: `1`
-  - `hr-warning-email-subgraph.yaml` (`total_elapsed_ms=2073`)
-- `error`: `6` (provider connection and missing custom worker/tool registry issues)
+- `ok`: `0`
+- `error`: `8` (all workflows failed with provider invalid API key)
 
 ### Error Pattern Notes
 
-- Several workflows in all language runs failed because configured model/provider routing attempted `ollama` on `127.0.0.1:11434`, which was unavailable in this environment.
-- Some workflows require extra runtime wiring (`custom_worker` executor and/or `run_workflow_graph` registry) and fail without that input.
+- This environment does not have a real provider API key configured (`WORKFLOW_API_KEY`/`CUSTOM_API_KEY` unset).
+- Python and Node command runs still exercise non-LLM paths, but LLM-backed steps and custom worker wiring requirements fail in several workflows.
+- Go example runner enforces API key validation before execution, so a valid-length dummy key was used; all LLM-backed workflows then failed with provider invalid API key.
 - Metrics above are still valid as observed end-to-end command and runtime measurements for this environment.
