@@ -405,67 +405,44 @@ impl Provider for OpenAIProvider {
             .await
             .map_err(|e| crate::utils::map_transport_error_with_timer(e, timer.clone()))?;
 
-        let status = response.status();
-        let retry_after = crate::utils::retry_after_from_headers(response.headers());
+        let response = match crate::utils::ensure_success_response(response).await {
+            Ok(response) => response,
+            Err(error_context) => {
+                tracing::warn!(
+                        status = %error_context.status,
+                        body_preview = %error_context.body.chars().take(200).collect::<String>(),
+                    "API request failed"
+                );
 
-        // Handle error responses with structured logging
-        if !status.is_success() {
-            // Capture headers for debugging (before consuming response)
-            let headers_debug: Vec<(String, String)> = response
-                .headers()
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        k.as_str().to_string(),
-                        v.to_str().unwrap_or("<binary>").to_string(),
-                    )
-                })
-                .collect();
+                let openai_error = OpenAIError::from_response(
+                    error_context.status.as_u16(),
+                    &error_context.body,
+                    error_context.retry_after,
+                );
 
-            let error_body = match response.text().await {
-                Ok(body) => {
-                    tracing::warn!(
-                        status = %status,
-                        body_preview = %body.chars().take(200).collect::<String>(),
-                        "API request failed"
-                    );
-                    body
-                }
-                Err(e) => {
-                    tracing::error!(
-                        status = %status,
-                        error = %e,
-                        "Failed to read error response body"
-                    );
-                    format!("HTTP {} - Could not read response body: {}", status, e)
-                }
-            };
+                // Log additional context for debugging
+                tracing::debug!(
+                    status = %error_context.status,
+                    headers = ?error_context.headers_debug,
+                    error_type = ?openai_error,
+                    "OpenAI API error details"
+                );
 
-            let openai_error =
-                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
+                // Record error metrics
+                timer.complete_error(format!("http_{}", error_context.status.as_u16()));
 
-            // Log additional context for debugging
-            tracing::debug!(
-                status = %status,
-                headers = ?headers_debug,
-                error_type = ?openai_error,
-                "OpenAI API error details"
-            );
+                return Err(SimpleAgentsError::Provider(openai_error.into()));
+            }
+        };
 
-            // Record error metrics
-            timer.complete_error(format!("http_{}", status.as_u16()));
-
-            return Err(SimpleAgentsError::Provider(openai_error.into()));
-        }
+        let status_code = response.status().as_u16();
 
         // Parse successful response
-        let mut body = match response.json::<serde_json::Value>().await {
-            Ok(b) => b,
-            Err(e) => {
+        let mut body = match crate::utils::parse_json_body(response).await {
+            Ok(body) => body,
+            Err(error) => {
                 timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    format!("Failed to parse JSON response: {}", e),
-                )));
+                return Err(SimpleAgentsError::Provider(error));
             }
         };
 
@@ -489,7 +466,7 @@ impl Provider for OpenAIProvider {
         timer.complete_success(prompt_tokens, completion_tokens);
 
         Ok(ProviderResponse {
-            status: status.as_u16(),
+            status: status_code,
             body,
             headers: None,
         })
@@ -723,25 +700,23 @@ impl OpenAIProvider {
             .await
             .map_err(crate::utils::map_transport_error)?;
 
-        let status = response.status();
-        let retry_after = crate::utils::retry_after_from_headers(response.headers());
+        let response = match crate::utils::ensure_success_response(response).await {
+            Ok(response) => response,
+            Err(error_context) => {
+                tracing::warn!(
+                        status = %error_context.status,
+                        body_preview = %error_context.body.chars().take(200).collect::<String>(),
+                    "Streaming API request failed"
+                );
 
-        // Handle error responses
-        if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_else(|e| {
-                format!("HTTP {} - Could not read response body: {}", status, e)
-            });
-
-            tracing::warn!(
-                status = %status,
-                body_preview = %error_body.chars().take(200).collect::<String>(),
-                "Streaming API request failed"
-            );
-
-            let openai_error =
-                OpenAIError::from_response(status.as_u16(), &error_body, retry_after);
-            return Err(SimpleAgentsError::Provider(openai_error.into()));
-        }
+                let openai_error = OpenAIError::from_response(
+                    error_context.status.as_u16(),
+                    &error_context.body,
+                    error_context.retry_after,
+                );
+                return Err(SimpleAgentsError::Provider(openai_error.into()));
+            }
+        };
 
         // Create SSE stream from response bytes
         let byte_stream = response.bytes_stream();
