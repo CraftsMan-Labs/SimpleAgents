@@ -39,7 +39,7 @@ NODE_CHAT_FLAGS ?= --stream --show-thinking
 WASM_CHAT_FLAGS ?= --max-turns 3
 RUST_CHAT_FLAGS ?= --max-turns 8
 JS_RUNTIME ?= node
-WASM_BINDGEN_CLI_VERSION ?= 0.2.114
+WASM_BINDGEN_CLI_VERSION ?= 0.2.117
 CARGO_HOME ?= $(HOME)/.cargo
 PYRIGHT_VERSION ?= 1.1.405
 GO_STATICCHECK_VERSION ?= v0.7.0
@@ -212,10 +212,16 @@ build-node:
 
 ensure-wasm-bindgen:
 	@PATH="$(CARGO_HOME)/bin:$$PATH"; \
-	command -v wasm-bindgen >/dev/null 2>&1 || { \
+	if ! command -v wasm-bindgen >/dev/null 2>&1; then \
 		echo "wasm-bindgen not found; installing wasm-bindgen-cli $(WASM_BINDGEN_CLI_VERSION)"; \
 		cargo install --locked wasm-bindgen-cli --version $(WASM_BINDGEN_CLI_VERSION); \
-	}
+	else \
+		current_version=$$(wasm-bindgen --version | awk '{print $$2}'); \
+		if [ "$$current_version" != "$(WASM_BINDGEN_CLI_VERSION)" ]; then \
+			echo "wasm-bindgen $$current_version detected; installing wasm-bindgen-cli $(WASM_BINDGEN_CLI_VERSION)"; \
+			cargo install --locked wasm-bindgen-cli --force --version $(WASM_BINDGEN_CLI_VERSION); \
+		fi; \
+	fi
 
 build-wasm: ensure-wasm-bindgen
 	cd $(WASM_PACKAGE_DIR) && PATH="$(CARGO_HOME)/bin:$$PATH" npm install && PATH="$(CARGO_HOME)/bin:$$PATH" npm run build
