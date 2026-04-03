@@ -28,7 +28,7 @@ Use this checklist before cutting a release that includes workflow runtime chang
 - [ ] Update `docs/WORKFLOW_PERFORMANCE.md` if benchmark strategy changed
 - [ ] Update `docs/WORKFLOW_SECURITY.md` for contract changes
 - [ ] Ensure `workflow-engine-research/examples/` has current coverage and schema examples
-- [ ] Update `CHANGELOG.md` with workflow section for the release
+- [ ] Update `CHANGELOG.md` with workflow section for the release (heading format: `## [x.y.z] - YYYY-MM-DD`)
 
 ## 5. Final Release Hygiene
 

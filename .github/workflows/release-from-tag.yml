@@ -1,0 +1,79 @@
+name: Release From Tag
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release notes from CHANGELOG
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          tag_name = os.environ["TAG_NAME"]
+          version = tag_name[1:] if tag_name.startswith("v") else tag_name
+          changelog_path = pathlib.Path("CHANGELOG.md")
+
+          if not changelog_path.exists():
+              print("ERROR: CHANGELOG.md not found at repository root", file=sys.stderr)
+              sys.exit(1)
+
+          lines = changelog_path.read_text(encoding="utf-8").splitlines()
+          header_pattern = re.compile(
+              rf"^##\s+\[(?:{re.escape(version)}|{re.escape(tag_name)})\]\b"
+          )
+          section_start = None
+          section_end = None
+
+          for index, line in enumerate(lines):
+              if section_start is None and header_pattern.match(line):
+                  section_start = index
+                  continue
+              if section_start is not None and line.startswith("## ["):
+                  section_end = index
+                  break
+
+          if section_start is None:
+              print(
+                  f"ERROR: No CHANGELOG section found for {tag_name}. "
+                  f"Expected heading like '## [{version}] - YYYY-MM-DD'",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          if section_end is None:
+              section_end = len(lines)
+
+          section_lines = lines[section_start:section_end]
+          notes = "\n".join(section_lines).strip() + "\n"
+          pathlib.Path("RELEASE_NOTES.md").write_text(notes, encoding="utf-8")
+          print(f"Prepared release notes from CHANGELOG section for {tag_name}")
+          PY
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            gh release edit "$TAG_NAME" --title "$TAG_NAME" --notes-file RELEASE_NOTES.md
+          else
+            gh release create "$TAG_NAME" --title "$TAG_NAME" --notes-file RELEASE_NOTES.md
+          fi
