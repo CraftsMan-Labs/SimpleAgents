@@ -31,7 +31,7 @@ regex-support = ["regex"]
 tokio = { version = "1.41", features = ["full"] }
 proptest = "1.5"
 criterion = { version = "0.5", features = ["html_reports"] }
-simple-agents-macros = { path = "../simple-agents-macros", version = "0.2.32" }
+simple-agents-macros = { path = "../simple-agents-macros", version = "0.2.36" }
 
 [[test]]
 name = "parser_tests"

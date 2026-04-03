@@ -133,7 +133,7 @@ pub(super) async fn execute_llm_node(
         tool_calls_global_key: llm.tool_calls_global_key.clone(),
         tool_trace_mode: options.telemetry.tool_trace_mode,
         execution_context: context.clone(),
-        email_text: email_text.to_string(),
+        input_text: email_text.to_string(),
         trace_id: telemetry_context.trace_id.clone(),
         trace_context: node_span_context,
         tenant_context: options.trace.tenant.clone(),

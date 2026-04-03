@@ -29,9 +29,11 @@ pub(super) fn normalize_tool_choice(
 
     let choice = match config {
         YamlToolChoiceConfig::Mode(mode) => ToolChoice::Mode(mode),
-        YamlToolChoiceConfig::Function { function } => ToolChoice::Tool(ToolChoiceTool {
+        YamlToolChoiceConfig::Function(function) => ToolChoice::Tool(ToolChoiceTool {
             tool_type: ToolType::Function,
-            function: ToolChoiceFunction { name: function },
+            function: ToolChoiceFunction {
+                name: function.function,
+            },
         }),
         YamlToolChoiceConfig::OpenAi(tool) => ToolChoice::Tool(tool),
     };

@@ -1,0 +1,269 @@
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlStepTiming {
+    pub node_id: String,
+    pub node_kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_name: Option<String>,
+    pub elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens_per_second: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlLlmNodeMetrics {
+    pub elapsed_ms: u128,
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u32>,
+    pub tokens_per_second: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlWorkflowRunOutput {
+    pub workflow_id: String,
+    pub entry_node: String,
+    pub email_text: String,
+    pub trace: Vec<String>,
+    pub outputs: BTreeMap<String, Value>,
+    pub terminal_node: String,
+    pub terminal_output: Option<Value>,
+    pub step_timings: Vec<YamlStepTiming>,
+    pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
+    pub llm_node_models: BTreeMap<String, String>,
+    pub total_elapsed_ms: u128,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttft_ms: Option<u128>,
+    pub total_input_tokens: u64,
+    pub total_output_tokens: u64,
+    pub total_tokens: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_reasoning_tokens: Option<u64>,
+    pub tokens_per_second: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trace_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowPayloadMode {
+    #[default]
+    FullPayload,
+    RedactedPayload,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlToolTraceMode {
+    #[default]
+    Full,
+    Redacted,
+    Off,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct YamlWorkflowTraceContextInput {
+    #[serde(default)]
+    pub trace_id: Option<String>,
+    #[serde(default)]
+    pub span_id: Option<String>,
+    #[serde(default)]
+    pub parent_span_id: Option<String>,
+    #[serde(default)]
+    pub traceparent: Option<String>,
+    #[serde(default)]
+    pub tracestate: Option<String>,
+    #[serde(default)]
+    pub baggage: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct YamlWorkflowTraceTenantContext {
+    #[serde(default)]
+    pub workspace_id: Option<String>,
+    #[serde(default)]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub conversation_id: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YamlWorkflowTelemetryConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub nerdstats: bool,
+    #[serde(default = "default_sample_rate")]
+    pub sample_rate: f32,
+    #[serde(default)]
+    pub payload_mode: YamlWorkflowPayloadMode,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default = "default_true")]
+    pub multi_tenant: bool,
+    #[serde(default)]
+    pub tool_trace_mode: YamlToolTraceMode,
+}
+
+impl Default for YamlWorkflowTelemetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            nerdstats: true,
+            sample_rate: 1.0,
+            payload_mode: YamlWorkflowPayloadMode::FullPayload,
+            retention_days: 30,
+            multi_tenant: true,
+            tool_trace_mode: YamlToolTraceMode::Full,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct YamlWorkflowTraceOptions {
+    #[serde(default)]
+    pub context: Option<YamlWorkflowTraceContextInput>,
+    #[serde(default)]
+    pub tenant: YamlWorkflowTraceTenantContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub struct YamlWorkflowRunOptions {
+    #[serde(default)]
+    pub telemetry: YamlWorkflowTelemetryConfig,
+    #[serde(default)]
+    pub trace: YamlWorkflowTraceOptions,
+    #[serde(default)]
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct YamlLlmTokenUsage {
+    pub prompt_tokens: u32,
+    pub completion_tokens: u32,
+    pub total_tokens: u32,
+    pub reasoning_tokens: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlLlmExecutionResult {
+    pub payload: Value,
+    pub usage: Option<YamlLlmTokenUsage>,
+    pub ttft_ms: Option<u128>,
+    pub tool_calls: Vec<YamlToolCallTrace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct YamlToolCallTrace {
+    pub id: String,
+    pub name: String,
+    pub arguments: Value,
+    pub output: Option<Value>,
+    pub status: String,
+    pub elapsed_ms: u128,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct YamlTokenTotals {
+    pub(super) input_tokens: u64,
+    pub(super) output_tokens: u64,
+    pub(super) total_tokens: u64,
+    pub(super) reasoning_tokens: Option<u64>,
+}
+
+impl YamlTokenTotals {
+    pub(super) fn add_usage(&mut self, usage: &YamlLlmTokenUsage) {
+        self.input_tokens += u64::from(usage.prompt_tokens);
+        self.output_tokens += u64::from(usage.completion_tokens);
+        self.total_tokens += u64::from(usage.total_tokens);
+
+        if let Some(reasoning_tokens) = usage.reasoning_tokens {
+            let next = self.reasoning_tokens.unwrap_or(0) + u64::from(reasoning_tokens);
+            self.reasoning_tokens = Some(next);
+        }
+    }
+
+    pub(super) fn tokens_per_second(&self, elapsed_ms: u128) -> f64 {
+        if elapsed_ms == 0 {
+            return 0.0;
+        }
+        round_two_decimals((self.output_tokens as f64) * 1000.0 / (elapsed_ms as f64))
+    }
+}
+
+fn round_two_decimals(value: f64) -> f64 {
+    (value * 100.0).round() / 100.0
+}
+
+pub(super) fn completion_tokens_per_second(completion_tokens: u32, elapsed_ms: u128) -> f64 {
+    if elapsed_ms == 0 {
+        return 0.0;
+    }
+    round_two_decimals((completion_tokens as f64) * 1000.0 / (elapsed_ms as f64))
+}
+
+pub(super) fn resolve_requested_model(
+    run_model_override: Option<&str>,
+    node_model: &str,
+) -> String {
+    run_model_override
+        .and_then(|model| {
+            let trimmed = model.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .unwrap_or_else(|| node_model.to_string())
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sample_rate() -> f32 {
+    1.0
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+
+pub(super) fn validate_sample_rate(sample_rate: f32) -> Result<(), super::YamlWorkflowRunError> {
+    if sample_rate.is_finite() && (0.0..=1.0).contains(&sample_rate) {
+        return Ok(());
+    }
+
+    Err(super::YamlWorkflowRunError::InvalidInput {
+        message: format!(
+            "telemetry.sample_rate must be between 0.0 and 1.0 inclusive; received {sample_rate}"
+        ),
+    })
+}

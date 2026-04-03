@@ -6,16 +6,12 @@ use futures_util::{Stream, StreamExt};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
-use reqwest::Client as HttpClient;
 use serde_json::{json, Value};
 use simple_agent_type::cache::Cache;
-use simple_agent_type::message::{parse_messages_value, Message};
+use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{
-    ApiKey, CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
+    CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
 };
-use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
-use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
-use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
     SimpleAgentsClient, SimpleAgentsClientBuilder,
@@ -25,35 +21,37 @@ use simple_agents_healing::parser::ParserConfig;
 use simple_agents_healing::schema::{Field as HealingField, ObjectSchema, StreamAnnotation};
 use simple_agents_healing::streaming::StreamingParser as RustStreamingParser;
 use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
-use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::healing_integration::{
     HealingConfig as ProviderHealingConfig, HealingIntegration,
 };
-use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
-use simple_agents_workflow::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
-    YamlWorkflowRunOptions,
-};
+use simple_agents_workflow::run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod completion_helpers;
+mod provider_helpers;
+mod schema_helpers;
+mod workflow_helpers;
+
+use completion_helpers::{
+    build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
+    expect_stream, finish_reason_to_str, healed_json_to_py, parse_messages, parse_tool_choice,
+    parse_tools, py_err, resolve_response_plan, response_with_metadata_from_response,
+};
+use provider_helpers::{provider_from_params, provider_name_exists};
+use schema_helpers::{
+    parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input,
+};
+use workflow_helpers::{
+    attach_workflow_events, parse_workflow_input_value, parse_workflow_run_options,
+    workflow_root_path, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
+    RecordingWorkflowEventSink,
+};
+
 type Runtime = tokio::runtime::Runtime;
 type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
-type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
-
-fn provider_name_exists(providers: &[Arc<dyn Provider>], name: &str) -> bool {
-    providers.iter().any(|p| p.name() == name)
-}
-
-struct ResponsePlan {
-    response_format: Option<ResponseFormat>,
-    schema_value: Option<Value>,
-    expects_json: bool,
-}
 
 /// Result from parsing JSON-ish text with healing metadata.
 #[pyclass]
@@ -113,7 +111,7 @@ pub struct CoercionResult {
 /// Internal schema wrapper for Python usage.
 #[pyclass]
 pub struct PySchema {
-    schema: Schema,
+    pub(crate) schema: Schema,
 }
 
 #[pymethods]
@@ -165,7 +163,7 @@ impl SchemaBuilder {
     #[allow(clippy::too_many_arguments)]
     fn field(
         &mut self,
-        py: Python<'_>,
+        _py: Python<'_>,
         name: &str,
         field_type: &Bound<'_, PyAny>,
         required: bool,
@@ -175,7 +173,7 @@ impl SchemaBuilder {
         stream: Option<String>,
         items: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let schema = parse_schema_from_py(py, field_type, items)?;
+        let schema = parse_schema_from_py(field_type, items)?;
         let aliases_vec = if let Some(alias_obj) = aliases {
             let values: Vec<String> = pythonize::depythonize(alias_obj).map_err(|_| {
                 PyRuntimeError::new_err("aliases must be a list of strings".to_string())
@@ -562,25 +560,25 @@ impl PyStreamIterator {
 #[pyclass]
 pub struct HealedJsonResult {
     #[pyo3(get)]
-    content: String,
+    pub(crate) content: String,
     #[pyo3(get)]
-    raw_response: String,
+    pub(crate) raw_response: String,
     #[pyo3(get)]
-    confidence: f32,
+    pub(crate) confidence: f32,
     #[pyo3(get)]
-    was_healed: bool,
+    pub(crate) was_healed: bool,
     #[pyo3(get)]
-    provider: Option<String>,
+    pub(crate) provider: Option<String>,
     #[pyo3(get)]
-    model: String,
+    pub(crate) model: String,
     #[pyo3(get)]
-    finish_reason: String,
+    pub(crate) finish_reason: String,
     #[pyo3(get)]
-    created: Option<i64>,
+    pub(crate) created: Option<i64>,
     #[pyo3(get)]
-    latency_ms: u64,
-    usage: PyObject,
-    flags: Vec<String>,
+    pub(crate) latency_ms: u64,
+    pub(crate) usage: PyObject,
+    pub(crate) flags: Vec<String>,
 }
 
 #[pymethods]
@@ -687,27 +685,27 @@ impl PyStructuredEvent {
 #[pyclass]
 pub struct ResponseWithMetadata {
     #[pyo3(get)]
-    content: String,
+    pub(crate) content: String,
     #[pyo3(get)]
-    provider: Option<String>,
+    pub(crate) provider: Option<String>,
     #[pyo3(get)]
-    model: String,
+    pub(crate) model: String,
     #[pyo3(get)]
-    finish_reason: String,
+    pub(crate) finish_reason: String,
     #[pyo3(get)]
-    created: Option<i64>,
+    pub(crate) created: Option<i64>,
     #[pyo3(get)]
-    latency_ms: u64,
+    pub(crate) latency_ms: u64,
     #[pyo3(get)]
-    was_healed: bool,
+    pub(crate) was_healed: bool,
     #[pyo3(get)]
-    healing_confidence: Option<f32>,
+    pub(crate) healing_confidence: Option<f32>,
     #[pyo3(get)]
-    healing_error: Option<String>,
+    pub(crate) healing_error: Option<String>,
     #[pyo3(get)]
-    tool_calls: PyObject,
-    flags: Vec<String>,
-    usage: PyObject,
+    pub(crate) tool_calls: PyObject,
+    pub(crate) flags: Vec<String>,
+    pub(crate) usage: PyObject,
 }
 
 #[pymethods]
@@ -1034,87 +1032,6 @@ impl Cache for PyCacheAdapter {
             Ok(())
         })
     }
-}
-
-fn provider_from_params(
-    provider_name: &str,
-    api_key: Option<&str>,
-    api_base: Option<&str>,
-    enable_healing: bool,
-    timeout: Duration,
-) -> Result<Arc<dyn Provider>> {
-    let api_key = match api_key {
-        Some(value) => Some(ApiKey::new(value)?),
-        None => None,
-    };
-
-    match provider_name {
-        "openai" => {
-            let mut provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        if is_local_base(api_base) {
-                            let client = HttpClient::builder()
-                                .timeout(timeout)
-                                .pool_max_idle_per_host(10)
-                                .pool_idle_timeout(Duration::from_secs(90))
-                                .no_proxy()
-                                .build()
-                                .map_err(|e| {
-                                    SimpleAgentsError::Config(format!(
-                                        "Failed to create HTTP client: {}",
-                                        e
-                                    ))
-                                })?;
-                            OpenAIProvider::with_client(api_key, api_base.to_string(), client)?
-                        } else {
-                            OpenAIProvider::with_base_url(api_key, api_base.to_string())?
-                        }
-                    }
-                    None => OpenAIProvider::new(api_key)?,
-                },
-                None => OpenAIProvider::from_env()?,
-            };
-            if enable_healing {
-                provider = provider.with_healing(ProviderHealingConfig::default());
-            }
-            Ok(Arc::new(provider))
-        }
-        "anthropic" => {
-            let mut provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        AnthropicProvider::with_base_url(api_key, api_base.to_string())?
-                    }
-                    None => AnthropicProvider::new(api_key)?,
-                },
-                None => AnthropicProvider::from_env()?,
-            };
-            if enable_healing {
-                provider = provider.with_healing(ProviderHealingConfig::default());
-            }
-            Ok(Arc::new(provider))
-        }
-        "openrouter" => {
-            let provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        OpenRouterProvider::with_base_url(api_key, api_base.to_string())?
-                    }
-                    None => OpenRouterProvider::new(api_key)?,
-                },
-                None => OpenRouterProvider::from_env()?,
-            };
-            Ok(Arc::new(provider))
-        }
-        _ => Err(SimpleAgentsError::Config(format!(
-            "Unknown provider '{provider_name}'"
-        ))),
-    }
-}
-
-fn is_local_base(api_base: &str) -> bool {
-    api_base.contains("localhost") || api_base.contains("127.0.0.1")
 }
 
 /// Native provider configuration object for ClientBuilder.
@@ -1852,563 +1769,6 @@ impl ClientBuilder {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_request_with_messages(
-    model: &str,
-    messages: Vec<Message>,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-    top_p: Option<f32>,
-    response_format: Option<ResponseFormat>,
-    tools: Option<Vec<ToolDefinition>>,
-    tool_choice: Option<ToolChoice>,
-    stream: Option<bool>,
-) -> Result<CompletionRequest> {
-    if model.is_empty() {
-        return Err(SimpleAgentsError::Config(
-            "model cannot be empty".to_string(),
-        ));
-    }
-    if messages.is_empty() {
-        return Err(SimpleAgentsError::Config(
-            "messages cannot be empty".to_string(),
-        ));
-    }
-
-    let mut builder = CompletionRequest::builder().model(model);
-    for message in messages {
-        builder = builder.message(message);
-    }
-
-    if let Some(max_tokens) = max_tokens {
-        builder = builder.max_tokens(max_tokens);
-    }
-    if let Some(temperature) = temperature {
-        builder = builder.temperature(temperature);
-    }
-    if let Some(top_p) = top_p {
-        builder = builder.top_p(top_p);
-    }
-    if let Some(format) = response_format {
-        builder = builder.response_format(format);
-    }
-    if let Some(tools) = tools {
-        builder = builder.tools(tools);
-    }
-    if let Some(tool_choice) = tool_choice {
-        builder = builder.tool_choice(tool_choice);
-    }
-    if let Some(stream) = stream {
-        builder = builder.stream(stream);
-    }
-
-    builder.build()
-}
-
-fn resolve_response_plan(
-    schema: Option<&Bound<'_, PyAny>>,
-    schema_name: Option<String>,
-    strict: bool,
-    response_format: Option<String>,
-) -> PyResult<ResponsePlan> {
-    if let Some(schema_obj) = schema {
-        let schema_json = schema_to_json_value(schema_obj)?;
-        let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
-        return Ok(ResponsePlan {
-            response_format: Some(ResponseFormat::JsonSchema {
-                json_schema: JsonSchemaFormat {
-                    name: schema_name,
-                    schema: schema_json.clone(),
-                    strict: Some(strict),
-                },
-            }),
-            schema_value: Some(schema_json),
-            expects_json: true,
-        });
-    }
-
-    if let Some(format) = response_format {
-        match format.to_lowercase().as_str() {
-            "json" | "json_object" => {
-                return Ok(ResponsePlan {
-                    response_format: Some(ResponseFormat::JsonObject),
-                    schema_value: None,
-                    expects_json: true,
-                })
-            }
-            "text" => {
-                return Ok(ResponsePlan {
-                    response_format: None,
-                    schema_value: None,
-                    expects_json: false,
-                })
-            }
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "response_format must be 'json', 'json_object', or 'text'".to_string(),
-                ))
-            }
-        }
-    }
-
-    Ok(ResponsePlan {
-        response_format: None,
-        schema_value: None,
-        expects_json: false,
-    })
-}
-
-fn expect_stream(outcome: CompletionOutcome) -> PyResult<CompletionStream> {
-    match outcome {
-        CompletionOutcome::Stream(stream) => Ok(stream),
-        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got completion response".to_string(),
-        )),
-        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got healed json response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got schema response".to_string(),
-        )),
-    }
-}
-
-fn expect_healed_json(
-    outcome: CompletionOutcome,
-) -> PyResult<simple_agents_core::HealedJsonResponse> {
-    match outcome {
-        CompletionOutcome::HealedJson(healed) => Ok(healed),
-        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got completion response".to_string(),
-        )),
-        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got streaming response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got schema response".to_string(),
-        )),
-    }
-}
-
-fn expect_response(outcome: CompletionOutcome) -> PyResult<CompletionResponse> {
-    match outcome {
-        CompletionOutcome::Response(response) => Ok(response),
-        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got streaming response".to_string(),
-        )),
-        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got healed json response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got schema response".to_string(),
-        )),
-    }
-}
-
-fn healed_json_to_py(
-    py: Python<'_>,
-    healed: simple_agents_core::HealedJsonResponse,
-    latency_ms: u64,
-) -> PyResult<PyObject> {
-    let content = serde_json::to_string(&healed.parsed.value)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e)))?;
-    let raw_response = healed.response.content().unwrap_or_default().to_string();
-    let confidence = healed.parsed.confidence;
-    let was_healed = !healed.parsed.flags.is_empty();
-    let flags = healed
-        .parsed
-        .flags
-        .iter()
-        .map(|f| f.description())
-        .collect();
-    let usage = usage_to_pydict(py, &healed.response.usage)?;
-    let finish_reason = healed
-        .response
-        .choices
-        .first()
-        .map(|c| finish_reason_to_str(c.finish_reason).to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let result = HealedJsonResult {
-        content,
-        raw_response,
-        confidence,
-        was_healed,
-        provider: healed.response.provider.clone(),
-        model: healed.response.model.clone(),
-        finish_reason,
-        created: healed.response.created,
-        latency_ms,
-        usage,
-        flags,
-    };
-
-    Ok(Py::new(py, result)?.into_py(py))
-}
-
-fn response_with_metadata_from_response(
-    py: Python<'_>,
-    response: CompletionResponse,
-    latency_ms: u64,
-) -> PyResult<ResponseWithMetadata> {
-    let usage = usage_to_pydict(py, &response.usage)?;
-    let content = response.content().unwrap_or_default().to_string();
-    let finish_reason = response
-        .choices
-        .first()
-        .map(|c| finish_reason_to_str(c.finish_reason).to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let (was_healed, healing_confidence, healing_error, flags) =
-        if let Some(meta) = &response.healing_metadata {
-            (
-                true,
-                Some(meta.confidence),
-                Some(meta.original_error.clone()),
-                meta.flags
-                    .iter()
-                    .map(|f: &simple_agent_type::coercion::CoercionFlag| f.description())
-                    .collect::<Vec<String>>(),
-            )
-        } else {
-            (false, None, None, Vec::new())
-        };
-
-    let tool_calls = response
-        .choices
-        .first()
-        .and_then(|c| c.message.tool_calls.clone())
-        .unwrap_or_default();
-    let tool_calls_obj = pythonize::pythonize(py, &tool_calls)
-        .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-    Ok(ResponseWithMetadata {
-        content,
-        provider: response.provider.clone(),
-        model: response.model.clone(),
-        finish_reason,
-        created: response.created,
-        latency_ms,
-        was_healed,
-        healing_confidence,
-        healing_error,
-        flags,
-        usage,
-        tool_calls: tool_calls_obj.into(),
-    })
-}
-
-fn finish_reason_to_str(reason: FinishReason) -> &'static str {
-    reason.as_str()
-}
-
-fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
-    let value: Value = pythonize::depythonize(messages)
-        .map_err(|_| SimpleAgentsError::Config("messages must be a list of dicts".to_string()))?;
-    parse_messages_value(&value).map_err(SimpleAgentsError::Config)
-}
-
-fn workflow_root_path(workflow_path: &std::path::Path) -> std::path::PathBuf {
-    workflow_path
-        .parent()
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-}
-
-struct PythonCustomWorkerExecutor {
-    workflow_root: std::path::PathBuf,
-}
-
-#[async_trait::async_trait]
-impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
-    async fn execute(
-        &self,
-        handler: &str,
-        handler_file: Option<&str>,
-        payload: &Value,
-        _email_text: &str,
-        context: &Value,
-    ) -> std::result::Result<Value, String> {
-        Python::with_gil(|py| {
-            let configured_handler_file = handler_file.unwrap_or("handlers.py");
-            let configured_path = std::path::PathBuf::from(configured_handler_file);
-            let handlers_path = if configured_path.is_absolute() {
-                configured_path
-            } else {
-                self.workflow_root.join(configured_path)
-            };
-
-            if !handlers_path.exists() {
-                return Err(format!(
-                    "custom worker handlers file not found: {}",
-                    handlers_path.display()
-                ));
-            }
-
-            let importlib_util = py
-                .import_bound("importlib.util")
-                .map_err(|error| error.to_string())?;
-            let module_path = handlers_path.to_string_lossy().to_string();
-            let spec = importlib_util
-                .call_method1(
-                    "spec_from_file_location",
-                    ("simple_agents_workflow_handlers", module_path.as_str()),
-                )
-                .map_err(|error| error.to_string())?;
-            if spec.is_none() {
-                return Err(format!(
-                    "failed to load module spec from {}",
-                    handlers_path.display()
-                ));
-            }
-
-            let module = importlib_util
-                .call_method1("module_from_spec", (&spec,))
-                .map_err(|error| error.to_string())?;
-            let loader = spec.getattr("loader").map_err(|error| error.to_string())?;
-            if loader.is_none() {
-                return Err("module loader is missing for handlers.py".to_string());
-            }
-            loader
-                .call_method1("exec_module", (&module,))
-                .map_err(|error| error.to_string())?;
-
-            let function = module.getattr(handler).map_err(|error| error.to_string())?;
-            let topic = payload
-                .get("topic")
-                .and_then(Value::as_str)
-                .unwrap_or("clarification");
-            let kwargs = PyDict::new_bound(py);
-            let context_obj =
-                pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
-            let payload_obj =
-                pythonize::pythonize(py, payload).map_err(|error| error.to_string())?;
-            kwargs
-                .set_item(
-                    "email_text",
-                    context["input"]["email_text"].as_str().unwrap_or_default(),
-                )
-                .map_err(|error| error.to_string())?;
-            kwargs
-                .set_item("context", context_obj)
-                .map_err(|error| error.to_string())?;
-            kwargs
-                .set_item("payload", payload_obj)
-                .map_err(|error| error.to_string())?;
-
-            let result = function.call((topic,), Some(&kwargs)).map_err(|error| {
-                format!(
-                    "custom worker handler '{}' in '{}' failed: {}",
-                    handler,
-                    handlers_path.display(),
-                    error
-                )
-            })?;
-            pythonize::depythonize::<Value>(&result).map_err(|error| error.to_string())
-        })
-    }
-}
-
-struct RecordingWorkflowEventSink {
-    events: Mutex<Vec<YamlWorkflowEvent>>,
-}
-
-impl RecordingWorkflowEventSink {
-    fn new() -> Self {
-        Self {
-            events: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn events_value(&self) -> PyResult<Value> {
-        let events = self
-            .events
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
-            .clone();
-        serde_json::to_value(events).map_err(|error| {
-            PyRuntimeError::new_err(format!("event serialization failed: {error}"))
-        })
-    }
-}
-
-impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
-    fn emit(&self, event: &YamlWorkflowEvent) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(event.clone());
-        }
-    }
-}
-
-fn attach_workflow_events(
-    value: &mut Value,
-    event_sink: &RecordingWorkflowEventSink,
-) -> PyResult<()> {
-    let events_value = event_sink.events_value()?;
-    if let Value::Object(object) = value {
-        object.insert("events".to_string(), events_value);
-    }
-    Ok(())
-}
-
-fn parse_workflow_run_options(
-    workflow_options: Option<&Bound<'_, PyAny>>,
-) -> PyResult<YamlWorkflowRunOptions> {
-    workflow_options
-        .map(|value| {
-            pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-            })
-        })
-        .transpose()
-        .map(|value| value.unwrap_or_default())
-}
-
-fn parse_workflow_input_value(workflow_input: &Bound<'_, PyAny>) -> PyResult<Value> {
-    let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-        .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-    if !workflow_input_value.is_object() {
-        return Err(PyRuntimeError::new_err(
-            "workflow_input must be a dict/object".to_string(),
-        ));
-    }
-    Ok(workflow_input_value)
-}
-
-struct PythonWorkflowEventSink {
-    callback: Option<Py<PyAny>>,
-}
-
-// Safe because callback interaction always happens under the Python GIL.
-unsafe impl Send for PythonWorkflowEventSink {}
-unsafe impl Sync for PythonWorkflowEventSink {}
-
-impl YamlWorkflowEventSink for PythonWorkflowEventSink {
-    fn emit(&self, event: &YamlWorkflowEvent) {
-        let Some(callback) = self.callback.as_ref() else {
-            return;
-        };
-
-        Python::with_gil(|py| {
-            let event_value = match serde_json::to_value(event) {
-                Ok(value) => value,
-                Err(error) => {
-                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
-                    return;
-                }
-            };
-            let py_event = match pythonize::pythonize(py, &event_value) {
-                Ok(value) => value,
-                Err(error) => {
-                    eprintln!(
-                        "[simple-agents-py] failed to convert workflow event for callback: {error}"
-                    );
-                    return;
-                }
-            };
-            if let Err(error) = callback.bind(py).call1((py_event,)) {
-                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
-            }
-        });
-    }
-}
-
-fn parse_tools(tools: &Bound<'_, PyAny>) -> Result<Vec<ToolDefinition>> {
-    pythonize::depythonize(tools).map_err(|_| {
-        SimpleAgentsError::Config("tools must be a list of tool definitions".to_string())
-    })
-}
-
-fn parse_tool_choice(tool_choice: &Bound<'_, PyAny>) -> Result<ToolChoice> {
-    pythonize::depythonize(tool_choice).map_err(|_| {
-        SimpleAgentsError::Config(
-            "tool_choice must be a string (\"auto\"/\"none\") or a tool choice object".to_string(),
-        )
-    })
-}
-
-fn py_err(error: SimpleAgentsError) -> PyErr {
-    PyRuntimeError::new_err(error.to_string())
-}
-
-fn parse_schema_from_py(
-    _py: Python<'_>,
-    field_type: &Bound<'_, PyAny>,
-    items: Option<&Bound<'_, PyAny>>,
-) -> PyResult<Schema> {
-    if let Ok(schema_ref) = field_type.extract::<PyRef<PySchema>>() {
-        return Ok(schema_ref.schema.clone());
-    }
-
-    let type_name: String = field_type.extract().map_err(|_| {
-        PyRuntimeError::new_err("field_type must be a string or Schema".to_string())
-    })?;
-
-    let schema = match type_name.as_str() {
-        "string" => Schema::String,
-        "integer" => Schema::Int,
-        "number" => Schema::Float,
-        "boolean" => Schema::Bool,
-        "any" => Schema::Any,
-        "array" => {
-            let item_schema = if let Some(items_obj) = items {
-                parse_schema_from_py(_py, items_obj, None)?
-            } else {
-                Schema::Any
-            };
-            Schema::Array(Box::new(item_schema))
-        }
-        "object" => Schema::Object(ObjectSchema {
-            fields: Vec::new(),
-            allow_additional_fields: true,
-        }),
-        other => {
-            return Err(PyRuntimeError::new_err(format!(
-                "Unknown field_type: {}",
-                other
-            )))
-        }
-    };
-
-    Ok(schema)
-}
-
-fn pydantic_schema_value(schema: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
-    for attr_name in ["model_json_schema", "schema"] {
-        if schema.hasattr(attr_name)? {
-            let attr = schema.getattr(attr_name)?;
-            if attr.is_callable() {
-                let result = attr.call0()?;
-                let value: Value = pythonize::depythonize(&result).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Invalid Pydantic schema: {}", e))
-                })?;
-                return Ok(Some(value));
-            }
-        }
-    }
-    Ok(None)
-}
-
-fn schema_to_json_value(schema: &Bound<'_, PyAny>) -> PyResult<Value> {
-    if let Some(value) = pydantic_schema_value(schema)? {
-        return Ok(value);
-    }
-
-    pythonize::depythonize(schema).map_err(|_| {
-        PyRuntimeError::new_err(
-            "schema must be JSON-serializable (dict) or a Pydantic model/class".to_string(),
-        )
-    })
-}
-
-fn usage_to_pydict(py: Python<'_>, usage: &Usage) -> PyResult<PyObject> {
-    let dict = PyDict::new_bound(py);
-    dict.set_item("prompt_tokens", usage.prompt_tokens)?;
-    dict.set_item("completion_tokens", usage.completion_tokens)?;
-    dict.set_item("total_tokens", usage.total_tokens)?;
-    Ok(dict.into())
-}
-
 /// Parse malformed JSON-ish text into proper JSON with healing metadata.
 #[pyfunction]
 #[pyo3(signature = (text, config=None))]
@@ -2454,56 +1814,7 @@ fn coerce_to_schema(
     let value: serde_json::Value = pythonize::depythonize(data)
         .map_err(|e| PyRuntimeError::new_err(format!("Invalid data: {}", e)))?;
 
-    let schema_obj = if let Ok(schema_ref) = schema.extract::<PyRef<PySchema>>() {
-        schema_ref.schema.clone()
-    } else {
-        let schema_value: serde_json::Value = if let Some(value) = pydantic_schema_value(schema)? {
-            value
-        } else {
-            let schema_dict: &Bound<'_, PyDict> = schema.downcast().map_err(|_| {
-                PyRuntimeError::new_err(
-                    "schema must be a dict, Schema, or Pydantic model/class".to_string(),
-                )
-            })?;
-            pythonize::depythonize(schema_dict)
-                .map_err(|e| PyRuntimeError::new_err(format!("Invalid schema: {}", e)))?
-        };
-
-        match schema_value {
-            serde_json::Value::Object(map) => {
-                let mut fields = Vec::new();
-                if let Some(serde_json::Value::Object(props_obj)) = map.get("properties") {
-                    let required_fields = map.get("required").and_then(|r| {
-                        if let serde_json::Value::Array(arr) = r {
-                            Some(arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
-                        } else {
-                            None
-                        }
-                    });
-
-                    for (key, val) in props_obj {
-                        let is_required = required_fields
-                            .as_ref()
-                            .map(|req| req.contains(&key.as_str()))
-                            .unwrap_or(false);
-                        let schema = Schema::from_json_schema_value(val).map_err(py_err)?;
-                        fields.push((key.clone(), schema, is_required));
-                    }
-                }
-                Schema::object(fields)
-            }
-            serde_json::Value::Array(arr) if !arr.is_empty() => {
-                let schema = Schema::from_json_schema_value(&arr[0]).map_err(py_err)?;
-                Schema::Array(Box::new(schema))
-            }
-            _ => {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Unsupported schema format: {}",
-                    schema_value
-                )))
-            }
-        }
-    };
+    let schema_obj = schema_from_python_input(schema)?;
 
     let coercion_config = if let Some(_cfg) = config {
         CoercionConfig::default()
@@ -2528,96 +1839,6 @@ fn coerce_to_schema(
         was_coerced,
         flags,
     })
-}
-
-trait SchemaExt {
-    fn from_json_schema_value(
-        value: &serde_json::Value,
-    ) -> std::result::Result<Self, SimpleAgentsError>
-    where
-        Self: Sized;
-}
-
-impl SchemaExt for Schema {
-    fn from_json_schema_value(
-        value: &serde_json::Value,
-    ) -> std::result::Result<Self, SimpleAgentsError> {
-        match value {
-            serde_json::Value::String(type_name) => match type_name.as_str() {
-                "string" => Ok(Schema::String),
-                "number" => Ok(Schema::Float),
-                "integer" => Ok(Schema::Int),
-                "boolean" => Ok(Schema::Bool),
-                _ => Ok(Schema::Any),
-            },
-            serde_json::Value::Object(map) => {
-                if let Some(serde_json::Value::String(type_name)) = map.get("type") {
-                    match type_name.as_str() {
-                        "object" => {
-                            let mut fields = Vec::new();
-                            if let Some(serde_json::Value::Object(props_obj)) =
-                                map.get("properties")
-                            {
-                                let required_fields = map.get("required").and_then(|r| {
-                                    if let serde_json::Value::Array(arr) = r {
-                                        Some(
-                                            arr.iter()
-                                                .filter_map(|v| v.as_str())
-                                                .collect::<Vec<_>>(),
-                                        )
-                                    } else {
-                                        None
-                                    }
-                                });
-
-                                for (key, val) in props_obj {
-                                    let is_required = required_fields
-                                        .as_ref()
-                                        .map(|req| req.contains(&key.as_str()))
-                                        .unwrap_or(false);
-                                    let schema = Schema::from_json_schema_value(val)?;
-                                    fields.push(simple_agents_healing::schema::Field {
-                                        name: key.clone(),
-                                        schema,
-                                        required: is_required,
-                                        aliases: Vec::new(),
-                                        default: None,
-                                        description: None,
-                                        stream_annotation:
-                                            simple_agents_healing::schema::StreamAnnotation::Normal,
-                                    });
-                                }
-                            }
-                            Ok(Schema::Object(
-                                simple_agents_healing::schema::ObjectSchema {
-                                    fields,
-                                    allow_additional_fields: true,
-                                },
-                            ))
-                        }
-                        "array" => {
-                            if let Some(items) = map.get("items") {
-                                Ok(Schema::Array(Box::new(Schema::from_json_schema_value(
-                                    items,
-                                )?)))
-                            } else {
-                                Ok(Schema::Array(Box::new(Schema::Any)))
-                            }
-                        }
-                        "string" => Ok(Schema::String),
-                        "number" => Ok(Schema::Float),
-                        "integer" => Ok(Schema::Int),
-                        "boolean" => Ok(Schema::Bool),
-                        "null" => Ok(Schema::Null),
-                        _ => Ok(Schema::Any),
-                    }
-                } else {
-                    Ok(Schema::Any)
-                }
-            }
-            _ => Ok(Schema::Any),
-        }
-    }
 }
 
 #[pymethods]
@@ -2706,6 +1927,23 @@ impl Client {
         )
         .map_err(py_err)?;
 
+        let completion_options = if !stream {
+            if let Some(schema_value) = response_plan.schema_value.as_ref() {
+                let schema = schema_from_json_schema_value(schema_value).map_err(py_err)?;
+                CompletionOptions {
+                    mode: CompletionMode::CoercedSchema(schema),
+                }
+            } else if heal && response_plan.expects_json {
+                CompletionOptions {
+                    mode: CompletionMode::HealedJson,
+                }
+            } else {
+                CompletionOptions::default()
+            }
+        } else {
+            CompletionOptions::default()
+        };
+
         if stream {
             if heal {
                 return Err(PyRuntimeError::new_err(
@@ -2719,7 +1957,7 @@ impl Client {
                 .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
             let outcome = py
                 .allow_threads(|| {
-                    runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+                    runtime.block_on(self.client.complete(&request, completion_options.clone()))
                 })
                 .map_err(py_err)?;
             let stream = expect_stream(outcome)?;
@@ -2754,24 +1992,18 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let start = Instant::now();
 
-        let outcome = if heal && response_plan.expects_json {
-            py.allow_threads(|| {
-                runtime.block_on(self.client.complete(
-                    &request,
-                    CompletionOptions {
-                        mode: CompletionMode::HealedJson,
-                    },
-                ))
-            })
-            .map_err(py_err)?
-        } else {
-            py.allow_threads(|| {
-                runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
-            })
-            .map_err(py_err)?
-        };
+        let outcome = py
+            .allow_threads(|| runtime.block_on(self.client.complete(&request, completion_options)))
+            .map_err(py_err)?;
 
         let latency_ms = start.elapsed().as_millis() as u64;
+
+        if response_plan.schema_value.is_some() {
+            let healed = expect_coerced_schema(outcome)?;
+            let content = serde_json::to_string(&healed.coerced.value)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            return Ok(content.into_py(py));
+        }
 
         if heal && response_plan.expects_json {
             let healed = expect_healed_json(outcome)?;

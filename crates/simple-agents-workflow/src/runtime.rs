@@ -3366,6 +3366,61 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cache_read_treats_cached_null_as_hit() {
+        let llm = MockLlmExecutor {
+            output: "unused".to_string(),
+        };
+        let workflow = WorkflowDefinition {
+            version: "v0".to_string(),
+            name: "cache-read-null-hit".to_string(),
+            nodes: vec![
+                Node {
+                    id: "start".to_string(),
+                    kind: NodeKind::Start {
+                        next: "cache_write".to_string(),
+                    },
+                },
+                Node {
+                    id: "cache_write".to_string(),
+                    kind: NodeKind::CacheWrite {
+                        key_path: "input.cache_key".to_string(),
+                        value_path: "input.payload".to_string(),
+                        next: "cache_read".to_string(),
+                    },
+                },
+                Node {
+                    id: "cache_read".to_string(),
+                    kind: NodeKind::CacheRead {
+                        key_path: "input.cache_key".to_string(),
+                        next: "end_hit".to_string(),
+                        on_miss: Some("end_miss".to_string()),
+                    },
+                },
+                Node {
+                    id: "end_hit".to_string(),
+                    kind: NodeKind::End,
+                },
+                Node {
+                    id: "end_miss".to_string(),
+                    kind: NodeKind::End,
+                },
+            ],
+        };
+        let runtime = WorkflowRuntime::new(workflow, &llm, None, WorkflowRuntimeOptions::default());
+
+        let result = runtime
+            .execute(json!({"cache_key": "customer-null", "payload": null}), None)
+            .await
+            .expect("cache read hit with null value should execute");
+
+        assert_eq!(
+            result.node_outputs.get("cache_read"),
+            Some(&json!({"key": "customer-null", "hit": true, "value": null}))
+        );
+        assert_eq!(result.terminal_node_id, "end_hit");
+    }
+
+    #[tokio::test]
     async fn rejects_condition_when_expression_scope_exceeds_limit() {
         let llm = MockLlmExecutor {
             output: "unused".to_string(),

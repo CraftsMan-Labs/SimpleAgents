@@ -310,47 +310,36 @@ impl Provider for AnthropicProvider {
             .await
             .map_err(|e| crate::utils::map_transport_error_with_timer(e, timer.clone()))?;
 
-        let status = response.status();
-        let retry_after = crate::utils::retry_after_from_headers(response.headers());
+        let response = match crate::utils::ensure_success_response(response).await {
+            Ok(response) => response,
+            Err(error_context) => {
+                tracing::warn!(
+                        status = %error_context.status,
+                        body_preview = %error_context.body.chars().take(200).collect::<String>(),
+                    "Anthropic API request failed"
+                );
 
-        // Handle error responses
-        if !status.is_success() {
-            let error_body = match response.text().await {
-                Ok(body) => {
-                    tracing::warn!(
-                        status = %status,
-                        body_preview = %body.chars().take(200).collect::<String>(),
-                        "Anthropic API request failed"
-                    );
-                    body
-                }
-                Err(e) => {
-                    tracing::error!(
-                        status = %status,
-                        error = %e,
-                        "Failed to read error response body"
-                    );
-                    format!("HTTP {} - Could not read response body: {}", status, e)
-                }
-            };
+                let anthropic_error = AnthropicError::from_response(
+                    error_context.status.as_u16(),
+                    &error_context.body,
+                    error_context.retry_after,
+                );
 
-            let anthropic_error =
-                AnthropicError::from_response(status.as_u16(), &error_body, retry_after);
+                // Record error metrics
+                timer.complete_error(format!("http_{}", error_context.status.as_u16()));
 
-            // Record error metrics
-            timer.complete_error(format!("http_{}", status.as_u16()));
+                return Err(SimpleAgentsError::Provider(anthropic_error.into()));
+            }
+        };
 
-            return Err(SimpleAgentsError::Provider(anthropic_error.into()));
-        }
+        let status_code = response.status().as_u16();
 
         // Parse successful response
-        let mut body = match response.json::<serde_json::Value>().await {
-            Ok(b) => b,
-            Err(e) => {
+        let mut body = match crate::utils::parse_json_body(response).await {
+            Ok(body) => body,
+            Err(error) => {
                 timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    format!("Failed to parse JSON response: {}", e),
-                )));
+                return Err(SimpleAgentsError::Provider(error));
             }
         };
 
@@ -372,7 +361,7 @@ impl Provider for AnthropicProvider {
         timer.complete_success(prompt_tokens, completion_tokens);
 
         Ok(ProviderResponse {
-            status: status.as_u16(),
+            status: status_code,
             body,
             headers: None,
         })
@@ -595,25 +584,23 @@ impl AnthropicProvider {
             .await
             .map_err(crate::utils::map_transport_error)?;
 
-        let status = response.status();
-        let retry_after = crate::utils::retry_after_from_headers(response.headers());
+        let response = match crate::utils::ensure_success_response(response).await {
+            Ok(response) => response,
+            Err(error_context) => {
+                tracing::warn!(
+                        status = %error_context.status,
+                        body_preview = %error_context.body.chars().take(200).collect::<String>(),
+                    "Anthropic streaming request failed"
+                );
 
-        // Handle error responses
-        if !status.is_success() {
-            let error_body = response.text().await.unwrap_or_else(|e| {
-                format!("HTTP {} - Could not read response body: {}", status, e)
-            });
-
-            tracing::warn!(
-                status = %status,
-                body_preview = %error_body.chars().take(200).collect::<String>(),
-                "Anthropic streaming request failed"
-            );
-
-            let anthropic_error =
-                AnthropicError::from_response(status.as_u16(), &error_body, retry_after);
-            return Err(SimpleAgentsError::Provider(anthropic_error.into()));
-        }
+                let anthropic_error = AnthropicError::from_response(
+                    error_context.status.as_u16(),
+                    &error_context.body,
+                    error_context.retry_after,
+                );
+                return Err(SimpleAgentsError::Provider(anthropic_error.into()));
+            }
+        };
 
         // Create SSE stream from response bytes
         let byte_stream = response.bytes_stream();

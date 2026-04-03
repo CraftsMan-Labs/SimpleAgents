@@ -55,7 +55,8 @@ def test_python_stub_workflow_methods_accept_workflow_options() -> None:
 
     assert "def run_email_workflow_yaml(" in stub
     assert (
-        "workflow_options: WorkflowRunOptions | Mapping[str, Any] | None = None" in stub
+        "workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None"
+        in stub
     )
     assert "def run_workflow_yaml(" in stub
 

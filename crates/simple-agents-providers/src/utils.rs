@@ -6,6 +6,15 @@ use simple_agent_type::ProviderError;
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime};
 
+/// Captured data for a non-success provider HTTP response.
+#[derive(Debug)]
+pub struct ErrorResponseContext {
+    pub status: reqwest::StatusCode,
+    pub retry_after: Option<Duration>,
+    pub body: String,
+    pub headers_debug: Vec<(String, String)>,
+}
+
 /// Default timeout for HTTP requests
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -60,6 +69,53 @@ pub async fn send_json_request(
     body: &serde_json::Value,
 ) -> std::result::Result<reqwest::Response, reqwest::Error> {
     client.post(url).headers(headers).json(body).send().await
+}
+
+/// Read an error response body, falling back to status + read error.
+pub async fn read_error_body(response: reqwest::Response) -> String {
+    let status = response.status();
+    response.text().await.unwrap_or_else(|error| {
+        format!("HTTP {} - Could not read response body: {}", status, error)
+    })
+}
+
+/// Parse a JSON response body into `serde_json::Value`.
+pub async fn parse_json_body(
+    response: reqwest::Response,
+) -> std::result::Result<serde_json::Value, ProviderError> {
+    response.json::<serde_json::Value>().await.map_err(|error| {
+        ProviderError::InvalidResponse(format!("Failed to parse JSON response: {error}"))
+    })
+}
+
+/// Return the response on success or capture status/body details on failure.
+pub async fn ensure_success_response(
+    response: reqwest::Response,
+) -> std::result::Result<reqwest::Response, ErrorResponseContext> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+
+    let status = response.status();
+    let retry_after = retry_after_from_headers(response.headers());
+    let headers_debug: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.as_str().to_string(),
+                value.to_str().unwrap_or("<binary>").to_string(),
+            )
+        })
+        .collect();
+    let body = read_error_body(response).await;
+
+    Err(ErrorResponseContext {
+        status,
+        retry_after,
+        body,
+        headers_debug,
+    })
 }
 
 /// Map reqwest transport errors to unified provider errors.

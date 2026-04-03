@@ -164,6 +164,115 @@ func TestTypedWorkflowRunOptionsToMapNil(t *testing.T) {
 	}
 }
 
+func TestTypedWorkflowInputToMapNil(t *testing.T) {
+	actual, err := typedWorkflowInputToMap(nil)
+	if err == nil {
+		t.Fatal("expected workflowInput validation error")
+	}
+	if actual != nil {
+		t.Fatal("expected nil map for nil typed workflow input")
+	}
+}
+
+func TestTypedWorkflowInputToMapIncludesAdditionalFields(t *testing.T) {
+	emailText := "hello"
+	actual, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		EmailText: &emailText,
+		Additional: map[string]json.RawMessage{
+			"priority": json.RawMessage(`"high"`),
+			"context":  json.RawMessage(`{"channel":"support"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	if actual["email_text"] != emailText {
+		t.Fatalf("expected email_text %q, got %v", emailText, actual["email_text"])
+	}
+
+	priority, ok := actual["priority"].(json.RawMessage)
+	if !ok {
+		t.Fatalf("expected priority as json.RawMessage, got %T", actual["priority"])
+	}
+	if string(priority) != `"high"` {
+		t.Fatalf("expected priority raw message %q, got %q", `"high"`, string(priority))
+	}
+
+	contextValue, ok := actual["context"].(json.RawMessage)
+	if !ok {
+		t.Fatalf("expected context as json.RawMessage, got %T", actual["context"])
+	}
+	if string(contextValue) != `{"channel":"support"}` {
+		t.Fatalf("expected context raw message %q, got %q", `{"channel":"support"}`, string(contextValue))
+	}
+}
+
+func TestTypedWorkflowInputToMapRejectsEmptyAdditionalJSON(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"invalid": json.RawMessage{},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for empty additional JSON payload")
+	}
+}
+
+func TestTypedWorkflowInputToMapRejectsMalformedAdditionalJSON(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"invalid": json.RawMessage(`{"bad":`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for malformed additional JSON payload")
+	}
+}
+
+func TestTypedWorkflowInputToMapRejectsReservedAdditionalEmailText(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"email_text": json.RawMessage(`"override"`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved additional email_text field")
+	}
+}
+
+func TestTypedWorkflowInputToMapRejectsReservedAdditionalMessages(t *testing.T) {
+	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Additional: map[string]json.RawMessage{
+			"messages": json.RawMessage(`[]`),
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for reserved additional messages field")
+	}
+}
+
+func TestTypedWorkflowInputToMapIncludesExplicitEmptyMessages(t *testing.T) {
+	actual, err := typedWorkflowInputToMap(&TypedWorkflowInput{
+		Messages: []WorkflowInputMessage{},
+	})
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+
+	messagesValue, ok := actual["messages"]
+	if !ok {
+		t.Fatal("expected messages key to be present")
+	}
+	messages, ok := messagesValue.([]WorkflowInputMessage)
+	if !ok {
+		t.Fatalf("expected messages slice, got %T", messagesValue)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("expected explicit empty messages slice, got len %d", len(messages))
+	}
+}
+
 func TestTypedWorkflowRunOptionsToMapWithTraceContext(t *testing.T) {
 	traceparent := "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"
 	conversationID := "conv-123"
@@ -239,6 +348,23 @@ func TestRunWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
 	}
 }
 
+func TestRunWorkflowYAMLWithTypedInputUninitializedClient(t *testing.T) {
+	c := &Client{}
+	emailText := "x"
+	_, err := c.RunWorkflowYAMLWithTypedInput(context.Background(), "workflow.yaml", &TypedWorkflowInput{EmailText: &emailText})
+	if err == nil {
+		t.Fatal("expected uninitialized client error")
+	}
+}
+
+func TestRunWorkflowYAMLWithTypedInputNilValidation(t *testing.T) {
+	c := &Client{}
+	_, err := c.RunWorkflowYAMLWithTypedInput(context.Background(), "workflow.yaml", nil)
+	if err == nil {
+		t.Fatal("expected workflowInput validation error")
+	}
+}
+
 func TestRunEmailWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
 	c := &Client{}
 	_, err := c.RunEmailWorkflowYAMLWithRunOptions(context.Background(), "workflow.yaml", "hello", nil)
@@ -283,12 +409,12 @@ func TestWorkflowOutputToTypedOutputProjectsNodeOutputs(t *testing.T) {
 		EntryNode:    "start",
 		Trace:        []string{"start", "classify"},
 		TerminalNode: "classify",
+		NodeOutputs: []WorkflowNodeOutputRecord{
+			{NodeID: "start", NodeKind: WorkflowNodeKindCustomWorker, Value: map[string]any{"ok": true}},
+			{NodeID: "classify", NodeKind: WorkflowNodeKindLlmCall, Value: map[string]any{"state": "ready"}},
+		},
 		TerminalOutput: map[string]any{
 			"state": "ready",
-		},
-		Outputs: map[string]map[string]any{
-			"start":    map[string]any{"ok": true},
-			"classify": map[string]any{"state": "ready"},
 		},
 	}
 
@@ -302,8 +428,8 @@ func TestWorkflowOutputToTypedOutputProjectsNodeOutputs(t *testing.T) {
 	if typed.TerminalOutput == nil {
 		t.Fatal("expected terminal output record")
 	}
-	if typed.TerminalOutput.NodeKind != WorkflowNodeKindUnknown {
-		t.Fatalf("expected unknown terminal node kind, got %s", typed.TerminalOutput.NodeKind)
+	if typed.TerminalOutput.NodeKind != WorkflowNodeKindLlmCall {
+		t.Fatalf("expected llm_call terminal node kind, got %s", typed.TerminalOutput.NodeKind)
 	}
 }
 

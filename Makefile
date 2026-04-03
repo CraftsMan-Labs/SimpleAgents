@@ -4,7 +4,8 @@
 	publish-node-doppler \
 	npm-login \
 	publish-crates publish-python publish-all \
-	check-publish publish-crates-dry publish-python-dry \
+	check-publish publish-crates-dry publish-python-dry node-package-dry-run wasm-package-dry-run \
+	python-typecheck go-vet go-staticcheck rust-check-all node-typecheck \
 	version-get version-sync version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
@@ -21,6 +22,7 @@ NAPI_PACKAGE_LOCK ?= $(NAPI_PROJECT_DIR)/package-lock.json
 WASM_PACKAGE_DIR ?= bindings/wasm/simple-agents-wasm
 WASM_PACKAGE_JSON ?= $(WASM_PACKAGE_DIR)/package.json
 WASM_PACKAGE_LOCK ?= $(WASM_PACKAGE_DIR)/package-lock.json
+WASM_RUST_MANIFEST ?= $(WASM_PACKAGE_DIR)/rust/Cargo.toml
 PYTHON_UV_LOCK ?= crates/simple-agents-py/uv.lock
 EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
@@ -38,8 +40,10 @@ NODE_CHAT_FLAGS ?= --stream --show-thinking
 WASM_CHAT_FLAGS ?= --max-turns 3
 RUST_CHAT_FLAGS ?= --max-turns 8
 JS_RUNTIME ?= node
-WASM_BINDGEN_CLI_VERSION ?= 0.2.114
+WASM_BINDGEN_CLI_VERSION ?= 0.2.117
 CARGO_HOME ?= $(HOME)/.cargo
+PYRIGHT_VERSION ?= 1.1.405
+GO_STATICCHECK_VERSION ?= v0.7.0
 
 help:
 	@echo "Testing & Quality:"
@@ -74,6 +78,13 @@ help:
 	@echo "  make test-node             - Build Node addon then run node --test"
 	@echo "  make test-wasm             - Run WASM JS binding tests"
 	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
+	@echo "  make python-typecheck      - Run pinned pyright checks"
+	@echo "  make go-vet                - Run go vet on Go bindings"
+	@echo "  make go-staticcheck        - Run pinned staticcheck on Go bindings"
+	@echo "  make rust-check-all        - Run cargo check on all targets/features"
+	@echo "  make node-typecheck        - Run TypeScript checks for Node bindings"
+	@echo "  make node-package-dry-run  - Validate Node package publish payload"
+	@echo "  make wasm-package-dry-run  - Validate WASM package publish payload"
 	@echo "  make test-binding-contracts - Run cross-language contract gates"
 	@echo "  make test-binding-layers   - Run unit/contract/live test layers"
 	@echo ""
@@ -202,10 +213,16 @@ build-node:
 
 ensure-wasm-bindgen:
 	@PATH="$(CARGO_HOME)/bin:$$PATH"; \
-	command -v wasm-bindgen >/dev/null 2>&1 || { \
+	if ! command -v wasm-bindgen >/dev/null 2>&1; then \
 		echo "wasm-bindgen not found; installing wasm-bindgen-cli $(WASM_BINDGEN_CLI_VERSION)"; \
 		cargo install --locked wasm-bindgen-cli --version $(WASM_BINDGEN_CLI_VERSION); \
-	}
+	else \
+		current_version=$$(wasm-bindgen --version | awk '{print $$2}'); \
+		if [ "$$current_version" != "$(WASM_BINDGEN_CLI_VERSION)" ]; then \
+			echo "wasm-bindgen $$current_version detected; installing wasm-bindgen-cli $(WASM_BINDGEN_CLI_VERSION)"; \
+			cargo install --locked wasm-bindgen-cli --force --version $(WASM_BINDGEN_CLI_VERSION); \
+		fi; \
+	fi
 
 build-wasm: ensure-wasm-bindgen
 	cd $(WASM_PACKAGE_DIR) && PATH="$(CARGO_HOME)/bin:$$PATH" npm install && PATH="$(CARGO_HOME)/bin:$$PATH" npm run build
@@ -228,6 +245,38 @@ test-go-bindings: release-ffi
 	GOCACHE="$(GO_CACHE_DIR)" \
 	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
 	go test ./...
+
+python-typecheck:
+	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p pyrightconfig.json
+	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p examples/pyrightconfig.json
+
+go-vet: release-ffi
+	cd $(GO_BINDINGS_DIR) && \
+	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
+	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	GOCACHE="$(GO_CACHE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+	go vet ./...
+
+go-staticcheck: release-ffi
+	cd $(GO_BINDINGS_DIR) && \
+	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
+	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
+	GOCACHE="$(GO_CACHE_DIR)" \
+	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
+	go run honnef.co/go/tools/cmd/staticcheck@$(GO_STATICCHECK_VERSION) ./...
+
+rust-check-all:
+	cargo check --workspace --all-targets --all-features
+
+node-typecheck: build-node
+	cd $(NAPI_PROJECT_DIR) && npm exec -- tsc --noEmit --emitDeclarationOnly false -p tsconfig.json
+
+node-package-dry-run:
+	cd $(NAPI_PROJECT_DIR) && npm pack --dry-run > /dev/null
+
+wasm-package-dry-run:
+	cd $(WASM_PACKAGE_DIR) && npm pack --dry-run > /dev/null
 
 publish-crates:
 	@set -e; \
@@ -288,6 +337,19 @@ check-publish:
 	@echo "==> Running tests..."
 	@$(MAKE) test
 	@echo ""
+	@echo "==> Running Python type checks..."
+	@$(MAKE) python-typecheck
+	@echo ""
+	@echo "==> Running Go static checks..."
+	@$(MAKE) go-vet
+	@$(MAKE) go-staticcheck
+	@echo ""
+	@echo "==> Running Rust workspace checks..."
+	@$(MAKE) rust-check-all
+	@echo ""
+	@echo "==> Running Node type checks..."
+	@$(MAKE) node-typecheck
+	@echo ""
 	@echo "==> Running Node binding contract test..."
 	@cd $(NAPI_PROJECT_DIR) && npm run test:contract
 	@echo ""
@@ -305,6 +367,11 @@ check-publish:
 		echo "Checking $$crate..."; \
 		cargo package --list -p $$crate --allow-dirty > /dev/null || exit 1; \
 	done
+	@echo ""
+	@echo "==> Validating package publish payloads..."
+	@$(MAKE) publish-python-dry
+	@$(MAKE) node-package-dry-run
+	@$(MAKE) wasm-package-dry-run
 	@echo ""
 	@echo "==> Dry-run publishing crates..."
 	@$(MAKE) publish-crates-dry
@@ -448,6 +515,14 @@ sync-wasm-version:
 	else \
 		echo "⚠ WASM package.json not found at $(WASM_PACKAGE_JSON)"; \
 		exit 1; \
+	fi; \
+	if [ -f "$(WASM_RUST_MANIFEST)" ]; then \
+		sed -i.bak 's/^version = ".*"/version = "'$$version'"/' "$(WASM_RUST_MANIFEST)"; \
+		rm -f "$(WASM_RUST_MANIFEST).bak"; \
+		echo "✓ WASM Rust crate version updated ($(WASM_RUST_MANIFEST) -> $$version)"; \
+	else \
+		echo "⚠ WASM Rust manifest not found at $(WASM_RUST_MANIFEST)"; \
+		exit 1; \
 	fi
 
 sync-binding-lockfiles:
@@ -536,7 +611,7 @@ version-patch:
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
 	sleep 1; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -561,7 +636,7 @@ version-minor:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -586,7 +661,7 @@ version-major:
 	sed -i.bak 's/^version = ".*"/version = "'$$new'"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $$new"; \
 	git tag -a "v$$new" -m "Release version $$new"; \
 	git push origin HEAD --follow-tags; \
@@ -613,7 +688,7 @@ version-set:
 	sed -i.bak 's/^version = ".*"/version = "$(VERSION)"/' examples/pyproject.toml; \
 	rm -f examples/pyproject.toml.bak; \
 	$(MAKE) --no-print-directory version-sync; \
-	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
+	git add Cargo.toml Cargo.lock crates/*/Cargo.toml crates/simple-agents-py/pyproject.toml examples/Cargo.toml examples/pyproject.toml $(NAPI_PACKAGE_JSON) $(NAPI_PACKAGE_LOCK) $(WASM_PACKAGE_JSON) $(WASM_PACKAGE_LOCK) $(WASM_RUST_MANIFEST) $(PYTHON_UV_LOCK) $(EXAMPLES_UV_LOCK) README.md; \
 	git commit -m "chore(release): bump version to $(VERSION)"; \
 	git tag -a "v$(VERSION)" -m "Release version $(VERSION)"; \
 	git push origin HEAD --follow-tags; \

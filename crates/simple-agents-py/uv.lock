@@ -122,7 +122,7 @@ wheels = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.2.32"
+version = "0.2.36"
 source = { editable = "." }
 
 [package.optional-dependencies]
