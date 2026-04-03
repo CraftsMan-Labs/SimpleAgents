@@ -7,7 +7,7 @@ use pyo3::types::PyDict;
 use serde_json::Value;
 use simple_agent_type::message::{parse_messages_value, Message};
 use simple_agent_type::prelude::{CompletionChunk, CompletionRequest, Result, SimpleAgentsError};
-use simple_agent_type::request::ResponseFormat;
+use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
 use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 use simple_agents_core::CompletionOutcome;
@@ -75,16 +75,24 @@ pub(crate) fn build_request_with_messages(
 
 pub(crate) fn resolve_response_plan(
     schema: Option<&Bound<'_, PyAny>>,
-    _schema_name: Option<String>,
-    _strict: bool,
+    schema_name: Option<String>,
+    strict: bool,
     response_format: Option<String>,
 ) -> PyResult<ResponsePlan> {
     if let Some(schema_obj) = schema {
-        let _ = schema_to_json_value(schema_obj)?;
-        return Err(PyRuntimeError::new_err(
-            "schema-based responses are not yet supported in Python bindings; use response_format='json' or 'text'"
-                .to_string(),
-        ));
+        let schema_json = schema_to_json_value(schema_obj)?;
+        let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
+        return Ok(ResponsePlan {
+            response_format: Some(ResponseFormat::JsonSchema {
+                json_schema: JsonSchemaFormat {
+                    name: schema_name,
+                    schema: schema_json.clone(),
+                    strict: Some(strict),
+                },
+            }),
+            schema_value: Some(schema_json),
+            expects_json: true,
+        });
     }
 
     if let Some(format) = response_format {
@@ -161,6 +169,23 @@ pub(crate) fn expect_response(outcome: CompletionOutcome) -> PyResult<Completion
         )),
         CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
             "expected completion response, got schema response".to_string(),
+        )),
+    }
+}
+
+pub(crate) fn expect_coerced_schema(
+    outcome: CompletionOutcome,
+) -> PyResult<simple_agents_core::HealedSchemaResponse> {
+    match outcome {
+        CompletionOutcome::CoercedSchema(healed) => Ok(healed),
+        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
+            "expected schema response, got completion response".to_string(),
+        )),
+        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
+            "expected schema response, got streaming response".to_string(),
+        )),
+        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
+            "expected schema response, got healed json response".to_string(),
         )),
     }
 }
@@ -293,26 +318,4 @@ pub(crate) fn usage_to_pydict(py: Python<'_>, usage: &Usage) -> PyResult<PyObjec
     dict.set_item("total_tokens", usage.total_tokens)?;
     dict.set_item("reasoning_tokens", usage.reasoning_tokens)?;
     Ok(dict.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_response_plan;
-    use pyo3::types::{PyDict, PyDictMethods};
-    use pyo3::Python;
-
-    #[test]
-    fn resolve_response_plan_rejects_schema_inputs() {
-        Python::with_gil(|py| {
-            let schema = PyDict::new_bound(py);
-            schema
-                .set_item("type", "object")
-                .expect("schema dict should be writable");
-            let result = resolve_response_plan(Some(schema.as_any()), None, true, None);
-            match result {
-                Ok(_) => panic!("schema should be rejected"),
-                Err(error) => assert!(error.to_string().contains("not yet supported")),
-            }
-        });
-    }
 }

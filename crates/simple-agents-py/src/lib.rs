@@ -36,12 +36,13 @@ mod schema_helpers;
 mod workflow_helpers;
 
 use completion_helpers::{
-    build_request_with_messages, expect_healed_json, expect_response, expect_stream,
+    build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
+    expect_stream,
     finish_reason_to_str, healed_json_to_py, parse_messages, parse_tool_choice, parse_tools,
     py_err, resolve_response_plan, response_with_metadata_from_response,
 };
 use provider_helpers::{provider_from_params, provider_name_exists};
-use schema_helpers::{parse_schema_from_py, schema_from_python_input};
+use schema_helpers::{parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input};
 use workflow_helpers::{
     attach_workflow_events, parse_workflow_input_value, parse_workflow_run_options,
     workflow_root_path, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
@@ -1925,6 +1926,23 @@ impl Client {
         )
         .map_err(py_err)?;
 
+        let completion_options = if !stream {
+            if let Some(schema_value) = response_plan.schema_value.as_ref() {
+                let schema = schema_from_json_schema_value(schema_value).map_err(py_err)?;
+                CompletionOptions {
+                    mode: CompletionMode::CoercedSchema(schema),
+                }
+            } else if heal && response_plan.expects_json {
+                CompletionOptions {
+                    mode: CompletionMode::HealedJson,
+                }
+            } else {
+                CompletionOptions::default()
+            }
+        } else {
+            CompletionOptions::default()
+        };
+
         if stream {
             if heal {
                 return Err(PyRuntimeError::new_err(
@@ -1938,7 +1956,7 @@ impl Client {
                 .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
             let outcome = py
                 .allow_threads(|| {
-                    runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+                    runtime.block_on(self.client.complete(&request, completion_options.clone()))
                 })
                 .map_err(py_err)?;
             let stream = expect_stream(outcome)?;
@@ -1973,24 +1991,18 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let start = Instant::now();
 
-        let outcome = if heal && response_plan.expects_json {
-            py.allow_threads(|| {
-                runtime.block_on(self.client.complete(
-                    &request,
-                    CompletionOptions {
-                        mode: CompletionMode::HealedJson,
-                    },
-                ))
-            })
-            .map_err(py_err)?
-        } else {
-            py.allow_threads(|| {
-                runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
-            })
-            .map_err(py_err)?
-        };
+        let outcome = py
+            .allow_threads(|| runtime.block_on(self.client.complete(&request, completion_options)))
+            .map_err(py_err)?;
 
         let latency_ms = start.elapsed().as_millis() as u64;
+
+        if response_plan.schema_value.is_some() {
+            let healed = expect_coerced_schema(outcome)?;
+            let content = serde_json::to_string(&healed.coerced.value)
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            return Ok(content.into_py(py));
+        }
 
         if heal && response_plan.expects_json {
             let healed = expect_healed_json(outcome)?;
