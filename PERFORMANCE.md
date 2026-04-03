@@ -164,7 +164,7 @@ Note: the command above includes compile/link memory on this run and is not repr
 Precompiled runtime-only measurement (same benchmark binary, no compile step in measured window):
 
 ```bash
-target/release/deps/runtime_benchmarks-4fddb17fecc87652 --bench --sample-size 10
+cargo bench -p simple-agents-workflow --bench runtime_benchmarks -- --sample-size 10
 ```
 
 - Wall-clock elapsed: `79579.83 ms`
