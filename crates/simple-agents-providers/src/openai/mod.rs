@@ -971,6 +971,28 @@ mod tests {
     }
 
     #[test]
+    fn test_redacted_headers_masks_sensitive_values() {
+        let headers = vec![
+            (
+                "Authorization".to_string(),
+                "Bearer secret-token".to_string(),
+            ),
+            ("Set-Cookie".to_string(), "session=secret".to_string()),
+            ("Content-Type".to_string(), "application/json".to_string()),
+        ];
+
+        let redacted = OpenAIProvider::redacted_headers(&headers);
+        assert_eq!(
+            redacted,
+            vec![
+                ("Authorization".to_string(), "<redacted>".to_string()),
+                ("Set-Cookie".to_string(), "<redacted>".to_string()),
+                ("Content-Type".to_string(), "application/json".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn test_transform_request_does_not_normalize_when_strict_omitted() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
         let provider = OpenAIProvider::new(api_key).unwrap();

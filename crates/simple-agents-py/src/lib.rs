@@ -37,12 +37,13 @@ mod workflow_helpers;
 
 use completion_helpers::{
     build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
-    expect_stream,
-    finish_reason_to_str, healed_json_to_py, parse_messages, parse_tool_choice, parse_tools,
-    py_err, resolve_response_plan, response_with_metadata_from_response,
+    expect_stream, finish_reason_to_str, healed_json_to_py, parse_messages, parse_tool_choice,
+    parse_tools, py_err, resolve_response_plan, response_with_metadata_from_response,
 };
 use provider_helpers::{provider_from_params, provider_name_exists};
-use schema_helpers::{parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input};
+use schema_helpers::{
+    parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input,
+};
 use workflow_helpers::{
     attach_workflow_events, parse_workflow_input_value, parse_workflow_run_options,
     workflow_root_path, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
@@ -162,7 +163,7 @@ impl SchemaBuilder {
     #[allow(clippy::too_many_arguments)]
     fn field(
         &mut self,
-        py: Python<'_>,
+        _py: Python<'_>,
         name: &str,
         field_type: &Bound<'_, PyAny>,
         required: bool,
@@ -172,7 +173,7 @@ impl SchemaBuilder {
         stream: Option<String>,
         items: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        let schema = parse_schema_from_py(py, field_type, items)?;
+        let schema = parse_schema_from_py(field_type, items)?;
         let aliases_vec = if let Some(alias_obj) = aliases {
             let values: Vec<String> = pythonize::depythonize(alias_obj).map_err(|_| {
                 PyRuntimeError::new_err("aliases must be a list of strings".to_string())

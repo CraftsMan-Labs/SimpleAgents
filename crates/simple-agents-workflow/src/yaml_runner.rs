@@ -3626,6 +3626,45 @@ nodes:
     }
 
     #[tokio::test]
+    async fn typed_wrapper_entrypoints_produce_equivalent_outputs() {
+        let yaml = r#"
+id: typed-wrapper-equivalence
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Classify this email into exactly one category:
+        {{ input.email_text }}
+"#;
+
+        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+        let input = json!({"email_text":"hello"});
+
+        let baseline = run_workflow_yaml_typed(&workflow, &input, &MockExecutor)
+            .await
+            .expect("base typed entrypoint should execute");
+        let options_wrapper = run_workflow_yaml_typed_with_custom_worker_and_events_and_options(
+            &workflow,
+            &input,
+            &MockExecutor,
+            None,
+            None,
+            &YamlWorkflowRunOptions::default(),
+        )
+        .await
+        .expect("typed options wrapper should execute");
+
+        assert_eq!(baseline.workflow_id, options_wrapper.workflow_id);
+        assert_eq!(baseline.terminal_node, options_wrapper.terminal_node);
+        assert_eq!(baseline.node_outputs, options_wrapper.node_outputs);
+        assert_eq!(baseline.trace, options_wrapper.trace);
+    }
+
+    #[tokio::test]
     async fn yaml_llm_tool_calling_captures_traces_and_supports_globals_reference() {
         let yaml = r#"
 id: tool-calling-workflow
@@ -5641,4 +5680,31 @@ nodes:
             .iter()
             .any(|event| event.event_type == YamlWorkflowEventType::WorkflowCompleted));
     }
+}
+
+#[tokio::test]
+async fn workflow_run_options_reject_unknown_top_level_field() {
+    let yaml = r#"
+id: options-unknown-top-level
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        {{ input.email_text }}
+"#;
+
+    let _workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let options = serde_json::from_value::<YamlWorkflowRunOptions>(json!({
+        "telemetry": {"enabled": true},
+        "unexpected": true
+    }))
+    .expect_err("unknown options key should fail parsing");
+
+    let message = options.to_string();
+    assert!(message.contains("unknown field"));
+    assert!(message.contains("unexpected"));
 }

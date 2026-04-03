@@ -319,3 +319,64 @@ pub(crate) fn usage_to_pydict(py: Python<'_>, usage: &Usage) -> PyResult<PyObjec
     dict.set_item("reasoning_tokens", usage.reasoning_tokens)?;
     Ok(dict.into())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_response_plan;
+    use pyo3::types::{PyDict, PyDictMethods};
+    use pyo3::Python;
+    use serde_json::json;
+    use simple_agent_type::request::ResponseFormat;
+
+    #[test]
+    fn resolve_response_plan_accepts_schema_inputs() {
+        Python::with_gil(|py| {
+            let schema = PyDict::new_bound(py);
+            schema
+                .set_item("type", "object")
+                .expect("schema dict should be writable");
+
+            let properties = PyDict::new_bound(py);
+            let name_schema = PyDict::new_bound(py);
+            name_schema
+                .set_item("type", "string")
+                .expect("property schema should be writable");
+            properties
+                .set_item("name", name_schema)
+                .expect("properties should be writable");
+            schema
+                .set_item("properties", properties)
+                .expect("schema should accept properties");
+
+            let plan = resolve_response_plan(
+                Some(schema.as_any()),
+                Some("person".to_string()),
+                true,
+                None,
+            )
+            .expect("schema response plan should be produced");
+
+            match plan.response_format {
+                Some(ResponseFormat::JsonSchema { json_schema }) => {
+                    assert_eq!(json_schema.name, "person");
+                    assert_eq!(json_schema.strict, Some(true));
+                    assert_eq!(
+                        json_schema.schema,
+                        json!({
+                            "type": "object",
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                }
+                            }
+                        })
+                    );
+                }
+                _ => panic!("expected JsonSchema response format"),
+            }
+
+            assert!(plan.expects_json);
+            assert!(plan.schema_value.is_some());
+        });
+    }
+}

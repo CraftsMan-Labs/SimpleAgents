@@ -8,7 +8,6 @@ use simple_agents_healing::schema::{Field, ObjectSchema, StreamAnnotation};
 use simple_agents_healing::Schema;
 
 pub(crate) fn parse_schema_from_py(
-    py: Python<'_>,
     field_type: &Bound<'_, PyAny>,
     items: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Schema> {
@@ -28,7 +27,7 @@ pub(crate) fn parse_schema_from_py(
         "any" => Schema::Any,
         "array" => {
             let item_schema = if let Some(items_obj) = items {
-                parse_schema_from_py(py, items_obj, None)?
+                parse_schema_from_py(items_obj, None)?
             } else {
                 Schema::Any
             };

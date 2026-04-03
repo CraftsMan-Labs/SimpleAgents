@@ -90,7 +90,10 @@ def initial_messages() -> list[dict[str, str]]:
 
 def render_assistant_reply(result: WorkflowRunOutput) -> str:
     terminal = result.get("terminal_node")
-    terminal_output = result.get("terminal_output") or {}
+    terminal_output_value = result.get("terminal_output")
+    terminal_output = (
+        terminal_output_value if isinstance(terminal_output_value, dict) else {}
+    )
 
     if terminal in {"explain_capabilities", "ask_for_scenario"}:
         question = terminal_output.get("question")
