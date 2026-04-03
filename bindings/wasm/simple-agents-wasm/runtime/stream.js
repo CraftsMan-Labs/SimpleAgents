@@ -10,20 +10,20 @@ export function createStreamAggregator(model) {
 }
 
 export function applyDeltaToAggregate(state, delta) {
-  if (!state || !delta) {
+  if (state === null || state === undefined || delta === null || delta === undefined) {
     return;
   }
 
-  if (!state.responseId && delta.id) {
+  if (state.responseId === "" && delta.id !== null && delta.id !== undefined) {
     state.responseId = delta.id;
   }
-  if (delta.model) {
+  if (delta.model !== null && delta.model !== undefined) {
     state.responseModel = delta.model;
   }
-  if (delta.content) {
+  if (delta.content !== null && delta.content !== undefined) {
     state.aggregate += delta.content;
   }
-  if (delta.finishReason) {
+  if (delta.finishReason !== null && delta.finishReason !== undefined) {
     state.finishReason = delta.finishReason;
   }
 }
@@ -61,8 +61,8 @@ export function createStreamEventBridge(model, onChunk) {
     mergeResult(result, started) {
       return {
         ...result,
-        id: result.id || aggregateState.responseId,
-        model: result.model || aggregateState.responseModel,
+        id: result.id ?? aggregateState.responseId,
+        model: result.model ?? aggregateState.responseModel,
         content: result.content ?? aggregateState.aggregate,
         finishReason: result.finishReason ?? aggregateState.finishReason,
         latencyMs: Math.max(0, Math.round(performance.now() - started))
