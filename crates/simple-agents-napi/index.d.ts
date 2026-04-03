@@ -86,7 +86,7 @@ export interface StreamEvent {
   delta?: StreamDelta
   error?: StreamErrorEvent
 }
-export declare class Client {
+export class Client {
   constructor(provider: string)
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
   stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
