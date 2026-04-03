@@ -2012,7 +2012,7 @@ async fn try_run_yaml_via_ir_runtime(
                     tool_calls_global_key: None,
                     tool_trace_mode: YamlToolTraceMode::Off,
                     execution_context: context.clone(),
-                    email_text: email_text.to_string(),
+                    input_text: email_text.to_string(),
                     trace_id: self.trace_id.clone(),
                     trace_context: self.trace_context.clone(),
                     tenant_context: self.tenant_context.clone(),

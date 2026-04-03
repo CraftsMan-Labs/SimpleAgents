@@ -220,8 +220,11 @@ impl<'a> WorkflowRunner<'a> {
     /// Execute the workflow and return the typed projection.
     ///
     /// The typed output keeps only workflow identity, traversal, and node
-    /// outputs. Legacy fields on `YamlWorkflowRunOutput` such as telemetry,
-    /// timing, token counters, and `email_text` remain available via `run()`.
+    /// outputs. This compatibility bridge intentionally omits observability
+    /// fields from `YamlWorkflowRunOutput`, including `step_timings`,
+    /// `llm_node_metrics`, token counters, `total_elapsed_ms`, `trace_id`,
+    /// and `metadata` (plus legacy compatibility fields such as `email_text`).
+    /// Call `run()` when those diagnostics are required.
     pub async fn run_typed(self) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
         let WorkflowRunner {
             source,

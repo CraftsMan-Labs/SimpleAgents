@@ -512,7 +512,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                 tool_name.as_str(),
                                 None,
                                 &arguments,
-                                request.email_text.as_str(),
+                                request.input_text.as_str(),
                                 &request.execution_context,
                             )
                             .await

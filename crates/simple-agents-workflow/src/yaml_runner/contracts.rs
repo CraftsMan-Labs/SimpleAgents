@@ -179,7 +179,7 @@ pub struct YamlLlmExecutionRequest {
     pub tool_calls_global_key: Option<String>,
     pub tool_trace_mode: YamlToolTraceMode,
     pub execution_context: Value,
-    pub email_text: String,
+    pub input_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
     pub tenant_context: YamlWorkflowTraceTenantContext,
@@ -208,7 +208,7 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
         handler: &str,
         handler_file: Option<&str>,
         payload: &Value,
-        email_text: &str,
+        input_text: &str,
         context: &Value,
     ) -> Result<Value, String>;
 }
@@ -258,8 +258,14 @@ pub struct YamlSwitch {
 #[serde(untagged)]
 pub enum YamlToolChoiceConfig {
     Mode(super::ToolChoiceMode),
-    Function { function: String },
+    Function(YamlToolChoiceFunction),
     OpenAi(super::ToolChoiceTool),
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YamlToolChoiceFunction {
+    pub function: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -334,6 +340,7 @@ pub struct YamlNodeType {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlNode {
     pub id: String,
     pub node_type: YamlNodeType,
@@ -357,14 +364,18 @@ impl YamlNode {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlEdge {
     pub from: String,
     pub to: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct YamlWorkflow {
     pub id: String,
+    #[serde(default)]
+    pub version: Option<String>,
     pub entry_node: String,
     #[serde(default)]
     pub nodes: Vec<YamlNode>,
