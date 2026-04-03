@@ -86,7 +86,9 @@ pub(crate) fn schema_from_json_schema_value(
             "number" => Ok(Schema::Float),
             "integer" => Ok(Schema::Int),
             "boolean" => Ok(Schema::Bool),
-            _ => Ok(Schema::Any),
+            _ => Err(SimpleAgentsError::Config(format!(
+                "unsupported JSON schema type '{type_name}'"
+            ))),
         },
         serde_json::Value::Object(map) => {
             if let Some(serde_json::Value::String(type_name)) = map.get("type") {
@@ -138,7 +140,9 @@ pub(crate) fn schema_from_json_schema_value(
                     "integer" => Ok(Schema::Int),
                     "boolean" => Ok(Schema::Bool),
                     "null" => Ok(Schema::Null),
-                    _ => Ok(Schema::Any),
+                    _ => Err(SimpleAgentsError::Config(format!(
+                        "unsupported JSON schema object type '{type_name}'"
+                    ))),
                 }
             } else {
                 Ok(Schema::Any)

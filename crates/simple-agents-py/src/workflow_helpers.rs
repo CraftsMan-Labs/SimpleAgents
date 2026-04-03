@@ -120,11 +120,15 @@ impl RecordingWorkflowEventSink {
     }
 
     pub(crate) fn events_value(&self) -> PyResult<Value> {
-        let events = self
-            .events
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("event sink lock poisoned"))?
-            .clone();
+        let events = match self.events.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                eprintln!(
+                    "[simple-agents-py] event sink lock poisoned while collecting events; recovering"
+                );
+                poisoned.into_inner().clone()
+            }
+        };
         serde_json::to_value(events).map_err(|error| {
             PyRuntimeError::new_err(format!("event serialization failed: {error}"))
         })
@@ -133,8 +137,15 @@ impl RecordingWorkflowEventSink {
 
 impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
     fn emit(&self, event: &YamlWorkflowEvent) {
-        if let Ok(mut events) = self.events.lock() {
-            events.push(event.clone());
+        match self.events.lock() {
+            Ok(mut events) => events.push(event.clone()),
+            Err(poisoned) => {
+                eprintln!(
+                    "[simple-agents-py] event sink lock poisoned while recording event; recovering"
+                );
+                let mut events = poisoned.into_inner();
+                events.push(event.clone());
+            }
         }
     }
 }

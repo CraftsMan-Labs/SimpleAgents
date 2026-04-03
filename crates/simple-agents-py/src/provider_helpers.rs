@@ -25,31 +25,11 @@ pub(crate) fn provider_from_params(
 
     match provider_name {
         "openai" => {
-            let mut provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        if is_local_base(api_base) {
-                            let client = HttpClient::builder()
-                                .timeout(timeout)
-                                .pool_max_idle_per_host(10)
-                                .pool_idle_timeout(Duration::from_secs(90))
-                                .no_proxy()
-                                .build()
-                                .map_err(|e| {
-                                    SimpleAgentsError::Config(format!(
-                                        "Failed to create HTTP client: {}",
-                                        e
-                                    ))
-                                })?;
-                            OpenAIProvider::with_client(api_key, api_base.to_string(), client)?
-                        } else {
-                            OpenAIProvider::with_base_url(api_key, api_base.to_string())?
-                        }
-                    }
-                    None => OpenAIProvider::new(api_key)?,
-                },
-                None => OpenAIProvider::from_env()?,
-            };
+            let resolved_api_key = resolve_openai_api_key(api_key)?;
+            let resolved_api_base = resolve_openai_api_base(api_base);
+            let client = build_openai_http_client(resolved_api_base.as_str(), timeout)?;
+            let mut provider =
+                OpenAIProvider::with_client(resolved_api_key, resolved_api_base, client)?;
             if enable_healing {
                 provider = provider.with_healing(ProviderHealingConfig::default());
             }
@@ -90,4 +70,37 @@ pub(crate) fn provider_from_params(
 
 fn is_local_base(api_base: &str) -> bool {
     api_base.contains("localhost") || api_base.contains("127.0.0.1")
+}
+
+fn resolve_openai_api_key(api_key: Option<ApiKey>) -> Result<ApiKey> {
+    if let Some(value) = api_key {
+        return Ok(value);
+    }
+
+    let from_env = std::env::var("OPENAI_API_KEY").map_err(|_| {
+        SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string())
+    })?;
+    ApiKey::new(from_env)
+}
+
+fn resolve_openai_api_base(api_base: Option<&str>) -> String {
+    api_base
+        .map(std::string::ToString::to_string)
+        .or_else(|| std::env::var("OPENAI_API_BASE").ok())
+        .unwrap_or_else(|| OpenAIProvider::DEFAULT_BASE_URL.to_string())
+}
+
+fn build_openai_http_client(api_base: &str, timeout: Duration) -> Result<HttpClient> {
+    let mut builder = HttpClient::builder()
+        .timeout(timeout)
+        .pool_max_idle_per_host(10)
+        .pool_idle_timeout(Duration::from_secs(90));
+
+    if is_local_base(api_base) {
+        builder = builder.no_proxy();
+    }
+
+    builder.build().map_err(|error| {
+        SimpleAgentsError::Config(format!("Failed to create HTTP client: {error}"))
+    })
 }
