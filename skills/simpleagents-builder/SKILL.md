@@ -21,6 +21,7 @@ Author YAML workflows that are deterministic, testable, and compatible with Simp
 3. Keep switch routing deterministic and explicit.
 4. Keep chat systems one-question-at-a-time unless user asks otherwise.
 5. Keep business policy in prompts/routing, not hidden in bindings.
+6. For `custom_worker`, verify `handler` matches a real function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted).
 
 ## Required Structure
 
@@ -61,6 +62,16 @@ edges:
 - worker/action nodes: `llm_call` for generation, `custom_worker` only when handler is intentional.
 - terminal behavior: explicit node with final message/question.
 
+Example `custom_worker` declaration:
+
+```yaml
+- id: rag_lookup
+  node_type:
+    custom_worker:
+      handler: get_rag_data
+      handler_file: handlers.py
+```
+
 ## Routing Pattern
 
 For state-based routing:
@@ -94,6 +105,7 @@ Before finalizing YAML:
 - Required fields align with routing conditions
 - `edges` cover intended flow transitions
 - No ambiguous multi-question prompts in interview/chat flows
+- For `custom_worker` nodes, `handler` matches a function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted)
 
 For examples and reusable templates, read:
 - `references/patterns.md`
