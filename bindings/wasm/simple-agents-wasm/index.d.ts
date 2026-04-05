@@ -103,6 +103,7 @@ export interface ClientConfig {
 export interface WorkflowRunOptions {
   telemetry?: Record<string, unknown>;
   trace?: Record<string, unknown>;
+  model?: string;
   onEvent?: (event: Record<string, unknown>) => void;
   functions?: Record<
     string,
@@ -124,6 +125,23 @@ export interface WorkflowRunResult {
   context: Record<string, unknown>;
   output?: unknown;
   events: WorkflowRunEvent[];
+}
+
+export interface WorkflowExecutionFlags {
+  model?: string;
+  healing?: boolean;
+  workflow_streaming?: boolean;
+  node_llm_streaming?: boolean;
+}
+
+export interface WorkflowExecutionRequest {
+  workflow_yaml: string;
+  messages: MessageInput[];
+  context?: Record<string, unknown>;
+  media?: Record<string, unknown>;
+  input?: Record<string, unknown>;
+  execution?: WorkflowExecutionFlags;
+  workflow_options?: WorkflowRunOptions;
 }
 
 export declare class Client {
@@ -154,6 +172,12 @@ export declare class Client {
     workflowPath: string,
     workflowInput: Record<string, unknown>
   ): Promise<never>;
+  run(request: WorkflowExecutionRequest): Promise<WorkflowRunResult>;
+  runAsync(request: WorkflowExecutionRequest): Promise<WorkflowRunResult>;
+  streamWorkflow(
+    request: WorkflowExecutionRequest,
+    onEvent?: (event: Record<string, unknown>) => void
+  ): Promise<WorkflowRunResult>;
 }
 
 export declare function hasRustBackend(): Promise<boolean>;

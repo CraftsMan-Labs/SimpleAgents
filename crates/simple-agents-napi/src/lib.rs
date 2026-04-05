@@ -11,7 +11,7 @@ use serde_json::Value as JsonValue;
 use simple_agent_type::coercion::CoercionFlag;
 use simple_agent_type::message::{Message, Role};
 use simple_agent_type::prelude::{
-    CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
+    ApiKey, CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
 };
 use simple_agent_type::response::{CompletionChunk, CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolCall, ToolType};
@@ -24,22 +24,74 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options, YamlWorkflowEvent,
-    YamlWorkflowEventSink, YamlWorkflowRunOptions,
+    workflow_execution, YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
+    YamlWorkflowSource,
 };
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 mod workflow_helpers;
-use workflow_helpers::{parse_workflow_options, validate_workflow_request};
+use workflow_helpers::{
+    build_workflow_input_with_messages_envelope, parse_workflow_options, validate_workflow_request,
+};
 
 type Runtime = tokio::runtime::Runtime;
 
 fn provider_from_env(provider_name: &str) -> SaResult<Arc<dyn Provider>> {
+    build_provider_arc(provider_name, None, None)
+}
+
+/// Builds a provider from explicit credentials and/or environment variables.
+///
+/// When `api_key` is `None`, provider-specific environment variables are used
+/// (same as [`provider_from_env`]).
+fn build_provider_arc(
+    provider_name: &str,
+    api_key: Option<&str>,
+    api_base: Option<&str>,
+) -> SaResult<Arc<dyn Provider>> {
     match provider_name {
-        "openai" => Ok(Arc::new(OpenAIProvider::from_env()?)),
-        "anthropic" => Ok(Arc::new(AnthropicProvider::from_env()?)),
-        "openrouter" => Ok(Arc::new(OpenRouterProvider::from_env()?)),
+        "openai" => {
+            let provider = match api_key {
+                Some(key) => {
+                    let key = ApiKey::new(key)?;
+                    match api_base {
+                        Some(base) => OpenAIProvider::with_base_url(key, base.to_string())?,
+                        None => OpenAIProvider::new(key)?,
+                    }
+                }
+                None => OpenAIProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
+        "anthropic" => {
+            let provider = match api_key {
+                Some(key) => {
+                    let key = ApiKey::new(key)?;
+                    match api_base {
+                        Some(base) => AnthropicProvider::with_base_url(key, base.to_string())?,
+                        None => AnthropicProvider::new(key)?,
+                    }
+                }
+                None => AnthropicProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
+        "openrouter" => {
+            let provider = match api_key {
+                Some(key) => {
+                    let key = ApiKey::new(key)?;
+                    match api_base {
+                        Some(base) => OpenRouterProvider::with_base_url(key, base.to_string())?,
+                        None => OpenRouterProvider::new(key)?,
+                    }
+                }
+                None => OpenRouterProvider::from_env()?,
+            };
+            Ok(Arc::new(provider))
+        }
         _ => Err(SimpleAgentsError::Config(format!(
             "Unknown provider '{provider_name}'"
         ))),
@@ -161,6 +213,45 @@ fn completion_options(opts: &CompleteOptions) -> SaResult<CompletionOptions> {
     };
 
     Ok(CompletionOptions { mode })
+}
+
+#[napi(object)]
+pub struct ClientProviderConfig {
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub api_base: Option<String>,
+}
+
+#[napi(object)]
+pub struct WorkflowYamlRunFlags {
+    pub healing: bool,
+    pub workflow_streaming: bool,
+    pub node_llm_streaming: bool,
+}
+
+#[napi(object)]
+pub struct ParsedWorkflowYamlExecutionRequest {
+    pub workflow_path: String,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub workflow_input: JsonValue,
+    pub healing: bool,
+    pub workflow_streaming: bool,
+    pub node_llm_streaming: bool,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub workflow_options: JsonValue,
+}
+
+#[napi(object)]
+pub struct WorkflowYamlRunRequest {
+    pub workflow_path: String,
+    pub messages: Vec<MessageInput>,
+    pub healing: bool,
+    pub workflow_streaming: bool,
+    pub node_llm_streaming: bool,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub extra_workflow_input: Option<JsonValue>,
+    #[napi(ts_type = "Record<string, unknown>")]
+    pub workflow_options: Option<JsonValue>,
 }
 
 #[napi(object)]
@@ -302,7 +393,7 @@ fn build_messages(input: Either<String, Vec<MessageInput>>) -> SaResult<Vec<Mess
     }
 }
 
-fn parse_message(input: MessageInput) -> SaResult<Message> {
+pub(crate) fn parse_message(input: MessageInput) -> SaResult<Message> {
     let parsed_role = input.role.parse::<Role>().map_err(|_| {
         SimpleAgentsError::Config("role must be one of: user, assistant, system, tool".to_string())
     })?;
@@ -598,6 +689,7 @@ pub struct WorkflowStreamTask {
     workflow_path: String,
     workflow_input: JsonValue,
     workflow_options: YamlWorkflowRunOptions,
+    workflow_flags: YamlWorkflowExecutionFlags,
     on_event: ThreadsafeFunction<String>,
 }
 
@@ -869,18 +961,18 @@ impl Task for WorkflowStreamTask {
             callback: self.on_event.clone(),
         };
 
+        let request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
+            workflow_input: &self.workflow_input,
+            executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
+            custom_worker: None,
+            options: &self.workflow_options,
+            flags: self.workflow_flags,
+        };
+
         let output = self
             .runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    std::path::Path::new(self.workflow_path.as_str()),
-                    &self.workflow_input,
-                    &self.client,
-                    None,
-                    Some(&event_sink),
-                    &self.workflow_options,
-                ),
-            )
+            .block_on(workflow_execution::stream(request, &event_sink))
             .map_err(|error| Error::from_reason(error.to_string()))?;
 
         serde_json::to_value(output)
@@ -890,6 +982,68 @@ impl Task for WorkflowStreamTask {
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
         env.to_js_value(&output)
     }
+}
+
+fn blocking_workflow_to_json(
+    runtime: &Runtime,
+    client: &Arc<SimpleAgentsClient>,
+    workflow_path: &str,
+    workflow_input: &JsonValue,
+    options: &YamlWorkflowRunOptions,
+    flags: YamlWorkflowExecutionFlags,
+    event_sink: Option<&dyn YamlWorkflowEventSink>,
+) -> Result<JsonValue> {
+    let request = YamlWorkflowExecutionRequest {
+        source: YamlWorkflowSource::File(Path::new(workflow_path)),
+        workflow_input,
+        executor: YamlWorkflowExecutorBinding::Client(client.as_ref()),
+        custom_worker: None,
+        options,
+        flags,
+    };
+
+    let output = if let Some(sink) = event_sink {
+        runtime.block_on(workflow_execution::stream(request, sink))
+    } else {
+        runtime.block_on(workflow_execution::run(request))
+    }
+    .map_err(|error| Error::from_reason(error.to_string()))?;
+
+    serde_json::to_value(output)
+        .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
+}
+
+#[napi(
+    js_name = "parseWorkflowYamlExecutionRequest",
+    ts_args_type = "workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: Record<string, unknown>"
+)]
+pub fn parse_workflow_yaml_execution_request(
+    workflow_path: String,
+    messages: Vec<MessageInput>,
+    flags: WorkflowYamlRunFlags,
+    extra_workflow_input: Option<JsonValue>,
+    workflow_options: Option<JsonValue>,
+) -> Result<ParsedWorkflowYamlExecutionRequest> {
+    if workflow_path.trim().is_empty() {
+        return Err(Error::from_reason(
+            "workflow_path cannot be empty".to_string(),
+        ));
+    }
+    let workflow_input =
+        build_workflow_input_with_messages_envelope(messages, extra_workflow_input.as_ref())?;
+    validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+    let opts = parse_workflow_options(workflow_options.clone())?;
+    let workflow_options_value = serde_json::to_value(&opts).map_err(|error| {
+        Error::from_reason(format!("failed to serialize workflow options: {error}"))
+    })?;
+    Ok(ParsedWorkflowYamlExecutionRequest {
+        workflow_path,
+        workflow_input,
+        healing: flags.healing,
+        workflow_streaming: flags.workflow_streaming,
+        node_llm_streaming: flags.node_llm_streaming,
+        workflow_options: workflow_options_value,
+    })
 }
 
 #[napi]
@@ -903,6 +1057,21 @@ impl Client {
     #[napi(constructor)]
     pub fn new(provider: String) -> Result<Self> {
         let provider = provider_from_env(&provider).map_err(napi_err)?;
+        Self::from_provider_arc(provider)
+    }
+
+    #[napi(factory)]
+    pub fn with_provider_config(config: ClientProviderConfig) -> Result<Self> {
+        let provider = build_provider_arc(
+            &config.provider,
+            config.api_key.as_deref(),
+            config.api_base.as_deref(),
+        )
+        .map_err(napi_err)?;
+        Self::from_provider_arc(provider)
+    }
+
+    fn from_provider_arc(provider: Arc<dyn Provider>) -> Result<Self> {
         let client = Arc::new(
             SimpleAgentsClientBuilder::new()
                 .with_provider(provider)
@@ -910,7 +1079,6 @@ impl Client {
                 .map_err(napi_err)?,
         );
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
-
         Ok(Self { runtime, client })
     }
 
@@ -1040,22 +1208,19 @@ impl Client {
         let options = parse_workflow_options(workflow_options)?;
 
         let event_sink = RecordingWorkflowEventSink::new();
-        let output = self
-            .runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    std::path::Path::new(workflow_path.as_str()),
-                    &workflow_input,
-                    &self.client,
-                    None,
-                    Some(&event_sink),
-                    &options,
-                ),
-            )
-            .map_err(|error| Error::from_reason(error.to_string()))?;
-
-        let mut output_value = serde_json::to_value(output)
-            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))?;
+        let stream_flags = YamlWorkflowExecutionFlags {
+            workflow_streaming: true,
+            ..YamlWorkflowExecutionFlags::default()
+        };
+        let mut output_value = blocking_workflow_to_json(
+            &self.runtime,
+            &self.client,
+            workflow_path.as_str(),
+            &workflow_input,
+            &options,
+            stream_flags,
+            Some(&event_sink),
+        )?;
         event_sink.attach_to_output(&mut output_value)?;
         Ok(output_value)
     }
@@ -1086,6 +1251,10 @@ impl Client {
             workflow_path,
             workflow_input,
             workflow_options: options,
+            workflow_flags: YamlWorkflowExecutionFlags {
+                workflow_streaming: true,
+                ..YamlWorkflowExecutionFlags::default()
+            },
             on_event: tsfn,
         };
 
@@ -1104,22 +1273,81 @@ impl Client {
     ) -> Result<JsonValue> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let options = parse_workflow_options(workflow_options)?;
+        blocking_workflow_to_json(
+            &self.runtime,
+            &self.client,
+            workflow_path.as_str(),
+            &workflow_input,
+            &options,
+            YamlWorkflowExecutionFlags::default(),
+            None,
+        )
+    }
 
-        let output = self
-            .runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    std::path::Path::new(workflow_path.as_str()),
-                    &workflow_input,
-                    &self.client,
-                    None,
-                    None,
-                    &options,
-                ),
-            )
-            .map_err(|error| Error::from_reason(error.to_string()))?;
+    #[napi(
+        ts_args_type = "request: WorkflowYamlRunRequest",
+        ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
+    )]
+    pub fn execute_workflow_yaml(&self, request: WorkflowYamlRunRequest) -> Result<JsonValue> {
+        let workflow_input = build_workflow_input_with_messages_envelope(
+            request.messages,
+            request.extra_workflow_input.as_ref(),
+        )?;
+        validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
+        let options = parse_workflow_options(request.workflow_options.clone())?;
+        let flags = YamlWorkflowExecutionFlags {
+            healing: request.healing,
+            workflow_streaming: request.workflow_streaming,
+            node_llm_streaming: request.node_llm_streaming,
+        };
+        blocking_workflow_to_json(
+            &self.runtime,
+            &self.client,
+            request.workflow_path.as_str(),
+            &workflow_input,
+            &options,
+            flags,
+            None,
+        )
+    }
 
-        serde_json::to_value(output)
-            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
+    #[napi(
+        ts_args_type = "request: WorkflowYamlRunRequest, onEvent: (err: unknown, eventJson: string) => void",
+        ts_return_type = "Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>"
+    )]
+    pub fn execute_workflow_yaml_stream(
+        &self,
+        request: WorkflowYamlRunRequest,
+        on_event: JsFunction,
+    ) -> Result<AsyncTask<WorkflowStreamTask>> {
+        let workflow_input = build_workflow_input_with_messages_envelope(
+            request.messages,
+            request.extra_workflow_input.as_ref(),
+        )?;
+        validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
+        let options = parse_workflow_options(request.workflow_options.clone())?;
+        let workflow_flags = YamlWorkflowExecutionFlags {
+            healing: request.healing,
+            workflow_streaming: request.workflow_streaming,
+            node_llm_streaming: request.node_llm_streaming,
+        };
+
+        let tsfn: ThreadsafeFunction<String> =
+            on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
+                let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
+                Ok(vec![event_json])
+            })?;
+
+        let task = WorkflowStreamTask {
+            runtime: self.runtime.clone(),
+            client: self.client.clone(),
+            workflow_path: request.workflow_path,
+            workflow_input,
+            workflow_options: options,
+            workflow_flags,
+            on_event: tsfn,
+        };
+
+        Ok(AsyncTask::new(task))
     }
 }

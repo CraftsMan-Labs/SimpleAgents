@@ -245,6 +245,43 @@ fn provider_from_env(provider_name: &str) -> Result<Arc<dyn Provider>> {
     }
 }
 
+fn provider_from_credentials(
+    provider_name: &str,
+    api_key: &str,
+    api_base: Option<&str>,
+) -> Result<Arc<dyn Provider>> {
+    let api_key = ApiKey::new(api_key)?;
+    match provider_name {
+        "openai" => {
+            let base = api_base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(OpenAIProvider::DEFAULT_BASE_URL)
+                .to_string();
+            Ok(Arc::new(OpenAIProvider::with_base_url(api_key, base)?))
+        }
+        "anthropic" => {
+            let base = api_base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(AnthropicProvider::DEFAULT_BASE_URL)
+                .to_string();
+            Ok(Arc::new(AnthropicProvider::with_base_url(api_key, base)?))
+        }
+        "openrouter" => {
+            let base = api_base
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(OpenRouterProvider::DEFAULT_BASE_URL)
+                .to_string();
+            Ok(Arc::new(OpenRouterProvider::with_base_url(api_key, base)?))
+        }
+        _ => Err(SimpleAgentsError::Config(format!(
+            "Unknown provider '{provider_name}'"
+        ))),
+    }
+}
+
 fn openrouter_from_env() -> Result<OpenRouterProvider> {
     let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
         SimpleAgentsError::Config("OPENROUTER_API_KEY environment variable is required".to_string())
@@ -665,6 +702,56 @@ fn emit_stream_event(
     }
 }
 
+/// Create a client using explicit provider credentials.
+///
+/// `provider_name` must be one of: "openai", "anthropic", "openrouter".
+/// `api_key` must be a non-empty API key string for that provider.
+/// `api_base` may be null or empty to use the provider default base URL.
+///
+/// # Safety
+///
+/// `provider_name` and `api_key` must be valid null-terminated UTF-8 strings.
+/// `api_base` must be null or a valid null-terminated UTF-8 string.
+/// The returned pointer must be freed with `sa_client_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_client_new_with_credentials(
+    provider_name: *const c_char,
+    api_key: *const c_char,
+    api_base: *const c_char,
+) -> *mut SAClient {
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<Box<SAClient>> {
+        let provider = cstr_to_string(provider_name, "provider_name")?;
+        let key = cstr_to_string(api_key, "api_key")?;
+        let base = cstr_to_optional_string(api_base, "api_base")?;
+        let base = base.as_deref();
+        let provider = provider_from_credentials(&provider, &key, base)?;
+        let client = build_client(provider)?;
+        let runtime = build_runtime()?;
+
+        Ok(Box::new(SAClient {
+            inner: FfiClient {
+                runtime: Mutex::new(runtime),
+                client,
+            },
+        }))
+    }));
+
+    match result {
+        Ok(Ok(client)) => {
+            clear_last_error();
+            Box::into_raw(client)
+        }
+        Ok(Err(error)) => {
+            set_last_error(error.to_string());
+            std::ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("Panic occurred in sa_client_new_with_credentials".to_string());
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// Create a client from environment variables for a provider.
 ///
 /// `provider_name` must be one of: "openai", "anthropic", "openrouter".
@@ -705,11 +792,11 @@ pub unsafe extern "C" fn sa_client_new_from_env(provider_name: *const c_char) ->
     }
 }
 
-/// Free a client created by `sa_client_new_from_env`.
+/// Free a client created by `sa_client_new_from_env` or `sa_client_new_with_credentials`.
 ///
 /// # Safety
 ///
-/// The `client` pointer must be null or a valid pointer returned by `sa_client_new_from_env`.
+/// The `client` pointer must be null or a valid pointer returned by a client constructor.
 /// After calling this function, the pointer is no longer valid and must not be used.
 #[no_mangle]
 pub unsafe extern "C" fn sa_client_free(client: *mut SAClient) {

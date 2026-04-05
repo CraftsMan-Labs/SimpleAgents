@@ -1,9 +1,10 @@
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use serde_json::Map;
 use serde_json::Value;
 use simple_agents_workflow::{
     YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
-    YamlWorkflowRunOptions,
+    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
 };
 use std::sync::Mutex;
 
@@ -177,6 +178,163 @@ pub(crate) fn parse_workflow_input_value(workflow_input: &Bound<'_, PyAny>) -> P
         ));
     }
     Ok(workflow_input_value)
+}
+
+pub(crate) struct PythonWorkflowExecutionRequest {
+    pub workflow_path: String,
+    pub messages: Vec<Value>,
+    pub context: Option<Value>,
+    pub media: Option<Value>,
+    pub input: Option<Value>,
+    pub execution: PythonWorkflowExecutionOptions,
+    pub workflow_options: Option<YamlWorkflowRunOptions>,
+}
+
+#[derive(Default)]
+pub(crate) struct PythonWorkflowExecutionOptions {
+    pub model: Option<String>,
+    pub healing: bool,
+    pub workflow_streaming: bool,
+    pub node_llm_streaming: bool,
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+pub(crate) fn parse_workflow_execution_request(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<PythonWorkflowExecutionRequest> {
+    let raw: Value = pythonize::depythonize(value).map_err(|error| {
+        PyRuntimeError::new_err(format!(
+            "invalid workflow execution request: {error}. expected keys: workflow_path, messages, context?, media?, input?, execution?, workflow_options?"
+        ))
+    })?;
+    let object = raw.as_object().ok_or_else(|| {
+        PyRuntimeError::new_err("workflow execution request must be a dict/object".to_string())
+    })?;
+    let workflow_path = object
+        .get("workflow_path")
+        .and_then(Value::as_str)
+        .ok_or_else(|| PyRuntimeError::new_err("workflow_path is required".to_string()))?
+        .to_string();
+    let messages = object
+        .get("messages")
+        .and_then(Value::as_array)
+        .ok_or_else(|| PyRuntimeError::new_err("messages is required".to_string()))?
+        .clone();
+    let context = object.get("context").cloned();
+    let media = object.get("media").cloned();
+    let input = object.get("input").cloned();
+    let workflow_options = object
+        .get("workflow_options")
+        .map(|options| {
+            serde_json::from_value::<YamlWorkflowRunOptions>(options.clone()).map_err(|error| {
+                PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+            })
+        })
+        .transpose()?;
+    let execution = if let Some(execution_value) = object.get("execution") {
+        let execution_object = execution_value.as_object().ok_or_else(|| {
+            PyRuntimeError::new_err("execution must be a dict/object".to_string())
+        })?;
+        let model = execution_object
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let healing = execution_object
+            .get("healing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let workflow_streaming = execution_object
+            .get("workflow_streaming")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let node_llm_streaming = execution_object
+            .get("node_llm_streaming")
+            .and_then(Value::as_bool)
+            .unwrap_or(default_true());
+        PythonWorkflowExecutionOptions {
+            model,
+            healing,
+            workflow_streaming,
+            node_llm_streaming,
+        }
+    } else {
+        PythonWorkflowExecutionOptions {
+            node_llm_streaming: default_true(),
+            ..PythonWorkflowExecutionOptions::default()
+        }
+    };
+    let request = PythonWorkflowExecutionRequest {
+        workflow_path,
+        messages,
+        context,
+        media,
+        input,
+        execution,
+        workflow_options,
+    };
+    if request.workflow_path.trim().is_empty() {
+        return Err(PyRuntimeError::new_err(
+            "workflow_path cannot be empty".to_string(),
+        ));
+    }
+    if request.messages.is_empty() {
+        return Err(PyRuntimeError::new_err(
+            "messages must contain at least one message".to_string(),
+        ));
+    }
+    Ok(request)
+}
+
+pub(crate) fn workflow_execution_flags(
+    options: &PythonWorkflowExecutionOptions,
+) -> YamlWorkflowExecutionFlags {
+    YamlWorkflowExecutionFlags {
+        healing: options.healing,
+        workflow_streaming: options.workflow_streaming,
+        node_llm_streaming: options.node_llm_streaming,
+    }
+}
+
+pub(crate) fn workflow_execution_options(
+    request: &PythonWorkflowExecutionRequest,
+) -> YamlWorkflowRunOptions {
+    let mut options = request.workflow_options.clone().unwrap_or_default();
+    if let Some(model) = request.execution.model.clone() {
+        options.model = Some(model);
+    }
+    options
+}
+
+pub(crate) fn build_workflow_input_from_execution_request(
+    request: &PythonWorkflowExecutionRequest,
+) -> PyResult<Value> {
+    let mut object = Map::new();
+
+    let extra_input = request
+        .input
+        .as_ref()
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    for (key, value) in extra_input {
+        object.insert(key, value);
+    }
+
+    object.insert(
+        "messages".to_string(),
+        Value::Array(request.messages.clone()),
+    );
+    if let Some(context) = request.context.clone() {
+        object.insert("context".to_string(), context);
+    }
+    if let Some(media) = request.media.clone() {
+        object.insert("media".to_string(), media);
+    }
+
+    Ok(Value::Object(object))
 }
 
 pub(crate) struct PythonWorkflowEventSink {

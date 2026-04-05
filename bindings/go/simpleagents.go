@@ -124,7 +124,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"regexp"
 	"runtime/cgo"
+	"strings"
 	"sync"
 	"unsafe"
 )
@@ -498,6 +501,19 @@ type TypedWorkflowRunOptions struct {
 	Model     *string                  `json:"model,omitempty"`
 }
 
+// WorkflowRunRequest is the messages-first workflow execution envelope for Run, RunAsync, and Stream.
+type WorkflowRunRequest struct {
+	WorkflowPath string
+	Input        *TypedWorkflowInput
+}
+
+// WorkflowRunFlags carries optional run options for unified workflow helpers.
+type WorkflowRunFlags struct {
+	RunOptions *TypedWorkflowRunOptions
+}
+
+var workflowCustomWorkerKeyRE = regexp.MustCompile(`(?m)^[\t ]*custom_worker[\t ]*:`)
+
 func typedWorkflowRunOptionsToMap(options *TypedWorkflowRunOptions) (map[string]any, error) {
 	if options == nil {
 		return nil, nil
@@ -546,6 +562,48 @@ func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any,
 	return decoded, nil
 }
 
+func validateWorkflowRunRequest(req WorkflowRunRequest) error {
+	if strings.TrimSpace(req.WorkflowPath) == "" {
+		return errors.New("workflow path cannot be empty")
+	}
+	if req.Input == nil {
+		return errors.New("workflow input cannot be nil")
+	}
+	if len(req.Input.Messages) == 0 {
+		return errors.New("workflow input must include at least one message")
+	}
+	return nil
+}
+
+func errWorkflowCustomWorkerUnsupported(workflowPath string) error {
+	return fmt.Errorf(
+		"workflow %q uses custom_worker, which the Go binding does not support (no worker subprocess is started); use a workflow without custom_worker or run it from Rust/Python",
+		workflowPath,
+	)
+}
+
+func workflowYAMLDeclaresCustomWorker(workflowPath string) (bool, error) {
+	data, err := os.ReadFile(workflowPath)
+	if err != nil {
+		return false, fmt.Errorf("read workflow file: %w", err)
+	}
+	return workflowCustomWorkerKeyRE.Match(data), nil
+}
+
+func guardWorkflowRunRequest(req WorkflowRunRequest) error {
+	if err := validateWorkflowRunRequest(req); err != nil {
+		return err
+	}
+	hasCustomWorker, err := workflowYAMLDeclaresCustomWorker(req.WorkflowPath)
+	if err != nil {
+		return err
+	}
+	if hasCustomWorker {
+		return errWorkflowCustomWorkerUnsupported(req.WorkflowPath)
+	}
+	return nil
+}
+
 type streamBridge struct {
 	ctx context.Context
 	out chan StreamResult
@@ -574,6 +632,46 @@ func NewClientFromEnv(provider string) (*Client, error) {
 	defer C.free(unsafe.Pointer(cProvider))
 
 	ptr := C.sa_client_new_from_env(cProvider)
+	if ptr == nil {
+		return nil, lastError()
+	}
+
+	return &Client{ptr: ptr}, nil
+}
+
+// ProviderConfig holds explicit LLM credentials for NewClientWithProvider.
+// Provider must be openai, anthropic, or openrouter (case-insensitive).
+// APIBase is optional; when empty, the provider default base URL is used.
+type ProviderConfig struct {
+	Provider string
+	APIKey   string
+	APIBase  string
+}
+
+// NewClientWithProvider builds a client from explicit credentials (no environment variables required).
+func NewClientWithProvider(cfg ProviderConfig) (*Client, error) {
+	prov := strings.TrimSpace(cfg.Provider)
+	if prov == "" {
+		return nil, errors.New("provider cannot be empty")
+	}
+	prov = strings.ToLower(prov)
+	if cfg.APIKey == "" {
+		return nil, errors.New("api key cannot be empty")
+	}
+
+	cProvider := C.CString(prov)
+	cKey := C.CString(cfg.APIKey)
+	defer C.free(unsafe.Pointer(cProvider))
+	defer C.free(unsafe.Pointer(cKey))
+
+	var cBase *C.char
+	if strings.TrimSpace(cfg.APIBase) != "" {
+		b := C.CString(strings.TrimSpace(cfg.APIBase))
+		defer C.free(unsafe.Pointer(b))
+		cBase = b
+	}
+
+	ptr := C.sa_client_new_with_credentials(cProvider, cKey, cBase)
 	if ptr == nil {
 		return nil, lastError()
 	}
@@ -715,6 +813,37 @@ func (c *Client) RunWorkflowYAMLWithTypedInputAndRunOptionsTyped(
 		return WorkflowRunTypedOutput{}, err
 	}
 	return out.ToTypedOutput(), nil
+}
+
+// Run executes a YAML workflow synchronously using typed input and options (see RunWorkflowYAMLWithTypedInputAndRunOptions).
+// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
+func (c *Client) Run(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags) (WorkflowYAMLOutput, error) {
+	if err := guardWorkflowRunRequest(req); err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+	return c.RunWorkflowYAMLWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions)
+}
+
+// RunAsync executes a YAML workflow and returns output including recorded events under output.events (see RunWorkflowYAMLWithEventsAndRunOptions).
+// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
+func (c *Client) RunAsync(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags) (WorkflowYAMLOutput, error) {
+	if err := guardWorkflowRunRequest(req); err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+	workflowInputMap, err := typedWorkflowInputToMap(req.Input)
+	if err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+	return c.RunWorkflowYAMLWithEventsAndRunOptions(ctx, req.WorkflowPath, workflowInputMap, flags.RunOptions)
+}
+
+// Stream executes a YAML workflow and delivers live workflow events to onEvent (see RunWorkflowYAMLStreamWithTypedInputAndRunOptions).
+// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
+func (c *Client) Stream(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags, onEvent func(WorkflowEvent)) (WorkflowYAMLOutput, error) {
+	if err := guardWorkflowRunRequest(req); err != nil {
+		return WorkflowYAMLOutput{}, err
+	}
+	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions, onEvent)
 }
 
 // RunWorkflowYAMLWithRunOptionsTyped executes workflow YAML with typed run options and typed output projection.

@@ -59,6 +59,21 @@ class WorkflowRunOptions(TypedDict, total=False):
     trace: WorkflowTraceOptions
     model: str
 
+class WorkflowExecutionFlags(TypedDict, total=False):
+    model: str
+    healing: bool
+    workflow_streaming: bool
+    node_llm_streaming: bool
+
+class WorkflowExecutionRequest(TypedDict, total=False):
+    workflow_path: str
+    messages: list[WorkflowMessage]
+    context: Mapping[str, JSONValue]
+    media: Mapping[str, JSONValue]
+    input: Mapping[str, JSONValue]
+    execution: WorkflowExecutionFlags
+    workflow_options: WorkflowRunOptions
+
 WorkflowNodeKind = Literal["llm_call", "switch", "custom_worker", "unknown"]
 
 class WorkflowNodeOutputRecord(TypedDict):
@@ -417,6 +432,15 @@ class Client:
         workflow_input: WorkflowInput | Mapping[str, JSONValue],
         include_events: bool = False,
         workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None,
+    ) -> WorkflowRunOutput: ...
+    def run(self, request: WorkflowExecutionRequest | Mapping[str, JSONValue]) -> WorkflowRunOutput: ...
+    def run_async(
+        self, request: WorkflowExecutionRequest | Mapping[str, JSONValue]
+    ) -> WorkflowRunOutput: ...
+    def stream(
+        self,
+        request: WorkflowExecutionRequest | Mapping[str, JSONValue],
+        on_event: Callable[[WorkflowEvent], object] | None = None,
     ) -> WorkflowRunOutput: ...
     def run_workflow_yaml_stream(
         self,

@@ -4053,11 +4053,12 @@ nodes:
         .expect_err("workflow should fail without custom worker executor");
 
         match error {
-            YamlWorkflowRunError::CustomWorker { node_id, message } => {
-                assert_eq!(node_id, "enrich");
-                assert!(message.contains("requires a configured custom worker executor"));
+            YamlWorkflowRunError::InvalidInput { message } => {
+                assert!(message.contains("enrich"));
+                assert!(message.contains("GetEmployeeRecord"));
+                assert!(message.contains("custom_worker"));
             }
-            other => panic!("expected custom worker error, got {other:?}"),
+            other => panic!("expected invalid input error, got {other:?}"),
         }
     }
 

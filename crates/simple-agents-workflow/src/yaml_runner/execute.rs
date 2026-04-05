@@ -176,6 +176,13 @@ fn validate_custom_worker_handler_files(
                 ),
             });
         }
+
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: format!(
+                "node '{}' declares custom_worker with handler='{}', but no custom worker executor is configured; register a custom worker executor or remove this node",
+                node.id, worker.handler
+            ),
+        });
     }
 
     Ok(())

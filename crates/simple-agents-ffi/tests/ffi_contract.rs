@@ -4,8 +4,9 @@ use std::path::PathBuf;
 
 use serde::Deserialize;
 use simple_agents_ffi::{
-    sa_client_free, sa_client_new_from_env, sa_complete, sa_complete_messages_json,
-    sa_last_error_message, sa_stream_messages, sa_string_free, SAMessage,
+    sa_client_free, sa_client_new_from_env, sa_client_new_with_credentials, sa_complete,
+    sa_complete_messages_json, sa_last_error_message, sa_stream_messages, sa_string_free,
+    SAMessage,
 };
 
 #[derive(Debug, Deserialize)]
@@ -23,6 +24,20 @@ struct FfiSymbols {
 fn rejects_unknown_provider() {
     let provider = CString::new("unknown").unwrap();
     let client = unsafe { sa_client_new_from_env(provider.as_ptr()) };
+    assert!(client.is_null());
+
+    let err = sa_last_error_message();
+    assert!(!err.is_null());
+    unsafe { sa_string_free(err) };
+}
+
+#[test]
+fn rejects_unknown_provider_with_credentials() {
+    let provider = CString::new("unknown").unwrap();
+    let api_key = CString::new("sk-123456789012345678901234567890").unwrap();
+    let client = unsafe {
+        sa_client_new_with_credentials(provider.as_ptr(), api_key.as_ptr(), std::ptr::null())
+    };
     assert!(client.is_null());
 
     let err = sa_last_error_message();

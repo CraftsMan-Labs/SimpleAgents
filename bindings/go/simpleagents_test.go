@@ -433,3 +433,86 @@ func TestRunWorkflowYAMLTypedUninitializedClient(t *testing.T) {
 		t.Fatal("expected uninitialized client error")
 	}
 }
+
+func TestValidateWorkflowRunRequest(t *testing.T) {
+	err := validateWorkflowRunRequest(WorkflowRunRequest{})
+	if err == nil {
+		t.Fatal("expected empty path error")
+	}
+	err = validateWorkflowRunRequest(WorkflowRunRequest{WorkflowPath: "w.yaml"})
+	if err == nil {
+		t.Fatal("expected nil input error")
+	}
+	err = validateWorkflowRunRequest(WorkflowRunRequest{
+		WorkflowPath: "w.yaml",
+		Input:        &TypedWorkflowInput{},
+	})
+	if err == nil {
+		t.Fatal("expected missing messages error")
+	}
+	if err := validateWorkflowRunRequest(WorkflowRunRequest{
+		WorkflowPath: "w.yaml",
+		Input: &TypedWorkflowInput{
+			Messages: []WorkflowInputMessage{{Role: MessageRoleUser, Content: "hi"}},
+		},
+	}); err != nil {
+		t.Fatalf("expected valid request, got %v", err)
+	}
+}
+
+func TestWorkflowYAMLDeclaresCustomWorker(t *testing.T) {
+	dir := t.TempDir()
+	plainPath := filepath.Join(dir, "plain.yaml")
+	if err := os.WriteFile(plainPath, []byte("workflow:\n  entry: start\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ok, err := workflowYAMLDeclaresCustomWorker(plainPath)
+	if err != nil {
+		t.Fatalf("plain workflow: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no custom_worker match")
+	}
+
+	cwPath := filepath.Join(dir, "cw.yaml")
+	if err := os.WriteFile(cwPath, []byte("nodes:\n  n1:\n    custom_worker:\n      runtime: python\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ok, err = workflowYAMLDeclaresCustomWorker(cwPath)
+	if err != nil {
+		t.Fatalf("custom worker workflow: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected custom_worker match")
+	}
+}
+
+func TestNewClientWithProviderValidation(t *testing.T) {
+	_, err := NewClientWithProvider(ProviderConfig{})
+	if err == nil {
+		t.Fatal("expected provider validation error")
+	}
+	_, err = NewClientWithProvider(ProviderConfig{Provider: "openai"})
+	if err == nil {
+		t.Fatal("expected api key validation error")
+	}
+}
+
+func TestRunRejectsCustomWorkerBeforeClient(t *testing.T) {
+	dir := t.TempDir()
+	cwPath := filepath.Join(dir, "cw.yaml")
+	if err := os.WriteFile(cwPath, []byte("  custom_worker:\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := &Client{}
+	req := WorkflowRunRequest{
+		WorkflowPath: cwPath,
+		Input: &TypedWorkflowInput{
+			Messages: []WorkflowInputMessage{{Role: MessageRoleUser, Content: "hi"}},
+		},
+	}
+	_, err := c.Run(context.Background(), req, WorkflowRunFlags{})
+	if err == nil {
+		t.Fatal("expected custom_worker error before client use")
+	}
+}

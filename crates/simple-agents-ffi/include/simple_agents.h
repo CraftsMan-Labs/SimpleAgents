@@ -21,6 +21,11 @@ typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);
 typedef int32_t (*SAWorkflowEventCallback)(const char *event_json, void *user_data);
 
 SAClient *sa_client_new_from_env(const char *provider_name);
+SAClient *sa_client_new_with_credentials(
+    const char *provider_name,
+    const char *api_key,
+    const char *api_base
+);
 void sa_client_free(SAClient *client);
 
 char *sa_complete(

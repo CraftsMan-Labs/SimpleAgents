@@ -25,7 +25,10 @@ use simple_agents_providers::healing_integration::{
     HealingConfig as ProviderHealingConfig, HealingIntegration,
 };
 use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
-use simple_agents_workflow::run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options;
+use simple_agents_workflow::workflow_execution;
+use simple_agents_workflow::{
+    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowSource,
+};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -45,9 +48,10 @@ use schema_helpers::{
     parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input,
 };
 use workflow_helpers::{
-    attach_workflow_events, parse_workflow_input_value, parse_workflow_run_options,
-    workflow_root_path, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
-    RecordingWorkflowEventSink,
+    attach_workflow_events, build_workflow_input_from_execution_request,
+    parse_workflow_execution_request, parse_workflow_input_value, parse_workflow_run_options,
+    workflow_execution_flags, workflow_execution_options, workflow_root_path,
+    PythonCustomWorkerExecutor, PythonWorkflowEventSink, RecordingWorkflowEventSink,
 };
 
 type Runtime = tokio::runtime::Runtime;
@@ -2022,6 +2026,144 @@ impl Client {
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
 
+    #[pyo3(signature = (request))]
+    fn run(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let request = parse_workflow_execution_request(request)?;
+        let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
+        let flags = workflow_execution_flags(&request.execution);
+        let options = workflow_execution_options(&request);
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+            workflow_input: &workflow_input_value,
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            options: &options,
+            flags,
+        };
+
+        let output = py
+            .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    #[pyo3(signature = (request))]
+    fn run_async(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let request = parse_workflow_execution_request(request)?;
+        let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
+        let flags = workflow_execution_flags(&request.execution);
+        let options = workflow_execution_options(&request);
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+            workflow_input: &workflow_input_value,
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            options: &options,
+            flags,
+        };
+
+        let output = py
+            .allow_threads(|| runtime.block_on(workflow_execution::run_async(execution_request)))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    #[pyo3(signature = (request, on_event=None))]
+    fn stream(
+        &self,
+        py: Python<'_>,
+        request: &Bound<'_, PyAny>,
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<PyObject> {
+        let request = parse_workflow_execution_request(request)?;
+        let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
+        let mut flags = workflow_execution_flags(&request.execution);
+        let options = workflow_execution_options(&request);
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+
+        if let Some(callback) = on_event {
+            flags.workflow_streaming = true;
+            let event_sink = PythonWorkflowEventSink {
+                callback: Some(callback),
+            };
+            let execution_request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+                workflow_input: &workflow_input_value,
+                executor: YamlWorkflowExecutorBinding::Client(&self.client),
+                custom_worker: Some(&custom_executor),
+                options: &options,
+                flags,
+            };
+            let output = py
+                .allow_threads(|| {
+                    runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
+                })
+                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+            let value = serde_json::to_value(output).map_err(|error| {
+                PyRuntimeError::new_err(format!("serialization failed: {error}"))
+            })?;
+            let py_value = pythonize::pythonize(py, &value)
+                .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+            return Ok(py_value.into_py(py));
+        }
+
+        let recording_sink = RecordingWorkflowEventSink::new();
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+            workflow_input: &workflow_input_value,
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            options: &options,
+            flags,
+        };
+        let output = py
+            .allow_threads(|| {
+                runtime.block_on(workflow_execution::stream(
+                    execution_request,
+                    &recording_sink,
+                ))
+            })
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let mut value = serde_json::to_value(output)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        attach_workflow_events(&mut value, &recording_sink)?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
     #[pyo3(signature = (workflow_path, workflow_input, include_events=false, workflow_options=None))]
     fn run_workflow_yaml(
         &self,
@@ -2036,59 +2178,37 @@ impl Client {
                 "workflow_path cannot be empty".to_string(),
             ));
         }
-
         let workflow_input_value = parse_workflow_input_value(workflow_input)?;
-
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let run_options = parse_workflow_run_options(workflow_options)?;
-
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let event_sink = RecordingWorkflowEventSink::new();
-
-        let output = if include_events {
-            py.allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input_value,
-                        &self.client,
-                        Some(&custom_executor),
-                        Some(&event_sink),
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-        } else {
-            py.allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input_value,
-                        &self.client,
-                        Some(&custom_executor),
-                        None,
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-        };
-
-        let mut value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        if include_events {
-            attach_workflow_events(&mut value, &event_sink)?;
+        let mut object = serde_json::Map::new();
+        if let Value::Object(existing) = workflow_input_value {
+            for (key, value) in existing {
+                object.insert(key, value);
+            }
         }
-
-        let py_value = pythonize::pythonize(py, &value)
+        object.insert(
+            "workflow_path".to_string(),
+            Value::String(workflow_path.to_string()),
+        );
+        if object.get("messages").is_none() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_input.messages is required for workflow execution".to_string(),
+            ));
+        }
+        if let Some(options_obj) = workflow_options {
+            let parsed = parse_workflow_run_options(Some(options_obj))?;
+            let options_value = serde_json::to_value(parsed).map_err(|error| {
+                PyRuntimeError::new_err(format!("workflow_options serialization failed: {error}"))
+            })?;
+            object.insert("workflow_options".to_string(), options_value);
+        }
+        let request = Value::Object(object);
+        let py_request = pythonize::pythonize(py, &request)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
+        if include_events {
+            self.stream(py, &py_request, None)
+        } else {
+            self.run(py, &py_request)
+        }
     }
 
     #[pyo3(signature = (workflow_path, workflow_input, on_event=None, workflow_options=None))]
@@ -2105,39 +2225,33 @@ impl Client {
                 "workflow_path cannot be empty".to_string(),
             ));
         }
-
         let workflow_input_value = parse_workflow_input_value(workflow_input)?;
-
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let run_options = parse_workflow_run_options(workflow_options)?;
-
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let event_sink = PythonWorkflowEventSink { callback: on_event };
-        let output = py
-            .allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input_value,
-                        &self.client,
-                        Some(&custom_executor),
-                        Some(&event_sink),
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-
-        let value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        let py_value = pythonize::pythonize(py, &value)
+        let mut object = serde_json::Map::new();
+        if let Value::Object(existing) = workflow_input_value {
+            for (key, value) in existing {
+                object.insert(key, value);
+            }
+        }
+        object.insert(
+            "workflow_path".to_string(),
+            Value::String(workflow_path.to_string()),
+        );
+        if object.get("messages").is_none() {
+            return Err(PyRuntimeError::new_err(
+                "workflow_input.messages is required for workflow execution".to_string(),
+            ));
+        }
+        if let Some(options_obj) = workflow_options {
+            let parsed = parse_workflow_run_options(Some(options_obj))?;
+            let options_value = serde_json::to_value(parsed).map_err(|error| {
+                PyRuntimeError::new_err(format!("workflow_options serialization failed: {error}"))
+            })?;
+            object.insert("workflow_options".to_string(), options_value);
+        }
+        let request = Value::Object(object);
+        let py_request = pythonize::pythonize(py, &request)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
+        self.stream(py, &py_request, on_event)
     }
 }
 
