@@ -157,10 +157,46 @@ print(result["events"][0]["event_type"])
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
-For `custom_worker` nodes in Python workflow execution:
+### `custom_worker` handlers (Python)
 
-- `handler` must exactly match the Python function name in the handler module.
-- `handler_file` is optional; when omitted it defaults to `handlers.py` relative to the workflow YAML directory.
+For `custom_worker` nodes, the Rust runner loads `handler_file` (default: `handlers.py` next to the workflow YAML) and calls the function whose name **exactly** matches `handler`.
+
+**Function signature.** Handlers are invoked with **only** keyword arguments:
+
+```python
+def my_handler(*, context: dict, payload: dict):
+    ...
+```
+
+- **`payload`**: the resolved `config.payload` object from YAML after template interpolation. Put per-node parameters here (for example `topic`, `company_name`).
+- **`context`**: execution context with:
+  - `input`: the workflow input you passed to `run_workflow_yaml` (for example `email_text`, `messages`).
+  - `nodes`: map of completed node outputs (same structure templates use under `nodes.*`).
+  - `globals`: workflow globals map.
+  - `trace` (when tracing is active): nested object with `context` (trace ids, `traceparent`, etc.) and `tenant` (workspace/user/conversation ids when set via run options).
+
+**Return value.** Must be JSON-serializable (dict, list, str, number, bool, null). It becomes this node’s output; downstream prompts use `nodes.<node_id>.output` and fields on that object.
+
+**Minimal example.**
+
+```yaml
+# fragment
+  - id: lookup
+    node_type:
+      custom_worker:
+        handler: get_seller_name
+    config:
+      payload:
+        company_name: "{{ nodes.extract_company.output.company_name }}"
+```
+
+```python
+def get_seller_name(*, context, payload):
+    name = (payload or {}).get("company_name") or "unknown"
+    return {"company_name": name, "stakeholder_name": "..."}
+```
+
+**Troubleshooting.** `TypeError: ... unexpected keyword argument 'context'` means the handler still uses an old signature (positional `topic`, or `email_text=`). Use `*, context, payload` and read `email_text` from `context["input"]` if your workflow passes it there.
 
 For chat-history workflows, use `run_workflow_yaml(...)` with structured workflow input:
 

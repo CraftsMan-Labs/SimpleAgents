@@ -86,7 +86,16 @@ fmt.Println(out.TotalElapsedMS)
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
-`custom_worker.handler_file` is not supported in Go binding YAML execution unless a custom worker executor is configured in the runtime layer; otherwise execution fails fast with a clear error.
+### Custom workers (`custom_worker`)
+
+Go FFI workflow entrypoints do **not** register a custom worker executor (same as Node). Behavior:
+
+- **`handler_file` set** → validation fails up front with an explicit error.
+- **`handler_file` omitted** → validation passes, but execution **stops with an error** when the graph hits a `custom_worker` node.
+
+The Rust contract for handlers remains: interpolated **`config.payload`** and **`context`** (`input`, `nodes`, `globals`, optional `trace`). See [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md).
+
+**Practical options:** Python package with `handlers.py`, WASM `workflowOptions.functions`, workflows without `custom_worker`, or app-side orchestration.
 
 Workflow event parity with Python is available via:
 

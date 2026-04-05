@@ -40,6 +40,7 @@ WASM/browser flow support is string/object based:
   - `custom_worker` requires exact handler lookup in `workflowOptions.functions`:
     - without `handler_file`: `workflowOptions.functions[handler]`
     - with `handler_file`: `workflowOptions.functions["<handler_file>#<handler>"]`
+  - Each handler is called as **`(args, graphContext)`** (sync or async/Promise). The first argument includes resolved **`payload`**, **`handler`**, **`nodeId`**, and related metadata; the second is the live graph context (input, nodes, globals). Payload interpolation and `nodes.*.output` template rules match [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md). This differs from Python’s kwargs-only `context` / `payload` call shape, but the **data** is the same.
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
 
 Workflow result contract is strict: `runWorkflowYamlString` expects outputs containing `workflow_id` and `outputs`, and throws if the backend response shape is incompatible.

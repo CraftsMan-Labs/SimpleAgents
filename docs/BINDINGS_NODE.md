@@ -126,7 +126,16 @@ Tracing exporter env configuration is shared across runtimes:
 - `OTEL_EXPORTER_OTLP_HEADERS`
 - `OTEL_SERVICE_NAME`
 
-Workflow YAML execution in Node currently does not execute local custom handler files directly. If a workflow uses `custom_worker.handler_file`, execution fails fast unless a custom worker executor is configured in the runtime layer.
+### Custom workers (`custom_worker`)
+
+Shipped `runWorkflowYaml*` methods call the Rust workflow runner with **no** `YamlWorkflowCustomWorkerExecutor` registered. That means:
+
+- If the YAML sets `custom_worker.handler_file` to a path, **validation fails** before the run starts (clear error: no executor configured).
+- If `handler_file` is omitted (typical email examples), validation passes, but when execution **reaches** a `custom_worker` node it **fails** because there is still no executor to invoke the handler.
+
+The engine-level contract for any future executor is unchanged: **resolved `config.payload`** plus **execution `context`** (`input`, `nodes`, `globals`, optional `trace`) — same as [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md) and Python.
+
+**Practical options:** use workflows without `custom_worker`, run handlers via **Python** or **browser WASM** (`workflowOptions.functions`), or host custom logic outside this Node API until a callback-based executor is exposed.
 
 ## Testing Notes
 

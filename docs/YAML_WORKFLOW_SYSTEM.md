@@ -143,6 +143,21 @@ Use `custom_worker` when code must run deterministically outside the model.
 - `llm_call.provider` is not supported in YAML and is rejected.
 - `custom_worker.language` is not supported in YAML and is rejected.
 
+#### Inputs and outputs
+
+- **`config.payload`**: arbitrary JSON object. Values are interpolated like other templates (`input.*`, `nodes.*`, `globals.*`) before the handler runs. Put every node-specific argument here (for example `topic`, `company_name`). The engine does not validate `payload` against a JSON Schema today (unlike `llm_call` + `config.output_schema`).
+- **Execution context** passed to bindings: JSON object with at least `input` (workflow input), `nodes` (completed node outputs), and `globals`. When tracing is enabled, `trace` is added with correlation and tenant fields (see below).
+- **Handler return value**: must be JSON-serializable. The runner stores it as this node’s structured output. Downstream templates use `nodes.<node_id>.output.<field>` when the handler returns an object (for example `nodes.rag_probation.output.topic`).
+
+#### Binding support (where handlers actually run)
+
+| Surface | Local file handlers | Notes |
+|--------|---------------------|--------|
+| **Python** (`simple-agents-py`) | Yes — default `handlers.py` next to the YAML | Handlers are called with keyword-only `context` and `payload`; see [BINDINGS_PYTHON.md](BINDINGS_PYTHON.md). |
+| **Node** (`simple-agents-napi`) | No — no custom worker executor in the shipped API | Workflows that **execute** a `custom_worker` step fail unless the graph avoids such nodes. See [BINDINGS_NODE.md](BINDINGS_NODE.md). |
+| **Go** (FFI) | Same as Node | See [BINDINGS_GO.md](BINDINGS_GO.md). |
+| **WASM / browser** (`runWorkflowYamlString`) | Yes — register functions in `workflowOptions.functions` | JS signature is `(args, graphContext)`; see [BINDINGS_WASM.md](BINDINGS_WASM.md). |
+
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
 
 ## A Good First Multi-Node Pattern
