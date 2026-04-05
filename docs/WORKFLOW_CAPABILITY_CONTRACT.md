@@ -186,6 +186,8 @@ Rust remains source of truth. Language bindings should wrap Rust behavior, not r
 - Node: `Client.executeWorkflowYaml(...)` / `executeWorkflowYamlStream(...)` delegate through Rust typed execution (legacy `runWorkflowYaml*` wrappers retained).
 - Python: `Client.run(...)` / `run_async(...)` / `stream(...)` delegate through Rust typed execution (legacy `run_workflow_yaml*` wrappers retained).
 
+**Binding parity note:** The `simple_agents_py.workflow_stream` helpers (`workflow_event_callback`, `stream_workflow`) are **Python-only** convenience for mapping workflow events to structured hook methods. Node.js callers continue to use JSON `onEvent` callbacks (or a future TypeScript helper). The **`split_stream_deltas`** execution flag is **cross-cutting**: it is implemented in Rust, parsed from Python `execution` objects, and exposed as optional `splitStreamDeltas` on `WorkflowYamlRunRequest` in the N-API binding, OR’d with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` for backward compatibility.
+
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 
 ## 9) Acceptance Mapping

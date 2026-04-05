@@ -233,6 +233,15 @@ streamed = client.stream(request, on_event=lambda event: print(event.get("event_
 
 `execution.model` overrides `workflow_options.model` when both are provided.
 
+### Workflow stream DX (`simple_agents_py.workflow_stream`)
+
+- **Low-level (full control):** `Client.stream(request, on_event=...)`.
+- **Structured hooks (recommended):** `stream_workflow(client, request, hooks)` or compose with `Client.stream(request, on_event=workflow_event_callback(hooks))`.
+
+Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
+
+**Split thinking vs. merged stream deltas.** Prefer `execution["split_stream_deltas"] = True` on the request. The Rust runner ORs this with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` (legacy). The environment variable remains supported for compatibility; removing it would be a separate, explicit breaking change.
+
 ### Live Workflow Events + LLM Deltas
 
 `Client.run_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:

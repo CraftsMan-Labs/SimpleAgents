@@ -95,6 +95,8 @@ client.executeWorkflowYaml(request: WorkflowYamlRunRequest)
 client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 ```
 
+`WorkflowYamlRunRequest` includes optional `splitStreamDeltas` (default false when omitted): when true, the Rust runner emits split thinking/output stream events, OR’d with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` for backward compatibility.
+
 `CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
 
 ## Workflow YAML Runner (Rust-backed)
