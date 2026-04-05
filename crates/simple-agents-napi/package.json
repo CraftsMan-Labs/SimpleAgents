@@ -1,6 +1,6 @@
 {
   "name": "simple-agents-node",
-  "version": "0.2.37",
+  "version": "0.3.0",
   "description": "Node.js bindings for SimpleAgents using napi-rs",
   "main": "index.js",
   "types": "index.d.ts",
