@@ -53,6 +53,7 @@ pub use api::{
     run_workflow_yaml_with_client, run_workflow_yaml_with_client_and_custom_worker,
     run_workflow_yaml_with_client_and_custom_worker_and_events,
     run_workflow_yaml_with_custom_worker, run_workflow_yaml_with_custom_worker_and_events,
+    workflow_execution,
 };
 use client_executor::BorrowedClientExecutor;
 use context::{
@@ -61,14 +62,15 @@ use context::{
 };
 use contracts::{event_sink_is_cancelled, workflow_event_sink_cancelled_message};
 pub use contracts::{
-    NoopYamlWorkflowEventSink, WorkflowMessage, WorkflowMessageRole, YamlCustomWorker, YamlEdge,
-    YamlGlobalUpdate, YamlLlmCall, YamlLlmExecutionRequest, YamlNode, YamlNodeConfig, YamlNodeType,
-    YamlOpenAiToolDeclaration, YamlOpenAiToolFunction, YamlResolvedTool,
-    YamlSimplifiedToolDeclaration, YamlSwitch, YamlSwitchBranch, YamlTemplateBinding,
-    YamlToIrError, YamlToolChoiceConfig, YamlToolDeclaration, YamlToolFormat, YamlWorkflow,
-    YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic, YamlWorkflowDiagnosticSeverity,
-    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
-    YamlWorkflowTokenKind,
+    is_workflow_stream_delta_event, NoopYamlWorkflowEventSink, WorkflowMessage,
+    WorkflowMessageRole, YamlCustomWorker, YamlEdge, YamlGlobalUpdate, YamlLlmCall,
+    YamlLlmExecutionRequest, YamlNode, YamlNodeConfig, YamlNodeType, YamlOpenAiToolDeclaration,
+    YamlOpenAiToolFunction, YamlResolvedTool, YamlSimplifiedToolDeclaration, YamlSwitch,
+    YamlSwitchBranch, YamlTemplateBinding, YamlToIrError, YamlToolChoiceConfig,
+    YamlToolDeclaration, YamlToolFormat, YamlWorkflow, YamlWorkflowCustomWorkerExecutor,
+    YamlWorkflowDiagnostic, YamlWorkflowDiagnosticSeverity, YamlWorkflowEvent,
+    YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
+    YamlWorkflowStreamFilterSink, YamlWorkflowTokenKind,
 };
 use globals::{apply_set_globals, apply_update_globals};
 use llm_tools::{
@@ -84,10 +86,12 @@ use types::{
     completion_tokens_per_second, resolve_requested_model, validate_sample_rate, YamlTokenTotals,
 };
 pub use types::{
-    YamlLlmExecutionResult, YamlLlmNodeMetrics, YamlLlmTokenUsage, YamlStepTiming,
-    YamlToolCallTrace, YamlToolTraceMode, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
-    YamlWorkflowRunOutput, YamlWorkflowTelemetryConfig, YamlWorkflowTraceContextInput,
-    YamlWorkflowTraceOptions, YamlWorkflowTraceTenantContext,
+    validate_yaml_workflow_execution, YamlLlmExecutionResult, YamlLlmNodeMetrics,
+    YamlLlmTokenUsage, YamlStepTiming, YamlToolCallTrace, YamlToolTraceMode,
+    YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutionSurface,
+    YamlWorkflowExecutorBinding, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
+    YamlWorkflowRunOutput, YamlWorkflowSource, YamlWorkflowTelemetryConfig,
+    YamlWorkflowTraceContextInput, YamlWorkflowTraceOptions, YamlWorkflowTraceTenantContext,
 };
 pub use validation::verify_yaml_workflow;
 
@@ -1731,6 +1735,48 @@ fn escape_mermaid_label(label: &str) -> String {
     label.replace('"', "\\\"")
 }
 
+pub(super) async fn dispatch_yaml_workflow_execution<'a>(
+    workflow: &'a YamlWorkflow,
+    workflow_input: &'a Value,
+    executor: YamlWorkflowExecutorBinding<'a>,
+    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    options: &'a YamlWorkflowRunOptions,
+    flags: YamlWorkflowExecutionFlags,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    match executor {
+        YamlWorkflowExecutorBinding::Llm(ex) => {
+            execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+                workflow,
+                workflow_input,
+                ex,
+                custom_worker,
+                event_sink,
+                options,
+                flags,
+            )
+            .await
+        }
+        YamlWorkflowExecutorBinding::Client(client) => {
+            let client_executor = BorrowedClientExecutor {
+                client,
+                custom_worker,
+                run_options: options.clone(),
+            };
+            execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+                workflow,
+                workflow_input,
+                &client_executor,
+                custom_worker,
+                event_sink,
+                options,
+                flags,
+            )
+            .await
+        }
+    }
+}
+
 pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -1790,6 +1836,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         custom_worker,
         event_sink,
         options,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -1820,7 +1867,12 @@ async fn try_run_yaml_via_ir_runtime(
     executor: &dyn YamlWorkflowLlmExecutor,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<Option<YamlWorkflowRunOutput>, YamlWorkflowRunError> {
+    if execution_flags != YamlWorkflowExecutionFlags::default() {
+        return Ok(None);
+    }
+
     let ir = match yaml_workflow_to_ir(workflow) {
         Ok(def) => def,
         Err(YamlToIrError::UnsupportedNode { .. })
@@ -5705,4 +5757,157 @@ nodes:
     let message = options.to_string();
     assert!(message.contains("unknown field"));
     assert!(message.contains("unexpected"));
+}
+
+#[cfg(test)]
+mod yaml_workflow_execution_contract_tests {
+    use std::sync::Mutex;
+
+    use super::{
+        is_workflow_stream_delta_event, validate_yaml_workflow_execution, YamlWorkflow,
+        YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+        YamlWorkflowExecutionSurface, YamlWorkflowStreamFilterSink,
+    };
+
+    fn minimal_workflow() -> YamlWorkflow {
+        let yaml = r#"
+id: contract-test
+entry_node: n
+nodes:
+  - id: n
+    node_type:
+      llm_call:
+        model: m
+    config:
+      prompt: "x"
+"#;
+        serde_yaml::from_str(yaml).expect("workflow yaml")
+    }
+
+    #[test]
+    fn execution_flags_default_preserves_yaml_streaming_opt_in() {
+        let f = YamlWorkflowExecutionFlags::default();
+        assert!(!f.healing);
+        assert!(!f.workflow_streaming);
+        assert!(f.node_llm_streaming);
+    }
+
+    #[test]
+    fn validate_rejects_run_with_workflow_streaming() {
+        let wf = minimal_workflow();
+        let flags = YamlWorkflowExecutionFlags {
+            workflow_streaming: true,
+            ..YamlWorkflowExecutionFlags::default()
+        };
+        let err = validate_yaml_workflow_execution(&wf, flags, YamlWorkflowExecutionSurface::Run)
+            .expect_err("run surface should reject workflow_streaming");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("workflow_streaming=true"),
+            "unexpected message: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_accepts_stream_surface_with_workflow_streaming() {
+        let wf = minimal_workflow();
+        let flags = YamlWorkflowExecutionFlags {
+            workflow_streaming: true,
+            ..YamlWorkflowExecutionFlags::default()
+        };
+        validate_yaml_workflow_execution(&wf, flags, YamlWorkflowExecutionSurface::Stream)
+            .expect("stream surface allows workflow_streaming");
+    }
+
+    #[test]
+    fn validate_rejects_healing_with_node_llm_streaming() {
+        let wf = minimal_workflow();
+        let flags = YamlWorkflowExecutionFlags {
+            healing: true,
+            node_llm_streaming: true,
+            ..YamlWorkflowExecutionFlags::default()
+        };
+        let err = validate_yaml_workflow_execution(&wf, flags, YamlWorkflowExecutionSurface::Run)
+            .expect_err("global heal+stream flags conflict");
+        assert!(
+            err.to_string().contains("healing and node_llm_streaming"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn stream_delta_event_predicate_matches_workflow_stream_types() {
+        assert!(is_workflow_stream_delta_event("node_stream_delta"));
+        assert!(is_workflow_stream_delta_event("node_stream_thinking_delta"));
+        assert!(is_workflow_stream_delta_event("node_stream_output_delta"));
+        assert!(!is_workflow_stream_delta_event("workflow_started"));
+    }
+
+    struct RecordingSink {
+        types: Mutex<Vec<String>>,
+    }
+
+    impl YamlWorkflowEventSink for RecordingSink {
+        fn emit(&self, event: &YamlWorkflowEvent) {
+            self.types
+                .lock()
+                .expect("lock")
+                .push(event.event_type.clone());
+        }
+    }
+
+    fn sample_delta_event() -> YamlWorkflowEvent {
+        YamlWorkflowEvent {
+            event_type: "node_stream_delta".to_string(),
+            node_id: None,
+            step_id: None,
+            node_kind: None,
+            streamable: None,
+            message: None,
+            delta: Some("x".to_string()),
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: None,
+            metadata: None,
+        }
+    }
+
+    fn sample_lifecycle_event() -> YamlWorkflowEvent {
+        YamlWorkflowEvent {
+            event_type: "workflow_started".to_string(),
+            node_id: None,
+            step_id: None,
+            node_kind: None,
+            streamable: None,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: None,
+            metadata: None,
+        }
+    }
+
+    #[test]
+    fn stream_filter_suppresses_deltas_when_workflow_streaming_disabled() {
+        let inner = RecordingSink {
+            types: Mutex::new(Vec::new()),
+        };
+        let filter = YamlWorkflowStreamFilterSink::new(&inner, false);
+        filter.emit(&sample_delta_event());
+        filter.emit(&sample_lifecycle_event());
+        let seen = inner.types.lock().expect("lock");
+        assert_eq!(seen.as_slice(), &["workflow_started".to_string()]);
+    }
+
+    #[test]
+    fn stream_filter_forwards_deltas_when_workflow_streaming_enabled() {
+        let inner = RecordingSink {
+            types: Mutex::new(Vec::new()),
+        };
+        let filter = YamlWorkflowStreamFilterSink::new(&inner, true);
+        filter.emit(&sample_delta_event());
+        let seen = inner.types.lock().expect("lock");
+        assert_eq!(seen.as_slice(), &["node_stream_delta".to_string()]);
+    }
 }

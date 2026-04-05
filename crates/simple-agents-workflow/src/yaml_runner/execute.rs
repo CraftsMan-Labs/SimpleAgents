@@ -16,6 +16,7 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
@@ -40,9 +41,15 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
 
     validate_custom_worker_handler_files(workflow, custom_worker)?;
 
-    if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
-            .await?
+    if let Some(output) = super::try_run_yaml_via_ir_runtime(
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        options,
+        execution_flags,
+    )
+    .await?
     {
         return Ok(output);
     }
@@ -73,6 +80,7 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
                 custom_worker,
                 event_sink,
                 options,
+                execution_flags,
                 tracer,
                 &telemetry_context,
                 workflow_span_context.as_ref(),
@@ -255,6 +263,7 @@ async fn execute_single_node_step(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
     tracer: &dyn crate::observability::tracing::WorkflowTracer,
     telemetry_context: &ResolvedTelemetryContext,
     workflow_span_context: Option<&TraceContext>,
@@ -281,11 +290,13 @@ async fn execute_single_node_step(
         node.kind_name(),
     );
 
-    let node_streamable = node
-        .node_type
-        .llm_call
-        .as_ref()
-        .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
+    let node_streamable = node.node_type.llm_call.as_ref().map(|llm| {
+        let yaml_heal = llm.heal.unwrap_or(false);
+        let yaml_stream = llm.stream.unwrap_or(false);
+        let effective_heal = yaml_heal || execution_flags.healing;
+        let effective_stream = yaml_stream && execution_flags.node_llm_streaming;
+        effective_stream && !effective_heal
+    });
     let workflow_elapsed_before_node_ms = state.started.elapsed().as_millis();
 
     emit_node_started(
@@ -312,6 +323,7 @@ async fn execute_single_node_step(
                     executor,
                     event_sink,
                     options,
+                    execution_flags,
                     telemetry_context,
                     node_span_context: node_span_context.clone(),
                     node_span: node_span.as_mut(),

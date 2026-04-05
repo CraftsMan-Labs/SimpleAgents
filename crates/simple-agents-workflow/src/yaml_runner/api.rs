@@ -351,3 +351,109 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     )
     .await
 }
+
+/// Canonical typed workflow execution API (three entrypoints: `run`, `run_async`, `stream`).
+pub mod workflow_execution {
+    use super::super::{
+        dispatch_yaml_workflow_execution, load_workflow_yaml_file,
+        validate_yaml_workflow_execution, YamlWorkflowExecutionRequest,
+        YamlWorkflowExecutionSurface, YamlWorkflowRunError, YamlWorkflowRunOutput,
+        YamlWorkflowSource, YamlWorkflowStreamFilterSink,
+    };
+
+    /// Blocking-style async run with no workflow event sink (`workflow_streaming` must be false).
+    pub async fn run(
+        request: YamlWorkflowExecutionRequest<'_>,
+    ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+        match request.source {
+            YamlWorkflowSource::Inline(workflow) => {
+                validate_yaml_workflow_execution(
+                    workflow,
+                    request.flags,
+                    YamlWorkflowExecutionSurface::Run,
+                )?;
+                dispatch_yaml_workflow_execution(
+                    workflow,
+                    request.workflow_input,
+                    request.executor,
+                    request.custom_worker,
+                    None,
+                    request.options,
+                    request.flags,
+                )
+                .await
+            }
+            YamlWorkflowSource::File(path) => {
+                let (_canonical, workflow) = load_workflow_yaml_file(path)?;
+                validate_yaml_workflow_execution(
+                    &workflow,
+                    request.flags,
+                    YamlWorkflowExecutionSurface::Run,
+                )?;
+                dispatch_yaml_workflow_execution(
+                    &workflow,
+                    request.workflow_input,
+                    request.executor,
+                    request.custom_worker,
+                    None,
+                    request.options,
+                    request.flags,
+                )
+                .await
+            }
+        }
+    }
+
+    /// Explicit future-style entry for bindings; behavior matches [`run`].
+    pub fn run_async<'a>(
+        request: YamlWorkflowExecutionRequest<'a>,
+    ) -> impl std::future::Future<Output = Result<YamlWorkflowRunOutput, YamlWorkflowRunError>> + Send + 'a
+    {
+        run(request)
+    }
+
+    /// Same as [`run`] but forwards events to `sink`, subject to `request.flags.workflow_streaming`.
+    pub async fn stream(
+        request: YamlWorkflowExecutionRequest<'_>,
+        sink: &dyn super::super::YamlWorkflowEventSink,
+    ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+        let filter = YamlWorkflowStreamFilterSink::new(sink, request.flags.workflow_streaming);
+        match request.source {
+            YamlWorkflowSource::Inline(workflow) => {
+                validate_yaml_workflow_execution(
+                    workflow,
+                    request.flags,
+                    YamlWorkflowExecutionSurface::Stream,
+                )?;
+                dispatch_yaml_workflow_execution(
+                    workflow,
+                    request.workflow_input,
+                    request.executor,
+                    request.custom_worker,
+                    Some(&filter),
+                    request.options,
+                    request.flags,
+                )
+                .await
+            }
+            YamlWorkflowSource::File(path) => {
+                let (_canonical, workflow) = load_workflow_yaml_file(path)?;
+                validate_yaml_workflow_execution(
+                    &workflow,
+                    request.flags,
+                    YamlWorkflowExecutionSurface::Stream,
+                )?;
+                dispatch_yaml_workflow_execution(
+                    &workflow,
+                    request.workflow_input,
+                    request.executor,
+                    request.custom_worker,
+                    Some(&filter),
+                    request.options,
+                    request.flags,
+                )
+                .await
+            }
+        }
+    }
+}

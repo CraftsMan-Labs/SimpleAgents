@@ -16,6 +16,7 @@ pub(super) struct LlmNodeEnv<'a> {
     pub(super) executor: &'a dyn YamlWorkflowLlmExecutor,
     pub(super) event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     pub(super) options: &'a YamlWorkflowRunOptions,
+    pub(super) execution_flags: super::YamlWorkflowExecutionFlags,
     pub(super) telemetry_context: &'a ResolvedTelemetryContext,
     pub(super) node_span_context: Option<TraceContext>,
     pub(super) node_span: Option<&'a mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
@@ -63,6 +64,7 @@ pub(super) async fn execute_llm_node(
         executor,
         event_sink,
         options,
+        execution_flags,
         telemetry_context,
         node_span_context,
         node_span,
@@ -100,6 +102,11 @@ pub(super) async fn execute_llm_node(
     let prompt = interpolate_template(prompt_template, &context);
     let schema = llm_output_schema_for_node(node);
 
+    let yaml_heal = llm.heal.unwrap_or(false);
+    let yaml_stream = llm.stream.unwrap_or(false);
+    let heal = yaml_heal || execution_flags.healing;
+    let stream = yaml_stream && execution_flags.node_llm_streaming;
+
     let request = YamlLlmExecutionRequest {
         node_id: node.id.clone(),
         is_terminal_node,
@@ -114,8 +121,8 @@ pub(super) async fn execute_llm_node(
         prompt_template: prompt_template.to_string(),
         prompt_bindings,
         schema,
-        stream: llm.stream.unwrap_or(false),
-        heal: llm.heal.unwrap_or(false),
+        stream,
+        heal,
         tools: normalize_llm_tools(llm).map_err(|message| YamlWorkflowRunError::Llm {
             node_id: node.id.clone(),
             message,
