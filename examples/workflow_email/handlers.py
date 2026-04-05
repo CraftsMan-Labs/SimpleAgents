@@ -3,10 +3,30 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_rag_data(
-    topic: str, *, email_text: str, context: dict[str, Any]
-) -> dict[str, str]:
-    """Real Python handler for YAML custom_worker: GetRagData."""
+def _workflow_email_text(context: dict[str, Any]) -> str:
+    """Best-effort email or chat body from workflow execution context['input']."""
+    raw_input = context.get("input")
+    if not isinstance(raw_input, dict):
+        return ""
+    et = raw_input.get("email_text")
+    if isinstance(et, str) and et.strip():
+        return et
+    messages = raw_input.get("messages")
+    if isinstance(messages, list) and len(messages) > 0:
+        last = messages[-1]
+        if isinstance(last, dict):
+            content = last.get("content")
+            if isinstance(content, str):
+                return content
+    return ""
+
+
+def get_rag_data(*, context: dict[str, Any], payload: dict[str, Any]) -> dict[str, str]:
+    """Python custom_worker handler: load topic from payload; email/chat from context input."""
+    topic_raw = payload.get("topic") if isinstance(payload, dict) else None
+    topic = str(topic_raw if topic_raw is not None else "clarification")
+    email_text = _workflow_email_text(context)
+
     if topic == "terminated":
         policy_violation = (
             "ignore" in email_text.lower() or "bypass" in email_text.lower()
@@ -84,9 +104,13 @@ def get_rag_data(
 
 
 def terminate_interview(
-    topic: str, *, email_text: str, context: dict[str, Any]
+    *, context: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, str]:
     """Deterministic termination handler for interview workflows."""
+    topic_raw = payload.get("topic") if isinstance(payload, dict) else None
+    topic = str(topic_raw if topic_raw is not None else "terminated")
+    email_text = _workflow_email_text(context)
+
     if topic == "already_terminated":
         message = (
             "This interview session is already closed due to a prior termination decision. "
@@ -117,19 +141,13 @@ def terminate_interview(
 
 
 def get_employee_record(
-    topic: str,
-    *,
-    email_text: str,
-    context: dict[str, Any],
-    payload: dict[str, Any] | None = None,
+    *, context: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, str]:
-    """Tool handler that resolves employee id and location by name."""
-    _ = topic
-    _ = email_text
+    """Tool-style handler that resolves employee id and location by name."""
     _ = context
 
     requested_name = "Unknown Employee"
-    if payload is not None:
+    if isinstance(payload, dict):
         raw_name = payload.get("employee_name")
         if isinstance(raw_name, str) and raw_name.strip():
             requested_name = raw_name.strip()
@@ -154,19 +172,13 @@ def get_employee_record(
 
 
 def get_seller_owner(
-    topic: str,
-    *,
-    email_text: str,
-    context: dict[str, Any],
-    payload: dict[str, Any] | None = None,
+    *, context: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, str]:
     """Resolve a seller name to its owner name for finance workflows."""
-    _ = topic
-    _ = email_text
     _ = context
 
     requested_seller = "unknown"
-    if payload is not None:
+    if isinstance(payload, dict):
         raw_seller_name = payload.get("seller_name")
         if isinstance(raw_seller_name, str) and raw_seller_name.strip():
             requested_seller = raw_seller_name.strip()
@@ -187,19 +199,13 @@ def get_seller_owner(
 
 
 def get_seller_name(
-    topic: str,
-    *,
-    email_text: str,
-    context: dict[str, Any],
-    payload: dict[str, Any] | None = None,
+    *, context: dict[str, Any], payload: dict[str, Any]
 ) -> dict[str, str]:
     """Resolve an invoice company name to its stakeholder name."""
-    _ = topic
-    _ = email_text
     _ = context
 
     requested_company_name = "unknown"
-    if payload is not None:
+    if isinstance(payload, dict):
         raw_company_name = payload.get("company_name")
         if isinstance(raw_company_name, str) and raw_company_name.strip():
             requested_company_name = raw_company_name.strip()
@@ -219,3 +225,7 @@ def get_seller_name(
         "company_name": requested_company_name,
         "stakeholder_name": stakeholder_name,
     }
+
+
+# YAML may use PascalCase (e.g. python-intern-fun-interview-system.yaml).
+GetRagData = get_rag_data

@@ -267,15 +267,13 @@ def run_custom_worker_handler(
     if fn is None:
         raise RuntimeError(f"Unsupported custom worker handler: {handler}")
 
-    return fn(
-        topic,
-        email_text=email_text,
-        context={
-            "input": {"email_text": email_text},
-            "nodes": outputs,
-            "globals": globals_state,
-        },
-    )
+    ctx = {
+        "input": {"email_text": email_text},
+        "nodes": outputs,
+        "globals": globals_state,
+    }
+    payload: dict[str, Any] = {"topic": topic}
+    return fn(context=ctx, payload=payload)
 
 
 def run_workflow(workflow: dict[str, Any], email_text: str) -> dict[str, Any]:
