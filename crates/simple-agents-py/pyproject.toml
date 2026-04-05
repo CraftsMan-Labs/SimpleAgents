@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "simple-agents-py"
-version = "0.3.0"
+version = "0.3.1"
 description = "Python bindings for SimpleAgents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -23,6 +23,7 @@ dev = ["pytest>=8.0"]
 [tool.maturin]
 bindings = "pyo3"
 module-name = "simple_agents_py"
+python-source = "python"
 include = ["simple_agents_py.pyi", "py.typed"]
 
 [tool.pytest.ini_options]
