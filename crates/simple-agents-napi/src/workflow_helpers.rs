@@ -1,4 +1,5 @@
 use napi::bindgen_prelude::{Error, Result};
+use serde::Deserialize;
 use serde_json::{Map, Value as JsonValue};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 
@@ -6,12 +7,33 @@ use crate::{parse_message, MessageInput};
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{Result as SaResult, SimpleAgentsError};
 
+#[derive(Debug, Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WorkflowRequestOptions {
+    #[serde(flatten)]
+    pub(crate) run_options: YamlWorkflowRunOptions,
+    #[serde(default)]
+    pub(crate) include_events: bool,
+}
+
 pub(crate) fn parse_workflow_options(
     workflow_options: Option<JsonValue>,
 ) -> Result<YamlWorkflowRunOptions> {
     workflow_options
         .map(|value| {
             serde_json::from_value::<YamlWorkflowRunOptions>(value)
+                .map_err(|error| Error::from_reason(format!("invalid workflowOptions: {error}")))
+        })
+        .transpose()
+        .map(|value| value.unwrap_or_default())
+}
+
+pub(crate) fn parse_workflow_request_options(
+    workflow_options: Option<JsonValue>,
+) -> Result<WorkflowRequestOptions> {
+    workflow_options
+        .map(|value| {
+            serde_json::from_value::<WorkflowRequestOptions>(value)
                 .map_err(|error| Error::from_reason(format!("invalid workflowOptions: {error}")))
         })
         .transpose()

@@ -34,7 +34,8 @@ use std::time::Instant;
 
 mod workflow_helpers;
 use workflow_helpers::{
-    build_workflow_input_with_messages_envelope, parse_workflow_options, validate_workflow_request,
+    build_workflow_input_with_messages_envelope, parse_workflow_options,
+    parse_workflow_request_options, validate_workflow_request,
 };
 
 type Runtime = tokio::runtime::Runtime;
@@ -692,6 +693,7 @@ pub struct WorkflowStreamTask {
     workflow_input: JsonValue,
     workflow_options: YamlWorkflowRunOptions,
     workflow_flags: YamlWorkflowExecutionFlags,
+    include_events: bool,
     on_event: ThreadsafeFunction<String>,
 }
 
@@ -735,6 +737,48 @@ struct NodeWorkflowEventSink {
 
 impl YamlWorkflowEventSink for NodeWorkflowEventSink {
     fn emit(&self, event: &YamlWorkflowEvent) {
+        let payload = match serde_json::to_string(event) {
+            Ok(value) => value,
+            Err(_) => return,
+        };
+        self.callback
+            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
+    }
+}
+
+struct NodeCombinedWorkflowEventSink {
+    events: Mutex<Vec<YamlWorkflowEvent>>,
+    callback: ThreadsafeFunction<String>,
+}
+
+impl NodeCombinedWorkflowEventSink {
+    fn new(callback: ThreadsafeFunction<String>) -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            callback,
+        }
+    }
+
+    fn attach_to_output(&self, output: &mut JsonValue) -> Result<()> {
+        let events = self
+            .events
+            .lock()
+            .map_err(|_| Error::from_reason("workflow event sink lock poisoned".to_string()))?
+            .clone();
+        let events_value = serde_json::to_value(events)
+            .map_err(|error| Error::from_reason(format!("failed to serialize events: {error}")))?;
+        if let JsonValue::Object(object) = output {
+            object.insert("events".to_string(), events_value);
+        }
+        Ok(())
+    }
+}
+
+impl YamlWorkflowEventSink for NodeCombinedWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if let Ok(mut events) = self.events.lock() {
+            events.push(event.clone());
+        }
         let payload = match serde_json::to_string(event) {
             Ok(value) => value,
             Err(_) => return,
@@ -959,26 +1003,44 @@ impl Task for WorkflowStreamTask {
     type JsValue = napi::JsUnknown;
 
     fn compute(&mut self) -> Result<Self::Output> {
-        let event_sink = NodeWorkflowEventSink {
-            callback: self.on_event.clone(),
-        };
-
-        let request = YamlWorkflowExecutionRequest {
-            source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
-            workflow_input: &self.workflow_input,
-            executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
-            custom_worker: None,
-            options: &self.workflow_options,
-            flags: self.workflow_flags,
-        };
-
-        let output = self
-            .runtime
-            .block_on(workflow_execution::stream(request, &event_sink))
-            .map_err(|error| Error::from_reason(error.to_string()))?;
-
-        serde_json::to_value(output)
-            .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
+        if self.include_events {
+            let event_sink = NodeCombinedWorkflowEventSink::new(self.on_event.clone());
+            let request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
+                workflow_input: &self.workflow_input,
+                executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
+                custom_worker: None,
+                options: &self.workflow_options,
+                flags: self.workflow_flags,
+            };
+            let output = self
+                .runtime
+                .block_on(workflow_execution::stream(request, &event_sink))
+                .map_err(|error| Error::from_reason(error.to_string()))?;
+            let mut value = serde_json::to_value(output).map_err(|error| {
+                Error::from_reason(format!("failed to serialize output: {error}"))
+            })?;
+            event_sink.attach_to_output(&mut value)?;
+            Ok(value)
+        } else {
+            let event_sink = NodeWorkflowEventSink {
+                callback: self.on_event.clone(),
+            };
+            let request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
+                workflow_input: &self.workflow_input,
+                executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
+                custom_worker: None,
+                options: &self.workflow_options,
+                flags: self.workflow_flags,
+            };
+            let output = self
+                .runtime
+                .block_on(workflow_execution::stream(request, &event_sink))
+                .map_err(|error| Error::from_reason(error.to_string()))?;
+            serde_json::to_value(output)
+                .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
+        }
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -1185,19 +1247,20 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
         ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
     )]
     pub fn run_workflow_yaml(
         &self,
         workflow_path: String,
         workflow_input: JsonValue,
+        workflow_options: Option<JsonValue>,
     ) -> Result<JsonValue> {
-        self.run_workflow_yaml_with_options(workflow_path, workflow_input, None)
+        self.run_workflow_yaml_with_options(workflow_path, workflow_input, workflow_options)
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
         ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
     )]
     pub fn run_workflow_yaml_with_events(
@@ -1228,7 +1291,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
         ts_return_type = "Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>"
     )]
     pub fn run_workflow_yaml_stream(
@@ -1239,7 +1302,7 @@ impl Client {
         workflow_options: Option<JsonValue>,
     ) -> Result<AsyncTask<WorkflowStreamTask>> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        let options = parse_workflow_options(workflow_options)?;
+        let request_options = parse_workflow_request_options(workflow_options)?;
 
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
@@ -1252,11 +1315,12 @@ impl Client {
             client: self.client.clone(),
             workflow_path,
             workflow_input,
-            workflow_options: options,
+            workflow_options: request_options.run_options,
             workflow_flags: YamlWorkflowExecutionFlags {
                 workflow_streaming: true,
                 ..YamlWorkflowExecutionFlags::default()
             },
+            include_events: request_options.include_events,
             on_event: tsfn,
         };
 
@@ -1264,7 +1328,7 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
         ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
     )]
     pub fn run_workflow_yaml_with_options(
@@ -1274,16 +1338,35 @@ impl Client {
         workflow_options: Option<JsonValue>,
     ) -> Result<JsonValue> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        let options = parse_workflow_options(workflow_options)?;
-        blocking_workflow_to_json(
-            &self.runtime,
-            &self.client,
-            workflow_path.as_str(),
-            &workflow_input,
-            &options,
-            YamlWorkflowExecutionFlags::default(),
-            None,
-        )
+        let request_options = parse_workflow_request_options(workflow_options)?;
+        if request_options.include_events {
+            let event_sink = RecordingWorkflowEventSink::new();
+            let stream_flags = YamlWorkflowExecutionFlags {
+                workflow_streaming: true,
+                ..YamlWorkflowExecutionFlags::default()
+            };
+            let mut output_value = blocking_workflow_to_json(
+                &self.runtime,
+                &self.client,
+                workflow_path.as_str(),
+                &workflow_input,
+                &request_options.run_options,
+                stream_flags,
+                Some(&event_sink),
+            )?;
+            event_sink.attach_to_output(&mut output_value)?;
+            Ok(output_value)
+        } else {
+            blocking_workflow_to_json(
+                &self.runtime,
+                &self.client,
+                workflow_path.as_str(),
+                &workflow_input,
+                &request_options.run_options,
+                YamlWorkflowExecutionFlags::default(),
+                None,
+            )
+        }
     }
 
     #[napi(
@@ -1349,6 +1432,7 @@ impl Client {
             workflow_input,
             workflow_options: options,
             workflow_flags,
+            include_events: false,
             on_event: tsfn,
         };
 

@@ -88,6 +88,39 @@ async function main() {
     { mode: 'healed_json' },
   );
   console.log('parsed JSON value:', healed.healed?.value);
+
+  // Workflow YAML (sync)
+  const workflowOutput = client.runWorkflowYaml(
+    'examples/workflow_email/email-intake-classification.yaml',
+    {
+      messages: [
+        { role: 'system', content: 'You are an HR classifier.' },
+        { role: 'user', content: 'Termination request, second warning already issued' },
+      ],
+    },
+    { include_events: true },
+  );
+  console.log('terminal output:', workflowOutput.terminal_output);
+
+  // Workflow YAML (async + live events)
+  const asyncOutput = await client.runWorkflowYamlStream(
+    'examples/workflow_email/email-intake-classification.yaml',
+    {
+      messages: [
+        { role: 'system', content: 'You are an HR classifier.' },
+        { role: 'user', content: 'Termination request, second warning already issued' },
+      ],
+    },
+    (err, eventJson) => {
+      if (err) {
+        console.error('event error:', err);
+        return;
+      }
+      console.log('event:', eventJson);
+    },
+    { telemetry: { nerdstats: true } },
+  );
+  console.log('async terminal output:', asyncOutput.terminal_output);
 }
 
 main().catch((err) => {

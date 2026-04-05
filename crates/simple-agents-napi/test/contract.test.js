@@ -63,7 +63,7 @@ test('runWorkflowYaml declaration supports workflowOptions', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
   assert.ok(
-    declaration.includes('runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown> }): { workflow_id: string;'),
+    declaration.includes('runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): { workflow_id: string;'),
     'runWorkflowYamlWithOptions should accept optional workflowOptions in TypeScript declaration',
   );
 });
