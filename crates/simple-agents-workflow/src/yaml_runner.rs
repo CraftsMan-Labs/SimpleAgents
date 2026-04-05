@@ -44,17 +44,7 @@ mod typed_contracts;
 mod types;
 mod validation;
 pub use api::{
-    run_email_workflow_yaml, run_email_workflow_yaml_file, run_email_workflow_yaml_file_typed,
-    run_email_workflow_yaml_file_typed_with_custom_worker_and_events_and_options,
-    run_email_workflow_yaml_file_with_client,
-    run_email_workflow_yaml_file_with_client_and_custom_worker,
-    run_email_workflow_yaml_file_with_client_and_custom_worker_and_events,
-    run_email_workflow_yaml_typed,
-    run_email_workflow_yaml_typed_with_custom_worker_and_events_and_options,
-    run_email_workflow_yaml_with_client, run_email_workflow_yaml_with_client_and_custom_worker,
-    run_email_workflow_yaml_with_client_and_custom_worker_and_events,
-    run_email_workflow_yaml_with_custom_worker,
-    run_email_workflow_yaml_with_custom_worker_and_events, run_workflow_yaml,
+    run_workflow_yaml,
     run_workflow_yaml_file, run_workflow_yaml_file_typed,
     run_workflow_yaml_file_typed_with_custom_worker_and_events_and_options,
     run_workflow_yaml_file_with_client, run_workflow_yaml_file_with_client_and_custom_worker,
@@ -1975,11 +1965,6 @@ async fn try_run_yaml_via_ir_runtime(
 
                 let prompt_bindings = collect_template_bindings(&prompt_template, &context);
                 let prompt = interpolate_template(&prompt_template, &context);
-                let email_text = context
-                    .get("input")
-                    .and_then(|v| v.get("email_text"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
                 let schema = input
                     .input
                     .get("output_schema")
@@ -2012,7 +1997,6 @@ async fn try_run_yaml_via_ir_runtime(
                     tool_calls_global_key: None,
                     tool_trace_mode: YamlToolTraceMode::Off,
                     execution_context: context.clone(),
-                    input_text: email_text.to_string(),
                     trace_id: self.trace_id.clone(),
                     trace_context: self.trace_context.clone(),
                     tenant_context: self.tenant_context.clone(),
@@ -2053,12 +2037,6 @@ async fn try_run_yaml_via_ir_runtime(
                 .as_object_mut()
                 .and_then(|obj| obj.remove("__handler_file"))
                 .and_then(|value| value.as_str().map(ToString::to_string));
-            let email_text = context
-                .get("input")
-                .and_then(|v| v.get("email_text"))
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-
             let tracer = workflow_tracer();
             let mut handler_span_context: Option<TraceContext> = None;
             let mut handler_span = if self.trace_sampled {
@@ -2104,7 +2082,6 @@ async fn try_run_yaml_via_ir_runtime(
                     &input.tool,
                     handler_file.as_deref(),
                     &payload,
-                    email_text,
                     &worker_context,
                 )
                 .await
@@ -2220,12 +2197,6 @@ async fn try_run_yaml_via_ir_runtime(
         .and_then(|v| v.get("output"))
         .cloned();
 
-    let email_text = workflow_input
-        .get("email_text")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-
     let token_totals = tool_executor
         .token_totals
         .lock()
@@ -2235,7 +2206,6 @@ async fn try_run_yaml_via_ir_runtime(
     let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
-        email_text,
         trace,
         outputs,
         terminal_node,
@@ -2340,12 +2310,6 @@ async fn execute_subworkflow_tool_call(
     if !subworkflow_input.contains_key("messages") {
         if let Some(messages) = input_context.get("messages") {
             subworkflow_input.insert("messages".to_string(), messages.clone());
-        }
-    }
-
-    if !subworkflow_input.contains_key("email_text") {
-        if let Some(email_text) = input_context.get("email_text") {
-            subworkflow_input.insert("email_text".to_string(), email_text.clone());
         }
     }
 
@@ -2761,7 +2725,6 @@ mod tests {
             _handler: &str,
             _handler_file: Option<&str>,
             _payload: &Value,
-            _email_text: &str,
             _context: &Value,
         ) -> Result<Value, String> {
             Ok(self.payload.clone())
@@ -2775,7 +2738,6 @@ mod tests {
             _handler: &str,
             _handler_file: Option<&str>,
             _payload: &Value,
-            _email_text: &str,
             _context: &Value,
         ) -> Result<Value, String> {
             self.execute_calls.fetch_add(1, Ordering::SeqCst);
@@ -2825,7 +2787,6 @@ mod tests {
             _handler: &str,
             _handler_file: Option<&str>,
             _payload: &Value,
-            _email_text: &str,
             context: &Value,
         ) -> Result<Value, String> {
             let mut guard = self
@@ -2844,7 +2805,6 @@ mod tests {
             _handler: &str,
             handler_file: Option<&str>,
             _payload: &Value,
-            _email_text: &str,
             _context: &Value,
         ) -> Result<Value, String> {
             let mut guard = self
@@ -2968,9 +2928,9 @@ edges:
         let custom_worker = FixedToolWorker {
             payload: json!({"context": "mock"}),
         };
-        let output = run_email_workflow_yaml_with_custom_worker(
+        let output = run_workflow_yaml_with_custom_worker(
             &workflow,
-            "test",
+            &json!({"email_text":"test"}),
             &MockExecutor,
             Some(&custom_worker),
         )
@@ -3007,7 +2967,7 @@ nodes:
 
         let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
         let output = WorkflowRunner::from_workflow(&workflow)
-            .with_email_text("test")
+            .with_input(&json!({"email_text":"test"}))
             .with_executor(&MockExecutor)
             .run()
             .await
@@ -3063,9 +3023,9 @@ nodes:
             events: Mutex::new(Vec::new()),
         };
 
-        let output = run_email_workflow_yaml_with_custom_worker_and_events(
+        let output = run_workflow_yaml_with_custom_worker_and_events(
             &workflow,
-            "Need help with termination",
+            &json!({"email_text":"Need help with termination"}),
             &MockExecutor,
             None,
             Some(&sink),
@@ -3334,7 +3294,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "workflow".to_string(),
             entry_node: "start".to_string(),
-            email_text: "hello".to_string(),
             trace: vec!["llm_node".to_string()],
             outputs: BTreeMap::new(),
             terminal_node: "llm_node".to_string(),
@@ -3388,7 +3347,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "workflow".to_string(),
             entry_node: "start".to_string(),
-            email_text: "hello".to_string(),
             trace: vec!["llm_node".to_string()],
             outputs: BTreeMap::new(),
             terminal_node: "llm_node".to_string(),
@@ -3436,7 +3394,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "schema-workflow".to_string(),
             entry_node: "start".to_string(),
-            email_text: "hello".to_string(),
             trace: vec!["classify".to_string(), "route".to_string()],
             outputs: BTreeMap::new(),
             terminal_node: "route".to_string(),
@@ -4972,7 +4929,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "wf-1".to_string(),
             entry_node: "start".to_string(),
-            email_text: "email".to_string(),
             trace: vec!["node-1".to_string()],
             outputs: BTreeMap::new(),
             terminal_node: "node-1".to_string(),
@@ -5032,7 +4988,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "wf-1".to_string(),
             entry_node: "start".to_string(),
-            email_text: "email".to_string(),
             trace: vec!["node-1".to_string()],
             outputs: BTreeMap::new(),
             terminal_node: "node-1".to_string(),
@@ -5527,7 +5482,6 @@ edges:
         let output = YamlWorkflowRunOutput {
             workflow_id: "typed-output-demo".to_string(),
             entry_node: "classify".to_string(),
-            email_text: String::new(),
             trace: vec![
                 "classify".to_string(),
                 "route".to_string(),
@@ -5605,7 +5559,6 @@ nodes:
         let output = YamlWorkflowRunOutput {
             workflow_id: "typed-output-unknown".to_string(),
             entry_node: "start".to_string(),
-            email_text: String::new(),
             trace: vec!["start".to_string(), "not-in-graph".to_string()],
             outputs: BTreeMap::from([("not-in-graph".to_string(), json!({"v": 1}))]),
             terminal_node: "not-in-graph".to_string(),

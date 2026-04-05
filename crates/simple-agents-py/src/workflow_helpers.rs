@@ -25,7 +25,6 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
         handler: &str,
         handler_file: Option<&str>,
         payload: &Value,
-        input_text: &str,
         context: &Value,
     ) -> std::result::Result<Value, String> {
         Python::with_gil(|py| {
@@ -73,21 +72,11 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
                 .map_err(|error| error.to_string())?;
 
             let function = module.getattr(handler).map_err(|error| error.to_string())?;
-            let Some(topic) = payload
-                .get("topic")
-                .and_then(Value::as_str)
-                .filter(|value| !value.trim().is_empty())
-            else {
-                return Err("custom worker payload.topic must be a non-empty string".to_string());
-            };
             let kwargs = pyo3::types::PyDict::new_bound(py);
             let context_obj =
                 pythonize::pythonize(py, context).map_err(|error| error.to_string())?;
             let payload_obj =
                 pythonize::pythonize(py, payload).map_err(|error| error.to_string())?;
-            kwargs
-                .set_item("email_text", input_text)
-                .map_err(|error| error.to_string())?;
             kwargs
                 .set_item("context", context_obj)
                 .map_err(|error| error.to_string())?;
@@ -95,7 +84,7 @@ impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
                 .set_item("payload", payload_obj)
                 .map_err(|error| error.to_string())?;
 
-            let result = function.call((topic,), Some(&kwargs)).map_err(|error| {
+            let result = function.call((), Some(&kwargs)).map_err(|error| {
                 format!(
                     "custom worker handler '{}' in '{}' failed: {}",
                     handler,

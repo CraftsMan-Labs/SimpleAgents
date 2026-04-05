@@ -100,8 +100,10 @@ def main() -> None:
     client = Client(provider, api_base=api_base, api_key=api_key)
 
     workflow_path = resolve_workflow_path(args.workflow)
-    output = client.run_email_workflow_yaml_stream(
-        str(workflow_path), args.email, on_event=on_event
+    output = client.run_workflow_yaml_stream(
+        str(workflow_path),
+        {"email_text": args.email},
+        on_event=on_event,
     )
 
     print("\n\n--- Final Output ---")

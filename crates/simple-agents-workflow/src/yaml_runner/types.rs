@@ -37,7 +37,6 @@ pub struct YamlLlmNodeMetrics {
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
-    pub email_text: String,
     pub trace: Vec<String>,
     pub outputs: BTreeMap<String, Value>,
     pub terminal_node: String,

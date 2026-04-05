@@ -18,7 +18,6 @@ enum WorkflowApiSource<'a> {
 #[derive(Clone, Copy)]
 enum WorkflowApiInput<'a> {
     Input(&'a Value),
-    EmailText(&'a str),
 }
 
 fn runner_for_source<'a>(source: WorkflowApiSource<'a>) -> WorkflowRunner<'a> {
@@ -34,7 +33,6 @@ fn runner_with_input<'a>(
 ) -> WorkflowRunner<'a> {
     match input {
         WorkflowApiInput::Input(workflow_input) => runner.with_input(workflow_input),
-        WorkflowApiInput::EmailText(email_text) => runner.with_email_text(email_text),
     }
 }
 
@@ -112,22 +110,6 @@ pub async fn run_workflow_yaml_file_typed(
     .await
 }
 
-pub async fn run_email_workflow_yaml_file_typed(
-    workflow_path: &Path,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
-        executor,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_typed(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -136,22 +118,6 @@ pub async fn run_workflow_yaml_typed(
     run_typed_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
-        executor,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_typed(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
         executor,
         None,
         None,
@@ -179,25 +145,6 @@ pub async fn run_workflow_yaml_file_typed_with_custom_worker_and_events_and_opti
     .await
 }
 
-pub async fn run_email_workflow_yaml_file_typed_with_custom_worker_and_events_and_options(
-    workflow_path: &Path,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
-        executor,
-        custom_worker,
-        event_sink,
-        Some(options),
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_typed_with_custom_worker_and_events_and_options(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -209,25 +156,6 @@ pub async fn run_workflow_yaml_typed_with_custom_worker_and_events_and_options(
     run_typed_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
-        executor,
-        custom_worker,
-        event_sink,
-        Some(options),
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_typed_with_custom_worker_and_events_and_options(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
         executor,
         custom_worker,
         event_sink,
@@ -252,22 +180,6 @@ pub async fn run_workflow_yaml_file(
     .await
 }
 
-pub async fn run_email_workflow_yaml_file(
-    workflow_path: &Path,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_executor(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
-        executor,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_file_with_client(
     workflow_path: &Path,
     workflow_input: &Value,
@@ -276,22 +188,6 @@ pub async fn run_workflow_yaml_file_with_client(
     run_with_client(
         WorkflowApiSource::File(workflow_path),
         WorkflowApiInput::Input(workflow_input),
-        client,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_file_with_client(
-    workflow_path: &Path,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
         client,
         None,
         None,
@@ -316,22 +212,6 @@ pub async fn run_workflow_yaml_with_client(
     .await
 }
 
-pub async fn run_email_workflow_yaml_with_client(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
-        client,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_file_with_client_and_custom_worker(
     workflow_path: &Path,
     workflow_input: &Value,
@@ -341,23 +221,6 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker(
     run_with_client(
         WorkflowApiSource::File(workflow_path),
         WorkflowApiInput::Input(workflow_input),
-        client,
-        custom_worker,
-        None,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker(
-    workflow_path: &Path,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
         client,
         custom_worker,
         None,
@@ -403,24 +266,6 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events_and
     .await
 }
 
-pub async fn run_email_workflow_yaml_file_with_client_and_custom_worker_and_events(
-    workflow_path: &Path,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::File(workflow_path),
-        WorkflowApiInput::EmailText(email_text),
-        client,
-        custom_worker,
-        event_sink,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_with_client_and_custom_worker(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -430,23 +275,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker(
     run_with_client(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
-        client,
-        custom_worker,
-        None,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_with_client_and_custom_worker(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
         client,
         custom_worker,
         None,
@@ -473,24 +301,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
     .await
 }
 
-pub async fn run_email_workflow_yaml_with_client_and_custom_worker_and_events(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    client: &SimpleAgentsClient,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_client(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
-        client,
-        custom_worker,
-        event_sink,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -499,22 +309,6 @@ pub async fn run_workflow_yaml(
     run_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
-        executor,
-        None,
-        None,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_executor(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
         executor,
         None,
         None,
@@ -540,23 +334,6 @@ pub async fn run_workflow_yaml_with_custom_worker(
     .await
 }
 
-pub async fn run_email_workflow_yaml_with_custom_worker(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_executor(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
-        executor,
-        custom_worker,
-        None,
-        None,
-    )
-    .await
-}
-
 pub async fn run_workflow_yaml_with_custom_worker_and_events(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -567,24 +344,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     run_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
-        executor,
-        custom_worker,
-        event_sink,
-        None,
-    )
-    .await
-}
-
-pub async fn run_email_workflow_yaml_with_custom_worker_and_events(
-    workflow: &YamlWorkflow,
-    email_text: &str,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    run_with_executor(
-        WorkflowApiSource::Inline(workflow),
-        WorkflowApiInput::EmailText(email_text),
         executor,
         custom_worker,
         event_sink,

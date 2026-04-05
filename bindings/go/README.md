@@ -72,7 +72,6 @@ See runnable example: `bindings/go/examples/client/main.go`.
 - `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
 - `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
 - `(*Client).RunWorkflowYAML(ctx, workflowPath, workflowInput)` (generic workflow input)
-- `(*Client).RunEmailWorkflowYAML(ctx, workflowPath, emailText)` (compatibility wrapper)
 - `(*Client).Complete(...)` (backward-compatible prompt helper)
 - `(*Client).Close()`
 

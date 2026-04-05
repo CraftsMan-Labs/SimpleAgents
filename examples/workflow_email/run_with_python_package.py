@@ -63,8 +63,10 @@ def main() -> None:
             if trimmed_path.exists():
                 workflow_path = trimmed_path
 
-    result = client.run_email_workflow_yaml(
-        str(workflow_path), args.email, include_events=args.include_events
+    result = client.run_workflow_yaml(
+        str(workflow_path),
+        {"email_text": args.email},
+        include_events=args.include_events,
     )
     print(json.dumps(result, indent=2))
 

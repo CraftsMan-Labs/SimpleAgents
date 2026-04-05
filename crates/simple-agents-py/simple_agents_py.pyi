@@ -24,7 +24,6 @@ class WorkflowMessage(TypedDict, total=False):
     tool_call_id: str
 
 class WorkflowInput(TypedDict, total=False):
-    email_text: str
     messages: list[WorkflowMessage]
 
 class WorkflowTelemetryOptions(TypedDict, total=False):
@@ -102,7 +101,6 @@ class WorkflowEvent(TypedDict, total=False):
 class WorkflowRunOutput(TypedDict, total=False):
     workflow_id: str
     entry_node: str
-    email_text: str
     trace: list[str]
     outputs: dict[str, JSONValue]
     terminal_node: str
@@ -413,20 +411,6 @@ class Client:
         | Iterator[StreamChunk]
         | Iterator[PyStructuredEvent]
     ): ...
-    def run_email_workflow_yaml(
-        self,
-        workflow_path: str,
-        email_text: str,
-        include_events: bool = False,
-        workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None,
-    ) -> WorkflowRunOutput: ...
-    def run_email_workflow_yaml_stream(
-        self,
-        workflow_path: str,
-        email_text: str,
-        on_event: Callable[[WorkflowEvent], object] | None = None,
-        workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None,
-    ) -> WorkflowRunOutput: ...
     def run_workflow_yaml(
         self,
         workflow_path: str,

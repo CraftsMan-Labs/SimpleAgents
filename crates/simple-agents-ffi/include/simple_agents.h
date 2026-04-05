@@ -55,12 +55,6 @@ int32_t sa_stream_messages(
     void *user_data
 );
 
-char *sa_run_email_workflow_yaml(
-    SAClient *client,
-    const char *workflow_path,
-    const char *email_text
-);
-
 char *sa_run_workflow_yaml(
     SAClient *client,
     const char *workflow_path,

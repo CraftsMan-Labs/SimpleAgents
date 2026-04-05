@@ -82,7 +82,7 @@ The test/examples convention also supports:
 new Client(provider: string)
 client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
 client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
-client.runEmailWorkflowYaml(workflowPath: string, emailText: string)
+client.runWorkflowYaml(workflowPath: string, workflowInput)
 client.runWorkflowYamlWithEvents(workflowPath: string, workflowInput, workflowOptions?)
 client.runWorkflowYamlStream(workflowPath: string, workflowInput, onEvent, workflowOptions?)
 ```
@@ -95,9 +95,9 @@ client.runWorkflowYamlStream(workflowPath: string, workflowInput, onEvent, workf
 import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
-const result = client.runEmailWorkflowYaml(
+const result = client.runWorkflowYaml(
   "examples/workflow_email/email-intake-classification.yaml",
-  "Please process supply chain replacement, order 9921 arrived damaged.",
+  { email_text: "Please process supply chain replacement, order 9921 arrived damaged." },
 )
 
 console.log(result.terminal_output)

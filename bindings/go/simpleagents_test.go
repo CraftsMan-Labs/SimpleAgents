@@ -175,9 +175,7 @@ func TestTypedWorkflowInputToMapNil(t *testing.T) {
 }
 
 func TestTypedWorkflowInputToMapIncludesAdditionalFields(t *testing.T) {
-	emailText := "hello"
 	actual, err := typedWorkflowInputToMap(&TypedWorkflowInput{
-		EmailText: &emailText,
 		Additional: map[string]json.RawMessage{
 			"priority": json.RawMessage(`"high"`),
 			"context":  json.RawMessage(`{"channel":"support"}`),
@@ -185,10 +183,6 @@ func TestTypedWorkflowInputToMapIncludesAdditionalFields(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("expected nil error, got %v", err)
-	}
-
-	if actual["email_text"] != emailText {
-		t.Fatalf("expected email_text %q, got %v", emailText, actual["email_text"])
 	}
 
 	priority, ok := actual["priority"].(json.RawMessage)
@@ -227,17 +221,6 @@ func TestTypedWorkflowInputToMapRejectsMalformedAdditionalJSON(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error for malformed additional JSON payload")
-	}
-}
-
-func TestTypedWorkflowInputToMapRejectsReservedAdditionalEmailText(t *testing.T) {
-	_, err := typedWorkflowInputToMap(&TypedWorkflowInput{
-		Additional: map[string]json.RawMessage{
-			"email_text": json.RawMessage(`"override"`),
-		},
-	})
-	if err == nil {
-		t.Fatal("expected error for reserved additional email_text field")
 	}
 }
 
@@ -350,8 +333,9 @@ func TestRunWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
 
 func TestRunWorkflowYAMLWithTypedInputUninitializedClient(t *testing.T) {
 	c := &Client{}
-	emailText := "x"
-	_, err := c.RunWorkflowYAMLWithTypedInput(context.Background(), "workflow.yaml", &TypedWorkflowInput{EmailText: &emailText})
+	_, err := c.RunWorkflowYAMLWithTypedInput(context.Background(), "workflow.yaml", &TypedWorkflowInput{
+		Messages: []WorkflowInputMessage{{Role: MessageRoleUser, Content: "x"}},
+	})
 	if err == nil {
 		t.Fatal("expected uninitialized client error")
 	}
@@ -362,14 +346,6 @@ func TestRunWorkflowYAMLWithTypedInputNilValidation(t *testing.T) {
 	_, err := c.RunWorkflowYAMLWithTypedInput(context.Background(), "workflow.yaml", nil)
 	if err == nil {
 		t.Fatal("expected workflowInput validation error")
-	}
-}
-
-func TestRunEmailWorkflowYAMLWithRunOptionsUninitializedClient(t *testing.T) {
-	c := &Client{}
-	_, err := c.RunEmailWorkflowYAMLWithRunOptions(context.Background(), "workflow.yaml", "hello", nil)
-	if err == nil {
-		t.Fatal("expected uninitialized client error")
 	}
 }
 

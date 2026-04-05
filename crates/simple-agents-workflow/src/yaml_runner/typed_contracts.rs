@@ -148,8 +148,7 @@ impl YamlWorkflowRunOutput {
     /// Project loose JSON output maps into explicit typed records.
     ///
     /// This keeps node outputs and terminal output while intentionally omitting
-    /// legacy compatibility fields such as `email_text`, token aggregates,
-    /// timings, and metadata from the typed surface.
+    /// token aggregates, timings, and metadata from the typed surface.
     pub fn to_typed_output(&self, workflow: &YamlWorkflow) -> YamlWorkflowRunTypedOutput {
         let node_kind_by_id: HashMap<&str, YamlWorkflowNodeKind> = workflow
             .nodes

@@ -6,7 +6,7 @@ use futures_util::{Stream, StreamExt};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyTuple};
-use serde_json::{json, Value};
+use serde_json::Value;
 use simple_agent_type::cache::Cache;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{
@@ -2022,79 +2022,6 @@ impl Client {
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
 
-    #[pyo3(signature = (workflow_path, email_text, include_events=false, workflow_options=None))]
-    fn run_email_workflow_yaml(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        email_text: &str,
-        include_events: bool,
-        workflow_options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        if workflow_path.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        if email_text.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "email_text cannot be empty".to_string(),
-            ));
-        }
-
-        let workflow_input = json!({ "email_text": email_text });
-
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let run_options = parse_workflow_run_options(workflow_options)?;
-
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let event_sink = RecordingWorkflowEventSink::new();
-        let output = if include_events {
-            py.allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input,
-                        &self.client,
-                        Some(&custom_executor),
-                        Some(&event_sink),
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-        } else {
-            py.allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input,
-                        &self.client,
-                        Some(&custom_executor),
-                        None,
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?
-        };
-
-        let mut value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        if include_events {
-            attach_workflow_events(&mut value, &event_sink)?;
-        }
-
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
-    }
-
     #[pyo3(signature = (workflow_path, workflow_input, include_events=false, workflow_options=None))]
     fn run_workflow_yaml(
         &self,
@@ -2159,60 +2086,6 @@ impl Client {
             attach_workflow_events(&mut value, &event_sink)?;
         }
 
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
-    }
-
-    #[pyo3(signature = (workflow_path, email_text, on_event=None, workflow_options=None))]
-    fn run_email_workflow_yaml_stream(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        email_text: &str,
-        on_event: Option<Py<PyAny>>,
-        workflow_options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        if workflow_path.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        if email_text.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "email_text cannot be empty".to_string(),
-            ));
-        }
-
-        let workflow_input = json!({ "email_text": email_text });
-
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let run_options = parse_workflow_run_options(workflow_options)?;
-
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let event_sink = PythonWorkflowEventSink { callback: on_event };
-        let output = py
-            .allow_threads(|| {
-                runtime.block_on(
-                    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                        workflow_path_buf.as_path(),
-                        &workflow_input,
-                        &self.client,
-                        Some(&custom_executor),
-                        Some(&event_sink),
-                        &run_options,
-                    ),
-                )
-            })
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-
-        let value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
         let py_value = pythonize::pythonize(py, &value)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         Ok(py_value.into_py(py))

@@ -71,7 +71,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
-	out, err := client.RunEmailWorkflowYAML(ctx, workflowPath, emailText)
+	out, err := client.RunWorkflowYAML(
+		ctx,
+		workflowPath,
+		map[string]any{"email_text": emailText},
+	)
 	if err != nil {
 		log.Fatal(err)
 	}

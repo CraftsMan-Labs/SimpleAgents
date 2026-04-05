@@ -8,12 +8,6 @@ package simpleagents
 #include <stdint.h>
 #include "simple_agents.h"
 
-char *sa_run_email_workflow_yaml(
-    SAClient *client,
-    const char *workflow_path,
-    const char *email_text
-);
-
 char *sa_run_workflow_yaml(
     SAClient *client,
     const char *workflow_path,
@@ -71,14 +65,6 @@ static int32_t sa_stream_messages_go(
         sa_go_stream_callback_bridge,
         (void *)user_handle
     );
-}
-
-static char *sa_run_email_workflow_yaml_go(
-    SAClient *client,
-    const char *workflow_path,
-    const char *email_text
-) {
-    return sa_run_email_workflow_yaml(client, workflow_path, email_text);
 }
 
 static char *sa_run_workflow_yaml_with_options_go(
@@ -171,7 +157,6 @@ type WorkflowInputMessage struct {
 // TypedWorkflowInput is a typed workflow input envelope.
 // Additional keeps compatibility for arbitrary JSON fields used by existing workflows.
 type TypedWorkflowInput struct {
-	EmailText  *string                    `json:"email_text,omitempty"`
 	Messages   []WorkflowInputMessage     `json:"messages,omitempty"`
 	Additional map[string]json.RawMessage `json:"-"`
 }
@@ -407,7 +392,6 @@ func (event WorkflowEvent) ToTypedEvent() WorkflowTypedEvent {
 type WorkflowYAMLOutput struct {
 	WorkflowID           string                            `json:"workflow_id"`
 	EntryNode            string                            `json:"entry_node"`
-	EmailText            string                            `json:"email_text"`
 	Trace                []string                          `json:"trace"`
 	Outputs              map[string]map[string]any         `json:"outputs"`
 	NodeOutputs          []WorkflowNodeOutputRecord        `json:"node_outputs,omitempty"`
@@ -543,7 +527,7 @@ func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any,
 
 	decoded := make(map[string]any, len(workflowInput.Additional)+2)
 	for key, rawValue := range workflowInput.Additional {
-		if key == "email_text" || key == "messages" {
+		if key == "messages" {
 			return nil, fmt.Errorf("workflowInput additional field %q is reserved; use typed fields instead", key)
 		}
 		if len(rawValue) == 0 {
@@ -555,9 +539,6 @@ func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any,
 		decoded[key] = json.RawMessage(rawValue)
 	}
 
-	if workflowInput.EmailText != nil {
-		decoded["email_text"] = *workflowInput.EmailText
-	}
 	if workflowInput.Messages != nil {
 		decoded["messages"] = workflowInput.Messages
 	}
@@ -654,62 +635,6 @@ func (c *Client) CompletePrompt(
 	temperature float32,
 ) (string, error) {
 	return c.CompleteWithContext(ctx, model, prompt, maxTokens, temperature)
-}
-
-// RunEmailWorkflowYAML executes the Rust workflow YAML runner and returns structured output.
-func (c *Client) RunEmailWorkflowYAML(
-	ctx context.Context,
-	workflowPath string,
-	emailText string,
-) (WorkflowYAMLOutput, error) {
-	return c.RunWorkflowYAML(ctx, workflowPath, map[string]any{"email_text": emailText})
-}
-
-// RunEmailWorkflowYAMLTyped executes email workflow YAML and projects output into typed records.
-func (c *Client) RunEmailWorkflowYAMLTyped(
-	ctx context.Context,
-	workflowPath string,
-	emailText string,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunEmailWorkflowYAML(ctx, workflowPath, emailText)
-	if err != nil {
-		return WorkflowRunTypedOutput{}, err
-	}
-	return out.ToTypedOutput(), nil
-}
-
-// RunEmailWorkflowYAMLWithRunOptions executes email workflow YAML with typed workflow options.
-func (c *Client) RunEmailWorkflowYAMLWithRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	emailText string,
-	options *TypedWorkflowRunOptions,
-) (WorkflowYAMLOutput, error) {
-	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	return c.RunWorkflowYAMLWithOptions(
-		ctx,
-		workflowPath,
-		map[string]any{"email_text": emailText},
-		workflowOptions,
-	)
-}
-
-// RunEmailWorkflowYAMLWithRunOptionsTyped executes email workflow YAML with typed run options and typed output projection.
-func (c *Client) RunEmailWorkflowYAMLWithRunOptionsTyped(
-	ctx context.Context,
-	workflowPath string,
-	emailText string,
-	options *TypedWorkflowRunOptions,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunEmailWorkflowYAMLWithRunOptions(ctx, workflowPath, emailText, options)
-	if err != nil {
-		return WorkflowRunTypedOutput{}, err
-	}
-	return out.ToTypedOutput(), nil
 }
 
 // RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.

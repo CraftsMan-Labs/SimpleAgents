@@ -70,10 +70,10 @@ text, err := client.Complete("gpt-4", "Hello", 128, 0.7)
 Go binding now exposes the Rust YAML workflow runner through FFI:
 
 ```go
-out, err := client.RunEmailWorkflowYAML(
+out, err := client.RunWorkflowYAML(
     context.Background(),
     "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
+    map[string]any{"email_text": "Termination request, second warning already issued"},
 )
 if err != nil {
     panic(err)

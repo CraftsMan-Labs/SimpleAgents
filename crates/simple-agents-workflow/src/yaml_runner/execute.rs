@@ -25,11 +25,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
 
     validate_sample_rate(options.telemetry.sample_rate)?;
 
-    let email_text = workflow_input
-        .get("email_text")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-
     let diagnostics = verify_yaml_workflow(workflow);
     let errors: Vec<YamlWorkflowDiagnostic> = diagnostics
         .iter()
@@ -78,7 +73,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
                 custom_worker,
                 event_sink,
                 options,
-                email_text,
                 tracer,
                 &telemetry_context,
                 workflow_span_context.as_ref(),
@@ -113,7 +107,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
             event_sink,
             &telemetry_context,
             started,
-            email_text,
             trace,
             outputs,
             step_timings,
@@ -262,7 +255,6 @@ async fn execute_single_node_step(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
-    email_text: &str,
     tracer: &dyn crate::observability::tracing::WorkflowTracer,
     telemetry_context: &ResolvedTelemetryContext,
     workflow_span_context: Option<&TraceContext>,
@@ -320,7 +312,6 @@ async fn execute_single_node_step(
                     executor,
                     event_sink,
                     options,
-                    email_text,
                     telemetry_context,
                     node_span_context: node_span_context.clone(),
                     node_span: node_span.as_mut(),
@@ -353,7 +344,6 @@ async fn execute_single_node_step(
                     edge_map,
                     custom_worker,
                     options,
-                    email_text,
                     telemetry_context,
                     workflow_span_context,
                     tracer,
@@ -449,7 +439,6 @@ fn finalize_workflow_output(
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     telemetry_context: &ResolvedTelemetryContext,
     started: Instant,
-    email_text: &str,
     trace: Vec<String>,
     outputs: BTreeMap<String, Value>,
     step_timings: Vec<YamlStepTiming>,
@@ -474,7 +463,6 @@ fn finalize_workflow_output(
     let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
-        email_text: email_text.to_string(),
         trace,
         outputs,
         terminal_node,

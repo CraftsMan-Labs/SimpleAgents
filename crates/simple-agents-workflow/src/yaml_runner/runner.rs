@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use serde_json::{json, Value};
+use serde_json::Value;
 use simple_agents_core::SimpleAgentsClient;
 
 use super::typed_contracts::YamlWorkflowEventSinkFanout;
@@ -32,7 +32,6 @@ enum WorkflowRunnerSource<'a> {
 pub struct WorkflowRunner<'a> {
     source: WorkflowRunnerSource<'a>,
     workflow_input: Option<&'a Value>,
-    email_text: Option<&'a str>,
     executor: Option<WorkflowRunnerExecutor<'a>>,
     custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&'a dyn YamlWorkflowEventSink>,
@@ -45,7 +44,6 @@ impl<'a> WorkflowRunner<'a> {
         Self {
             source: WorkflowRunnerSource::File(workflow_path),
             workflow_input: None,
-            email_text: None,
             executor: None,
             custom_worker: None,
             event_sink: None,
@@ -58,7 +56,6 @@ impl<'a> WorkflowRunner<'a> {
         Self {
             source: WorkflowRunnerSource::Inline(workflow),
             workflow_input: None,
-            email_text: None,
             executor: None,
             custom_worker: None,
             event_sink: None,
@@ -69,11 +66,6 @@ impl<'a> WorkflowRunner<'a> {
 
     pub fn with_input(mut self, workflow_input: &'a Value) -> Self {
         self.workflow_input = Some(workflow_input);
-        self
-    }
-
-    pub fn with_email_text(mut self, email_text: &'a str) -> Self {
-        self.email_text = Some(email_text);
         self
     }
 
@@ -117,7 +109,6 @@ impl<'a> WorkflowRunner<'a> {
         let WorkflowRunner {
             source,
             workflow_input,
-            email_text,
             executor,
             custom_worker,
             event_sink,
@@ -125,16 +116,11 @@ impl<'a> WorkflowRunner<'a> {
             options,
         } = self;
 
-        let fallback_input;
         let workflow_input = if let Some(workflow_input) = workflow_input {
             workflow_input
-        } else if let Some(email_text) = email_text {
-            fallback_input = json!({ "email_text": email_text });
-            &fallback_input
         } else {
             return Err(YamlWorkflowRunError::InvalidInput {
-                message: "workflow input is required; call with_input(...) or with_email_text(...)"
-                    .to_string(),
+                message: "workflow input is required; call with_input(...)".to_string(),
             });
         };
 
@@ -223,13 +209,12 @@ impl<'a> WorkflowRunner<'a> {
     /// outputs. This compatibility bridge intentionally omits observability
     /// fields from `YamlWorkflowRunOutput`, including `step_timings`,
     /// `llm_node_metrics`, token counters, `total_elapsed_ms`, `trace_id`,
-    /// and `metadata` (plus legacy compatibility fields such as `email_text`).
+    /// and `metadata`.
     /// Call `run()` when those diagnostics are required.
     pub async fn run_typed(self) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
         let WorkflowRunner {
             source,
             workflow_input,
-            email_text,
             executor,
             custom_worker,
             event_sink,
@@ -242,7 +227,6 @@ impl<'a> WorkflowRunner<'a> {
                 let output = WorkflowRunner {
                     source: WorkflowRunnerSource::Inline(workflow),
                     workflow_input,
-                    email_text,
                     executor,
                     custom_worker,
                     event_sink,
@@ -257,7 +241,6 @@ impl<'a> WorkflowRunner<'a> {
                 let (_, workflow) = load_workflow_yaml_file(path)?;
                 let output = WorkflowRunner::from_workflow(&workflow)
                     .with_optional_input(workflow_input)
-                    .with_optional_email_text(email_text)
                     .with_optional_executor(executor)
                     .with_custom_worker(custom_worker)
                     .with_event_sink(event_sink)
@@ -272,11 +255,6 @@ impl<'a> WorkflowRunner<'a> {
 
     fn with_optional_input(mut self, workflow_input: Option<&'a Value>) -> Self {
         self.workflow_input = workflow_input;
-        self
-    }
-
-    fn with_optional_email_text(mut self, email_text: Option<&'a str>) -> Self {
-        self.email_text = email_text;
         self
     }
 

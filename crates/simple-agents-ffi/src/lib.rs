@@ -17,7 +17,6 @@ use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
-    run_email_workflow_yaml_file_with_client,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options, YamlWorkflowEvent,
     YamlWorkflowEventSink, YamlWorkflowRunOptions,
 };
@@ -958,49 +957,6 @@ pub unsafe extern "C" fn sa_stream_messages(
 
             emit_stream_event(callback, user_data, FfiStreamEvent::Done)
         })
-    })
-}
-
-/// Execute workflow email YAML through the Rust workflow runner and return JSON output.
-///
-/// # Safety
-///
-/// - `client` must be a pointer returned by `sa_client_new_from_env`.
-/// - `workflow_path` and `email_text` must be valid null-terminated UTF-8 strings.
-/// - Returned string must be freed with `sa_string_free`.
-#[no_mangle]
-pub unsafe extern "C" fn sa_run_email_workflow_yaml(
-    client: *mut SAClient,
-    workflow_path: *const c_char,
-    email_text: *const c_char,
-) -> *mut c_char {
-    if client.is_null() {
-        set_last_error("client cannot be null".to_string());
-        return std::ptr::null_mut();
-    }
-
-    ffi_guard(|| {
-        let workflow_path = cstr_to_string(workflow_path, "workflow_path")?;
-        let email_text = cstr_to_string(email_text, "email_text")?;
-
-        let client = &(*client).inner;
-        let runtime = client
-            .runtime
-            .lock()
-            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
-
-        let output = runtime
-            .block_on(run_email_workflow_yaml_file_with_client(
-                std::path::Path::new(workflow_path.as_str()),
-                email_text.as_str(),
-                &client.client,
-            ))
-            .map_err(|error| {
-                SimpleAgentsError::Config(format!("failed to run workflow yaml: {error}"))
-            })?;
-
-        serde_json::to_string(&output)
-            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize result: {e}")))
     })
 }
 

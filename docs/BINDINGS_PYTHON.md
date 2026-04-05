@@ -127,9 +127,9 @@ Python binding now exposes Rust workflow YAML execution directly:
 from simple_agents_py import Client
 
 client = Client("openai", api_base="https://...", api_key="...")
-result = client.run_email_workflow_yaml(
+result = client.run_workflow_yaml(
     "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
+    {"email_text": "Termination request, second warning already issued"},
 )
 
 print(result["terminal_output"])
@@ -146,9 +146,9 @@ print(result["tokens_per_second"])      # completion tokens / second
 To collect workflow events without live callbacks, set `include_events=True`:
 
 ```python
-result = client.run_email_workflow_yaml(
+result = client.run_workflow_yaml(
     "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
+    {"email_text": "Termination request, second warning already issued"},
     include_events=True,
 )
 
@@ -179,7 +179,7 @@ result = client.run_workflow_yaml(
 
 ### Live Workflow Events + LLM Deltas
 
-`Client.run_email_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
+`Client.run_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
 
 ```python
 def on_event(event: dict[str, object]) -> None:
@@ -188,9 +188,9 @@ def on_event(event: dict[str, object]) -> None:
     else:
         print(event)
 
-result = client.run_email_workflow_yaml_stream(
+result = client.run_workflow_yaml_stream(
     "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
+    {"email_text": "Termination request, second warning already issued"},
     on_event=on_event,
     workflow_options={"telemetry": {"nerdstats": True}},
 )

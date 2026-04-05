@@ -70,9 +70,8 @@ Current state:
 ### Python (`simple-agents-py`)
 
 - Workflow entrypoints:
-  - `run_email_workflow_yaml(...)`
   - `run_workflow_yaml(...)`
-  - `run_email_workflow_yaml_stream(...)`
+  - `run_workflow_yaml_stream(...)`
 - Time metrics exposed in return payload:
   - `total_elapsed_ms`
   - `step_timings[]` with per-node `elapsed_ms`
@@ -89,7 +88,7 @@ Current state:
 ### Node.js / TypeScript (`simple-agents-node`)
 
 - Workflow entrypoints:
-  - `runEmailWorkflowYaml(...)`
+  - `runWorkflowYaml(...)`
   - `runWorkflowYamlWithEvents(...)`
   - `runWorkflowYamlStream(...)`
 - Time metrics exposed in return payload:
@@ -103,7 +102,7 @@ Current state:
 ### Go (`bindings/go` via FFI)
 
 - Workflow entrypoints:
-  - `RunEmailWorkflowYAML(...)`
+  - `RunWorkflowYAML(...)`
   - `RunWorkflowYAMLWithEvents(...)`
   - `RunWorkflowYAMLStream(...)`
 - Time metrics exposed in return payload:

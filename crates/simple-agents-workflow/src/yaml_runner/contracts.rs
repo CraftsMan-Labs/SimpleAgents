@@ -179,7 +179,6 @@ pub struct YamlLlmExecutionRequest {
     pub tool_calls_global_key: Option<String>,
     pub tool_trace_mode: YamlToolTraceMode,
     pub execution_context: Value,
-    pub input_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
     pub tenant_context: YamlWorkflowTraceTenantContext,
@@ -208,7 +207,6 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
         handler: &str,
         handler_file: Option<&str>,
         payload: &Value,
-        input_text: &str,
         context: &Value,
     ) -> Result<Value, String>;
 }
