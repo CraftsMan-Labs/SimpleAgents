@@ -44,8 +44,7 @@ mod typed_contracts;
 mod types;
 mod validation;
 pub use api::{
-    run_workflow_yaml,
-    run_workflow_yaml_file, run_workflow_yaml_file_typed,
+    run_workflow_yaml, run_workflow_yaml_file, run_workflow_yaml_file_typed,
     run_workflow_yaml_file_typed_with_custom_worker_and_events_and_options,
     run_workflow_yaml_file_with_client, run_workflow_yaml_file_with_client_and_custom_worker,
     run_workflow_yaml_file_with_client_and_custom_worker_and_events,
