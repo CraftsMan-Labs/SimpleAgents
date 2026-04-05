@@ -394,12 +394,26 @@ def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
             event, request["show_thinking"], stream_state, request["node_names"]
         )
 
-    result_any = client_any.run_workflow_yaml_stream(
-        str(request["workflow_path"]),
-        request["workflow_input"],
-        on_event=on_event,
-        workflow_options=workflow_options,
-    )
+    wf_input = request["workflow_input"]
+    raw_messages = wf_input.get("messages")
+    if not isinstance(raw_messages, list):
+        raise TypeError("workflow_input.messages must be a list of message dicts when streaming")
+    messages = [m for m in raw_messages if isinstance(m, dict)]
+    extra_input = {k: v for k, v in wf_input.items() if k != "messages"}
+
+    stream_request: dict[str, object] = {
+        "workflow_path": str(request["workflow_path"]),
+        "messages": messages,
+        "input": extra_input,
+        "workflow_options": workflow_options,
+        "execution": {
+            "workflow_streaming": True,
+            "node_llm_streaming": True,
+            "split_stream_deltas": request["show_thinking"],
+        },
+    }
+
+    result_any = client_any.stream(stream_request, on_event=on_event)
     result = cast(
         WorkflowRunResult,
         result_any if isinstance(result_any, dict) else {},
@@ -439,6 +453,8 @@ def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
 
 def main() -> None:
     args = parse_args()
+    # Duplicate opt-in: execution.split_stream_deltas is set on the stream request below.
+    # Env remains for backward compatibility; remove this block once downstreams migrate.
     if args.show_thinking:
         os.environ["SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW"] = "1"
     else:
