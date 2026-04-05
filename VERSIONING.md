@@ -37,6 +37,8 @@ Individual crates inherit this version:
 version.workspace = true
 ```
 
+In-tree crates listed under `[workspace.dependencies]` use **path-only** entries (no duplicated `version =`), so workspace bumps cannot drift from stale pins. After any manifest change, `./scripts/verify-workspace-versions.sh` (also run at the end of `make version-sync` and in CI) checks that any internal workspace dependency that still carries a `version` key matches `[workspace.package].version`, and runs `cargo metadata --locked`.
+
 ### Bumping Versions
 
 Use the Makefile commands:

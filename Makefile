@@ -6,7 +6,7 @@
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry node-package-dry-run wasm-package-dry-run \
 	python-typecheck go-vet go-staticcheck rust-check-all node-typecheck \
-	version-get version-sync version-patch version-minor version-major version-set \
+	version-get version-sync verify-workspace-versions version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
 EXAMPLE ?= openai_basic
@@ -102,6 +102,7 @@ help:
 	@echo "Versioning:"
 	@echo "  make version-get           - Show current version"
 	@echo "  make version-sync          - Sync versions across manifests"
+	@echo "  make verify-workspace-versions - Check workspace dep pins + cargo metadata --locked"
 	@echo "  make version-patch         - Bump patch version (0.1.0 -> 0.1.1)"
 	@echo "  make version-minor         - Bump minor version (0.1.0 -> 0.2.0)"
 	@echo "  make version-major         - Bump major version (0.1.0 -> 1.0.0)"
@@ -488,6 +489,10 @@ version-sync:
 	@$(MAKE) --no-print-directory sync-wasm-version
 	@$(MAKE) --no-print-directory sync-binding-lockfiles
 	@$(MAKE) --no-print-directory sync-readme-version
+	@./scripts/verify-workspace-versions.sh
+
+verify-workspace-versions:
+	@./scripts/verify-workspace-versions.sh
 
 sync-napi-version:
 	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
@@ -596,6 +601,7 @@ version-patch:
 		echo "Error: version-patch cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	patch=$$((patch + 1)); \
@@ -622,6 +628,7 @@ version-minor:
 		echo "Error: version-minor cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	minor=$$((minor + 1)); \
@@ -647,6 +654,7 @@ version-major:
 		echo "Error: version-major cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	major=$$((major + 1)); \
@@ -672,6 +680,7 @@ version-set:
 		echo "Error: version-set cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION not specified"; \
 		echo "Usage: make version-set VERSION=0.2.0"; \

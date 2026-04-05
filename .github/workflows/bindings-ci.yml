@@ -24,6 +24,8 @@ jobs:
       - name: Guard SimpleAgentsBuilder mirror drift
         run: ./scripts/check-simpleagentsbuilder-skill-links.sh
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify workspace Cargo version consistency
+        run: ./scripts/verify-workspace-versions.sh
       - uses: actions/setup-go@v5
         with:
           go-version: "1.21"
