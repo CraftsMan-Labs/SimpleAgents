@@ -373,6 +373,7 @@ func TestRunWorkflowYAMLStreamWithRunOptionsUninitializedClient(t *testing.T) {
 		map[string]any{"email_text": "x"},
 		nil,
 		nil,
+		nil,
 	)
 	if err == nil {
 		t.Fatal("expected uninitialized client error")

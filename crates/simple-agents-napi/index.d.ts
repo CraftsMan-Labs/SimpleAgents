@@ -27,7 +27,7 @@ export interface WorkflowYamlRunRequest {
   healing: boolean
   workflowStreaming: boolean
   nodeLlmStreaming: boolean
-  /** When true, emit split thinking/output stream events (OR with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`). */
+  /** When true, emit split thinking/output stream events (thinking vs output deltas). */
   splitStreamDeltas?: boolean
   extraWorkflowInput?: Record<string, unknown>
   workflowOptions?: Record<string, unknown>

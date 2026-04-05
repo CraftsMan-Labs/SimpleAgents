@@ -8,8 +8,8 @@ use super::{
     load_workflow_yaml_file,
     run_workflow_yaml_with_client_and_custom_worker_and_events_and_options,
     run_workflow_yaml_with_custom_worker_and_events_and_options, YamlWorkflow,
-    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEventSink, YamlWorkflowLlmExecutor,
-    YamlWorkflowRunError, YamlWorkflowRunOptions, YamlWorkflowRunOutput,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+    YamlWorkflowLlmExecutor, YamlWorkflowRunError, YamlWorkflowRunOptions, YamlWorkflowRunOutput,
     YamlWorkflowRunTypedOutput, YamlWorkflowTypedEventSink, YamlWorkflowTypedEventSinkAdapter,
 };
 
@@ -37,6 +37,7 @@ pub struct WorkflowRunner<'a> {
     event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     typed_event_sink: Option<&'a dyn YamlWorkflowTypedEventSink>,
     options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
 }
 
 impl<'a> WorkflowRunner<'a> {
@@ -49,6 +50,7 @@ impl<'a> WorkflowRunner<'a> {
             event_sink: None,
             typed_event_sink: None,
             options: None,
+            execution_flags: YamlWorkflowExecutionFlags::default(),
         }
     }
 
@@ -61,6 +63,7 @@ impl<'a> WorkflowRunner<'a> {
             event_sink: None,
             typed_event_sink: None,
             options: None,
+            execution_flags: YamlWorkflowExecutionFlags::default(),
         }
     }
 
@@ -105,6 +108,11 @@ impl<'a> WorkflowRunner<'a> {
         self
     }
 
+    pub fn with_execution_flags(mut self, execution_flags: YamlWorkflowExecutionFlags) -> Self {
+        self.execution_flags = execution_flags;
+        self
+    }
+
     pub async fn run(self) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
         let WorkflowRunner {
             source,
@@ -114,6 +122,7 @@ impl<'a> WorkflowRunner<'a> {
             event_sink,
             typed_event_sink,
             options,
+            execution_flags,
         } = self;
 
         let workflow_input = if let Some(workflow_input) = workflow_input {
@@ -163,6 +172,7 @@ impl<'a> WorkflowRunner<'a> {
                     custom_worker,
                     resolved_event_sink,
                     options,
+                    execution_flags,
                 )
                 .await
             }
@@ -175,6 +185,7 @@ impl<'a> WorkflowRunner<'a> {
                     custom_worker,
                     resolved_event_sink,
                     options,
+                    execution_flags,
                 )
                 .await
             }
@@ -186,6 +197,7 @@ impl<'a> WorkflowRunner<'a> {
                     custom_worker,
                     resolved_event_sink,
                     options,
+                    execution_flags,
                 )
                 .await
             }
@@ -197,6 +209,7 @@ impl<'a> WorkflowRunner<'a> {
                     custom_worker,
                     resolved_event_sink,
                     options,
+                    execution_flags,
                 )
                 .await
             }
@@ -220,6 +233,7 @@ impl<'a> WorkflowRunner<'a> {
             event_sink,
             typed_event_sink,
             options,
+            execution_flags,
         } = self;
 
         match source {
@@ -232,6 +246,7 @@ impl<'a> WorkflowRunner<'a> {
                     event_sink,
                     typed_event_sink,
                     options,
+                    execution_flags,
                 }
                 .run()
                 .await?;
@@ -246,6 +261,7 @@ impl<'a> WorkflowRunner<'a> {
                     .with_event_sink(event_sink)
                     .with_typed_event_sink(typed_event_sink)
                     .with_optional_options(options)
+                    .with_execution_flags(execution_flags)
                     .run()
                     .await?;
                 Ok(output.to_typed_output(&workflow))

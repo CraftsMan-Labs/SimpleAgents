@@ -5,8 +5,8 @@ use simple_agents_core::SimpleAgentsClient;
 
 use super::{
     WorkflowRunner, YamlWorkflow, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEventSink,
-    YamlWorkflowLlmExecutor, YamlWorkflowRunError, YamlWorkflowRunOptions, YamlWorkflowRunOutput,
-    YamlWorkflowRunTypedOutput,
+    YamlWorkflowExecutionFlags, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
+    YamlWorkflowRunOptions, YamlWorkflowRunOutput, YamlWorkflowRunTypedOutput,
 };
 
 #[derive(Clone, Copy)]
@@ -54,11 +54,13 @@ async fn run_with_executor<'a>(
     custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let runner = runner_with_input(runner_for_source(source), input)
         .with_executor(executor)
         .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink);
+        .with_event_sink(event_sink)
+        .with_execution_flags(execution_flags);
     runner_with_optional_options(runner, options).run().await
 }
 
@@ -69,11 +71,13 @@ async fn run_with_client<'a>(
     custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let runner = runner_with_input(runner_for_source(source), input)
         .with_client(client)
         .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink);
+        .with_event_sink(event_sink)
+        .with_execution_flags(execution_flags);
     runner_with_optional_options(runner, options).run().await
 }
 
@@ -84,11 +88,13 @@ async fn run_typed_with_executor<'a>(
     custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
     let runner = runner_with_input(runner_for_source(source), input)
         .with_executor(executor)
         .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink);
+        .with_event_sink(event_sink)
+        .with_execution_flags(execution_flags);
     runner_with_optional_options(runner, options)
         .run_typed()
         .await
@@ -106,6 +112,7 @@ pub async fn run_workflow_yaml_file_typed(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -122,6 +129,7 @@ pub async fn run_workflow_yaml_typed(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -141,6 +149,7 @@ pub async fn run_workflow_yaml_file_typed_with_custom_worker_and_events_and_opti
         custom_worker,
         event_sink,
         Some(options),
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -160,6 +169,7 @@ pub async fn run_workflow_yaml_typed_with_custom_worker_and_events_and_options(
         custom_worker,
         event_sink,
         Some(options),
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -176,6 +186,7 @@ pub async fn run_workflow_yaml_file(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -192,6 +203,7 @@ pub async fn run_workflow_yaml_file_with_client(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -208,6 +220,7 @@ pub async fn run_workflow_yaml_with_client(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -225,6 +238,7 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker(
         custom_worker,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -243,6 +257,7 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events(
         custom_worker,
         event_sink,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -254,6 +269,7 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events_and
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     run_with_client(
         WorkflowApiSource::File(workflow_path),
@@ -262,6 +278,7 @@ pub async fn run_workflow_yaml_file_with_client_and_custom_worker_and_events_and
         custom_worker,
         event_sink,
         Some(options),
+        execution_flags,
     )
     .await
 }
@@ -279,6 +296,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker(
         custom_worker,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -297,6 +315,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events(
         custom_worker,
         event_sink,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -313,6 +332,7 @@ pub async fn run_workflow_yaml(
         None,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -330,6 +350,7 @@ pub async fn run_workflow_yaml_with_custom_worker(
         custom_worker,
         None,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }
@@ -348,6 +369,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
         custom_worker,
         event_sink,
         None,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
 }

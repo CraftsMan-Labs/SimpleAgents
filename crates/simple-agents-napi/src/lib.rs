@@ -248,7 +248,7 @@ pub struct WorkflowYamlRunRequest {
     pub healing: bool,
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
-    /// When true, emit split thinking/output stream events (OR with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`).
+    /// When true, emit split thinking/output stream events (`node_stream_thinking_delta` / `node_stream_output_delta`).
     pub split_stream_deltas: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,

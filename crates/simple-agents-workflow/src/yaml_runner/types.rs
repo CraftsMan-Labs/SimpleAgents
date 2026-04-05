@@ -154,7 +154,12 @@ pub struct YamlWorkflowTraceOptions {
 }
 
 /// Global execution toggles for a workflow run (orthogonal to per-node YAML `heal` / `stream`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// JSON uses snake_case keys: `healing`, `workflow_streaming`, `node_llm_streaming`,
+/// `split_stream_deltas`. Missing keys deserialize using [`Default`] (see
+/// [`Default::default`] on this type).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
 pub struct YamlWorkflowExecutionFlags {
     /// When true, enables the JSON healing path for structured LLM outputs in addition to any
     /// per-node `heal` setting in YAML.
@@ -165,8 +170,7 @@ pub struct YamlWorkflowExecutionFlags {
     /// When false, LLM nodes never use provider streaming, regardless of YAML `stream`.
     pub node_llm_streaming: bool,
     /// When true, emit separate stream events for thinking vs output (`node_stream_thinking_delta`,
-    /// `node_stream_output_delta`) in addition to `node_stream_delta`. Also enabled when the
-    /// `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` environment variable is set (OR semantics).
+    /// `node_stream_output_delta`) in addition to `node_stream_delta`.
     pub split_stream_deltas: bool,
 }
 

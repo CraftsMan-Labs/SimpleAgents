@@ -265,11 +265,6 @@ function timestampSession() {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2))
-  if (args.showThinking) {
-    process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW = '1'
-  } else {
-    delete process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW
-  }
   const { provider, apiBase, apiKey } = loadConfig()
   mapProviderEnv(provider, apiKey, apiBase)
 
@@ -326,9 +321,17 @@ async function main() {
       }
       const result = args.stream
         ? parseResultJson(
-            await client.runWorkflowYamlStream(
-            workflowPath,
-            workflowInput,
+            await client.executeWorkflowYamlStream(
+            {
+              workflowPath,
+              messages: workflowInput.messages,
+              healing: false,
+              workflowStreaming: true,
+              nodeLlmStreaming: true,
+              splitStreamDeltas: args.showThinking,
+              extraWorkflowInput: { email_text: userInput },
+              workflowOptions,
+            },
             (errOrEventJson, maybeEventJson, fallbackEventJson) => {
               const eventJson = extractEventJson(errOrEventJson, maybeEventJson, fallbackEventJson)
               if (eventJson === null) return
@@ -337,7 +340,6 @@ async function main() {
               streamedEvents.push(event)
               printStreamEvent(event, args.showThinking, streamState)
             },
-            workflowOptions,
           ))
         : args.includeEvents
           ? client.runWorkflowYamlWithEvents(workflowPath, workflowInput, workflowOptions)

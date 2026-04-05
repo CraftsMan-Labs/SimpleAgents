@@ -219,7 +219,7 @@ pub struct YamlLlmExecutionRequest {
     pub trace_context: Option<TraceContext>,
     pub tenant_context: YamlWorkflowTraceTenantContext,
     pub trace_sampled: bool,
-    /// Split thinking/output stream events; OR'd with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`.
+    /// Split thinking/output stream events (mirrors [`YamlWorkflowExecutionFlags::split_stream_deltas`]).
     pub split_stream_deltas: bool,
 }
 

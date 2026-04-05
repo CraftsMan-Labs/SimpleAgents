@@ -18,7 +18,7 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options, YamlWorkflowEvent,
-    YamlWorkflowEventSink, YamlWorkflowRunOptions,
+    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
 };
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -334,6 +334,22 @@ fn parse_workflow_run_options(raw_json: Option<String>) -> Result<YamlWorkflowRu
             serde_json::from_str::<YamlWorkflowRunOptions>(&value).map_err(|error| {
                 SimpleAgentsError::Config(format!(
                     "workflow_options_json must be valid JSON: {error}"
+                ))
+            })
+        }
+    }
+}
+
+fn parse_workflow_execution_flags(raw_json: Option<String>) -> Result<YamlWorkflowExecutionFlags> {
+    match raw_json {
+        None => Ok(YamlWorkflowExecutionFlags::default()),
+        Some(value) => {
+            if value.trim().is_empty() {
+                return Ok(YamlWorkflowExecutionFlags::default());
+            }
+            serde_json::from_str::<YamlWorkflowExecutionFlags>(&value).map_err(|error| {
+                SimpleAgentsError::Config(format!(
+                    "workflow_execution_flags_json must be valid JSON: {error}"
                 ))
             })
         }
@@ -1118,6 +1134,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_with_options(
                     None,
                     None,
                     &workflow_options,
+                    YamlWorkflowExecutionFlags::default(),
                 ),
             )
             .map_err(|error| {
@@ -1182,6 +1199,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_with_events(
                     None,
                     Some(&event_sink),
                     &workflow_options,
+                    YamlWorkflowExecutionFlags::default(),
                 ),
             )
             .map_err(|error| {
@@ -1204,6 +1222,8 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_with_events(
 /// - `workflow_path` and `workflow_input_json` must be valid null-terminated UTF-8 strings.
 /// - `workflow_input_json` must decode to a JSON object.
 /// - `workflow_options_json` may be null.
+/// - `workflow_execution_flags_json` may be null; when non-null it must be UTF-8 JSON matching
+///   Rust `YamlWorkflowExecutionFlags` (for example `{"split_stream_deltas":true}`).
 /// - `callback` must be non-null for the duration of the call.
 /// - Returned string must be freed with `sa_string_free`.
 #[no_mangle]
@@ -1212,6 +1232,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_stream_events(
     workflow_path: *const c_char,
     workflow_input_json: *const c_char,
     workflow_options_json: *const c_char,
+    workflow_execution_flags_json: *const c_char,
     callback: SAWorkflowEventCallback,
     user_data: *mut c_void,
 ) -> *mut c_char {
@@ -1230,6 +1251,10 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_stream_events(
         let workflow_input_json = cstr_to_string(workflow_input_json, "workflow_input_json")?;
         let workflow_options_json =
             cstr_to_optional_string(workflow_options_json, "workflow_options_json")?;
+        let workflow_execution_flags_json = cstr_to_optional_string(
+            workflow_execution_flags_json,
+            "workflow_execution_flags_json",
+        )?;
         let workflow_input: JsonValue =
             serde_json::from_str(&workflow_input_json).map_err(|e| {
                 SimpleAgentsError::Config(format!("workflow_input_json must be valid JSON: {e}"))
@@ -1240,6 +1265,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_stream_events(
             ));
         }
         let workflow_options = parse_workflow_run_options(workflow_options_json)?;
+        let workflow_execution_flags = parse_workflow_execution_flags(workflow_execution_flags_json)?;
 
         let client = &(*client).inner;
         let runtime = client
@@ -1257,6 +1283,7 @@ pub unsafe extern "C" fn sa_run_workflow_yaml_stream_events(
                     None,
                     Some(&event_sink),
                     &workflow_options,
+                    workflow_execution_flags,
                 ),
             )
             .map_err(|error| {

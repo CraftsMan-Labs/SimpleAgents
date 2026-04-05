@@ -173,10 +173,7 @@ run-node-chat-history: build-node
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	case " $(NODE_CHAT_FLAGS) " in \
-	  *" --show-thinking "*) SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW=1 $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
-	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
-	esac
+	$(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS)
 
 run-wasm-chat-history: build-wasm
 	@set -a; \

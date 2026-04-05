@@ -33,6 +33,7 @@ char *sa_run_workflow_yaml_stream_events(
     const char *workflow_path,
     const char *workflow_input_json,
     const char *workflow_options_json,
+    const char *workflow_execution_flags_json,
     int32_t (*callback)(const char *event_json, void *user_data),
     void *user_data
 );
@@ -104,6 +105,7 @@ static char *sa_run_workflow_yaml_stream_events_go(
     const char *workflow_path,
     const char *workflow_input_json,
     const char *workflow_options_json,
+    const char *workflow_execution_flags_json,
     size_t user_handle
 ) {
     return sa_run_workflow_yaml_stream_events(
@@ -111,6 +113,7 @@ static char *sa_run_workflow_yaml_stream_events_go(
         workflow_path,
         workflow_input_json,
         workflow_options_json,
+        workflow_execution_flags_json,
         sa_go_workflow_event_callback_bridge,
         (void *)user_handle
     );
@@ -501,6 +504,80 @@ type TypedWorkflowRunOptions struct {
 	Model     *string                  `json:"model,omitempty"`
 }
 
+// WorkflowExecutionFlags mirrors Rust YamlWorkflowExecutionFlags (workflow run toggles).
+//
+// Prefer starting from DefaultWorkflowExecutionFlags() and mutating fields, or With* helpers,
+// so you never rely on Go zero values (all false would incorrectly set node_llm_streaming to false).
+//
+// MarshalJSON always emits all four keys so logs and FFI payloads show explicit values.
+type WorkflowExecutionFlags struct {
+	Healing            bool `json:"healing,omitempty"`
+	WorkflowStreaming  bool `json:"workflow_streaming,omitempty"`
+	NodeLlmStreaming   bool `json:"node_llm_streaming,omitempty"`
+	SplitStreamDeltas  bool `json:"split_stream_deltas,omitempty"`
+}
+
+// DefaultWorkflowExecutionFlags returns the same values as Rust YamlWorkflowExecutionFlags::default().
+func DefaultWorkflowExecutionFlags() WorkflowExecutionFlags {
+	return WorkflowExecutionFlags{
+		Healing:            false,
+		WorkflowStreaming:  false,
+		NodeLlmStreaming:     true,
+		SplitStreamDeltas:  false,
+	}
+}
+
+// MarshalJSON always serializes all four booleans (never omits keys) for clear wire format and DX.
+func (f WorkflowExecutionFlags) MarshalJSON() ([]byte, error) {
+	type explicit struct {
+		Healing            bool `json:"healing"`
+		WorkflowStreaming  bool `json:"workflow_streaming"`
+		NodeLlmStreaming   bool `json:"node_llm_streaming"`
+		SplitStreamDeltas  bool `json:"split_stream_deltas"`
+	}
+	return json.Marshal(explicit{
+		Healing:            f.Healing,
+		WorkflowStreaming:  f.WorkflowStreaming,
+		NodeLlmStreaming:     f.NodeLlmStreaming,
+		SplitStreamDeltas:  f.SplitStreamDeltas,
+	})
+}
+
+// UnmarshalJSON merges with DefaultWorkflowExecutionFlags so partial JSON (e.g. only split_stream_deltas)
+// does not zero out node_llm_streaming.
+func (f *WorkflowExecutionFlags) UnmarshalJSON(data []byte) error {
+	var aux struct {
+		Healing            *bool `json:"healing,omitempty"`
+		WorkflowStreaming  *bool `json:"workflow_streaming,omitempty"`
+		NodeLlmStreaming   *bool `json:"node_llm_streaming,omitempty"`
+		SplitStreamDeltas  *bool `json:"split_stream_deltas,omitempty"`
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	def := DefaultWorkflowExecutionFlags()
+	if aux.Healing != nil {
+		def.Healing = *aux.Healing
+	}
+	if aux.WorkflowStreaming != nil {
+		def.WorkflowStreaming = *aux.WorkflowStreaming
+	}
+	if aux.NodeLlmStreaming != nil {
+		def.NodeLlmStreaming = *aux.NodeLlmStreaming
+	}
+	if aux.SplitStreamDeltas != nil {
+		def.SplitStreamDeltas = *aux.SplitStreamDeltas
+	}
+	*f = def
+	return nil
+}
+
+// WithSplitStreamDeltas returns a copy with SplitStreamDeltas set (common override).
+func (f WorkflowExecutionFlags) WithSplitStreamDeltas(v bool) WorkflowExecutionFlags {
+	f.SplitStreamDeltas = v
+	return f
+}
+
 // WorkflowRunRequest is the messages-first workflow execution envelope for Run, RunAsync, and Stream.
 type WorkflowRunRequest struct {
 	WorkflowPath string
@@ -508,8 +585,11 @@ type WorkflowRunRequest struct {
 }
 
 // WorkflowRunFlags carries optional run options for unified workflow helpers.
+//
+// ExecutionFlags is optional: nil means default Rust execution flags (see WorkflowExecutionFlags).
 type WorkflowRunFlags struct {
-	RunOptions *TypedWorkflowRunOptions
+	RunOptions       *TypedWorkflowRunOptions
+	ExecutionFlags *WorkflowExecutionFlags
 }
 
 var workflowCustomWorkerKeyRE = regexp.MustCompile(`(?m)^[\t ]*custom_worker[\t ]*:`)
@@ -843,7 +923,7 @@ func (c *Client) Stream(ctx context.Context, req WorkflowRunRequest, flags Workf
 	if err := guardWorkflowRunRequest(req); err != nil {
 		return WorkflowYAMLOutput{}, err
 	}
-	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions, onEvent)
+	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions, flags.ExecutionFlags, onEvent)
 }
 
 // RunWorkflowYAMLWithRunOptionsTyped executes workflow YAML with typed run options and typed output projection.
@@ -1052,15 +1132,20 @@ func (c *Client) RunWorkflowYAMLStream(
 	workflowInput map[string]any,
 	onEvent func(WorkflowEvent),
 ) (WorkflowYAMLOutput, error) {
-	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, nil, onEvent)
+	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, nil, nil, onEvent)
 }
 
 // RunWorkflowYAMLStreamWithOptions emits live workflow events to onEvent with workflow options.
+//
+// options: nil means no YamlWorkflowRunOptions JSON (telemetry/trace/model defaults).
+// executionFlags: nil selects DefaultWorkflowExecutionFlags(); non-nil values are sent as-is.
+// The FFI always receives explicit JSON for all four flags (never a null pointer).
 func (c *Client) RunWorkflowYAMLStreamWithOptions(
 	ctx context.Context,
 	workflowPath string,
 	workflowInput map[string]any,
 	options map[string]any,
+	executionFlags *WorkflowExecutionFlags,
 	onEvent func(WorkflowEvent),
 ) (WorkflowYAMLOutput, error) {
 	if workflowPath == "" {
@@ -1087,6 +1172,16 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 		workflowOptionsJSON = string(encoded)
 	}
 
+	effectiveFlags := DefaultWorkflowExecutionFlags()
+	if executionFlags != nil {
+		effectiveFlags = *executionFlags
+	}
+	encodedFlags, marshalErr := json.Marshal(effectiveFlags)
+	if marshalErr != nil {
+		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow execution flags: %w", marshalErr)
+	}
+	cWorkflowExecutionFlagsJSON := C.CString(string(encodedFlags))
+
 	ptr, err := c.beginCall()
 	if err != nil {
 		return WorkflowYAMLOutput{}, err
@@ -1111,12 +1206,14 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 		defer C.free(unsafe.Pointer(cWorkflowPath))
 		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
 		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
+		defer C.free(unsafe.Pointer(cWorkflowExecutionFlagsJSON))
 
 		response := C.sa_run_workflow_yaml_stream_events_go(
 			ptr,
 			cWorkflowPath,
 			cWorkflowInputJSON,
 			cWorkflowOptionsJSON,
+			cWorkflowExecutionFlagsJSON,
 			C.size_t(handle),
 		)
 		if response == nil {
@@ -1156,11 +1253,14 @@ func (c *Client) RunWorkflowYAMLStreamWithOptions(
 }
 
 // RunWorkflowYAMLStreamWithRunOptions emits workflow events with typed workflow options.
+//
+// executionFlags: nil means default Rust execution flags (see WorkflowExecutionFlags).
 func (c *Client) RunWorkflowYAMLStreamWithRunOptions(
 	ctx context.Context,
 	workflowPath string,
 	workflowInput map[string]any,
 	options *TypedWorkflowRunOptions,
+	executionFlags *WorkflowExecutionFlags,
 	onEvent func(WorkflowEvent),
 ) (WorkflowYAMLOutput, error) {
 	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
@@ -1168,15 +1268,18 @@ func (c *Client) RunWorkflowYAMLStreamWithRunOptions(
 		return WorkflowYAMLOutput{}, err
 	}
 
-	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, onEvent)
+	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, executionFlags, onEvent)
 }
 
 // RunWorkflowYAMLStreamWithTypedInputAndRunOptions emits workflow events with typed input and options.
+//
+// executionFlags: nil means default Rust execution flags (see WorkflowExecutionFlags).
 func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptions(
 	ctx context.Context,
 	workflowPath string,
 	workflowInput *TypedWorkflowInput,
 	options *TypedWorkflowRunOptions,
+	executionFlags *WorkflowExecutionFlags,
 	onEvent func(WorkflowEvent),
 ) (WorkflowYAMLOutput, error) {
 	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
@@ -1184,7 +1287,7 @@ func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptions(
 		return WorkflowYAMLOutput{}, err
 	}
 
-	return c.RunWorkflowYAMLStreamWithRunOptions(ctx, workflowPath, workflowInputMap, options, onEvent)
+	return c.RunWorkflowYAMLStreamWithRunOptions(ctx, workflowPath, workflowInputMap, options, executionFlags, onEvent)
 }
 
 // RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents emits typed workflow events with typed input and options.
@@ -1193,6 +1296,7 @@ func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents(
 	workflowPath string,
 	workflowInput *TypedWorkflowInput,
 	options *TypedWorkflowRunOptions,
+	executionFlags *WorkflowExecutionFlags,
 	onEvent func(WorkflowTypedEvent),
 ) (WorkflowYAMLOutput, error) {
 	callback := func(event WorkflowEvent) {
@@ -1202,7 +1306,7 @@ func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents(
 		onEvent(event.ToTypedEvent())
 	}
 
-	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options, callback)
+	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options, executionFlags, callback)
 }
 
 type completeResult struct {

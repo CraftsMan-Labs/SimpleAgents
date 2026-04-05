@@ -241,7 +241,7 @@ streamed = client.stream(request, on_event=lambda event: print(event.get("event_
 
 Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
 
-**Split thinking vs. merged stream deltas.** Prefer `execution["split_stream_deltas"] = True` on the request. The Rust runner ORs this with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` (legacy). The environment variable remains supported for compatibility; removing it would be a separate, explicit breaking change.
+**Split thinking vs. merged stream deltas.** Set `execution["split_stream_deltas"] = True` on the request when you want separate thinking vs output stream events.
 
 ### Live Workflow Events + LLM Deltas
 

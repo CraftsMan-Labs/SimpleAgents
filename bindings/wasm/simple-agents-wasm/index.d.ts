@@ -132,6 +132,7 @@ export interface WorkflowExecutionFlags {
   healing?: boolean;
   workflow_streaming?: boolean;
   node_llm_streaming?: boolean;
+  split_stream_deltas?: boolean;
 }
 
 export interface WorkflowExecutionRequest {

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -453,12 +452,6 @@ def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
 
 def main() -> None:
     args = parse_args()
-    # Duplicate opt-in: execution.split_stream_deltas is set on the stream request below.
-    # Env remains for backward compatibility; remove this block once downstreams migrate.
-    if args.show_thinking:
-        os.environ["SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW"] = "1"
-    else:
-        os.environ.pop("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", None)
 
     provider, api_base, api_key = load_provider_config(caller_file=__file__)
     client = Client(provider, api_base=api_base, api_key=api_key)

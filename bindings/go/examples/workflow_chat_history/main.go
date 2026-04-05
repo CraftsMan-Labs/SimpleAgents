@@ -244,12 +244,6 @@ func main() {
 	modelFlag := flag.String("model", "", "Override llm_call model for all workflow LLM nodes")
 	flag.Parse()
 
-	if *showThinkingFlag {
-		_ = os.Setenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1")
-	} else {
-		_ = os.Unsetenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW")
-	}
-
 	provider, apiBase, apiKey, err := loadConfig()
 	if err != nil {
 		panic(err)
@@ -348,7 +342,11 @@ func main() {
 			currentNode := ""
 			lastTokenLabel := ""
 			rawDebugStreamDetected := false
-			out, runErr = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, func(event simpleagents.WorkflowEvent) {
+			execFlags := simpleagents.DefaultWorkflowExecutionFlags()
+			if *showThinkingFlag {
+				execFlags = execFlags.WithSplitStreamDeltas(true)
+			}
+			out, runErr = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, &execFlags, func(event simpleagents.WorkflowEvent) {
 				streamedEvents = append(streamedEvents, event)
 
 				isToolLifecycleEvent := event.EventType == "node_tool_call_requested" ||

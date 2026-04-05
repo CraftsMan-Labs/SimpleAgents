@@ -92,10 +92,6 @@ test('workflow stream emits explicit stream event types', async (t) => {
     return;
   }
   assertRequiredEnv();
-  process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW = '1';
-  t.after(() => {
-    delete process.env.SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW;
-  });
 
   const workflowPath = path.join(os.tmpdir(), `live-workflow-stream-${Date.now()}.yaml`);
   const workflowYaml = `id: live-workflow-stream-test
@@ -137,12 +133,15 @@ nodes:
   const eventCounts = new Map();
   let completionNerdstats = null;
   let sawSecondArgEventJson = false;
-  const result = await client.runWorkflowYamlStream(
-    workflowPath,
+  const result = await client.executeWorkflowYamlStream(
     {
-      messages: [
-        { role: 'user', content: 'Hi' },
-      ],
+      workflowPath,
+      messages: [{ role: 'user', content: 'Hi' }],
+      healing: true,
+      workflowStreaming: true,
+      nodeLlmStreaming: true,
+      splitStreamDeltas: true,
+      workflowOptions: { telemetry: { nerdstats: true } },
     },
     (errOrEventJson, maybeEventJson, fallbackEventJson) => {
       if (typeof maybeEventJson === 'string') {
@@ -170,7 +169,6 @@ nodes:
         }
       }
     },
-    { telemetry: { nerdstats: true } },
   );
 
   assert.ok(result && typeof result === 'object', 'stream call should resolve structured output object');

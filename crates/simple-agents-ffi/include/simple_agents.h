@@ -80,11 +80,31 @@ char *sa_run_workflow_yaml_with_events(
     const char *workflow_options_json
 );
 
+/*
+ * Stream workflow YAML: invokes callback with JSON workflow events, returns final output JSON.
+ *
+ * Parameters (all strings UTF-8, null-terminated except as noted):
+ * - client: from sa_client_new_* ; must not be NULL.
+ * - workflow_path: filesystem path to workflow YAML.
+ * - workflow_input_json: JSON object (workflow input).
+ * - workflow_options_json: NULL or JSON for telemetry/trace/model (YamlWorkflowRunOptions).
+ * - workflow_execution_flags_json: NULL, empty string, or JSON object for YamlWorkflowExecutionFlags.
+ *   When NULL/empty, Rust uses defaults: healing=false, workflow_streaming=false,
+ *   node_llm_streaming=true, split_stream_deltas=false.
+ *   Go bindings always pass a non-null JSON object with all four keys for discoverability.
+ *   Keys (all optional; omitted keys keep defaults): "healing", "workflow_streaming",
+ *   "node_llm_streaming", "split_stream_deltas" (bool). split_stream_deltas=true emits
+ *   separate thinking vs output stream events (e.g. node_stream_thinking_delta).
+ * - callback: called with each event JSON string; must not be NULL.
+ * - user_data: passed through to callback.
+ * Return: JSON string (free with sa_string_free) or NULL on error (see sa_last_error_message).
+ */
 char *sa_run_workflow_yaml_stream_events(
     SAClient *client,
     const char *workflow_path,
     const char *workflow_input_json,
     const char *workflow_options_json,
+    const char *workflow_execution_flags_json,
     SAWorkflowEventCallback callback,
     void *user_data
 );

@@ -12,7 +12,7 @@ use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
 use simple_agents_workflow::{
     run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowRunOptions,
+    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
 };
 
 #[derive(Debug, Clone)]
@@ -266,6 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await?;
 

@@ -111,11 +111,6 @@ func TestLiveWorkflowStreamExplicitEventTypes(t *testing.T) {
 	}
 	defer client.Close()
 
-	if err := os.Setenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1"); err != nil {
-		t.Fatalf("set stream raw env: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Unsetenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") })
-
 	workflowFile, err := os.CreateTemp("", "live-workflow-stream-*.yaml")
 	if err != nil {
 		t.Fatalf("create temp workflow: %v", err)
@@ -180,9 +175,10 @@ edges:
 
 	eventTypes := map[string]int{}
 	var completionNerdstats map[string]any
+	splitFlags := DefaultWorkflowExecutionFlags().WithSplitStreamDeltas(true)
 	_, err = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowFile.Name(), workflowInput, map[string]any{
 		"telemetry": map[string]any{"nerdstats": true},
-	}, func(event WorkflowEvent) {
+	}, &splitFlags, func(event WorkflowEvent) {
 		eventTypes[event.EventType]++
 		if event.EventType == "workflow_completed" && event.Metadata != nil {
 			if raw, ok := event.Metadata["nerdstats"]; ok {

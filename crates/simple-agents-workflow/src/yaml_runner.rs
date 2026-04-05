@@ -661,22 +661,9 @@ fn custom_worker_context_with_trace(
     context_with_trace
 }
 
-fn include_raw_stream_debug_events() -> bool {
-    match std::env::var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") {
-        Ok(value) => {
-            let normalized = value.trim().to_ascii_lowercase();
-            normalized == "1" || normalized == "true" || normalized == "yes" || normalized == "on"
-        }
-        Err(_) => false,
-    }
-}
-
 /// Whether split thinking/output stream events are enabled for this LLM request.
-///
-/// True when [`YamlLlmExecutionRequest::split_stream_deltas`] is set or when env
-/// `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` is truthy (legacy).
 pub(crate) fn split_stream_deltas_enabled(request: &YamlLlmExecutionRequest) -> bool {
-    request.split_stream_deltas || include_raw_stream_debug_events()
+    request.split_stream_deltas
 }
 
 #[derive(Debug)]
@@ -1792,6 +1779,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     let executor = BorrowedClientExecutor {
         client,
@@ -1805,6 +1793,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
         custom_worker,
         event_sink,
         options,
+        execution_flags,
     )
     .await
 }
@@ -1816,6 +1805,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
     run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
         workflow,
@@ -1824,6 +1814,7 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
         custom_worker,
         event_sink,
         options,
+        execution_flags,
     )
     .await
     .map(|output| output.to_typed_output(workflow))
@@ -1836,6 +1827,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         workflow,
@@ -1844,7 +1836,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         custom_worker,
         event_sink,
         options,
-        YamlWorkflowExecutionFlags::default(),
+        execution_flags,
     )
     .await
 }
@@ -1856,6 +1848,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options_typed(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
     run_workflow_yaml_with_custom_worker_and_events_and_options(
         workflow,
@@ -1864,6 +1857,7 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options_typed(
         custom_worker,
         event_sink,
         options,
+        execution_flags,
     )
     .await
     .map(|output| output.to_typed_output(workflow))
@@ -2399,6 +2393,7 @@ async fn execute_subworkflow_tool_call(
         custom_worker,
         None,
         &subworkflow_options,
+        YamlWorkflowExecutionFlags::default(),
     )
     .await
     .map_err(|error| format!("subworkflow '{}' failed: {}", workflow_id, error))?;
@@ -2448,12 +2443,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::{Arc, Mutex, OnceLock};
-
-    fn stream_debug_env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
+    use std::sync::{Arc, Mutex};
 
     struct MockExecutor;
 
@@ -3163,6 +3153,7 @@ nodes:
             None,
             Some(&sink),
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3247,6 +3238,7 @@ nodes:
             None,
             Some(&sink),
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3314,6 +3306,7 @@ nodes:
             None,
             Some(&sink),
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3628,6 +3621,7 @@ nodes:
             None,
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("events/options wrapper should execute");
@@ -3749,6 +3743,7 @@ edges:
             Some(&worker),
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3798,6 +3793,7 @@ nodes:
             None,
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3867,6 +3863,7 @@ nodes:
             Some(&worker),
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -3936,6 +3933,7 @@ nodes:
             Some(&worker),
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("workflow should hard-fail on schema mismatch");
@@ -3991,6 +3989,7 @@ nodes:
             Some(&worker),
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("workflow should reject unknown tool before executing worker");
@@ -4057,6 +4056,7 @@ nodes:
             None,
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("workflow should fail without custom worker executor");
@@ -4113,6 +4113,7 @@ nodes:
             Some(&worker),
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -4181,6 +4182,7 @@ nodes:
             None,
             Some(&sink),
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("workflow should stop when sink signals cancellation");
@@ -4513,6 +4515,7 @@ nodes:
             Some(&worker),
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -4601,6 +4604,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -4685,6 +4689,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -4743,6 +4748,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -4800,6 +4806,7 @@ nodes:
                 None,
                 None,
                 &options,
+                YamlWorkflowExecutionFlags::default(),
             )
             .await
             .expect("workflow should execute");
@@ -4851,6 +4858,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("invalid sample_rate should fail");
@@ -4895,6 +4903,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("nan sample_rate should fail");
@@ -5176,6 +5185,7 @@ nodes:
             None,
             None,
             &options,
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect("workflow should execute");
@@ -5250,25 +5260,6 @@ Some trailing explanation"#;
         assert!(error.contains("no JSON object candidate found"));
     }
 
-    #[test]
-    fn include_raw_stream_debug_events_defaults_to_false() {
-        let _guard = stream_debug_env_lock()
-            .lock()
-            .expect("stream debug env lock should not be poisoned");
-        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
-        assert!(!include_raw_stream_debug_events());
-    }
-
-    #[test]
-    fn include_raw_stream_debug_events_accepts_truthy_values() {
-        let _guard = stream_debug_env_lock()
-            .lock()
-            .expect("stream debug env lock should not be poisoned");
-        std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "true");
-        assert!(include_raw_stream_debug_events());
-        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
-    }
-
     fn stub_llm_request(split_stream_deltas: bool) -> YamlLlmExecutionRequest {
         YamlLlmExecutionRequest {
             node_id: "n".to_string(),
@@ -5301,26 +5292,11 @@ Some trailing explanation"#;
     }
 
     #[test]
-    fn split_stream_deltas_enabled_request_flag_without_env() {
-        let _guard = stream_debug_env_lock()
-            .lock()
-            .expect("stream debug env lock should not be poisoned");
-        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+    fn split_stream_deltas_enabled_follows_request_flag() {
         let on = stub_llm_request(true);
         assert!(split_stream_deltas_enabled(&on));
         let off = stub_llm_request(false);
         assert!(!split_stream_deltas_enabled(&off));
-    }
-
-    #[test]
-    fn split_stream_deltas_enabled_env_still_opt_in_when_request_false() {
-        let _guard = stream_debug_env_lock()
-            .lock()
-            .expect("stream debug env lock should not be poisoned");
-        std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1");
-        let off = stub_llm_request(false);
-        assert!(split_stream_deltas_enabled(&off));
-        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
     }
 
     #[test]
@@ -5521,6 +5497,7 @@ nodes:
             None,
             None,
             &YamlWorkflowRunOptions::default(),
+            YamlWorkflowExecutionFlags::default(),
         )
         .await
         .expect_err("handler_file without executor should fail");
