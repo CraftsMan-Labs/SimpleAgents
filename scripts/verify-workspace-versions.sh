@@ -42,22 +42,34 @@ for key, spec in deps.items():
     if isinstance(spec, str):
         print(
             f"Error: internal workspace dependency {key!r} uses a bare version string {spec!r}; "
-            "use {{ path = \"...\" }} or pin version to match [workspace.package].version.",
+            "use {{ version = \"...\", path = \"...\" }} with version matching [workspace.package].version.",
             file=sys.stderr,
         )
         raise SystemExit(1)
     if not isinstance(spec, dict):
         continue
-    if "version" in spec:
-        pinned = spec["version"]
-        if pinned != ws_ver:
-            print(
-                f"Error: [workspace.dependencies].{key} has version {pinned!r} but "
-                f"[workspace.package].version is {ws_ver!r}. "
-                "Run make version-sync or align pins (prefer path-only entries for in-tree crates).",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+    if "path" not in spec:
+        print(
+            f"Error: [workspace.dependencies].{key} must include path for in-tree resolution.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    if "version" not in spec:
+        print(
+            f"Error: [workspace.dependencies].{key} must include version = \"{ws_ver}\" "
+            "(path-only breaks cargo publish: dependency would have no version on crates.io).",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    pinned = spec["version"]
+    if pinned != ws_ver:
+        print(
+            f"Error: [workspace.dependencies].{key} has version {pinned!r} but "
+            f"[workspace.package].version is {ws_ver!r}. "
+            "Run make version-sync to align pins.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 print(f"OK: internal workspace dependency pins match workspace version {ws_ver!r}.")
 PY
