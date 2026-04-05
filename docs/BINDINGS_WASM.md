@@ -23,6 +23,7 @@ This document defines the current browser-compatible binding surface for
 - `stream(model, promptOrMessages, onChunk, options?)`
 - `streamEvents(model, promptOrMessages, onEvent, options?)`
 - `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
+- `run(request)` / `runAsync(request)` / `streamWorkflow(request, onEvent?)` (typed, messages-first workflow facade)
 
 ## Deliberate differences vs Node binding
 
@@ -44,6 +45,14 @@ WASM/browser flow support is string/object based:
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
 
 Workflow result contract is strict: `runWorkflowYamlString` expects outputs containing `workflow_id` and `outputs`, and throws if the backend response shape is incompatible.
+
+Unified workflow request shape for browser runtime:
+
+- `workflow_yaml: string` (inline YAML text; browser runtime does not support local filesystem path loading)
+- `messages: MessageInput[]` (required)
+- optional `context`, `media`, `input`, `execution`, `workflow_options`
+
+Note: completion APIs already use `stream(...)`, so workflow streaming is exposed as `streamWorkflow(...)` to avoid method-name collision on the shared `Client` surface.
 
 ## Security and deployment notes
 

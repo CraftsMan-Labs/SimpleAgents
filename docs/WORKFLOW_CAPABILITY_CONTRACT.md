@@ -181,11 +181,10 @@ References:
 
 Rust remains source of truth. Language bindings should wrap Rust behavior, not re-implement core logic.
 
-- FFI: `sa_run_workflow_yaml` returns JSON output from Rust runner.
-- Go: `Client.RunWorkflowYAML(...)` delegates through FFI.
-- Node: `Client.runWorkflowYaml(...)` delegates through Rust binding.
-- Python: `Client.run_workflow_yaml(...)` delegates through Rust binding.
-- Python streaming: `Client.run_workflow_yaml_stream(...)` delegates through Rust event stream + callback sink.
+- FFI: `sa_run_workflow_yaml*` returns JSON output from Rust runner.
+- Go: `Client.Run(...)` / `RunAsync(...)` / `Stream(...)` delegate through FFI (legacy `RunWorkflowYAML*` wrappers retained).
+- Node: `Client.executeWorkflowYaml(...)` / `executeWorkflowYamlStream(...)` delegate through Rust typed execution (legacy `runWorkflowYaml*` wrappers retained).
+- Python: `Client.run(...)` / `run_async(...)` / `stream(...)` delegate through Rust typed execution (legacy `run_workflow_yaml*` wrappers retained).
 
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 

@@ -67,11 +67,13 @@ See runnable example: `bindings/go/examples/client/main.go`.
 ## API summary
 
 - `NewClientFromEnv(provider string) (*Client, error)`
+- `NewClientWithProvider(cfg ProviderConfig) (*Client, error)` (explicit `Provider` / `APIKey` / optional `APIBase`; no env required)
 - `(*Client).CompletePrompt(ctx, model, prompt, maxTokens, temperature)` (canonical prompt API)
 - `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (compatibility alias)
 - `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
 - `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
 - `(*Client).RunWorkflowYAML(ctx, workflowPath, workflowInput)` (generic workflow input)
+- `(*Client).Run` / `RunAsync` / `Stream` with `WorkflowRunRequest` + `WorkflowRunFlags` (messages-first input; rejects `custom_worker` workflows before run)
 - `(*Client).Complete(...)` (backward-compatible prompt helper)
 - `(*Client).Close()`
 

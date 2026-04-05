@@ -213,6 +213,26 @@ result = client.run_workflow_yaml(
 )
 ```
 
+Unified typed facade (messages-first request object):
+
+```python
+request = {
+    "workflow_path": "examples/workflow_email/email-intake-classification.yaml",
+    "messages": [{"role": "user", "content": "Please process invoice #123"}],
+    "execution": {
+        "healing": False,
+        "workflow_streaming": False,
+        "node_llm_streaming": True,
+    },
+}
+
+result = client.run(request)
+result2 = client.run_async(request)
+streamed = client.stream(request, on_event=lambda event: print(event.get("event_type")))
+```
+
+`execution.model` overrides `workflow_options.model` when both are provided.
+
 ### Live Workflow Events + LLM Deltas
 
 `Client.run_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:

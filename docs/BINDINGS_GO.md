@@ -29,7 +29,10 @@ import (
 )
 
 func main() {
-  client, err := simpleagents.NewClientFromEnv("openai")
+  client, err := simpleagents.NewClientWithProvider(simpleagents.ProviderConfig{
+    Provider: "openai",
+    APIKey:   "sk-...",
+  })
   if err != nil {
     panic(err)
   }
@@ -61,7 +64,8 @@ text, err := client.Complete("gpt-4", "Hello", 128, 0.7)
 
 ## Notes
 
-- `NewClientFromEnv` reads provider keys from environment variables (e.g., `OPENAI_API_KEY`).
+- `NewClientWithProvider` accepts explicit credentials (`ProviderConfig`).
+- `NewClientFromEnv` remains available for environment-based fallback.
 - `CompleteMessages` returns structured data including tool calls, usage, and optional healing/coercion metadata.
 - Always call `Close()` to release the underlying FFI client.
 
@@ -86,12 +90,20 @@ fmt.Println(out.TotalElapsedMS)
 
 This method delegates to Rust `simple-agents-workflow` as the source of truth.
 
+New typed workflow facade:
+
+- `Run(ctx, request, flags)` - sync run
+- `RunAsync(ctx, request, flags)` - async/future-style run
+- `Stream(ctx, request, flags, onEvent)` - live workflow events + final output
+
+`request` is messages-first and typed:
+
+- `WorkflowPath string`
+- `Input *TypedWorkflowInput` (must include `messages`)
+
 ### Custom workers (`custom_worker`)
 
-Go FFI workflow entrypoints do **not** register a custom worker executor (same as Node). Behavior:
-
-- **`handler_file` set** → validation fails up front with an explicit error.
-- **`handler_file` omitted** → validation passes, but execution **stops with an error** when the graph hits a `custom_worker` node.
+Go binding now fails fast before FFI execution when the workflow contains `custom_worker`, with an actionable error (use Python/WASM executor path or remove `custom_worker` from this runtime).
 
 The Rust contract for handlers remains: interpolated **`config.payload`** and **`context`** (`input`, `nodes`, `globals`, optional `trace`). See [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md).
 

@@ -67,7 +67,12 @@ console.log(coerced.coerced?.value);
 
 ## Environment Variables
 
-The bindings read provider configuration from environment variables:
+The bindings support both explicit credentials and environment-based fallback:
+
+- Explicit: `Client.withProviderConfig({ provider, apiKey, apiBase? })`
+- Fallback: `new Client(provider)` (reads environment variables)
+
+Environment variables used by fallback:
 
 - OpenAI: `OPENAI_API_KEY`, optional `OPENAI_API_BASE`
 - Anthropic: `ANTHROPIC_API_KEY`
@@ -79,12 +84,15 @@ The test/examples convention also supports:
 ## API Surface (Types)
 
 ```ts
-new Client(provider: string)
+new Client(provider: string) // env fallback
+Client.withProviderConfig(config: { provider: string; apiKey?: string; apiBase?: string })
 client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
 client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
 client.runWorkflowYaml(workflowPath: string, workflowInput)
 client.runWorkflowYamlWithEvents(workflowPath: string, workflowInput, workflowOptions?)
 client.runWorkflowYamlStream(workflowPath: string, workflowInput, onEvent, workflowOptions?)
+client.executeWorkflowYaml(request: WorkflowYamlRunRequest)
+client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 ```
 
 `CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
@@ -128,14 +136,9 @@ Tracing exporter env configuration is shared across runtimes:
 
 ### Custom workers (`custom_worker`)
 
-Shipped `runWorkflowYaml*` methods call the Rust workflow runner with **no** `YamlWorkflowCustomWorkerExecutor` registered. That means:
+Node binding now performs startup validation for this runtime: if a workflow contains any `custom_worker` node and no executor is registered, execution is rejected before node execution starts with an actionable error that includes the node id and handler name.
 
-- If the YAML sets `custom_worker.handler_file` to a path, **validation fails** before the run starts (clear error: no executor configured).
-- If `handler_file` is omitted (typical email examples), validation passes, but when execution **reaches** a `custom_worker` node it **fails** because there is still no executor to invoke the handler.
-
-The engine-level contract for any future executor is unchanged: **resolved `config.payload`** plus **execution `context`** (`input`, `nodes`, `globals`, optional `trace`) — same as [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md) and Python.
-
-**Practical options:** use workflows without `custom_worker`, run handlers via **Python** or **browser WASM** (`workflowOptions.functions`), or host custom logic outside this Node API until a callback-based executor is exposed.
+This keeps YAML handler naming authoritative while preventing late-runtime failures. Use Python or WASM for local custom worker execution until a Node callback executor is exposed.
 
 ## Testing Notes
 
