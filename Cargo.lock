@@ -692,9 +692,9 @@ dependencies = [
 
 [[package]]
 name = "fastrand"
-version = "2.3.0"
+version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+checksum = "a043dc74da1e37d6afe657061213aa6f425f855399a11d3463c6ecccc4dfda1f"
 
 [[package]]
 name = "find-msvc-tools"
@@ -2620,9 +2620,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.27"
+version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d767eb0aabc880b29956c35734170f26ed551a859dbd361d140cdbeca61ab1e2"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"
@@ -2734,7 +2734,7 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "simple-agent-type"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "blake3",
@@ -2749,7 +2749,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cache"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "simple-agent-type",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-cli"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "clap",
  "serde",
@@ -2776,7 +2776,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2793,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-examples"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2808,7 +2808,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-ffi"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2824,7 +2824,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "criterion",
  "proptest",
@@ -2840,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-macros"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "futures-util",
  "napi",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2899,7 +2899,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2919,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-router"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2931,7 +2931,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2954,7 +2954,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow-workers"
-version = "0.2.36"
+version = "0.2.37"
 dependencies = [
  "async-trait",
  "prost",
