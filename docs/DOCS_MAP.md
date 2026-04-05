@@ -36,6 +36,7 @@ Use this page to jump to the right guide by role and task.
 3. [Rust Core Systems](/RUST_CORE_SYSTEMS)
 4. [Documentation Standards](/DOCS_STANDARDS)
 5. [Contribution Checklist](https://github.com/CraftsMan-Labs/SimpleAgents/blob/main/CONTRIBUTING.md)
+6. Engineering codebase review (read-only audit, 2026-04-05): repository folder `docs/codebase-review-2026-04-05/` — start at `README.md`, manifest at `00-documentation-record.md`
 
 ## Build and Operate
 
