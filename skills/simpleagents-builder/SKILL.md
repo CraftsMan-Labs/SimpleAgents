@@ -22,6 +22,7 @@ Author YAML workflows that are deterministic, testable, and compatible with Simp
 4. Keep chat systems one-question-at-a-time unless user asks otherwise.
 5. Keep business policy in prompts/routing, not hidden in bindings.
 6. For `custom_worker`, verify `handler` matches a real function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted). For **`simple-agents-py`**, that function must use **`def handler_name(*, context, payload):`** (keyword-only); put node parameters in YAML `config.payload` and read shared workflow input from `context["input"]`. File-based `handlers.py` runs automatically only in **Python**; **Node** and **Go** packaged APIs do not execute local handlers today; **WASM** uses `workflowOptions.functions` with a JS `(args, graphContext)` signature (see repo `docs/BINDINGS_*.md` and `docs/YAML_WORKFLOW_SYSTEM.md`).
+7. Prefer unified workflow run APIs (`run_workflow_yaml`, `run_workflow_yaml_stream` / `Client.stream`, or typed `executeWorkflowYaml*`) and keep streaming/healing controlled by YAML execution flags and options, not ad-hoc wrapper selection.
 
 ## Required Structure
 
@@ -109,6 +110,7 @@ Before finalizing YAML:
 - `edges` cover intended flow transitions
 - No ambiguous multi-question prompts in interview/chat flows
 - For `custom_worker` nodes, `handler` matches a function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted); for Python runs, signature is `*, context, payload`.
+- Workflow examples use the unified run/stream APIs, not legacy email-specific wrappers
 
 For examples and reusable templates, read:
 - `references/patterns.md`
