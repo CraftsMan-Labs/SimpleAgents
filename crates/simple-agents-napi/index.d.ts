@@ -27,7 +27,7 @@ export interface WorkflowYamlRunRequest {
   healing: boolean
   workflowStreaming: boolean
   nodeLlmStreaming: boolean
-  /** When true, emit split thinking/output stream events (thinking vs output deltas). */
+  /** When true, emit split thinking/output stream events (`node_stream_thinking_delta` / `node_stream_output_delta`). */
   splitStreamDeltas?: boolean
   extraWorkflowInput?: Record<string, unknown>
   workflowOptions?: Record<string, unknown>
