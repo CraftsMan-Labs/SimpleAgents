@@ -33,4 +33,4 @@ Record any future scan results in a dated addendum under this folder or in CI ar
 ## Related repository docs
 
 - [Workflow Security](../WORKFLOW_SECURITY.md) — enforced limits and policies
-- [code-review/08-baseline-truth-matrix.md](../../code-review/08-baseline-truth-matrix.md) — earlier remediation baseline (some linked reports missing from tree)
+- [Prior review continuity](./06-prior-review-continuity.md) — discusses the earlier `code-review/08-baseline-truth-matrix.md` baseline (file not present in tree; see that page for missing sources)
