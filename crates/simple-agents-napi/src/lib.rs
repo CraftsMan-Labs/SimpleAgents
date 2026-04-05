@@ -248,6 +248,8 @@ pub struct WorkflowYamlRunRequest {
     pub healing: bool,
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
+    /// When true, emit split thinking/output stream events (OR with env `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`).
+    pub split_stream_deltas: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
     #[napi(ts_type = "Record<string, unknown>")]
@@ -1299,6 +1301,7 @@ impl Client {
             healing: request.healing,
             workflow_streaming: request.workflow_streaming,
             node_llm_streaming: request.node_llm_streaming,
+            split_stream_deltas: request.split_stream_deltas.unwrap_or(false),
         };
         blocking_workflow_to_json(
             &self.runtime,
@@ -1330,6 +1333,7 @@ impl Client {
             healing: request.healing,
             workflow_streaming: request.workflow_streaming,
             node_llm_streaming: request.node_llm_streaming,
+            split_stream_deltas: request.split_stream_deltas.unwrap_or(false),
         };
 
         let tsfn: ThreadsafeFunction<String> =
