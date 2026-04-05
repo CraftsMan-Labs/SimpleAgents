@@ -288,7 +288,7 @@ publish-crates:
 		attempt=1; \
 		while true; do \
 			set +e; \
-			out=$$($(DOPPLER_RUN) "cargo publish -p $$crate" 2>&1); \
+			out=$$($(DOPPLER_RUN) "cargo publish -p $$crate --allow-dirty" 2>&1); \
 			status=$$?; \
 			set -e; \
 			echo "$$out"; \
