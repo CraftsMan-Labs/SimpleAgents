@@ -64,6 +64,7 @@ class WorkflowExecutionFlags(TypedDict, total=False):
     healing: bool
     workflow_streaming: bool
     node_llm_streaming: bool
+    split_stream_deltas: bool
 
 class WorkflowExecutionRequest(TypedDict, total=False):
     workflow_path: str

@@ -196,6 +196,7 @@ pub(crate) struct PythonWorkflowExecutionOptions {
     pub healing: bool,
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
+    pub split_stream_deltas: bool,
 }
 
 const fn default_true() -> bool {
@@ -254,11 +255,16 @@ pub(crate) fn parse_workflow_execution_request(
             .get("node_llm_streaming")
             .and_then(Value::as_bool)
             .unwrap_or(default_true());
+        let split_stream_deltas = execution_object
+            .get("split_stream_deltas")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         PythonWorkflowExecutionOptions {
             model,
             healing,
             workflow_streaming,
             node_llm_streaming,
+            split_stream_deltas,
         }
     } else {
         PythonWorkflowExecutionOptions {
@@ -295,6 +301,7 @@ pub(crate) fn workflow_execution_flags(
         healing: options.healing,
         workflow_streaming: options.workflow_streaming,
         node_llm_streaming: options.node_llm_streaming,
+        split_stream_deltas: options.split_stream_deltas,
     }
 }
 
