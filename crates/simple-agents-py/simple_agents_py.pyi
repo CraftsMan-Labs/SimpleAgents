@@ -442,12 +442,14 @@ class Client:
         self,
         request: WorkflowExecutionRequest | Mapping[str, JSONValue],
         on_event: Callable[[WorkflowEvent], object] | None = None,
+        include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...
     def run_workflow_yaml_stream(
         self,
         workflow_path: str,
         workflow_input: WorkflowInput | Mapping[str, JSONValue],
         on_event: Callable[[WorkflowEvent], object] | None = None,
+        include_events: bool = False,
         workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None,
     ) -> WorkflowRunOutput: ...
 

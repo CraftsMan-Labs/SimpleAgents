@@ -51,7 +51,8 @@ use workflow_helpers::{
     attach_workflow_events, build_workflow_input_from_execution_request,
     parse_workflow_execution_request, parse_workflow_input_value, parse_workflow_run_options,
     workflow_execution_flags, workflow_execution_options, workflow_root_path,
-    PythonCustomWorkerExecutor, PythonWorkflowEventSink, RecordingWorkflowEventSink,
+    CombinedWorkflowEventSink, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
+    RecordingWorkflowEventSink,
 };
 
 type Runtime = tokio::runtime::Runtime;
@@ -2094,12 +2095,13 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    #[pyo3(signature = (request, on_event=None))]
+    #[pyo3(signature = (request, on_event=None, include_events_in_output=false))]
     fn stream(
         &self,
         py: Python<'_>,
         request: &Bound<'_, PyAny>,
         on_event: Option<Py<PyAny>>,
+        include_events_in_output: bool,
     ) -> PyResult<PyObject> {
         let request = parse_workflow_execution_request(request)?;
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
@@ -2115,26 +2117,48 @@ impl Client {
 
         if let Some(callback) = on_event {
             flags.workflow_streaming = true;
-            let event_sink = PythonWorkflowEventSink {
-                callback: Some(callback),
+            let output = if include_events_in_output {
+                let event_sink = CombinedWorkflowEventSink::new(true, Some(callback));
+                let execution_request = YamlWorkflowExecutionRequest {
+                    source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+                    workflow_input: &workflow_input_value,
+                    executor: YamlWorkflowExecutorBinding::Client(&self.client),
+                    custom_worker: Some(&custom_executor),
+                    options: &options,
+                    flags,
+                };
+                let output = py
+                    .allow_threads(|| {
+                        runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
+                    })
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                let mut value = serde_json::to_value(output).map_err(|error| {
+                    PyRuntimeError::new_err(format!("serialization failed: {error}"))
+                })?;
+                event_sink.attach_to_output(&mut value)?;
+                value
+            } else {
+                let event_sink = PythonWorkflowEventSink {
+                    callback: Some(callback),
+                };
+                let execution_request = YamlWorkflowExecutionRequest {
+                    source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+                    workflow_input: &workflow_input_value,
+                    executor: YamlWorkflowExecutorBinding::Client(&self.client),
+                    custom_worker: Some(&custom_executor),
+                    options: &options,
+                    flags,
+                };
+                let output = py
+                    .allow_threads(|| {
+                        runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
+                    })
+                    .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+                serde_json::to_value(output).map_err(|error| {
+                    PyRuntimeError::new_err(format!("serialization failed: {error}"))
+                })?
             };
-            let execution_request = YamlWorkflowExecutionRequest {
-                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-                workflow_input: &workflow_input_value,
-                executor: YamlWorkflowExecutorBinding::Client(&self.client),
-                custom_worker: Some(&custom_executor),
-                options: &options,
-                flags,
-            };
-            let output = py
-                .allow_threads(|| {
-                    runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
-                })
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            let value = serde_json::to_value(output).map_err(|error| {
-                PyRuntimeError::new_err(format!("serialization failed: {error}"))
-            })?;
-            let py_value = pythonize::pythonize(py, &value)
+            let py_value = pythonize::pythonize(py, &output)
                 .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
             return Ok(py_value.into_py(py));
         }
@@ -2205,19 +2229,20 @@ impl Client {
         let py_request = pythonize::pythonize(py, &request)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         if include_events {
-            self.stream(py, &py_request, None)
+            self.stream(py, &py_request, None, false)
         } else {
             self.run(py, &py_request)
         }
     }
 
-    #[pyo3(signature = (workflow_path, workflow_input, on_event=None, workflow_options=None))]
+    #[pyo3(signature = (workflow_path, workflow_input, on_event=None, include_events=false, workflow_options=None))]
     fn run_workflow_yaml_stream(
         &self,
         py: Python<'_>,
         workflow_path: &str,
         workflow_input: &Bound<'_, PyAny>,
         on_event: Option<Py<PyAny>>,
+        include_events: bool,
         workflow_options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         if workflow_path.trim().is_empty() {
@@ -2251,7 +2276,7 @@ impl Client {
         let request = Value::Object(object);
         let py_request = pythonize::pythonize(py, &request)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        self.stream(py, &py_request, on_event)
+        self.stream(py, &py_request, on_event, include_events)
     }
 }
 

@@ -380,3 +380,92 @@ impl YamlWorkflowEventSink for PythonWorkflowEventSink {
         });
     }
 }
+
+pub(crate) struct CombinedWorkflowEventSink {
+    events: Mutex<Vec<YamlWorkflowEvent>>,
+    pub(crate) callback: Option<Py<PyAny>>,
+    record: bool,
+}
+
+unsafe impl Send for CombinedWorkflowEventSink {}
+unsafe impl Sync for CombinedWorkflowEventSink {}
+
+impl CombinedWorkflowEventSink {
+    pub(crate) fn new(record: bool, callback: Option<Py<PyAny>>) -> Self {
+        Self {
+            events: Mutex::new(Vec::new()),
+            callback,
+            record,
+        }
+    }
+
+    pub(crate) fn attach_to_output(&self, value: &mut Value) -> PyResult<()> {
+        if !self.record {
+            return Ok(());
+        }
+        let events = match self.events.lock() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => {
+                eprintln!(
+                    "[simple-agents-py] event sink lock poisoned while collecting events; recovering"
+                );
+                poisoned.into_inner().clone()
+            }
+        };
+        let events_value = serde_json::to_value(events).map_err(|error| {
+            PyRuntimeError::new_err(format!("event serialization failed: {error}"))
+        })?;
+        match value {
+            Value::Object(object) => {
+                object.insert("events".to_string(), events_value);
+                Ok(())
+            }
+            _ => Err(PyRuntimeError::new_err(
+                "workflow output must be an object when include_events=true".to_string(),
+            )),
+        }
+    }
+}
+
+impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if self.record {
+            match self.events.lock() {
+                Ok(mut events) => events.push(event.clone()),
+                Err(poisoned) => {
+                    eprintln!(
+                        "[simple-agents-py] event sink lock poisoned while recording event; recovering"
+                    );
+                    let mut events = poisoned.into_inner();
+                    events.push(event.clone());
+                }
+            }
+        }
+
+        let Some(callback) = self.callback.as_ref() else {
+            return;
+        };
+
+        Python::with_gil(|py| {
+            let event_value = match serde_json::to_value(event) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
+                    return;
+                }
+            };
+            let py_event = match pythonize::pythonize(py, &event_value) {
+                Ok(value) => value,
+                Err(error) => {
+                    eprintln!(
+                        "[simple-agents-py] failed to convert workflow event for callback: {error}"
+                    );
+                    return;
+                }
+            };
+            if let Err(error) = callback.bind(py).call1((py_event,)) {
+                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
+            }
+        });
+    }
+}
