@@ -236,7 +236,8 @@ streamed = client.stream(request, on_event=lambda event: print(event.get("event_
 ### Workflow stream DX (`simple_agents_py.workflow_stream`)
 
 - **Low-level (full control):** `Client.stream(request, on_event=...)`.
-- **Structured hooks (recommended):** `stream_workflow(client, request, hooks)` or compose with `Client.stream(request, on_event=workflow_event_callback(hooks))`.
+- **Structured hooks (recommended):** `stream_workflow(client, request, hooks=...)` or `stream_workflow(client, request, on_event=...)` — *not both*.
+- **Typed requests (Pydantic):** `pip install simple-agents-py[pydantic]`, then `from simple_agents_py.workflow_request import WorkflowExecutionRequest` and pass the model to `stream_workflow` / `run_workflow_request` / `run_workflow_request_async` (no hand-maintained dicts). Plain `dict` requests still work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
 
 Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
 

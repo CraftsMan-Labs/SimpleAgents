@@ -3,14 +3,21 @@
 Events are the same dicts the Rust runner emits; shape matches
 :class:`simple_agents_py.WorkflowEvent` in ``simple_agents_py.pyi``.
 
-**Split thinking vs. merged deltas.** Set ``execution["split_stream_deltas"] = True`` on the
-request (preferred) or set env ``SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`` to a truthy
-value (legacy). The two are OR'd in the Rust runner.
+**Split thinking vs. merged deltas.** Set ``execution.split_stream_deltas=True`` on a
+:class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest` (or the equivalent
+dict key), or set env ``SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW`` (legacy). The two
+are OR'd in the Rust runner.
+
+**Requests:** Pass a :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`
+(needs ``pip install simple-agents-py[pydantic]``) or any ``mapping``; see
+:func:`workflow_payload.workflow_execution_request_to_mapping`.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable, Mapping, Protocol
+
+from .workflow_payload import workflow_execution_request_to_mapping
 
 WorkflowStreamEvent = Mapping[str, Any]
 
@@ -56,20 +63,39 @@ def workflow_event_callback(hooks: Any) -> Callable[[WorkflowStreamEvent], Any]:
     return on_event
 
 
-def stream_workflow(client: Any, request: Mapping[str, Any], hooks: Any) -> Any:
-    """Run ``client.stream(request, on_event=workflow_event_callback(hooks))``.
+def run_workflow_request(client: Any, request: Any) -> Any:
+    """``client.run(workflow_execution_request_to_mapping(request))``."""
+    return client.run(workflow_execution_request_to_mapping(request))
 
-    **Return value** — same ``WorkflowRunOutput`` mapping as other workflow APIs, including:
 
-    - ``workflow_id``, ``entry_node``, ``trace``, ``outputs``
-    - ``terminal_node``, ``terminal_output``
-    - ``step_timings``, ``llm_node_metrics``, ``llm_node_models``
-    - ``total_elapsed_ms``, ``ttft_ms``
-    - ``total_input_tokens``, ``total_output_tokens``, ``total_tokens``,
-      ``total_reasoning_tokens``, ``tokens_per_second``
-    - ``trace_id``, ``metadata``
-    - ``events`` — when the runner records them (e.g. callback-free stream path)
+def run_workflow_request_async(client: Any, request: Any) -> Any:
+    """``client.run_async(workflow_execution_request_to_mapping(request))``."""
+    return client.run_async(workflow_execution_request_to_mapping(request))
 
-    See ``WorkflowRunOutput`` in ``simple_agents_py.pyi`` for the canonical shape.
+
+def stream_workflow(
+    client: Any,
+    request: Any,
+    hooks: Any | None = None,
+    *,
+    on_event: Callable[[WorkflowStreamEvent], Any] | None = None,
+) -> Any:
+    """Stream a workflow with optional structured *hooks* or a raw *on_event* callback.
+
+    *request* may be a mapping or a Pydantic
+    :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`.
+
+    Pass **only one** of *hooks* or *on_event*. If both are omitted, uses
+    ``Client.stream`` without a live callback (events recorded on the result when
+    applicable).
     """
-    return client.stream(request, on_event=workflow_event_callback(hooks))
+    payload = workflow_execution_request_to_mapping(request)
+    if hooks is not None and on_event is not None:
+        raise ValueError("pass only one of hooks or on_event")
+    cb: Callable[[WorkflowStreamEvent], Any] | None
+    if hooks is not None:
+        cb = workflow_event_callback(hooks)
+    else:
+        cb = on_event
+    return client.stream(payload, on_event=cb)
+

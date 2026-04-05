@@ -1,7 +1,8 @@
 """
 Workflow stream hooks + split_stream_deltas without mutating os.environ.
 
-Requires a provider API key in the environment and a real workflow_path.
+Requires ``pip install simple-agents-py[pydantic]`` (or ``[dev]`` in this repo), a provider
+API key, and a resolvable ``workflow_path``.
 """
 
 from __future__ import annotations
@@ -11,6 +12,11 @@ import sys
 from typing import Any, Mapping
 
 from simple_agents_py import Client
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionFlags,
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+)
 from simple_agents_py.workflow_stream import stream_workflow
 
 
@@ -42,20 +48,20 @@ def main() -> None:
         sys.exit(1)
 
     client = Client("openai")
-    request = {
-        "workflow_path": workflow_path,
-        "messages": [
-            {"role": "user", "content": "Classify: short resignation note."},
+    request = WorkflowExecutionRequest(
+        workflow_path=workflow_path,
+        messages=[
+            WorkflowMessage(role="user", content="Classify: short resignation note."),
         ],
-        "input": {
+        input={
             "email_text": "I am resigning effective Friday. Thanks for everything.",
         },
-        "execution": {
-            "workflow_streaming": True,
-            "node_llm_streaming": True,
-            "split_stream_deltas": True,
-        },
-    }
+        execution=WorkflowExecutionFlags(
+            workflow_streaming=True,
+            node_llm_streaming=True,
+            split_stream_deltas=True,
+        ),
+    )
     result = stream_workflow(client, request, Hooks())
     print("\nterminal:", result.get("terminal_output"))
 

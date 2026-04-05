@@ -18,7 +18,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pydantic>=2.0"]
+pydantic = ["pydantic>=2.0"]
 
 [tool.maturin]
 bindings = "pyo3"
