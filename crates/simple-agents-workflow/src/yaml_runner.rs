@@ -671,6 +671,14 @@ fn include_raw_stream_debug_events() -> bool {
     }
 }
 
+/// Whether split thinking/output stream events are enabled for this LLM request.
+///
+/// True when [`YamlLlmExecutionRequest::split_stream_deltas`] is set or when env
+/// `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` is truthy (legacy).
+pub(crate) fn split_stream_deltas_enabled(request: &YamlLlmExecutionRequest) -> bool {
+    request.split_stream_deltas || include_raw_stream_debug_events()
+}
+
 #[derive(Debug)]
 struct StreamedPayloadResolution {
     payload: Value,
@@ -2052,6 +2060,7 @@ async fn try_run_yaml_via_ir_runtime(
                     trace_context: self.trace_context.clone(),
                     tenant_context: self.tenant_context.clone(),
                     trace_sampled: self.trace_sampled,
+                    split_stream_deltas: false,
                 };
 
                 let llm_result = self
@@ -5260,6 +5269,60 @@ Some trailing explanation"#;
         std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
     }
 
+    fn stub_llm_request(split_stream_deltas: bool) -> YamlLlmExecutionRequest {
+        YamlLlmExecutionRequest {
+            node_id: "n".to_string(),
+            is_terminal_node: false,
+            stream_json_as_text: false,
+            model: "m".to_string(),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            messages: None,
+            append_prompt_as_user: false,
+            prompt: String::new(),
+            prompt_template: String::new(),
+            prompt_bindings: vec![],
+            schema: json!({}),
+            stream: false,
+            heal: false,
+            tools: vec![],
+            tool_choice: None,
+            max_tool_roundtrips: 1,
+            tool_calls_global_key: None,
+            tool_trace_mode: YamlToolTraceMode::Off,
+            execution_context: json!({}),
+            trace_id: None,
+            trace_context: None,
+            tenant_context: YamlWorkflowTraceTenantContext::default(),
+            trace_sampled: false,
+            split_stream_deltas,
+        }
+    }
+
+    #[test]
+    fn split_stream_deltas_enabled_request_flag_without_env() {
+        let _guard = stream_debug_env_lock()
+            .lock()
+            .expect("stream debug env lock should not be poisoned");
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+        let on = stub_llm_request(true);
+        assert!(split_stream_deltas_enabled(&on));
+        let off = stub_llm_request(false);
+        assert!(!split_stream_deltas_enabled(&off));
+    }
+
+    #[test]
+    fn split_stream_deltas_enabled_env_still_opt_in_when_request_false() {
+        let _guard = stream_debug_env_lock()
+            .lock()
+            .expect("stream debug env lock should not be poisoned");
+        std::env::set_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1");
+        let off = stub_llm_request(false);
+        assert!(split_stream_deltas_enabled(&off));
+        std::env::remove_var("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW");
+    }
+
     #[test]
     fn structured_json_delta_filter_strips_reasoning_prefix_and_suffix() {
         let mut filter = StructuredJsonDeltaFilter::default();
@@ -5791,6 +5854,7 @@ nodes:
         assert!(!f.healing);
         assert!(!f.workflow_streaming);
         assert!(f.node_llm_streaming);
+        assert!(!f.split_stream_deltas);
     }
 
     #[test]

@@ -167,7 +167,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         let mut final_stream_usage: Option<simple_agent_type::response::Usage> =
                             None;
                         let mut delta_filter = StructuredJsonDeltaFilter::default();
-                        let include_raw_debug = include_raw_stream_debug_events();
+                        let include_raw_debug = super::split_stream_deltas_enabled(&request);
                         let mut json_text_formatter = if request.stream_json_as_text {
                             Some(StreamJsonAsTextFormatter::default())
                         } else {
@@ -711,7 +711,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 let stream_started = request_started;
                 let mut ttft_ms: Option<u128> = None;
                 let mut delta_filter = StructuredJsonDeltaFilter::default();
-                let include_raw_debug = include_raw_stream_debug_events();
+                let include_raw_debug = super::split_stream_deltas_enabled(&request);
                 let mut json_text_formatter = if request.stream_json_as_text {
                     Some(StreamJsonAsTextFormatter::default())
                 } else {

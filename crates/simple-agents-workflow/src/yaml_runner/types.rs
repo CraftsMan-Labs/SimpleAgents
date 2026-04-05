@@ -164,6 +164,10 @@ pub struct YamlWorkflowExecutionFlags {
     pub workflow_streaming: bool,
     /// When false, LLM nodes never use provider streaming, regardless of YAML `stream`.
     pub node_llm_streaming: bool,
+    /// When true, emit separate stream events for thinking vs output (`node_stream_thinking_delta`,
+    /// `node_stream_output_delta`) in addition to `node_stream_delta`. Also enabled when the
+    /// `SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW` environment variable is set (OR semantics).
+    pub split_stream_deltas: bool,
 }
 
 impl Default for YamlWorkflowExecutionFlags {
@@ -173,6 +177,7 @@ impl Default for YamlWorkflowExecutionFlags {
             healing: false,
             workflow_streaming: false,
             node_llm_streaming: true,
+            split_stream_deltas: false,
         }
     }
 }

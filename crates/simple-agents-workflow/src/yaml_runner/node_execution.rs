@@ -141,6 +141,7 @@ pub(super) async fn execute_llm_node(
         trace_context: node_span_context,
         tenant_context: options.trace.tenant.clone(),
         trace_sampled: telemetry_context.sampled,
+        split_stream_deltas: execution_flags.split_stream_deltas,
     };
 
     if let Some(span) = node_span.as_mut() {
