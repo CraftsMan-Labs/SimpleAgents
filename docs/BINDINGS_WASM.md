@@ -24,6 +24,7 @@ This document defines the current browser-compatible binding surface for
 - `streamEvents(model, promptOrMessages, onEvent, options?)`
 - `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
 - `run(request)` / `runAsync(request)` / `streamWorkflow(request, onEvent?)` (typed, messages-first workflow facade)
+- `createWorkflowStreamPrinter({ splitThinking? })` from `simple-agents-wasm/workflow_stream_printer` for a default streaming `onEvent` implementation (Node uses `process.stdout.write` when available; browsers fall back to `console.log`)
 
 ## Deliberate differences vs Node binding
 
@@ -51,6 +52,8 @@ Unified workflow request shape for browser runtime:
 - `workflow_yaml: string` (inline YAML text; browser runtime does not support local filesystem path loading)
 - `messages: MessageInput[]` (required)
 - optional `context`, `media`, `input`, `execution`, `workflow_options`
+
+`workflow_options.telemetry` and `workflow_options.trace` use explicit TypeScript interfaces in `index.d.ts` (`WorkflowTelemetryConfig`, `WorkflowTraceConfig`, etc., snake_case field names to match the Rust runner). `input` may be typed as `WorkflowInputFields` for common keys such as `email_text` while still allowing extra workflow-specific properties.
 
 Note: completion APIs already use `stream(...)`, so workflow streaming is exposed as `streamWorkflow(...)` to avoid method-name collision on the shared `Client` surface.
 

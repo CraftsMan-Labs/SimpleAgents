@@ -100,10 +100,43 @@ export interface ClientConfig {
   headers?: Record<string, string>;
 }
 
+/** Matches Rust `YamlWorkflowTelemetryConfig` JSON (snake_case). */
+export interface WorkflowTelemetryConfig {
+  enabled?: boolean;
+  nerdstats?: boolean;
+  sample_rate?: number;
+  payload_mode?: "full_payload" | "redacted_payload";
+  retention_days?: number;
+  multi_tenant?: boolean;
+  tool_trace_mode?: "full" | "redacted" | "off";
+}
+
+export interface WorkflowTraceContext {
+  trace_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
+  traceparent?: string;
+  tracestate?: string;
+  baggage?: Record<string, string>;
+}
+
+export interface WorkflowTraceTenant {
+  workspace_id?: string;
+  user_id?: string;
+  conversation_id?: string;
+  request_id?: string;
+  run_id?: string;
+}
+
+export interface WorkflowTraceConfig {
+  context?: WorkflowTraceContext;
+  tenant?: WorkflowTraceTenant;
+}
+
 export interface WorkflowRunOptions {
-  telemetry?: Record<string, unknown>;
-  trace?: Record<string, unknown>;
   model?: string;
+  telemetry?: WorkflowTelemetryConfig;
+  trace?: WorkflowTraceConfig;
   onEvent?: (event: Record<string, unknown>) => void;
   functions?: Record<
     string,
@@ -112,6 +145,12 @@ export interface WorkflowRunOptions {
       context: Record<string, unknown>
     ) => unknown | Promise<unknown>
   >;
+}
+
+/** Common workflow `input` fields; extra keys are allowed for workflow-specific payloads. */
+export interface WorkflowInputFields {
+  email_text?: string;
+  [key: string]: unknown;
 }
 
 export interface WorkflowRunEvent {
@@ -140,7 +179,7 @@ export interface WorkflowExecutionRequest {
   messages: MessageInput[];
   context?: Record<string, unknown>;
   media?: Record<string, unknown>;
-  input?: Record<string, unknown>;
+  input?: WorkflowInputFields;
   execution?: WorkflowExecutionFlags;
   workflow_options?: WorkflowRunOptions;
 }

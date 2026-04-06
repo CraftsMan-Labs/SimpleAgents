@@ -16,12 +16,26 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "workflow_stream_printer.mjs",
+    "workflow_stream_printer.d.ts",
     "runtime",
     "README.md",
     "pkg",
     "rust/Cargo.toml",
     "rust/src"
   ],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./workflow_stream_printer": {
+      "types": "./workflow_stream_printer.d.ts",
+      "import": "./workflow_stream_printer.mjs",
+      "default": "./workflow_stream_printer.mjs"
+    }
+  },
   "engines": {
     "node": ">=18"
   },
