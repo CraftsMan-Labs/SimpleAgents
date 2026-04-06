@@ -2,7 +2,7 @@ use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use serde_json::Map;
 use serde_json::Value;
-use simple_agents_workflow::{
+use simple_agents_workflow::yaml_runner::{
     YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
     YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
 };
@@ -154,30 +154,6 @@ pub(crate) fn attach_workflow_events(
             "workflow output must be an object when include_events=true".to_string(),
         )),
     }
-}
-
-pub(crate) fn parse_workflow_run_options(
-    workflow_options: Option<&Bound<'_, PyAny>>,
-) -> PyResult<YamlWorkflowRunOptions> {
-    workflow_options
-        .map(|value| {
-            pythonize::depythonize::<YamlWorkflowRunOptions>(value).map_err(|error| {
-                PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
-            })
-        })
-        .transpose()
-        .map(|value| value.unwrap_or_default())
-}
-
-pub(crate) fn parse_workflow_input_value(workflow_input: &Bound<'_, PyAny>) -> PyResult<Value> {
-    let workflow_input_value: Value = pythonize::depythonize(workflow_input)
-        .map_err(|error| PyRuntimeError::new_err(format!("invalid workflow_input: {error}")))?;
-    if !workflow_input_value.is_object() {
-        return Err(PyRuntimeError::new_err(
-            "workflow_input must be a dict/object".to_string(),
-        ));
-    }
-    Ok(workflow_input_value)
 }
 
 pub(crate) struct PythonWorkflowExecutionRequest {

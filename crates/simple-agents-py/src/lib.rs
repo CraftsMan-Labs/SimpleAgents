@@ -5,386 +5,36 @@
 use futures_util::{Stream, StreamExt};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
-use serde_json::Value;
-use simple_agent_type::cache::Cache;
 use simple_agent_type::message::Message;
-use simple_agent_type::prelude::{
-    CompletionChunk, CompletionRequest, Provider, Result, SimpleAgentsError,
-};
-use simple_agents_core::{
-    CompletionMode, CompletionOptions, CompletionOutcome, HealingSettings, Middleware,
-    SimpleAgentsClient, SimpleAgentsClientBuilder,
-};
-use simple_agents_healing::coercion::CoercionConfig;
-use simple_agents_healing::parser::ParserConfig;
-use simple_agents_healing::schema::{Field as HealingField, ObjectSchema};
-use simple_agents_healing::streaming::StreamingParser as RustStreamingParser;
-use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
-use simple_agents_providers::healing_integration::{
-    HealingConfig as ProviderHealingConfig, HealingIntegration,
-};
-use simple_agents_providers::streaming_structured::{StructuredEvent, StructuredStream};
-use simple_agents_workflow::workflow_execution;
-use simple_agents_workflow::{
+use simple_agent_type::prelude::{CompletionChunk, Result};
+use simple_agents_core::{CompletionOptions, SimpleAgentsClient};
+use simple_agents_workflow::yaml_runner::workflow_execution;
+use simple_agents_workflow::yaml_runner::{
     YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowSource,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 mod completion_helpers;
 mod provider_helpers;
-mod schema_helpers;
 mod workflow_helpers;
 
 use completion_helpers::{
-    build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
-    expect_stream, finish_reason_to_str, healed_json_to_py, parse_messages, parse_tool_choice,
-    parse_tools, py_err, resolve_response_plan, response_with_metadata_from_response,
+    build_request_with_messages, expect_response, expect_stream, finish_reason_to_str,
+    parse_messages, parse_tool_choice, parse_tools, py_err, response_with_metadata_from_response,
 };
-use provider_helpers::{provider_from_params, provider_name_exists};
-use schema_helpers::{
-    parse_schema_from_py, schema_from_json_schema_value, schema_from_python_input,
-};
+use provider_helpers::build_provider;
 use workflow_helpers::{
     attach_workflow_events, build_workflow_input_from_execution_request,
-    parse_workflow_execution_request, parse_workflow_input_value, parse_workflow_run_options,
-    workflow_execution_flags, workflow_execution_options, workflow_root_path,
-    CombinedWorkflowEventSink, PythonCustomWorkerExecutor, PythonWorkflowEventSink,
-    RecordingWorkflowEventSink,
+    parse_workflow_execution_request, workflow_execution_flags, workflow_execution_options,
+    workflow_root_path, CombinedWorkflowEventSink, PythonCustomWorkerExecutor,
+    PythonWorkflowEventSink, RecordingWorkflowEventSink,
 };
 
 type Runtime = tokio::runtime::Runtime;
-type StructuredStreamBox = Pin<Box<dyn Stream<Item = Result<StructuredEvent<Value>>> + Send>>;
-
-/// Result from parsing JSON-ish text with healing metadata.
-#[pyclass]
-pub struct ParseResult {
-    #[pyo3(get)]
-    value: PyObject,
-    #[pyo3(get)]
-    confidence: f32,
-    #[pyo3(get)]
-    was_healed: bool,
-    flags: Vec<String>,
-}
-
-#[pymethods]
-impl ParseResult {
-    #[new]
-    #[pyo3(signature = (value, confidence, was_healed, flags))]
-    fn new(value: PyObject, confidence: f32, was_healed: bool, flags: Vec<String>) -> Self {
-        Self {
-            value,
-            confidence,
-            was_healed,
-            flags,
-        }
-    }
-
-    #[getter]
-    fn flags(&self) -> Vec<String> {
-        self.flags.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ParseResult(confidence={:.2}, flags={})",
-            self.confidence,
-            self.flags.len()
-        )
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Result from coercing data to match a schema with healing metadata.
-#[pyclass]
-pub struct CoercionResult {
-    #[pyo3(get)]
-    value: PyObject,
-    #[pyo3(get)]
-    confidence: f32,
-    #[pyo3(get)]
-    was_coerced: bool,
-    flags: Vec<String>,
-}
-
-/// Internal schema wrapper for Python usage.
-#[pyclass]
-pub struct PySchema {
-    pub(crate) schema: Schema,
-}
-
-#[pymethods]
-impl PySchema {
-    fn __repr__(&self) -> String {
-        "Schema()".to_string()
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Builder for healing schemas with aliases and defaults.
-#[pyclass]
-pub struct SchemaBuilder {
-    fields: Vec<HealingField>,
-    allow_additional_fields: bool,
-}
-
-#[pymethods]
-impl SchemaBuilder {
-    #[new]
-    fn new() -> Self {
-        Self {
-            fields: Vec::new(),
-            allow_additional_fields: true,
-        }
-    }
-
-    /// Allow or deny additional fields not defined in the schema.
-    fn allow_additional_fields(&mut self, allow: bool) {
-        self.allow_additional_fields = allow;
-    }
-
-    /// Add a field to the schema.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Field name
-    /// * `type` - Field type string (e.g., "string", "integer", "number", "boolean", "array")
-    /// * `required` - Whether the field is required
-    /// * `aliases` - Optional list of aliases
-    /// * `default` - Optional default value
-    /// * `description` - Optional description
-    /// * `items` - For arrays, the item type (string or Schema)
-    #[pyo3(signature = (name, field_type, required=true, aliases=None, default=None, description=None, items=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn field(
-        &mut self,
-        _py: Python<'_>,
-        name: &str,
-        field_type: &Bound<'_, PyAny>,
-        required: bool,
-        aliases: Option<&Bound<'_, PyAny>>,
-        default: Option<&Bound<'_, PyAny>>,
-        description: Option<String>,
-        items: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<()> {
-        let schema = parse_schema_from_py(field_type, items)?;
-        let aliases_vec = if let Some(alias_obj) = aliases {
-            let values: Vec<String> = pythonize::depythonize(alias_obj).map_err(|_| {
-                PyRuntimeError::new_err("aliases must be a list of strings".to_string())
-            })?;
-            values
-        } else {
-            Vec::new()
-        };
-
-        let default_value = if let Some(default_obj) = default {
-            let value: serde_json::Value = pythonize::depythonize(default_obj).map_err(|_| {
-                PyRuntimeError::new_err("default must be JSON-serializable".to_string())
-            })?;
-            Some(value)
-        } else {
-            None
-        };
-
-        self.fields.push(HealingField {
-            name: name.to_string(),
-            schema,
-            required,
-            aliases: aliases_vec,
-            default: default_value,
-            description,
-        });
-
-        Ok(())
-    }
-
-    /// Build the schema.
-    fn build(&self) -> PySchema {
-        PySchema {
-            schema: Schema::Object(ObjectSchema {
-                fields: self.fields.clone(),
-                allow_additional_fields: self.allow_additional_fields,
-            }),
-        }
-    }
-}
-
-#[pymethods]
-impl CoercionResult {
-    #[new]
-    #[pyo3(signature = (value, confidence, was_coerced, flags))]
-    fn new(value: PyObject, confidence: f32, was_coerced: bool, flags: Vec<String>) -> Self {
-        Self {
-            value,
-            confidence,
-            was_coerced,
-            flags,
-        }
-    }
-
-    #[getter]
-    fn flags(&self) -> Vec<String> {
-        self.flags.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "CoercionResult(confidence={:.2}, flags={})",
-            self.confidence,
-            self.flags.len()
-        )
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Streaming JSON parser for incremental parsing.
-///
-/// Accumulates chunks and extracts complete JSON values as they become available.
-///
-/// # Example
-///
-/// ```python
-/// from simple_agents_py import StreamingParser
-///
-/// parser = StreamingParser()
-/// parser.feed('{"name": "Alice", ')
-/// parser.feed('"age": 30}')
-///
-/// result = parser.finalize()
-/// print(result.value)  # {"name": "Alice", "age": 30}
-/// ```
-#[pyclass]
-pub struct StreamingParser {
-    parser: Option<RustStreamingParser>,
-}
-
-#[pymethods]
-impl StreamingParser {
-    /// Create a new streaming parser with default configuration.
-    #[new]
-    #[pyo3(signature = (config=None))]
-    fn new(config: Option<&Bound<'_, PyDict>>) -> PyResult<Self> {
-        let parser = if let Some(_cfg) = config {
-            RustStreamingParser::with_config(ParserConfig::default())
-        } else {
-            RustStreamingParser::new()
-        };
-        Ok(Self {
-            parser: Some(parser),
-        })
-    }
-
-    /// Feed a chunk of JSON data to the parser.
-    ///
-    /// For single objects, this doesn't return values until finalize() is called.
-    /// For arrays, this can return completed array elements in future implementations.
-    ///
-    /// # Arguments
-    ///
-    /// * `chunk` - A string chunk of JSON data
-    fn feed(&mut self, chunk: &str) -> PyResult<()> {
-        if let Some(parser) = &mut self.parser {
-            parser.feed(chunk);
-        }
-        Ok(())
-    }
-
-    /// Finalize the stream and get the complete parsed value.
-    ///
-    /// This attempts to parse the entire accumulated buffer as a single JSON value.
-    /// Call this when the stream is complete. After calling finalize, the parser
-    /// cannot be used again.
-    ///
-    /// # Returns
-    ///
-    /// A ParseResult containing the parsed value, confidence, and healing metadata.
-    ///
-    /// # Errors
-    ///
-    /// Raises RuntimeError if the accumulated buffer cannot be parsed as valid JSON.
-    /// Raises RuntimeError if finalize is called more than once.
-    fn finalize(&mut self, py: Python<'_>) -> PyResult<ParseResult> {
-        let parser = self
-            .parser
-            .take()
-            .ok_or_else(|| PyRuntimeError::new_err("Parser already finalized"))?;
-
-        let result = parser
-            .finalize()
-            .map_err(|e| PyRuntimeError::new_err(format!("Parsing failed: {}", e)))?;
-
-        let py_value = pythonize::pythonize(py, &result.value)
-            .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-        let was_healed = !result.flags.is_empty();
-        let flags: Vec<String> = result.flags.iter().map(|f| f.description()).collect();
-
-        Ok(ParseResult {
-            value: py_value.into(),
-            confidence: result.confidence,
-            was_healed,
-            flags,
-        })
-    }
-
-    /// Get the current buffer size in bytes.
-    fn buffer_len(&self) -> usize {
-        self.parser.as_ref().map(|p| p.buffer_len()).unwrap_or(0)
-    }
-
-    /// Check if the buffer is empty.
-    fn is_empty(&self) -> bool {
-        self.parser.as_ref().map(|p| p.is_empty()).unwrap_or(true)
-    }
-
-    /// Clear the parser state and buffer.
-    fn clear(&mut self) {
-        if let Some(parser) = &mut self.parser {
-            parser.clear();
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        let finalized = if self.parser.is_none() {
-            "True"
-        } else {
-            "False"
-        };
-        format!(
-            "StreamingParser(buffer_len={}, finalized={})",
-            self.buffer_len(),
-            finalized
-        )
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
 
 /// A single chunk from a streaming completion.
-///
-/// # Example
-///
-/// ```python
-/// from simple_agents_py import Client
-///
-/// client = Client("openai")
-/// for chunk in client.complete("gpt-4o-mini", "Hello!", stream=True):
-///     print(chunk.content, end="", flush=True)
-/// ```
 #[pyclass]
 pub struct StreamChunk {
     #[pyo3(get)]
@@ -420,8 +70,6 @@ impl StreamChunk {
 }
 
 /// Streaming iterator that yields StreamChunk objects.
-///
-/// Bridges Rust async streams to Python's iterator protocol.
 #[pyclass]
 pub struct PyStreamIterator {
     stream: Option<Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>>,
@@ -430,70 +78,10 @@ pub struct PyStreamIterator {
 
 #[pymethods]
 impl PyStreamIterator {
-    #[new]
-    #[pyo3(signature = (client, model, messages, max_tokens=None, temperature=None, top_p=None))]
-    fn new(
-        client: &Client,
-        model: &str,
-        messages: &Bound<'_, PyAny>,
-        max_tokens: Option<u32>,
-        temperature: Option<f32>,
-        top_p: Option<f32>,
-    ) -> PyResult<Self> {
-        let messages = parse_messages(messages).map_err(py_err)?;
-        let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            None,
-            None,
-            None,
-            Some(true),
-        )
-        .map_err(py_err)?;
-
-        let runtime = client
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-
-        let client_ref = &client.client;
-        let outcome = runtime
-            .block_on(client_ref.complete(&request, CompletionOptions::default()))
-            .map_err(py_err)?;
-        let stream = match outcome {
-            CompletionOutcome::Stream(stream) => stream,
-            CompletionOutcome::Response(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected streaming response, got completion response",
-                ))
-            }
-            CompletionOutcome::HealedJson(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected streaming response, got healed json response",
-                ))
-            }
-            CompletionOutcome::CoercedSchema(_) => {
-                return Err(PyRuntimeError::new_err(
-                    "expected streaming response, got schema response",
-                ))
-            }
-        };
-
-        Ok(Self {
-            stream: Some(Box::pin(stream)),
-            runtime: Arc::clone(&client.runtime),
-        })
-    }
-
-    /// Iterator protocol: returns self.
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
     }
 
-    /// Iterator protocol: return next chunk or raise StopIteration.
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<StreamChunk>> {
         let runtime = Arc::clone(&slf.runtime);
         let stream = slf
@@ -546,132 +134,7 @@ impl PyStreamIterator {
     }
 }
 
-/// Result from a JSON completion with healing metadata.
-#[pyclass]
-pub struct HealedJsonResult {
-    #[pyo3(get)]
-    pub(crate) content: String,
-    #[pyo3(get)]
-    pub(crate) raw_response: String,
-    #[pyo3(get)]
-    pub(crate) confidence: f32,
-    #[pyo3(get)]
-    pub(crate) was_healed: bool,
-    #[pyo3(get)]
-    pub(crate) provider: Option<String>,
-    #[pyo3(get)]
-    pub(crate) model: String,
-    #[pyo3(get)]
-    pub(crate) finish_reason: String,
-    #[pyo3(get)]
-    pub(crate) created: Option<i64>,
-    #[pyo3(get)]
-    pub(crate) latency_ms: u64,
-    pub(crate) usage: PyObject,
-    pub(crate) flags: Vec<String>,
-}
-
-#[pymethods]
-impl HealedJsonResult {
-    #[new]
-    #[pyo3(signature = (content, confidence, was_healed, flags, raw_response=None, provider=None, model=None, finish_reason=None, created=None, latency_ms=0, usage=None))]
-    #[allow(clippy::too_many_arguments)]
-    fn new(
-        py: Python<'_>,
-        content: String,
-        confidence: f32,
-        was_healed: bool,
-        flags: Vec<String>,
-        raw_response: Option<String>,
-        provider: Option<String>,
-        model: Option<String>,
-        finish_reason: Option<String>,
-        created: Option<i64>,
-        latency_ms: u64,
-        usage: Option<PyObject>,
-    ) -> Self {
-        let usage = usage.unwrap_or_else(|| py.None().into());
-        Self {
-            content,
-            raw_response: raw_response.unwrap_or_default(),
-            confidence,
-            was_healed,
-            provider,
-            model: model.unwrap_or_default(),
-            finish_reason: finish_reason.unwrap_or_default(),
-            created,
-            latency_ms,
-            usage,
-            flags,
-        }
-    }
-
-    #[getter]
-    fn usage(&self, py: Python<'_>) -> PyObject {
-        self.usage.clone_ref(py).into()
-    }
-
-    #[getter]
-    fn flags(&self) -> Vec<String> {
-        self.flags.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "HealedJsonResult(confidence={:.2}, flags={}, content={:?}...)",
-            self.confidence,
-            self.flags.len(),
-            &self.content.chars().take(50).collect::<String>()
-        )
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Event emitted during structured streaming.
-///
-/// Can represent either a partial update (progressive parsing) or
-/// final complete value with healing metadata.
-#[pyclass]
-pub struct PyStructuredEvent {
-    #[pyo3(get)]
-    is_partial: bool,
-    #[pyo3(get)]
-    is_complete: bool,
-    #[pyo3(get)]
-    value: PyObject,
-    #[pyo3(get)]
-    partial_value: PyObject,
-    #[pyo3(get)]
-    confidence: f32,
-    #[pyo3(get)]
-    was_healed: bool,
-}
-
-#[pymethods]
-impl PyStructuredEvent {
-    fn __repr__(&self) -> String {
-        if self.is_partial {
-            format!(
-                "PyStructuredEvent(partial, confidence={:.2})",
-                self.confidence
-            )
-        } else {
-            format!(
-                "PyStructuredEvent(complete, confidence={:.2}, healed={})",
-                self.confidence, self.was_healed
-            )
-        }
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Completion response with metadata for debugging and observability.
+/// Completion response with metadata.
 #[pyclass]
 pub struct ResponseWithMetadata {
     #[pyo3(get)]
@@ -687,14 +150,7 @@ pub struct ResponseWithMetadata {
     #[pyo3(get)]
     pub(crate) latency_ms: u64,
     #[pyo3(get)]
-    pub(crate) was_healed: bool,
-    #[pyo3(get)]
-    pub(crate) healing_confidence: Option<f32>,
-    #[pyo3(get)]
-    pub(crate) healing_error: Option<String>,
-    #[pyo3(get)]
     pub(crate) tool_calls: PyObject,
-    pub(crate) flags: Vec<String>,
     pub(crate) usage: PyObject,
 }
 
@@ -703,11 +159,6 @@ impl ResponseWithMetadata {
     #[getter]
     fn usage(&self, py: Python<'_>) -> PyObject {
         self.usage.clone_ref(py).into()
-    }
-
-    #[getter]
-    fn flags(&self) -> Vec<String> {
-        self.flags.clone()
     }
 
     fn __repr__(&self) -> String {
@@ -722,1139 +173,33 @@ impl ResponseWithMetadata {
     }
 }
 
-/// Streaming iterator for structured output events.
-///
-/// Bridges Rust's StructuredStream to Python's iterator protocol.
-#[pyclass]
-pub struct StructuredStreamIterator {
-    stream: Option<StructuredStreamBox>,
-    runtime: Arc<Mutex<Runtime>>,
-}
-
-#[pymethods]
-impl StructuredStreamIterator {
-    /// Iterator protocol: returns self.
-    fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf
-    }
-
-    /// Iterator protocol: return next event or raise StopIteration.
-    fn __next__(
-        mut slf: PyRefMut<'_, Self>,
-        py: Python<'_>,
-    ) -> PyResult<Option<PyStructuredEvent>> {
-        let runtime = Arc::clone(&slf.runtime);
-        let stream = slf
-            .stream
-            .as_mut()
-            .ok_or_else(|| PyRuntimeError::new_err("Stream exhausted"))?;
-
-        let result = py.allow_threads(|| {
-            let runtime = runtime
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-            Ok::<_, PyErr>(runtime.block_on(stream.next()))
-        })?;
-
-        match result {
-            Some(Ok(rust_event)) => {
-                // Convert Rust event to Python event
-                let (is_partial, is_complete, value, partial_value, confidence, was_healed) =
-                    match rust_event {
-                        StructuredEvent::Partial(v) => {
-                            let py_value = pythonize::pythonize(py, &v).map_err(|e| {
-                                PyRuntimeError::new_err(format!("Conversion failed: {}", e))
-                            })?;
-                            let obj: PyObject = py_value.into();
-                            (true, false, obj.clone_ref(py).into(), obj, 0.0, false)
-                        }
-                        StructuredEvent::Complete {
-                            value,
-                            confidence,
-                            was_healed,
-                        } => {
-                            let py_value = pythonize::pythonize(py, &value).map_err(|e| {
-                                PyRuntimeError::new_err(format!("Conversion failed: {}", e))
-                            })?;
-                            let obj: PyObject = py_value.into();
-                            let none: PyObject = py.None().into();
-                            (false, true, obj, none, confidence, was_healed)
-                        }
-                    };
-
-                Ok(Some(PyStructuredEvent {
-                    is_partial,
-                    is_complete,
-                    value,
-                    partial_value,
-                    confidence,
-                    was_healed,
-                }))
-            }
-            Some(Err(e)) => Err(PyRuntimeError::new_err(format!("{}", e))),
-            None => {
-                slf.stream = None;
-                Ok(None)
-            }
-        }
-    }
-
-    fn __repr__(&self) -> String {
-        format!("StructuredStreamIterator(active={})", self.stream.is_some())
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
 #[pyclass]
 struct Client {
     runtime: Arc<Mutex<Runtime>>,
     client: SimpleAgentsClient,
 }
 
-struct PyMiddlewareAdapter {
-    middleware: Py<PyAny>,
-}
-
-// Safe because all interaction with the Python object happens under the GIL.
-unsafe impl Send for PyMiddlewareAdapter {}
-unsafe impl Sync for PyMiddlewareAdapter {}
-
-impl PyMiddlewareAdapter {
-    fn call_optional_method(
-        &self,
-        method: &str,
-        args: &[PyObject],
-    ) -> std::result::Result<(), SimpleAgentsError> {
-        Python::with_gil(|py| {
-            let obj = self.middleware.bind(py);
-            if !obj
-                .hasattr(method)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?
-            {
-                return Ok(());
-            }
-
-            let args = PyTuple::new_bound(py, args);
-            let result = obj
-                .call_method1(method, args)
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-
-            if result
-                .hasattr("__await__")
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?
-            {
-                return Err(SimpleAgentsError::Config(format!(
-                    "Middleware method '{}' returned awaitable; async middleware not supported",
-                    method
-                )));
-            }
-
-            Ok(())
-        })
-    }
-}
-
-#[async_trait::async_trait]
-impl Middleware for PyMiddlewareAdapter {
-    async fn before_request(&self, request: &CompletionRequest) -> Result<()> {
-        let args = Python::with_gil(
-            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-                let py_request = pythonize::pythonize(py, request)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                Ok(vec![py_request.into()])
-            },
-        )?;
-        self.call_optional_method("before_request", &args)
-    }
-
-    async fn after_response(
-        &self,
-        request: &CompletionRequest,
-        response: &simple_agent_type::response::CompletionResponse,
-        latency: Duration,
-    ) -> Result<()> {
-        let args = Python::with_gil(
-            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-                let py_request = pythonize::pythonize(py, request)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                let py_response = pythonize::pythonize(py, response)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                let latency_ms: u64 = latency.as_millis() as u64;
-                Ok(vec![
-                    py_request.into(),
-                    py_response.into(),
-                    latency_ms.into_py(py),
-                ])
-            },
-        )?;
-        self.call_optional_method("after_response", &args)
-    }
-
-    async fn on_cache_hit(
-        &self,
-        request: &CompletionRequest,
-        response: &simple_agent_type::response::CompletionResponse,
-    ) -> Result<()> {
-        let args = Python::with_gil(
-            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-                let py_request = pythonize::pythonize(py, request)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                let py_response = pythonize::pythonize(py, response)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                Ok(vec![py_request.into(), py_response.into()])
-            },
-        )?;
-        self.call_optional_method("on_cache_hit", &args)
-    }
-
-    async fn on_error(
-        &self,
-        request: &CompletionRequest,
-        error: &SimpleAgentsError,
-        latency: Duration,
-    ) -> Result<()> {
-        let args = Python::with_gil(
-            |py| -> std::result::Result<Vec<PyObject>, SimpleAgentsError> {
-                let py_request = pythonize::pythonize(py, request)
-                    .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-                let latency_ms: u64 = latency.as_millis() as u64;
-                Ok(vec![
-                    py_request.into(),
-                    error.to_string().into_py(py),
-                    latency_ms.into_py(py),
-                ])
-            },
-        )?;
-        self.call_optional_method("on_error", &args)
-    }
-
-    fn name(&self) -> &str {
-        "py_middleware"
-    }
-}
-
-struct PyCacheAdapter {
-    cache: Py<PyAny>,
-}
-
-// Safe because all interaction with the Python object happens under the GIL.
-unsafe impl Send for PyCacheAdapter {}
-unsafe impl Sync for PyCacheAdapter {}
-
-impl PyCacheAdapter {
-    fn call_required_method<'py>(
-        &self,
-        py: Python<'py>,
-        method: &str,
-        args: &[PyObject],
-    ) -> std::result::Result<Bound<'py, PyAny>, SimpleAgentsError> {
-        let obj = self.cache.bind(py);
-        if !obj
-            .hasattr(method)
-            .map_err(|e| SimpleAgentsError::Config(e.to_string()))?
-        {
-            return Err(SimpleAgentsError::Config(format!(
-                "Cache object must implement '{}'",
-                method
-            )));
-        }
-
-        let args = PyTuple::new_bound(py, args);
-        let result = obj
-            .call_method1(method, args)
-            .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-
-        if result
-            .hasattr("__await__")
-            .map_err(|e| SimpleAgentsError::Config(e.to_string()))?
-        {
-            return Err(SimpleAgentsError::Config(format!(
-                "Cache method '{}' returned awaitable; async cache not supported",
-                method
-            )));
-        }
-
-        Ok(result)
-    }
-}
-
-#[async_trait::async_trait]
-impl Cache for PyCacheAdapter {
-    async fn get(&self, key: &str) -> Result<Option<Vec<u8>>> {
-        Python::with_gil(|py| {
-            let result = self.call_required_method(py, "get", &[key.into_py(py)])?;
-            if result.is_none() {
-                return Ok(None);
-            }
-            let bytes: Vec<u8> = result
-                .extract()
-                .map_err(|e| SimpleAgentsError::Config(e.to_string()))?;
-            Ok(Some(bytes))
-        })
-    }
-
-    async fn set(&self, key: &str, value: Vec<u8>, ttl: Duration) -> Result<()> {
-        Python::with_gil(|py| {
-            let py_bytes = PyBytes::new_bound(py, &value).into_py(py);
-            let ttl_secs = ttl.as_secs();
-            let _ = self.call_required_method(
-                py,
-                "set",
-                &[key.into_py(py), py_bytes, ttl_secs.into_py(py)],
-            )?;
-            Ok(())
-        })
-    }
-
-    async fn delete(&self, key: &str) -> Result<()> {
-        Python::with_gil(|py| {
-            let _ = self.call_required_method(py, "delete", &[key.into_py(py)])?;
-            Ok(())
-        })
-    }
-
-    async fn clear(&self) -> Result<()> {
-        Python::with_gil(|py| {
-            let _ = self.call_required_method(py, "clear", &[])?;
-            Ok(())
-        })
-    }
-}
-
-/// Native provider configuration object for ClientBuilder.
-#[pyclass]
-pub struct ProviderConfig {
-    provider: String,
-    api_key: Option<String>,
-    api_base: Option<String>,
-}
-
-#[pymethods]
-impl ProviderConfig {
-    #[new]
-    #[pyo3(signature = (provider, api_key=None, api_base=None))]
-    fn new(provider: String, api_key: Option<String>, api_base: Option<String>) -> Self {
-        Self {
-            provider,
-            api_key,
-            api_base,
-        }
-    }
-
-    #[getter]
-    fn provider(&self) -> String {
-        self.provider.clone()
-    }
-
-    #[getter]
-    fn api_key(&self) -> Option<String> {
-        self.api_key.clone()
-    }
-
-    #[getter]
-    fn api_base(&self) -> Option<String> {
-        self.api_base.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ProviderConfig(provider='{}', api_key_set={}, api_base={:?})",
-            self.provider,
-            self.api_key.is_some(),
-            self.api_base
-        )
-    }
-}
-
-/// Native routing policy object for ClientBuilder.
-#[pyclass]
-pub struct RoutingPolicy {
-    mode: String,
-    config: RoutingConfig,
-}
-
-#[pymethods]
-impl RoutingPolicy {
-    #[staticmethod]
-    fn direct() -> Self {
-        Self {
-            mode: "direct".to_string(),
-            config: RoutingConfig::Direct,
-        }
-    }
-
-    #[staticmethod]
-    fn round_robin() -> Self {
-        Self {
-            mode: "round_robin".to_string(),
-            config: RoutingConfig::RoundRobin,
-        }
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (alpha=0.2, slow_threshold_ms=2000))]
-    fn latency(alpha: f64, slow_threshold_ms: u64) -> PyResult<Self> {
-        if !(0.0..=1.0).contains(&alpha) {
-            return Err(PyRuntimeError::new_err(
-                "alpha must be between 0.0 and 1.0".to_string(),
-            ));
-        }
-        Ok(Self {
-            mode: "latency".to_string(),
-            config: RoutingConfig::Latency {
-                alpha,
-                slow_threshold_ms,
-            },
-        })
-    }
-
-    #[staticmethod]
-    fn cost(provider_costs: &Bound<'_, PyDict>) -> PyResult<Self> {
-        let mut costs = Vec::new();
-        for (provider_name, cost_val) in provider_costs.iter() {
-            let name: String = provider_name.extract()?;
-            let cost: f64 = cost_val.extract()?;
-            if !cost.is_finite() || cost < 0.0 {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Invalid cost for provider {}: must be non-negative finite number",
-                    name
-                )));
-            }
-            costs.push((name, cost));
-        }
-        Ok(Self {
-            mode: "cost".to_string(),
-            config: RoutingConfig::Cost { costs },
-        })
-    }
-
-    #[staticmethod]
-    #[pyo3(signature = (retryable_only=true))]
-    fn fallback(retryable_only: bool) -> Self {
-        Self {
-            mode: "fallback".to_string(),
-            config: RoutingConfig::Fallback { retryable_only },
-        }
-    }
-
-    #[getter]
-    fn mode(&self) -> String {
-        self.mode.clone()
-    }
-
-    fn __repr__(&self) -> String {
-        format!("RoutingPolicy(mode='{}')", self.mode)
-    }
-}
-
-/// Native cache configuration object for ClientBuilder.
-#[pyclass]
-pub struct CacheConfig {
-    ttl_seconds: u64,
-}
-
-#[pymethods]
-impl CacheConfig {
-    #[new]
-    #[pyo3(signature = (ttl_seconds))]
-    fn new(ttl_seconds: u64) -> Self {
-        Self { ttl_seconds }
-    }
-
-    #[getter]
-    fn ttl_seconds(&self) -> u64 {
-        self.ttl_seconds
-    }
-
-    fn __repr__(&self) -> String {
-        format!("CacheConfig(ttl_seconds={})", self.ttl_seconds)
-    }
-}
-
-/// Native healing configuration object for ClientBuilder.
-#[pyclass]
-pub struct HealingConfig {
-    enabled: bool,
-    min_confidence: f32,
-    fuzzy_match_threshold: f64,
-}
-
-#[pymethods]
-impl HealingConfig {
-    #[new]
-    #[pyo3(signature = (enabled=true, min_confidence=0.0, fuzzy_match_threshold=0.8))]
-    fn new(enabled: bool, min_confidence: f32, fuzzy_match_threshold: f64) -> PyResult<Self> {
-        if !(0.0..=1.0).contains(&min_confidence) {
-            return Err(PyRuntimeError::new_err(
-                "min_confidence must be between 0.0 and 1.0".to_string(),
-            ));
-        }
-        if !(0.0..=1.0).contains(&fuzzy_match_threshold) {
-            return Err(PyRuntimeError::new_err(
-                "fuzzy_match_threshold must be between 0.0 and 1.0".to_string(),
-            ));
-        }
-        Ok(Self {
-            enabled,
-            min_confidence,
-            fuzzy_match_threshold,
-        })
-    }
-
-    #[getter]
-    fn enabled(&self) -> bool {
-        self.enabled
-    }
-
-    #[getter]
-    fn min_confidence(&self) -> f32 {
-        self.min_confidence
-    }
-
-    #[getter]
-    fn fuzzy_match_threshold(&self) -> f64 {
-        self.fuzzy_match_threshold
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "HealingConfig(enabled={}, min_confidence={}, fuzzy_match_threshold={})",
-            self.enabled, self.min_confidence, self.fuzzy_match_threshold
-        )
-    }
-}
-
-/// Builder for creating SimpleAgents clients with advanced configuration.
-///
-/// Allows adding multiple providers, configuring routing, caching, and healing.
-///
-/// # Example
-///
-/// ```python
-/// from simple_agents_py import ClientBuilder
-///
-/// client = (
-///     ClientBuilder()
-///     .add_provider("openai", api_key="sk-...")
-///     .add_provider("anthropic", api_key="sk-ant-...")
-///     .with_routing("round_robin")
-///     .with_cache(ttl_seconds=300)
-///     .build()
-/// )
-/// ```
-#[pyclass]
-pub struct ClientBuilder {
-    providers: Vec<Arc<dyn Provider>>,
-    routing_mode: Option<String>,
-    routing_config: Option<RoutingConfig>,
-    cache_ttl: Option<u64>,
-    healing_config: Option<HealingSettings>,
-    middleware: Vec<Arc<dyn Middleware>>,
-    custom_cache: Option<Arc<dyn Cache>>,
-}
-
-#[derive(Debug, Clone)]
-enum RoutingConfig {
-    Direct,
-    RoundRobin,
-    Latency {
-        alpha: f64,
-        slow_threshold_ms: u64,
-    },
-    Cost {
-        costs: Vec<(String, f64)>, // (provider_name, cost_per_1k_tokens)
-    },
-    Fallback {
-        retryable_only: bool,
-    },
-}
-
-#[pymethods]
-impl ClientBuilder {
-    /// Create a new client builder.
-    #[new]
-    fn new() -> Self {
-        Self {
-            providers: Vec::new(),
-            routing_mode: None,
-            routing_config: None,
-            cache_ttl: None,
-            healing_config: None,
-            middleware: Vec::new(),
-            custom_cache: None,
-        }
-    }
-
-    /// Add a provider to the builder.
-    ///
-    /// # Arguments
-    ///
-    /// * `provider` - Provider name: "openai", "anthropic", or "openrouter"
-    /// * `api_key` - Optional API key (uses env var if not provided)
-    /// * `api_base` - Optional custom API base URL
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[pyo3(signature = (provider, api_key=None, api_base=None))]
-    fn add_provider<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        provider: &str,
-        api_key: Option<String>,
-        api_base: Option<String>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        // Enable healing by default for providers added through ClientBuilder
-        let provider = provider_from_params(
-            provider,
-            api_key.as_deref(),
-            api_base.as_deref(),
-            true,
-            Duration::from_secs(30),
-        )
-        .map_err(py_err)?;
-
-        if provider_name_exists(&slf.providers, provider.name()) {
-            return Err(PyRuntimeError::new_err(format!(
-                "duplicate provider name '{}' is not allowed; configure a distinct provider identity",
-                provider.name()
-            )));
-        }
-
-        slf.providers.push(provider);
-        Ok(slf)
-    }
-
-    /// Add a provider using native ProviderConfig.
-    fn add_provider_config<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &ProviderConfig,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let provider = provider_from_params(
-            &config.provider,
-            config.api_key.as_deref(),
-            config.api_base.as_deref(),
-            true,
-            Duration::from_secs(30),
-        )
-        .map_err(py_err)?;
-
-        if provider_name_exists(&slf.providers, provider.name()) {
-            return Err(PyRuntimeError::new_err(format!(
-                "duplicate provider name '{}' is not allowed; configure a distinct provider identity",
-                provider.name()
-            )));
-        }
-
-        slf.providers.push(provider);
-        Ok(slf)
-    }
-
-    /// Configure routing mode (simple version with defaults).
-    ///
-    /// # Arguments
-    ///
-    /// * `mode` - Routing mode: "direct", "round_robin", "latency", "cost", "fallback"
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    fn with_routing<'a>(mut slf: PyRefMut<'a, Self>, mode: &str) -> PyResult<PyRefMut<'a, Self>> {
-        let valid_modes = ["direct", "round_robin", "latency", "cost", "fallback"];
-        if !valid_modes.contains(&mode) {
-            return Err(PyRuntimeError::new_err(format!(
-                "Unknown routing mode: {}. Must be one of: {}",
-                mode,
-                valid_modes.join(", ")
-            )));
-        }
-        slf.routing_mode = Some(mode.to_string());
-        // Set default config for the mode
-        slf.routing_config = Some(match mode {
-            "direct" => RoutingConfig::Direct,
-            "round_robin" => RoutingConfig::RoundRobin,
-            "latency" => RoutingConfig::Latency {
-                alpha: 0.2,
-                slow_threshold_ms: 2000,
-            },
-            "cost" => RoutingConfig::Cost { costs: Vec::new() },
-            "fallback" => RoutingConfig::Fallback {
-                retryable_only: true,
-            },
-            _ => unreachable!(),
-        });
-        Ok(slf)
-    }
-
-    /// Configure routing using native RoutingPolicy.
-    fn with_routing_policy<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        policy: &RoutingPolicy,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.routing_mode = Some(policy.mode.clone());
-        slf.routing_config = Some(policy.config.clone());
-        Ok(slf)
-    }
-
-    /// Configure latency-based routing with custom settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Dict with latency routing config options:
-    ///   - `alpha`: float (default: 0.2) - Exponential moving average factor (0.0-1.0)
-    ///   - `slow_threshold_ms`: int (default: 2000) - Threshold in ms for marking providers as degraded
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[pyo3(signature = (config))]
-    fn with_latency_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &Bound<'_, PyDict>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let mut alpha = 0.2;
-        let mut slow_threshold_ms = 2000u64;
-
-        if let Some(alpha_val) = config.get_item("alpha")? {
-            if !alpha_val.is_none() {
-                alpha = alpha_val.extract()?;
-                if !(0.0..=1.0).contains(&alpha) {
-                    return Err(PyRuntimeError::new_err(
-                        "alpha must be between 0.0 and 1.0".to_string(),
-                    ));
-                }
-            }
-        }
-
-        if let Some(threshold_val) = config.get_item("slow_threshold_ms")? {
-            if !threshold_val.is_none() {
-                slow_threshold_ms = threshold_val.extract()?;
-            }
-        }
-
-        slf.routing_mode = Some("latency".to_string());
-        slf.routing_config = Some(RoutingConfig::Latency {
-            alpha,
-            slow_threshold_ms,
-        });
-        Ok(slf)
-    }
-
-    /// Configure cost-based routing with provider costs.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Dict with cost routing config:
-    ///   - `provider_costs`: dict mapping provider names to costs per 1k tokens
-    ///     Example: {"openai": 0.002, "anthropic": 0.0003}
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[pyo3(signature = (config))]
-    fn with_cost_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &Bound<'_, PyDict>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let costs_dict = config
-            .get_item("provider_costs")?
-            .ok_or_else(|| PyRuntimeError::new_err("provider_costs is required"))?;
-
-        let costs_dict_ref: &Bound<'_, PyDict> = costs_dict
-            .downcast()
-            .map_err(|_| PyRuntimeError::new_err("provider_costs must be a dict"))?;
-
-        let mut costs = Vec::new();
-        for (provider_name, cost_val) in costs_dict_ref.iter() {
-            let name: String = provider_name.extract()?;
-            let cost: f64 = cost_val.extract()?;
-
-            if !cost.is_finite() || cost < 0.0 {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Invalid cost for provider {}: must be non-negative finite number",
-                    name
-                )));
-            }
-
-            costs.push((name, cost));
-        }
-
-        slf.routing_mode = Some("cost".to_string());
-        slf.routing_config = Some(RoutingConfig::Cost { costs });
-        Ok(slf)
-    }
-
-    /// Configure fallback routing with custom settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Dict with fallback routing config options:
-    ///   - `retryable_only`: bool (default: true) - If true, only fallback on retryable errors
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[pyo3(signature = (config))]
-    fn with_fallback_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &Bound<'_, PyDict>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let mut retryable_only = true;
-
-        if let Some(val) = config.get_item("retryable_only")? {
-            if !val.is_none() {
-                retryable_only = val.extract()?;
-            }
-        }
-
-        slf.routing_mode = Some("fallback".to_string());
-        slf.routing_config = Some(RoutingConfig::Fallback { retryable_only });
-        Ok(slf)
-    }
-
-    /// Configure response cache with TTL.
-    ///
-    /// # Arguments
-    ///
-    /// * `ttl_seconds` - Time to live for cache entries in seconds (0 to disable)
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    fn with_cache<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        ttl_seconds: u64,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.cache_ttl = Some(ttl_seconds);
-        Ok(slf)
-    }
-
-    /// Configure response cache using native CacheConfig.
-    fn with_cache_config<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &CacheConfig,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.cache_ttl = Some(config.ttl_seconds);
-        Ok(slf)
-    }
-
-    /// Configure healing settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - Dict with healing config options:
-    ///   - `enabled`: bool (default: true)
-    ///   - `min_confidence`: float (default: 0.0)
-    ///   - `fuzzy_match_threshold`: float (default: 0.8)
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[pyo3(signature = (config))]
-    fn with_healing_config<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &Bound<'_, PyDict>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let mut healing = HealingSettings::default();
-        let parser_config = ParserConfig::default();
-        let mut coercion_config = CoercionConfig::default();
-
-        // Parse enabled flag
-        if let Some(enabled) = config.get_item("enabled")? {
-            if !enabled.is_none() {
-                let val: bool = enabled.extract()?;
-                healing.enabled = val;
-            }
-        }
-
-        // Parse min_confidence
-        if let Some(min_conf) = config.get_item("min_confidence")? {
-            if !min_conf.is_none() {
-                let val: f32 = min_conf.extract()?;
-                coercion_config.min_confidence = val;
-            }
-        }
-
-        // Parse fuzzy_match_threshold
-        if let Some(threshold) = config.get_item("fuzzy_match_threshold")? {
-            if !threshold.is_none() {
-                let val: f64 = threshold.extract()?;
-                coercion_config.fuzzy_match_threshold = val;
-            }
-        }
-
-        healing.parser_config = parser_config;
-        healing.coercion_config = coercion_config;
-        slf.healing_config = Some(healing);
-        Ok(slf)
-    }
-
-    /// Configure healing using native HealingConfig.
-    fn with_healing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        config: &HealingConfig,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let mut healing = HealingSettings::default();
-        let parser_config = ParserConfig::default();
-        let mut coercion_config = CoercionConfig::default();
-
-        healing.enabled = config.enabled;
-        coercion_config.min_confidence = config.min_confidence;
-        coercion_config.fuzzy_match_threshold = config.fuzzy_match_threshold;
-        healing.parser_config = parser_config;
-        healing.coercion_config = coercion_config;
-        slf.healing_config = Some(healing);
-        Ok(slf)
-    }
-
-    /// Add a middleware hook.
-    ///
-    /// The middleware object can implement any of:
-    /// - before_request(request)
-    /// - after_response(request, response, latency_ms)
-    /// - on_cache_hit(request, response)
-    /// - on_error(request, error, latency_ms)
-    ///
-    /// Methods are optional; only implemented methods are called.
-    fn add_middleware<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        middleware: PyObject,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.middleware.push(Arc::new(PyMiddlewareAdapter {
-            middleware: middleware.into(),
-        }));
-        Ok(slf)
-    }
-
-    /// Use a custom cache backend provided by Python.
-    ///
-    /// The cache object must implement:
-    /// - get(key) -> Optional[bytes]
-    /// - set(key, value: bytes, ttl_seconds: int) -> None
-    /// - delete(key) -> None
-    /// - clear() -> None
-    ///
-    /// Async cache methods are not supported.
-    #[pyo3(signature = (cache, ttl_seconds=None))]
-    fn with_custom_cache<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        cache: PyObject,
-        ttl_seconds: Option<u64>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.custom_cache = Some(Arc::new(PyCacheAdapter {
-            cache: cache.into(),
-        }));
-        if let Some(ttl) = ttl_seconds {
-            slf.cache_ttl = Some(ttl);
-        }
-        Ok(slf)
-    }
-
-    /// Build the client.
-    ///
-    /// # Errors
-    ///
-    /// Returns RuntimeError if no providers were added.
-    fn build(slf: PyRefMut<'_, Self>) -> PyResult<Client> {
-        if slf.providers.is_empty() {
-            return Err(PyRuntimeError::new_err("At least one provider is required"));
-        }
-
-        let mut builder = SimpleAgentsClientBuilder::new();
-
-        // Add providers
-        for provider in slf.providers.iter() {
-            builder = builder.with_provider(provider.clone());
-        }
-
-        // Set routing mode
-        if let Some(config) = &slf.routing_config {
-            use simple_agents_core::RoutingMode;
-            let routing_mode = match config {
-                RoutingConfig::Direct => RoutingMode::Direct,
-                RoutingConfig::RoundRobin => RoutingMode::RoundRobin,
-                RoutingConfig::Latency {
-                    alpha,
-                    slow_threshold_ms,
-                } => {
-                    use simple_agents_router::LatencyRouterConfig;
-                    let latency_config = LatencyRouterConfig {
-                        alpha: *alpha,
-                        slow_threshold: Duration::from_millis(*slow_threshold_ms),
-                    };
-                    RoutingMode::Latency(latency_config)
-                }
-                RoutingConfig::Cost { costs } => {
-                    use simple_agents_router::{CostRouterConfig, ProviderCost};
-                    let mut provider_costs = Vec::new();
-                    for (name, cost) in costs.iter() {
-                        let pc = ProviderCost::new(name.as_str(), *cost).map_err(|e| {
-                            PyRuntimeError::new_err(format!("Invalid cost for {}: {}", name, e))
-                        })?;
-                        provider_costs.push(pc);
-                    }
-                    let cost_config = CostRouterConfig::new(provider_costs);
-                    RoutingMode::Cost(cost_config)
-                }
-                RoutingConfig::Fallback { retryable_only } => {
-                    use simple_agents_router::FallbackRouterConfig;
-                    let fallback_config = FallbackRouterConfig {
-                        retryable_only: *retryable_only,
-                    };
-                    RoutingMode::Fallback(fallback_config)
-                }
-            };
-            builder = builder.with_routing_mode(routing_mode);
-        }
-
-        // Set cache
-        if let Some(custom_cache) = &slf.custom_cache {
-            builder = builder.with_cache(custom_cache.clone());
-            if let Some(ttl) = slf.cache_ttl {
-                builder = builder.with_cache_ttl(Duration::from_secs(ttl));
-            }
-        } else if let Some(ttl) = slf.cache_ttl {
-            if ttl > 0 {
-                use simple_agents_cache::InMemoryCache;
-                let cache = Arc::new(InMemoryCache::new(10 * 1024 * 1024, 1000)); // 10MB, 1000 entries
-                builder = builder
-                    .with_cache(cache)
-                    .with_cache_ttl(Duration::from_secs(ttl));
-            }
-        }
-
-        // Set healing config
-        if let Some(healing) = &slf.healing_config {
-            builder = builder.with_healing_settings(healing.clone());
-        }
-
-        // Add middleware
-        for middleware in slf.middleware.iter() {
-            builder = builder.with_middleware(middleware.clone());
-        }
-
-        let client = builder.build().map_err(py_err)?;
-        let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        Ok(Client {
-            runtime: Arc::new(Mutex::new(runtime)),
-            client,
-        })
-    }
-
-    fn __repr__(&self) -> String {
-        format!(
-            "ClientBuilder(providers={}, routing={:?}, cache_ttl={:?}, middleware={})",
-            self.providers.len(),
-            self.routing_mode,
-            self.cache_ttl,
-            self.middleware.len()
-        )
-    }
-
-    fn __str__(&self) -> String {
-        self.__repr__()
-    }
-}
-
-/// Parse malformed JSON-ish text into proper JSON with healing metadata.
-#[pyfunction]
-#[pyo3(signature = (text, config=None))]
-fn heal_json(
-    py: Python<'_>,
-    text: &str,
-    config: Option<&Bound<'_, PyDict>>,
-) -> PyResult<ParseResult> {
-    let parser_config = if let Some(_cfg) = config {
-        ParserConfig::default()
-    } else {
-        ParserConfig::default()
-    };
-
-    let parser = JsonishParser::with_config(parser_config);
-    let result = parser
-        .parse(text)
-        .map_err(|e| PyRuntimeError::new_err(format!("Parsing failed: {}", e)))?;
-
-    let py_value = pythonize::pythonize(py, &result.value)
-        .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-    let was_healed = !result.flags.is_empty();
-    let flags: Vec<String> = result.flags.iter().map(|f| f.description()).collect();
-
-    Ok(ParseResult {
-        value: py_value.into(),
-        confidence: result.confidence,
-        was_healed,
-        flags,
-    })
-}
-
-/// Coerce data to match a JSON schema with healing metadata.
-#[pyfunction]
-#[pyo3(signature = (data, schema, config=None))]
-fn coerce_to_schema(
-    py: Python<'_>,
-    data: &Bound<'_, PyAny>,
-    schema: &Bound<'_, PyAny>,
-    config: Option<&Bound<'_, PyDict>>,
-) -> PyResult<CoercionResult> {
-    let value: serde_json::Value = pythonize::depythonize(data)
-        .map_err(|e| PyRuntimeError::new_err(format!("Invalid data: {}", e)))?;
-
-    let schema_obj = schema_from_python_input(schema)?;
-
-    let coercion_config = if let Some(_cfg) = config {
-        CoercionConfig::default()
-    } else {
-        CoercionConfig::default()
-    };
-
-    let engine = CoercionEngine::with_config(coercion_config);
-    let result = engine
-        .coerce(&value, &schema_obj)
-        .map_err(|e| PyRuntimeError::new_err(format!("Coercion failed: {}", e)))?;
-
-    let py_value = pythonize::pythonize(py, &result.value)
-        .map_err(|e| PyRuntimeError::new_err(format!("Conversion failed: {}", e)))?;
-
-    let was_coerced = !result.flags.is_empty();
-    let flags: Vec<String> = result.flags.iter().map(|f| f.description()).collect();
-
-    Ok(CoercionResult {
-        value: py_value.into(),
-        confidence: result.confidence,
-        was_coerced,
-        flags,
-    })
-}
-
 #[pymethods]
 #[allow(clippy::useless_conversion)]
 impl Client {
+    /// Create a new Client.
+    ///
+    /// # Arguments
+    /// * `api_key` - API key for the provider
+    /// * `model` - Default model name (reserved for future use)
+    /// * `base_url` - Optional custom base URL
+    /// * `api_format` - Optional API format: "chat_completions" (default) or "responses"
     #[new]
-    #[pyo3(signature = (provider, api_key=None, api_base=None, healing=true, timeout_seconds=30))]
+    #[pyo3(signature = (api_key, model=None, base_url=None, api_format=None))]
     fn new(
-        provider: &str,
-        api_key: Option<String>,
-        api_base: Option<String>,
-        healing: bool,
-        timeout_seconds: u64,
+        api_key: &str,
+        model: Option<&str>,
+        base_url: Option<&str>,
+        api_format: Option<&str>,
     ) -> PyResult<Self> {
-        let provider = provider_from_params(
-            provider,
-            api_key.as_deref(),
-            api_base.as_deref(),
-            healing,
-            Duration::from_secs(timeout_seconds),
-        )
-        .map_err(py_err)?;
-        let client = SimpleAgentsClientBuilder::new()
-            .with_provider(provider)
-            .build()
-            .map_err(py_err)?;
+        let _ = model;
+        let provider = build_provider(api_key, base_url, api_format).map_err(py_err)?;
+        let client = SimpleAgentsClient::new(provider);
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
 
         Ok(Self {
@@ -1863,7 +208,8 @@ impl Client {
         })
     }
 
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, schema=None, schema_name=None, strict=true, stream=false, heal=false))]
+    /// Send a completion request.
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -1876,17 +222,10 @@ impl Client {
         tools: Option<&Bound<'_, PyAny>>,
         tool_choice: Option<&Bound<'_, PyAny>>,
         response_format: Option<String>,
-        schema: Option<&Bound<'_, PyAny>>,
-        schema_name: Option<String>,
-        strict: bool,
-        stream: bool,
-        heal: bool,
     ) -> PyResult<PyObject> {
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
-                return Err(PyRuntimeError::new_err(
-                    "prompt cannot be empty".to_string(),
-                ));
+                return Err(PyRuntimeError::new_err("prompt cannot be empty"));
             }
             vec![Message::user(prompt)]
         } else {
@@ -1894,87 +233,20 @@ impl Client {
         };
 
         let tools = match tools {
-            Some(tools) => Some(parse_tools(tools).map_err(py_err)?),
+            Some(t) => Some(parse_tools(t).map_err(py_err)?),
             None => None,
         };
         let tool_choice = match tool_choice {
-            Some(choice) => Some(parse_tool_choice(choice).map_err(py_err)?),
+            Some(tc) => Some(parse_tool_choice(tc).map_err(py_err)?),
             None => None,
         };
 
-        let response_plan = resolve_response_plan(schema, schema_name, strict, response_format)?;
+        let resp_format = completion_helpers::resolve_response_format(response_format)?;
 
         let request = build_request_with_messages(
-            model,
-            messages,
-            max_tokens,
-            temperature,
-            top_p,
-            response_plan.response_format.clone(),
-            tools,
-            tool_choice,
-            if stream { Some(true) } else { None },
+            model, messages, max_tokens, temperature, top_p, resp_format, tools, tool_choice, None,
         )
         .map_err(py_err)?;
-
-        let completion_options = if !stream {
-            if let Some(schema_value) = response_plan.schema_value.as_ref() {
-                let schema = schema_from_json_schema_value(schema_value).map_err(py_err)?;
-                CompletionOptions {
-                    mode: CompletionMode::CoercedSchema(schema),
-                }
-            } else if heal && response_plan.expects_json {
-                CompletionOptions {
-                    mode: CompletionMode::HealedJson,
-                }
-            } else {
-                CompletionOptions::default()
-            }
-        } else {
-            CompletionOptions::default()
-        };
-
-        if stream {
-            if heal {
-                return Err(PyRuntimeError::new_err(
-                    "heal is not supported with stream=True".to_string(),
-                ));
-            }
-
-            let runtime = self
-                .runtime
-                .lock()
-                .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-            let outcome = py
-                .allow_threads(|| {
-                    runtime.block_on(self.client.complete(&request, completion_options.clone()))
-                })
-                .map_err(py_err)?;
-            let stream = expect_stream(outcome)?;
-
-            if let Some(schema_value) = response_plan.schema_value {
-                if !schema_value.is_object() {
-                    return Err(PyRuntimeError::new_err(
-                        "schema must be a dict/object".to_string(),
-                    ));
-                }
-
-                let healing = HealingIntegration::new(ProviderHealingConfig::lenient());
-                let structured_stream: StructuredStream<_, Value> =
-                    StructuredStream::new(stream, schema_value, Some(healing));
-                let iterator = StructuredStreamIterator {
-                    stream: Some(Box::pin(structured_stream)),
-                    runtime: Arc::clone(&self.runtime),
-                };
-                return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
-            }
-
-            let iterator = PyStreamIterator {
-                stream: Some(Box::pin(stream)),
-                runtime: Arc::clone(&self.runtime),
-            };
-            return Ok(Bound::new(py, iterator)?.into_any().into_py(py));
-        }
 
         let runtime = self
             .runtime
@@ -1983,37 +255,61 @@ impl Client {
         let start = Instant::now();
 
         let outcome = py
-            .allow_threads(|| runtime.block_on(self.client.complete(&request, completion_options)))
+            .allow_threads(|| runtime.block_on(self.client.complete(&request, CompletionOptions::default())))
             .map_err(py_err)?;
 
         let latency_ms = start.elapsed().as_millis() as u64;
-
-        if response_plan.schema_value.is_some() {
-            let healed = expect_coerced_schema(outcome)?;
-            let content = serde_json::to_string(&healed.coerced.value)
-                .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-            return Ok(content.into_py(py));
-        }
-
-        if heal && response_plan.expects_json {
-            let healed = expect_healed_json(outcome)?;
-            return healed_json_to_py(py, healed, latency_ms);
-        }
-
         let response = expect_response(outcome)?;
-
-        if response_plan.expects_json {
-            let content = response.content().unwrap_or_default().to_string();
-            return Ok(content.into_py(py));
-        }
-
         let response_with_metadata =
             response_with_metadata_from_response(py, response, latency_ms)?;
         Ok(Py::new(py, response_with_metadata)?.into_py(py))
     }
 
+    /// Send a streaming completion request.
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None))]
+    fn stream_complete(
+        &self,
+        py: Python<'_>,
+        model: &str,
+        input: &Bound<'_, PyAny>,
+        max_tokens: Option<u32>,
+        temperature: Option<f32>,
+        top_p: Option<f32>,
+    ) -> PyResult<PyObject> {
+        let messages = if let Ok(prompt) = input.extract::<&str>() {
+            if prompt.is_empty() {
+                return Err(PyRuntimeError::new_err("prompt cannot be empty"));
+            }
+            vec![Message::user(prompt)]
+        } else {
+            parse_messages(input).map_err(py_err)?
+        };
+
+        let request = build_request_with_messages(
+            model, messages, max_tokens, temperature, top_p, None, None, None, Some(true),
+        )
+        .map_err(py_err)?;
+
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+
+        let outcome = py
+            .allow_threads(|| runtime.block_on(self.client.complete(&request, CompletionOptions::default())))
+            .map_err(py_err)?;
+        let stream = expect_stream(outcome)?;
+
+        let iterator = PyStreamIterator {
+            stream: Some(Box::pin(stream)),
+            runtime: Arc::clone(&self.runtime),
+        };
+        Ok(Bound::new(py, iterator)?.into_any().into_py(py))
+    }
+
+    /// Run a YAML workflow (blocking).
     #[pyo3(signature = (request))]
-    fn run(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    fn run_workflow(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
         let request = parse_workflow_execution_request(request)?;
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
@@ -2046,42 +342,9 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    #[pyo3(signature = (request))]
-    fn run_async(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let request = parse_workflow_execution_request(request)?;
-        let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
-        let flags = workflow_execution_flags(&request.execution);
-        let options = workflow_execution_options(&request);
-
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let execution_request = YamlWorkflowExecutionRequest {
-            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-            workflow_input: &workflow_input_value,
-            executor: YamlWorkflowExecutorBinding::Client(&self.client),
-            custom_worker: Some(&custom_executor),
-            options: &options,
-            flags,
-        };
-
-        let output = py
-            .allow_threads(|| runtime.block_on(workflow_execution::run_async(execution_request)))
-            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-
-        let value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
-    }
-
+    /// Run a YAML workflow with streaming events.
     #[pyo3(signature = (request, on_event=None, include_events_in_output=false))]
-    fn stream(
+    fn stream_workflow(
         &self,
         py: Python<'_>,
         request: &Bound<'_, PyAny>,
@@ -2172,119 +435,13 @@ impl Client {
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         Ok(py_value.into_py(py))
     }
-
-    #[pyo3(signature = (workflow_path, workflow_input, include_events=false, workflow_options=None))]
-    fn run_workflow_yaml(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        workflow_input: &Bound<'_, PyAny>,
-        include_events: bool,
-        workflow_options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        if workflow_path.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
-        let mut object = serde_json::Map::new();
-        if let Value::Object(existing) = workflow_input_value {
-            for (key, value) in existing {
-                object.insert(key, value);
-            }
-        }
-        object.insert(
-            "workflow_path".to_string(),
-            Value::String(workflow_path.to_string()),
-        );
-        if object.get("messages").is_none() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input.messages is required for workflow execution".to_string(),
-            ));
-        }
-        if let Some(options_obj) = workflow_options {
-            let parsed = parse_workflow_run_options(Some(options_obj))?;
-            let options_value = serde_json::to_value(parsed).map_err(|error| {
-                PyRuntimeError::new_err(format!("workflow_options serialization failed: {error}"))
-            })?;
-            object.insert("workflow_options".to_string(), options_value);
-        }
-        let request = Value::Object(object);
-        let py_request = pythonize::pythonize(py, &request)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        if include_events {
-            self.stream(py, &py_request, None, false)
-        } else {
-            self.run(py, &py_request)
-        }
-    }
-
-    #[pyo3(signature = (workflow_path, workflow_input, on_event=None, include_events=false, workflow_options=None))]
-    fn run_workflow_yaml_stream(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        workflow_input: &Bound<'_, PyAny>,
-        on_event: Option<Py<PyAny>>,
-        include_events: bool,
-        workflow_options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        if workflow_path.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_path cannot be empty".to_string(),
-            ));
-        }
-        let workflow_input_value = parse_workflow_input_value(workflow_input)?;
-        let mut object = serde_json::Map::new();
-        if let Value::Object(existing) = workflow_input_value {
-            for (key, value) in existing {
-                object.insert(key, value);
-            }
-        }
-        object.insert(
-            "workflow_path".to_string(),
-            Value::String(workflow_path.to_string()),
-        );
-        if object.get("messages").is_none() {
-            return Err(PyRuntimeError::new_err(
-                "workflow_input.messages is required for workflow execution".to_string(),
-            ));
-        }
-        if let Some(options_obj) = workflow_options {
-            let parsed = parse_workflow_run_options(Some(options_obj))?;
-            let options_value = serde_json::to_value(parsed).map_err(|error| {
-                PyRuntimeError::new_err(format!("workflow_options serialization failed: {error}"))
-            })?;
-            object.insert("workflow_options".to_string(), options_value);
-        }
-        let request = Value::Object(object);
-        let py_request = pythonize::pythonize(py, &request)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        self.stream(py, &py_request, on_event, include_events)
-    }
 }
 
 #[pymodule]
 fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Client>()?;
-    module.add_class::<ClientBuilder>()?;
-    module.add_class::<ProviderConfig>()?;
-    module.add_class::<RoutingPolicy>()?;
-    module.add_class::<CacheConfig>()?;
-    module.add_class::<HealingConfig>()?;
-    module.add_class::<HealedJsonResult>()?;
-    module.add_class::<ParseResult>()?;
-    module.add_class::<CoercionResult>()?;
-    module.add_class::<PySchema>()?;
-    module.add_class::<SchemaBuilder>()?;
-    module.add_class::<StreamingParser>()?;
     module.add_class::<StreamChunk>()?;
     module.add_class::<PyStreamIterator>()?;
-    module.add_class::<PyStructuredEvent>()?;
-    module.add_class::<StructuredStreamIterator>()?;
     module.add_class::<ResponseWithMetadata>()?;
-    module.add_function(wrap_pyfunction!(heal_json, module)?)?;
-    module.add_function(wrap_pyfunction!(coerce_to_schema, module)?)?;
     Ok(())
 }

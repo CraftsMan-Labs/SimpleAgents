@@ -17,13 +17,11 @@ use simple_agent_type::response::{CompletionChunk, CompletionResponse, FinishRea
 use simple_agent_type::tool::{ToolCall, ToolType};
 use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
-    SimpleAgentsClient, SimpleAgentsClientBuilder,
+    SimpleAgentsClient,
 };
 use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema};
-use simple_agents_providers::anthropic::AnthropicProvider;
-use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_workflow::{
+use simple_agents_providers::openai::OpenAiCompatProvider;
+use simple_agents_workflow::yaml_runner::{
     workflow_execution, YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
     YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
     YamlWorkflowSource,
@@ -45,63 +43,21 @@ pub use workflow_options_napi::{
 
 type Runtime = tokio::runtime::Runtime;
 
-fn provider_from_env(provider_name: &str) -> SaResult<Arc<dyn Provider>> {
-    build_provider_arc(provider_name, None, None)
-}
-
-/// Builds a provider from explicit credentials and/or environment variables.
-///
-/// When `api_key` is `None`, provider-specific environment variables are used
-/// (same as [`provider_from_env`]).
 fn build_provider_arc(
-    provider_name: &str,
     api_key: Option<&str>,
-    api_base: Option<&str>,
+    base_url: Option<&str>,
 ) -> SaResult<Arc<dyn Provider>> {
-    match provider_name {
-        "openai" => {
-            let provider = match api_key {
-                Some(key) => {
-                    let key = ApiKey::new(key)?;
-                    match api_base {
-                        Some(base) => OpenAIProvider::with_base_url(key, base.to_string())?,
-                        None => OpenAIProvider::new(key)?,
-                    }
-                }
-                None => OpenAIProvider::from_env()?,
-            };
-            Ok(Arc::new(provider))
+    let provider = match api_key {
+        Some(key) => {
+            let key = ApiKey::new(key)?;
+            match base_url {
+                Some(base) => OpenAiCompatProvider::with_base_url(key, base.to_string())?,
+                None => OpenAiCompatProvider::new(key)?,
+            }
         }
-        "anthropic" => {
-            let provider = match api_key {
-                Some(key) => {
-                    let key = ApiKey::new(key)?;
-                    match api_base {
-                        Some(base) => AnthropicProvider::with_base_url(key, base.to_string())?,
-                        None => AnthropicProvider::new(key)?,
-                    }
-                }
-                None => AnthropicProvider::from_env()?,
-            };
-            Ok(Arc::new(provider))
-        }
-        "openrouter" => {
-            let provider = match api_key {
-                Some(key) => {
-                    let key = ApiKey::new(key)?;
-                    match api_base {
-                        Some(base) => OpenRouterProvider::with_base_url(key, base.to_string())?,
-                        None => OpenRouterProvider::new(key)?,
-                    }
-                }
-                None => OpenRouterProvider::from_env()?,
-            };
-            Ok(Arc::new(provider))
-        }
-        _ => Err(SimpleAgentsError::Config(format!(
-            "Unknown provider '{provider_name}'"
-        ))),
-    }
+        None => OpenAiCompatProvider::from_env()?,
+    };
+    Ok(Arc::new(provider))
 }
 
 fn napi_err(error: SimpleAgentsError) -> Error {
@@ -220,12 +176,9 @@ fn completion_options(opts: &CompleteOptions) -> SaResult<CompletionOptions> {
     Ok(CompletionOptions { mode })
 }
 
-#[napi(object)]
-pub struct ClientProviderConfig {
-    pub provider: String,
-    pub api_key: Option<String>,
-    pub api_base: Option<String>,
-}
+// ---------------------------------------------------------------------------
+// NAPI object types
+// ---------------------------------------------------------------------------
 
 #[napi(object)]
 pub struct WorkflowYamlRunFlags {
@@ -253,7 +206,6 @@ pub struct WorkflowYamlRunRequest {
     pub healing: bool,
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
-    /// When true, emit split thinking/output stream events (`node_stream_thinking_delta` / `node_stream_output_delta`).
     pub split_stream_deltas: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
@@ -378,6 +330,10 @@ pub struct StreamEvent {
     pub error: Option<StreamErrorEvent>,
 }
 
+// ---------------------------------------------------------------------------
+// Message / request builders
+// ---------------------------------------------------------------------------
+
 fn build_messages(input: Either<String, Vec<MessageInput>>) -> SaResult<Vec<Message>> {
     match input {
         Either::A(prompt) => {
@@ -469,6 +425,10 @@ fn build_request(
     builder.build()
 }
 
+// ---------------------------------------------------------------------------
+// Conversion helpers
+// ---------------------------------------------------------------------------
+
 fn tool_type_to_str(tool_type: ToolType) -> &'static str {
     match tool_type {
         ToolType::Function => "function",
@@ -525,7 +485,7 @@ impl CompletionResult {
         let role = choice
             .map(|c| role_to_str(c.message.role).to_string())
             .unwrap_or_else(|| "assistant".to_string());
-        let content = choice.map(|c| c.message.content.clone());
+        let content = choice.map(|c| c.message.content_text().to_string());
         let tool_calls = choice
             .and_then(|c| c.message.tool_calls.clone())
             .map(|calls| calls.into_iter().map(ToolCallResult::from).collect());
@@ -593,29 +553,6 @@ fn chunk_to_stream_chunk(chunk: CompletionChunk, error: Option<String>) -> Strea
     }
 }
 
-fn chunk_to_stream_delta(chunk: CompletionChunk) -> StreamDelta {
-    let raw = serde_json::to_string(&chunk).ok();
-    let choice = chunk.choices.first();
-    let content = choice.and_then(|c| c.delta.content.clone());
-    let finish_reason = choice
-        .and_then(|c| c.finish_reason)
-        .map(|fr| finish_reason_to_str(fr).to_string());
-    let role = choice
-        .and_then(|c| c.delta.role)
-        .map(|role| role_to_str(role).to_string());
-    let index = choice.map(|c| c.index).unwrap_or(0);
-
-    StreamDelta {
-        id: chunk.id,
-        model: chunk.model,
-        index,
-        role,
-        content,
-        finish_reason,
-        raw,
-    }
-}
-
 fn flags_to_strings(flags: &[CoercionFlag]) -> Vec<String> {
     flags
         .iter()
@@ -630,6 +567,10 @@ fn healing_data(value: JsonValue, flags: Vec<CoercionFlag>, confidence: f32) -> 
         confidence: confidence as f64,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Async tasks
+// ---------------------------------------------------------------------------
 
 pub struct CompleteTask {
     runtime: Arc<Runtime>,
@@ -681,12 +622,98 @@ pub struct StreamTask {
     on_chunk: ThreadsafeFunction<StreamChunk>,
 }
 
-pub struct StreamEventsTask {
-    runtime: Arc<Runtime>,
-    client: Arc<SimpleAgentsClient>,
-    request: CompletionRequest,
-    completion_options: CompletionOptions,
-    on_event: ThreadsafeFunction<StreamEvent>,
+impl Task for StreamTask {
+    type Output = CompletionResult;
+    type JsValue = CompletionResult;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let started = Instant::now();
+        let outcome = self
+            .runtime
+            .block_on(
+                self.client
+                    .complete(&self.request, self.completion_options.clone()),
+            )
+            .map_err(napi_err)?;
+
+        let mut aggregated = String::new();
+        let mut response_id = String::new();
+        let mut model = self.request.model.clone();
+        match outcome {
+            CompletionOutcome::Stream(mut stream) => {
+                while let Some(item) = self.runtime.block_on(stream.next()) {
+                    match item {
+                        Ok(chunk) => {
+                            if response_id.is_empty() {
+                                response_id = chunk.id.clone();
+                            }
+                            if !chunk.model.is_empty() {
+                                model = chunk.model.clone();
+                            }
+                            if let Some(ref content) =
+                                chunk.choices.first().and_then(|c| c.delta.content.clone())
+                            {
+                                aggregated.push_str(content);
+                            }
+                            let payload = chunk_to_stream_chunk(chunk, None);
+                            self.on_chunk
+                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+                        }
+                        Err(e) => {
+                            let payload = StreamChunk {
+                                id: "error".to_string(),
+                                model: "".to_string(),
+                                content: None,
+                                finish_reason: None,
+                                error: Some(e.to_string()),
+                                raw: None,
+                            };
+                            self.on_chunk
+                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
+                            return Err(napi_err(e));
+                        }
+                    }
+                }
+            }
+            CompletionOutcome::Response(response) => {
+                return Ok(CompletionResult::from_response(
+                    response,
+                    started.elapsed().as_millis() as u64,
+                ))
+            }
+            CompletionOutcome::HealedJson(_) | CompletionOutcome::CoercedSchema(_) => {
+                return Err(Error::from_reason(
+                    "healed/schema modes are not supported with streaming".to_string(),
+                ))
+            }
+        }
+
+        let latency_ms = started.elapsed().as_millis() as u64;
+        let usage = CompletionUsage {
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+        };
+
+        Ok(CompletionResult {
+            id: response_id,
+            model,
+            role: "assistant".to_string(),
+            content: Some(aggregated),
+            tool_calls: None,
+            finish_reason: None,
+            usage,
+            usage_available: false,
+            latency_ms: latency_ms as u32,
+            raw: None,
+            healed: None,
+            coerced: None,
+        })
+    }
+
+    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        Ok(output)
+    }
 }
 
 pub struct WorkflowStreamTask {
@@ -791,216 +818,6 @@ impl YamlWorkflowEventSink for NodeCombinedWorkflowEventSink {
     }
 }
 
-impl Task for StreamTask {
-    type Output = CompletionResult;
-    type JsValue = CompletionResult;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let started = Instant::now();
-        let outcome = self
-            .runtime
-            .block_on(
-                self.client
-                    .complete(&self.request, self.completion_options.clone()),
-            )
-            .map_err(napi_err)?;
-
-        let mut aggregated = String::new();
-        let mut response_id = String::new();
-        let mut model = self.request.model.clone();
-        match outcome {
-            CompletionOutcome::Stream(mut stream) => {
-                while let Some(item) = self.runtime.block_on(stream.next()) {
-                    match item {
-                        Ok(chunk) => {
-                            if response_id.is_empty() {
-                                response_id = chunk.id.clone();
-                            }
-                            if !chunk.model.is_empty() {
-                                model = chunk.model.clone();
-                            }
-                            if let Some(ref content) =
-                                chunk.choices.first().and_then(|c| c.delta.content.clone())
-                            {
-                                aggregated.push_str(content);
-                            }
-                            let payload = chunk_to_stream_chunk(chunk, None);
-                            self.on_chunk
-                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
-                        }
-                        Err(e) => {
-                            let payload = StreamChunk {
-                                id: "error".to_string(),
-                                model: "".to_string(),
-                                content: None,
-                                finish_reason: None,
-                                error: Some(e.to_string()),
-                                raw: None,
-                            };
-                            self.on_chunk
-                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
-                            return Err(napi_err(e));
-                        }
-                    }
-                }
-            }
-            CompletionOutcome::Response(response) => {
-                return Ok(CompletionResult::from_response(
-                    response,
-                    started.elapsed().as_millis() as u64,
-                ))
-            }
-            CompletionOutcome::HealedJson(_) => {
-                return Err(Error::from_reason(
-                    "healed JSON responses are not yet supported in Node bindings".to_string(),
-                ))
-            }
-            CompletionOutcome::CoercedSchema(_) => {
-                return Err(Error::from_reason(
-                    "schema responses are not yet supported in Node bindings".to_string(),
-                ))
-            }
-        }
-
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let usage = CompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        };
-
-        Ok(CompletionResult {
-            id: response_id,
-            model,
-            role: "assistant".to_string(),
-            content: Some(aggregated),
-            tool_calls: None,
-            finish_reason: None,
-            usage,
-            usage_available: false,
-            latency_ms: latency_ms as u32,
-            raw: None,
-            healed: None,
-            coerced: None,
-        })
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
-    }
-}
-
-impl Task for StreamEventsTask {
-    type Output = CompletionResult;
-    type JsValue = CompletionResult;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let started = Instant::now();
-        let outcome = self
-            .runtime
-            .block_on(
-                self.client
-                    .complete(&self.request, self.completion_options.clone()),
-            )
-            .map_err(napi_err)?;
-
-        let mut aggregated = String::new();
-        let mut response_id = String::new();
-        let mut model = self.request.model.clone();
-        match outcome {
-            CompletionOutcome::Stream(mut stream) => {
-                while let Some(item) = self.runtime.block_on(stream.next()) {
-                    match item {
-                        Ok(chunk) => {
-                            if response_id.is_empty() {
-                                response_id = chunk.id.clone();
-                            }
-                            if !chunk.model.is_empty() {
-                                model = chunk.model.clone();
-                            }
-                            if let Some(ref content) =
-                                chunk.choices.first().and_then(|c| c.delta.content.clone())
-                            {
-                                aggregated.push_str(content);
-                            }
-                            let payload = StreamEvent {
-                                event_type: "delta".to_string(),
-                                delta: Some(chunk_to_stream_delta(chunk)),
-                                error: None,
-                            };
-                            self.on_event
-                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
-                        }
-                        Err(e) => {
-                            let payload = StreamEvent {
-                                event_type: "error".to_string(),
-                                delta: None,
-                                error: Some(StreamErrorEvent {
-                                    message: e.to_string(),
-                                }),
-                            };
-                            self.on_event
-                                .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
-                            return Err(napi_err(e));
-                        }
-                    }
-                }
-
-                self.on_event.call(
-                    Ok(StreamEvent {
-                        event_type: "done".to_string(),
-                        delta: None,
-                        error: None,
-                    }),
-                    ThreadsafeFunctionCallMode::NonBlocking,
-                );
-            }
-            CompletionOutcome::Response(response) => {
-                return Ok(CompletionResult::from_response(
-                    response,
-                    started.elapsed().as_millis() as u64,
-                ))
-            }
-            CompletionOutcome::HealedJson(_) => {
-                return Err(Error::from_reason(
-                    "healed JSON responses are not yet supported in Node bindings".to_string(),
-                ))
-            }
-            CompletionOutcome::CoercedSchema(_) => {
-                return Err(Error::from_reason(
-                    "schema responses are not yet supported in Node bindings".to_string(),
-                ))
-            }
-        }
-
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let usage = CompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        };
-
-        Ok(CompletionResult {
-            id: response_id,
-            model,
-            role: "assistant".to_string(),
-            content: Some(aggregated),
-            tool_calls: None,
-            finish_reason: None,
-            usage,
-            usage_available: false,
-            latency_ms: latency_ms as u32,
-            raw: None,
-            healed: None,
-            coerced: None,
-        })
-    }
-
-    fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        Ok(output)
-    }
-}
-
 impl Task for WorkflowStreamTask {
     type Output = JsonValue;
     type JsValue = napi::JsUnknown;
@@ -1080,6 +897,10 @@ fn blocking_workflow_to_json(
         .map_err(|error| Error::from_reason(format!("failed to serialize output: {error}")))
 }
 
+// ---------------------------------------------------------------------------
+// Top-level helpers
+// ---------------------------------------------------------------------------
+
 #[napi(
     js_name = "parseWorkflowYamlExecutionRequest",
     ts_args_type = "workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: WorkflowRunOptionsNapi"
@@ -1114,6 +935,10 @@ pub fn parse_workflow_yaml_execution_request(
     })
 }
 
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
+
 #[napi]
 pub struct Client {
     runtime: Arc<Runtime>,
@@ -1122,30 +947,24 @@ pub struct Client {
 
 #[napi]
 impl Client {
+    /// Create a client from an API key.
+    ///
+    /// Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
+    /// the endpoint.
     #[napi(constructor)]
-    pub fn new(provider: String) -> Result<Self> {
-        let provider = provider_from_env(&provider).map_err(napi_err)?;
-        Self::from_provider_arc(provider)
+    pub fn new(api_key: String, base_url: Option<String>) -> Result<Self> {
+        let provider =
+            build_provider_arc(Some(api_key.as_str()), base_url.as_deref()).map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::new(provider));
+        let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
+        Ok(Self { runtime, client })
     }
 
+    /// Create a client using environment variables for the API key.
     #[napi(factory)]
-    pub fn with_provider_config(config: ClientProviderConfig) -> Result<Self> {
-        let provider = build_provider_arc(
-            &config.provider,
-            config.api_key.as_deref(),
-            config.api_base.as_deref(),
-        )
-        .map_err(napi_err)?;
-        Self::from_provider_arc(provider)
-    }
-
-    fn from_provider_arc(provider: Arc<dyn Provider>) -> Result<Self> {
-        let client = Arc::new(
-            SimpleAgentsClientBuilder::new()
-                .with_provider(provider)
-                .build()
-                .map_err(napi_err)?,
-        );
+    pub fn from_env() -> Result<Self> {
+        let provider = build_provider_arc(None, None).map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::new(provider));
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
         Ok(Self { runtime, client })
     }
@@ -1174,10 +993,11 @@ impl Client {
     }
 
     #[napi(
+        js_name = "streamComplete",
         ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions",
         ts_return_type = "Promise<CompletionResult>"
     )]
-    pub fn stream(
+    pub fn stream_complete(
         &self,
         model: String,
         prompt_or_messages: Either<String, Vec<MessageInput>>,
@@ -1190,7 +1010,7 @@ impl Client {
         let completion_options = completion_options(&opts).map_err(napi_err)?;
         if !matches!(completion_options.mode, CompletionMode::Standard) {
             return Err(Error::from_reason(
-                "healed_json and schema modes are not supported with stream() yet".to_string(),
+                "healed_json and schema modes are not supported with streaming yet".to_string(),
             ));
         }
         let request = build_request(&model, messages, &opts).map_err(napi_err)?;
@@ -1212,130 +1032,11 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions",
-        ts_return_type = "Promise<CompletionResult>"
-    )]
-    pub fn stream_events(
-        &self,
-        model: String,
-        prompt_or_messages: Either<String, Vec<MessageInput>>,
-        on_event: JsFunction,
-        options: Option<CompleteOptions>,
-    ) -> Result<AsyncTask<StreamEventsTask>> {
-        let messages = build_messages(prompt_or_messages).map_err(napi_err)?;
-        let mut opts = options.unwrap_or_default();
-        opts.stream = Some(true);
-        let completion_options = completion_options(&opts).map_err(napi_err)?;
-        if !matches!(completion_options.mode, CompletionMode::Standard) {
-            return Err(Error::from_reason(
-                "healed_json and schema modes are not supported with stream_events() yet"
-                    .to_string(),
-            ));
-        }
-        let request = build_request(&model, messages, &opts).map_err(napi_err)?;
-
-        let tsfn: ThreadsafeFunction<StreamEvent> =
-            on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<StreamEvent>| {
-                ctx.env.to_js_value(&ctx.value).map(|v| vec![v])
-            })?;
-
-        let task = StreamEventsTask {
-            runtime: self.runtime.clone(),
-            client: self.client.clone(),
-            request,
-            completion_options,
-            on_event: tsfn,
-        };
-
-        Ok(AsyncTask::new(task))
-    }
-
-    #[napi(
+        js_name = "runWorkflow",
         ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
-        ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
+        ts_return_type = "Record<string, unknown>"
     )]
-    pub fn run_workflow_yaml(
-        &self,
-        workflow_path: String,
-        workflow_input: JsonValue,
-        workflow_options: Option<JsonValue>,
-    ) -> Result<JsonValue> {
-        self.run_workflow_yaml_with_options(workflow_path, workflow_input, workflow_options)
-    }
-
-    #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
-        ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
-    )]
-    pub fn run_workflow_yaml_with_events(
-        &self,
-        workflow_path: String,
-        workflow_input: JsonValue,
-        workflow_options: Option<JsonValue>,
-    ) -> Result<JsonValue> {
-        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        let options = parse_workflow_options(workflow_options)?;
-
-        let event_sink = RecordingWorkflowEventSink::new();
-        let stream_flags = YamlWorkflowExecutionFlags {
-            workflow_streaming: true,
-            ..YamlWorkflowExecutionFlags::default()
-        };
-        let mut output_value = blocking_workflow_to_json(
-            &self.runtime,
-            &self.client,
-            workflow_path.as_str(),
-            &workflow_input,
-            &options,
-            stream_flags,
-            Some(&event_sink),
-        )?;
-        event_sink.attach_to_output(&mut output_value)?;
-        Ok(output_value)
-    }
-
-    #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
-        ts_return_type = "Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>"
-    )]
-    pub fn run_workflow_yaml_stream(
-        &self,
-        workflow_path: String,
-        workflow_input: JsonValue,
-        on_event: JsFunction,
-        workflow_options: Option<JsonValue>,
-    ) -> Result<AsyncTask<WorkflowStreamTask>> {
-        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        let request_options = parse_workflow_request_options(workflow_options)?;
-
-        let tsfn: ThreadsafeFunction<String> =
-            on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-                let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
-                Ok(vec![event_json])
-            })?;
-
-        let task = WorkflowStreamTask {
-            runtime: self.runtime.clone(),
-            client: self.client.clone(),
-            workflow_path,
-            workflow_input,
-            workflow_options: request_options.run_options,
-            workflow_flags: YamlWorkflowExecutionFlags {
-                workflow_streaming: true,
-                ..YamlWorkflowExecutionFlags::default()
-            },
-            include_events: request_options.include_events,
-            on_event: tsfn,
-        };
-
-        Ok(AsyncTask::new(task))
-    }
-
-    #[napi(
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
-        ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
-    )]
-    pub fn run_workflow_yaml_with_options(
+    pub fn run_workflow(
         &self,
         workflow_path: String,
         workflow_input: JsonValue,
@@ -1374,60 +1075,19 @@ impl Client {
     }
 
     #[napi(
-        ts_args_type = "request: WorkflowYamlRunRequest",
-        ts_return_type = "{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }"
+        js_name = "streamWorkflow",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
+        ts_return_type = "Promise<Record<string, unknown>>"
     )]
-    pub fn execute_workflow_yaml(&self, request: WorkflowYamlRunRequest) -> Result<JsonValue> {
-        let workflow_input = build_workflow_input_with_messages_envelope(
-            request.messages,
-            request.extra_workflow_input.as_ref(),
-        )?;
-        validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
-        let opts_json =
-            workflow_options_napi::workflow_run_options_napi_to_json(request.workflow_options)?;
-        let request_options = parse_workflow_request_options(opts_json)?;
-        let options = request_options.run_options;
-        let flags = YamlWorkflowExecutionFlags {
-            healing: request.healing,
-            workflow_streaming: request.workflow_streaming,
-            node_llm_streaming: request.node_llm_streaming,
-            split_stream_deltas: request.split_stream_deltas.unwrap_or(false),
-        };
-        blocking_workflow_to_json(
-            &self.runtime,
-            &self.client,
-            request.workflow_path.as_str(),
-            &workflow_input,
-            &options,
-            flags,
-            None,
-        )
-    }
-
-    #[napi(
-        ts_args_type = "request: WorkflowYamlRunRequest, onEvent: (err: unknown, eventJson: string) => void",
-        ts_return_type = "Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>"
-    )]
-    pub fn execute_workflow_yaml_stream(
+    pub fn stream_workflow(
         &self,
-        request: WorkflowYamlRunRequest,
+        workflow_path: String,
+        workflow_input: JsonValue,
         on_event: JsFunction,
+        workflow_options: Option<JsonValue>,
     ) -> Result<AsyncTask<WorkflowStreamTask>> {
-        let workflow_input = build_workflow_input_with_messages_envelope(
-            request.messages,
-            request.extra_workflow_input.as_ref(),
-        )?;
-        validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
-        let opts_json =
-            workflow_options_napi::workflow_run_options_napi_to_json(request.workflow_options)?;
-        let request_options = parse_workflow_request_options(opts_json)?;
-        let options = request_options.run_options;
-        let workflow_flags = YamlWorkflowExecutionFlags {
-            healing: request.healing,
-            workflow_streaming: request.workflow_streaming,
-            node_llm_streaming: request.node_llm_streaming,
-            split_stream_deltas: request.split_stream_deltas.unwrap_or(false),
-        };
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+        let request_options = parse_workflow_request_options(workflow_options)?;
 
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
@@ -1438,11 +1098,14 @@ impl Client {
         let task = WorkflowStreamTask {
             runtime: self.runtime.clone(),
             client: self.client.clone(),
-            workflow_path: request.workflow_path,
+            workflow_path,
             workflow_input,
-            workflow_options: options,
-            workflow_flags,
-            include_events: false,
+            workflow_options: request_options.run_options,
+            workflow_flags: YamlWorkflowExecutionFlags {
+                workflow_streaming: true,
+                ..YamlWorkflowExecutionFlags::default()
+            },
+            include_events: request_options.include_events,
             on_event: tsfn,
         };
 

@@ -1,7 +1,7 @@
 use napi::bindgen_prelude::{Error, Result};
 use serde::Deserialize;
 use serde_json::{Map, Value as JsonValue};
-use simple_agents_workflow::YamlWorkflowRunOptions;
+use simple_agents_workflow::yaml_runner::YamlWorkflowRunOptions;
 
 use crate::{parse_message, MessageInput};
 use simple_agent_type::message::Message;
