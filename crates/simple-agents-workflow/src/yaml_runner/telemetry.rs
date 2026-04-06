@@ -583,8 +583,8 @@ mod tests {
             Some("abc123"),
         );
 
-        assert_eq!(sub_options.telemetry.enabled, true);
-        assert_eq!(sub_options.telemetry.nerdstats, false);
+        assert!(sub_options.telemetry.enabled);
+        assert!(!sub_options.telemetry.nerdstats);
         assert!((sub_options.telemetry.sample_rate - 0.5).abs() < f32::EPSILON);
         assert_eq!(sub_options.model, Some("gpt-4.1".to_string()));
         assert_eq!(

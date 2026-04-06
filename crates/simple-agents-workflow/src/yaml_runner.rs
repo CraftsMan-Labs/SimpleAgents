@@ -722,7 +722,7 @@ edges:
         assert_eq!(output.entry_node, "classify_top_level");
         assert_eq!(output.terminal_node, "termination_sub_classify");
         assert!(output.terminal_output.is_some());
-        assert!(output.total_elapsed_ms > 0 || output.total_elapsed_ms == 0);
+        let _ = output.total_elapsed_ms;
         assert!(!output.step_timings.is_empty());
         for step in &output.step_timings {
             assert!(!step.node_id.is_empty());
