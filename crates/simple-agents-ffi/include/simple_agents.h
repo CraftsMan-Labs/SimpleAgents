@@ -10,106 +10,90 @@ extern "C" {
 
 typedef struct SAClient SAClient;
 
-typedef struct {
-    const char *role;
-    const char *content;
-    const char *name;
-    const char *tool_call_id;
-} SAMessage;
-
+/* Callback invoked for each streaming chunk (JSON string). Return 0 to continue, non-zero to cancel. */
 typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);
-typedef int32_t (*SAWorkflowEventCallback)(const char *event_json, void *user_data);
 
-SAClient *sa_client_new_from_env(const char *provider_name);
-SAClient *sa_client_new_with_credentials(
-    const char *provider_name,
+/*
+ * Create a new client.
+ *
+ * Parameters:
+ * - api_key: OpenAI-compatible API key (required, must not be NULL).
+ * - model:   Reserved for future use; pass NULL.
+ * - base_url: Override base URL (e.g. "https://api.openai.com/v1"). Pass NULL for the default.
+ *
+ * Returns a live client pointer, or NULL on error (check sa_last_error_message).
+ * Must be freed with sa_client_free.
+ */
+SAClient *sa_client_new(
     const char *api_key,
-    const char *api_base
+    const char *model,
+    const char *base_url
 );
+
+/*
+ * Free a client created by sa_client_new.
+ * Safe to call with NULL.
+ */
 void sa_client_free(SAClient *client);
 
-char *sa_complete(
-    SAClient *client,
-    const char *model,
-    const char *prompt,
-    int32_t max_tokens,
-    float temperature
-);
+/*
+ * Execute a completion request.
+ *
+ * Parameters:
+ * - client:       Live pointer from sa_client_new; must not be NULL.
+ * - request_json: JSON string matching the CompletionRequest schema.
+ *
+ * Returns a JSON string with the CompletionResponse, or NULL on error.
+ * Caller must free with sa_string_free.
+ */
+char *sa_complete(SAClient *client, const char *request_json);
 
-char *sa_complete_messages_json(
+/*
+ * Stream a completion request.
+ *
+ * Parameters:
+ * - client:       Live pointer from sa_client_new; must not be NULL.
+ * - request_json: JSON string with "stream": true.
+ * - callback:     Called for each chunk; return 0 to continue, non-zero to cancel.
+ * - user_data:    Passed through to callback unchanged.
+ *
+ * Returns 0 on success, -1 on error (check sa_last_error_message).
+ */
+int32_t sa_stream(
     SAClient *client,
-    const char *model,
-    const SAMessage *messages,
-    size_t messages_len,
-    int32_t max_tokens,
-    float temperature,
-    float top_p,
-    const char *mode,
-    const char *schema_json
-);
-
-int32_t sa_stream_messages(
-    SAClient *client,
-    const char *model,
-    const SAMessage *messages,
-    size_t messages_len,
-    int32_t max_tokens,
-    float temperature,
-    float top_p,
+    const char *request_json,
     SAStreamCallback callback,
     void *user_data
 );
 
-char *sa_run_workflow_yaml(
+/*
+ * Run a workflow YAML file synchronously.
+ *
+ * Parameters:
+ * - client:     Live pointer from sa_client_new; must not be NULL.
+ * - yaml_path:  Filesystem path to the workflow YAML file.
+ * - input_json: JSON object for the workflow input.
+ *
+ * Returns a JSON string with the YamlWorkflowRunOutput, or NULL on error.
+ * Caller must free with sa_string_free.
+ */
+char *sa_run_workflow(
     SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json
-);
-
-char *sa_run_workflow_yaml_with_options(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
-);
-
-char *sa_run_workflow_yaml_with_events(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
+    const char *yaml_path,
+    const char *input_json
 );
 
 /*
- * Stream workflow YAML: invokes callback with JSON workflow events, returns final output JSON.
- *
- * Parameters (all strings UTF-8, null-terminated except as noted):
- * - client: from sa_client_new_* ; must not be NULL.
- * - workflow_path: filesystem path to workflow YAML.
- * - workflow_input_json: JSON object (workflow input).
- * - workflow_options_json: NULL or JSON for telemetry/trace/model (YamlWorkflowRunOptions).
- * - workflow_execution_flags_json: NULL, empty string, or JSON object for YamlWorkflowExecutionFlags.
- *   When NULL/empty, Rust uses defaults: healing=false, workflow_streaming=false,
- *   node_llm_streaming=true, split_stream_deltas=false.
- *   Go bindings always pass a non-null JSON object with all four keys for discoverability.
- *   Keys (all optional; omitted keys keep defaults): "healing", "workflow_streaming",
- *   "node_llm_streaming", "split_stream_deltas" (bool). split_stream_deltas=true emits
- *   separate thinking vs output stream events (e.g. node_stream_thinking_delta).
- * - callback: called with each event JSON string; must not be NULL.
- * - user_data: passed through to callback.
- * Return: JSON string (free with sa_string_free) or NULL on error (see sa_last_error_message).
+ * Get the last error message for the current thread.
+ * Returns NULL if no error.
+ * Caller must free with sa_string_free.
  */
-char *sa_run_workflow_yaml_stream_events(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json,
-    const char *workflow_execution_flags_json,
-    SAWorkflowEventCallback callback,
-    void *user_data
-);
-
 char *sa_last_error_message(void);
+
+/*
+ * Free a string returned by sa_complete, sa_run_workflow, or sa_last_error_message.
+ * Safe to call with NULL.
+ */
 void sa_string_free(char *value);
 
 #ifdef __cplusplus

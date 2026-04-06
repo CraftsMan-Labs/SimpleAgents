@@ -21,10 +21,11 @@
   },
   "ffi": {
     "required_c_symbols": [
-      "sa_complete_messages_json(",
-      "sa_stream_messages(",
-      "sa_run_workflow_yaml_with_events(",
-      "sa_run_workflow_yaml_stream_events(",
+      "sa_client_new(",
+      "sa_client_free(",
+      "sa_complete(",
+      "sa_stream(",
+      "sa_run_workflow(",
       "sa_last_error_message(void)",
       "typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);"
     ]
