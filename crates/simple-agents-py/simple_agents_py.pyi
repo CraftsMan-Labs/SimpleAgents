@@ -34,11 +34,17 @@ class Role(Enum):
     Tool = "Tool"
 
 class ContentPart:
-    """A single content part: text or image_url."""
+    """A single multimodal content part (text, image, audio, or video)."""
     @staticmethod
     def text(text: str) -> ContentPart: ...
     @staticmethod
     def image_url(url: str) -> ContentPart: ...
+    @staticmethod
+    def image(media_type: str, data: str) -> ContentPart: ...
+    @staticmethod
+    def audio(media_type: str, data: str) -> ContentPart: ...
+    @staticmethod
+    def video(media_type: str, data: str) -> ContentPart: ...
 
 class Message:
     """A typed conversation message."""

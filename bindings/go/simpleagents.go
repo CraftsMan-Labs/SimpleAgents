@@ -78,10 +78,86 @@ const (
 	MessageRoleTool      MessageRole = "tool"
 )
 
-// Message is a single conversation turn.
+// MIME type constants for multimodal content (aligned with Rust `simple_agent_type::message::mime`).
+const (
+	MimeImagePNG  = "image/png"
+	MimeImageJPEG = "image/jpeg"
+	MimeImageWebP = "image/webp"
+	MimeImageGIF  = "image/gif"
+	MimeAudioMP3  = "audio/mpeg"
+	MimeAudioWAV  = "audio/wav"
+	MimeAudioFLAC = "audio/flac"
+	MimeAudioOGG  = "audio/ogg"
+	MimeVideoMP4  = "video/mp4"
+	MimeVideoWebM = "video/webm"
+	MimeVideoMOV  = "video/quicktime"
+	MimeVideoMKV  = "video/x-matroska"
+)
+
+// ContentPart is one multimodal segment (text, image, audio, or video). Wire JSON matches Rust serde.
+type ContentPart struct {
+	kind      string
+	text      string
+	mediaType string
+	data      string
+}
+
+// TextPart returns a text content part.
+func TextPart(text string) ContentPart {
+	return ContentPart{kind: "text", text: text}
+}
+
+// ImagePart returns an image part from base64 data (MIME + base64 without prefix).
+func ImagePart(mediaType, data string) ContentPart {
+	return ContentPart{kind: "image", mediaType: mediaType, data: data}
+}
+
+// AudioPart returns an audio part from base64 data.
+func AudioPart(mediaType, data string) ContentPart {
+	return ContentPart{kind: "audio", mediaType: mediaType, data: data}
+}
+
+// VideoPart returns a video part from base64 data.
+func VideoPart(mediaType, data string) ContentPart {
+	return ContentPart{kind: "video", mediaType: mediaType, data: data}
+}
+
+// MarshalJSON implements wire format compatible with simple-agent-type ContentPart.
+func (c ContentPart) MarshalJSON() ([]byte, error) {
+	switch c.kind {
+	case "text":
+		return json.Marshal(map[string]string{"type": "text", "text": c.text})
+	case "image":
+		u := "data:" + c.mediaType + ";base64," + c.data
+		return json.Marshal(map[string]interface{}{
+			"type":      "image_url",
+			"image_url": map[string]string{"url": u},
+		})
+	case "audio":
+		return json.Marshal(map[string]interface{}{
+			"type": "input_audio",
+			"input_audio": map[string]string{
+				"media_type": c.mediaType,
+				"data":       c.data,
+			},
+		})
+	case "video":
+		return json.Marshal(map[string]interface{}{
+			"type": "video",
+			"video": map[string]string{
+				"media_type": c.mediaType,
+				"data":       c.data,
+			},
+		})
+	default:
+		return nil, fmt.Errorf("simpleagents: invalid ContentPart")
+	}
+}
+
+// Message is a single conversation turn. Content is either a plain string or a slice of ContentPart.
 type Message struct {
 	Role       MessageRole `json:"role"`
-	Content    string      `json:"content"`
+	Content    interface{} `json:"content"`
 	Name       string      `json:"name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }

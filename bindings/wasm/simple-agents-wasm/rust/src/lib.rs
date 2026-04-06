@@ -18,7 +18,8 @@ struct ClientConfig {
 #[serde(rename_all = "camelCase")]
 struct MessageInput {
     role: String,
-    content: String,
+    /// Plain string or multimodal parts array (OpenAI-compatible JSON).
+    content: JsonValue,
     name: Option<String>,
     #[serde(alias = "tool_call_id")]
     tool_call_id: Option<String>,
@@ -44,7 +45,8 @@ struct JsToolCallFunction {
 #[derive(Serialize, Clone)]
 struct OpenAiMessageInput {
     role: String,
-    content: String,
+    /// Plain string or multimodal parts array.
+    content: JsonValue,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,7 +312,7 @@ fn to_messages(prompt_or_messages: JsValue) -> Result<Vec<MessageInput>, JsValue
         }
         return Ok(vec![MessageInput {
             role: "user".to_string(),
-            content: trimmed.to_string(),
+            content: JsonValue::String(trimmed.to_string()),
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -325,12 +327,64 @@ fn to_messages(prompt_or_messages: JsValue) -> Result<Vec<MessageInput>, JsValue
     Ok(messages)
 }
 
+/// Reads `media_type` or `mediaType` from a JSON object (JS often uses camelCase).
+fn media_type_field(obj: &JsonMap<String, JsonValue>) -> Option<&str> {
+    obj.get("media_type")
+        .or_else(|| obj.get("mediaType"))
+        .and_then(|v| v.as_str())
+}
+
+/// Converts simplified multimodal parts (`type`: image|audio|video + data) to OpenAI chat
+/// wire format. Passes through strings, native OpenAI parts, and unknown objects unchanged.
+fn normalize_message_content(content: JsonValue) -> JsonValue {
+    match content {
+        JsonValue::Array(parts) => JsonValue::Array(
+            parts.into_iter().map(normalize_content_part).collect(),
+        ),
+        other => other,
+    }
+}
+
+fn normalize_content_part(part: JsonValue) -> JsonValue {
+    let Some(obj) = part.as_object() else {
+        return part;
+    };
+    let ty = obj.get("type").and_then(|v| v.as_str());
+    match ty {
+        Some("image") => {
+            let mt = media_type_field(obj).unwrap_or("");
+            let data = obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "type": "image_url",
+                "image_url": { "url": format!("data:{mt};base64,{data}") }
+            })
+        }
+        Some("audio") => {
+            let mt = media_type_field(obj).unwrap_or("");
+            let data = obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "type": "input_audio",
+                "input_audio": { "media_type": mt, "data": data }
+            })
+        }
+        Some("video") => {
+            let mt = media_type_field(obj).unwrap_or("");
+            let data = obj.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            json!({
+                "type": "video",
+                "video": { "media_type": mt, "data": data }
+            })
+        }
+        _ => part,
+    }
+}
+
 fn to_openai_messages(messages: Vec<MessageInput>) -> Vec<OpenAiMessageInput> {
     messages
         .into_iter()
         .map(|message| OpenAiMessageInput {
             role: message.role,
-            content: message.content,
+            content: normalize_message_content(message.content),
             name: message.name,
             tool_call_id: message.tool_call_id,
             tool_calls: message.tool_calls.map(|tool_calls| {
@@ -1459,7 +1513,7 @@ impl WasmClient {
                         if llm.append_prompt_as_user.unwrap_or(true) {
                             history.push(MessageInput {
                                 role: "user".to_string(),
-                                content: prompt,
+                                content: JsonValue::String(prompt),
                                 name: None,
                                 tool_call_id: None,
                                 tool_calls: None,

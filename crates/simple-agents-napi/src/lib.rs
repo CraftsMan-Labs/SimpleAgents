@@ -9,7 +9,7 @@ use napi_derive::napi;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
 use simple_agent_type::coercion::CoercionFlag;
-use simple_agent_type::message::{Message, Role};
+use simple_agent_type::message::{ContentPart, Message, MessageContent, Role};
 use simple_agent_type::prelude::{
     ApiKey, CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
 };
@@ -226,10 +226,20 @@ pub struct CompleteOptions {
 }
 
 #[napi(object)]
+pub struct ContentPartInput {
+    #[napi(ts_type = "'text' | 'image' | 'audio' | 'video'")]
+    pub r#type: String,
+    pub text: Option<String>,
+    pub media_type: Option<String>,
+    pub data: Option<String>,
+}
+
+#[napi(object)]
 pub struct MessageInput {
     #[napi(ts_type = "'system' | 'user' | 'assistant' | 'tool'")]
     pub role: String,
-    pub content: String,
+    #[napi(ts_type = "string | Array<ContentPartInput>")]
+    pub content: Either<String, Vec<ContentPartInput>>,
     pub name: Option<String>,
     pub tool_call_id: Option<String>,
     pub tool_calls: Option<Vec<JsToolCall>>,
@@ -355,38 +365,131 @@ fn build_messages(input: Either<String, Vec<MessageInput>>) -> SaResult<Vec<Mess
     }
 }
 
+fn message_content_from_parts(parts: Vec<ContentPartInput>) -> SaResult<MessageContent> {
+    if parts.is_empty() {
+        return Err(SimpleAgentsError::Config(
+            "content parts cannot be empty".to_string(),
+        ));
+    }
+    let mut out = Vec::with_capacity(parts.len());
+    for p in parts {
+        match p.r#type.as_str() {
+            "text" => {
+                let t = p.text.ok_or_else(|| {
+                    SimpleAgentsError::Config("text part requires `text`".to_string())
+                })?;
+                out.push(ContentPart::text(t));
+            }
+            "image" => {
+                let mt = p.media_type.ok_or_else(|| {
+                    SimpleAgentsError::Config("image part requires `media_type`".to_string())
+                })?;
+                let d = p.data.ok_or_else(|| {
+                    SimpleAgentsError::Config("image part requires `data`".to_string())
+                })?;
+                out.push(ContentPart::image(mt, d));
+            }
+            "audio" => {
+                let mt = p.media_type.ok_or_else(|| {
+                    SimpleAgentsError::Config("audio part requires `media_type`".to_string())
+                })?;
+                let d = p.data.ok_or_else(|| {
+                    SimpleAgentsError::Config("audio part requires `data`".to_string())
+                })?;
+                out.push(ContentPart::audio(mt, d));
+            }
+            "video" => {
+                let mt = p.media_type.ok_or_else(|| {
+                    SimpleAgentsError::Config("video part requires `media_type`".to_string())
+                })?;
+                let d = p.data.ok_or_else(|| {
+                    SimpleAgentsError::Config("video part requires `data`".to_string())
+                })?;
+                out.push(ContentPart::video(mt, d));
+            }
+            other => {
+                return Err(SimpleAgentsError::Config(format!(
+                    "unknown content part type `{other}` (expected: text|image|audio|video)"
+                )));
+            }
+        }
+    }
+    Ok(MessageContent::Parts(out))
+}
+
 pub(crate) fn parse_message(input: MessageInput) -> SaResult<Message> {
-    let parsed_role = input.role.parse::<Role>().map_err(|_| {
+    let MessageInput {
+        role,
+        content,
+        name,
+        tool_call_id,
+        tool_calls,
+    } = input;
+
+    let parsed_role = role.parse::<Role>().map_err(|_| {
         SimpleAgentsError::Config("role must be one of: user, assistant, system, tool".to_string())
     })?;
 
+    let message_content: MessageContent = match content {
+        Either::A(s) => {
+            if s.is_empty() {
+                return Err(SimpleAgentsError::Config(
+                    "content cannot be empty".to_string(),
+                ));
+            }
+            MessageContent::Text(s)
+        }
+        Either::B(parts) => message_content_from_parts(parts)?,
+    };
+
     let mut message = match parsed_role {
-        Role::User => Message::user(input.content),
+        Role::User => Message {
+            role: Role::User,
+            content: message_content,
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
         Role::Assistant => {
-            let mut msg = Message::assistant(input.content);
-            if let Some(tool_calls) = input.tool_calls {
-                let calls = tool_calls
-                    .into_iter()
-                    .map(ToolCall::from)
-                    .collect::<Vec<_>>();
+            let mut msg = Message {
+                role: Role::Assistant,
+                content: message_content,
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            };
+            if let Some(calls_in) = tool_calls {
+                let calls = calls_in.into_iter().map(ToolCall::from).collect::<Vec<_>>();
                 if !calls.is_empty() {
                     msg = msg.with_tool_calls(calls);
                 }
             }
             msg
         }
-        Role::System => Message::system(input.content),
+        Role::System => Message {
+            role: Role::System,
+            content: message_content,
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        },
         Role::Tool => {
-            let tool_call_id = input.tool_call_id.ok_or_else(|| {
+            let call_id = tool_call_id.ok_or_else(|| {
                 SimpleAgentsError::Config("tool role requires tool_call_id".to_string())
             })?;
-            Message::tool(input.content, tool_call_id)
+            Message {
+                role: Role::Tool,
+                content: message_content,
+                name: None,
+                tool_call_id: Some(call_id),
+                tool_calls: None,
+            }
         }
     };
 
-    if let Some(name) = input.name {
-        if !name.is_empty() {
-            message = message.with_name(name);
+    if let Some(n) = name {
+        if !n.is_empty() {
+            message = message.with_name(n);
         }
     }
 

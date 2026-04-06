@@ -164,6 +164,30 @@ impl ContentPart {
         }
     }
 
+    /// Create an image content part from base64 data (MIME type + base64 string).
+    #[staticmethod]
+    fn image(media_type: &str, data: &str) -> Self {
+        ContentPart {
+            inner: simple_agent_type::message::ContentPart::image(media_type, data),
+        }
+    }
+
+    /// Create an audio content part from base64 data.
+    #[staticmethod]
+    fn audio(media_type: &str, data: &str) -> Self {
+        ContentPart {
+            inner: simple_agent_type::message::ContentPart::audio(media_type, data),
+        }
+    }
+
+    /// Create a video content part from base64 data.
+    #[staticmethod]
+    fn video(media_type: &str, data: &str) -> Self {
+        ContentPart {
+            inner: simple_agent_type::message::ContentPart::video(media_type, data),
+        }
+    }
+
     fn __repr__(&self) -> String {
         match &self.inner {
             simple_agent_type::message::ContentPart::Text { text } => {
@@ -178,7 +202,20 @@ impl ContentPart {
                     &image_url.url.chars().take(60).collect::<String>()
                 )
             }
-            _ => "ContentPart(other)".to_string(),
+            simple_agent_type::message::ContentPart::Audio { input_audio } => {
+                format!(
+                    "ContentPart.audio({:?}, <{} bytes>)",
+                    input_audio.media_type,
+                    input_audio.data.len()
+                )
+            }
+            simple_agent_type::message::ContentPart::Video { video } => {
+                format!(
+                    "ContentPart.video({:?}, <{} bytes>)",
+                    video.media_type,
+                    video.data.len()
+                )
+            }
         }
     }
 }

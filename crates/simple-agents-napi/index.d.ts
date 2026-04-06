@@ -73,9 +73,15 @@ export interface CompleteOptions {
   mode?: string
   schema?: unknown
 }
+export interface ContentPartInput {
+  type: 'text' | 'image' | 'audio' | 'video'
+  text?: string
+  mediaType?: string
+  data?: string
+}
 export interface MessageInput {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | Array<ContentPartInput>
   name?: string
   toolCallId?: string
   toolCalls?: Array<JsToolCall>

@@ -7,9 +7,23 @@ export interface CompleteOptions {
   schema?: unknown;
 }
 
+/**
+ * Simplified multimodal segment (normalized to OpenAI wire format before send).
+ * You may also pass native OpenAI parts (e.g. `{ type: "image_url", image_url: { url } }`).
+ */
+export interface ContentPartInput {
+  type: "text" | "image" | "audio" | "video";
+  text?: string;
+  /** Base64 payload without data: prefix */
+  data?: string;
+  /** MIME type, e.g. image/png (also accepts camelCase `mediaType`) */
+  media_type?: string;
+  mediaType?: string;
+}
+
 export interface MessageInput {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | ContentPartInput[];
   name?: string;
   toolCallId?: string;
   toolCalls?: Array<JsToolCall>;
