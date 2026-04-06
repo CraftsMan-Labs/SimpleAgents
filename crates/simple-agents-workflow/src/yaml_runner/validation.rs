@@ -1,6 +1,36 @@
 use std::collections::{HashMap, HashSet};
 
+use serde_json::Value;
+
 use super::*;
+
+pub(crate) fn validate_json_schema(schema: &Value) -> Result<(), String> {
+    jsonschema::JSONSchema::compile(schema)
+        .map(|_| ())
+        .map_err(|error| format!("invalid JSON schema: {error}"))
+}
+
+pub(crate) fn validate_schema_instance(schema: &Value, instance: &Value) -> Result<(), String> {
+    let validator = jsonschema::JSONSchema::compile(schema)
+        .map_err(|error| format!("invalid JSON schema: {error}"))?;
+    if let Err(errors) = validator.validate(instance) {
+        let message = errors
+            .into_iter()
+            .next()
+            .map(|error| error.to_string())
+            .unwrap_or_else(|| "unknown schema validation error".to_string());
+        return Err(format!("schema validation failed: {message}"));
+    }
+    Ok(())
+}
+
+pub(crate) fn schema_type(schema: &Value) -> Option<&str> {
+    schema.get("type").and_then(Value::as_str)
+}
+
+pub(crate) fn schema_expects_object(schema: &Value) -> bool {
+    schema_type(schema) == Some("object")
+}
 
 pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnostic> {
     let mut diagnostics = Vec::new();
