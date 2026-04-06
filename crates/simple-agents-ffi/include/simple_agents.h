@@ -84,6 +84,38 @@ char *sa_run_workflow(
 );
 
 /*
+ * Stream a workflow YAML file, delivering each event as JSON to the callback.
+ *
+ * Parameters:
+ * - client:     Live pointer from sa_client_new; must not be NULL.
+ * - yaml_path:  Filesystem path to the workflow YAML file.
+ * - input_json: JSON object for the workflow input.
+ * - callback:   Called for each event; return 0 to continue, non-zero to cancel.
+ * - user_data:  Passed through to callback unchanged.
+ *
+ * Returns 0 on success, -1 on error (check sa_last_error_message).
+ */
+int32_t sa_stream_workflow(
+    SAClient *client,
+    const char *yaml_path,
+    const char *input_json,
+    SAStreamCallback callback,
+    void *user_data
+);
+
+/*
+ * Resume a workflow from a checkpoint JSON string.
+ *
+ * Parameters:
+ * - client:          Live pointer from sa_client_new; must not be NULL.
+ * - checkpoint_json: JSON string from a failed workflow's checkpoint field.
+ *
+ * Returns a JSON string with the YamlWorkflowRunOutput, or NULL on error.
+ * Caller must free with sa_string_free.
+ */
+char *sa_resume(SAClient *client, const char *checkpoint_json);
+
+/*
  * Get the last error message for the current thread.
  * Returns NULL if no error.
  * Caller must free with sa_string_free.

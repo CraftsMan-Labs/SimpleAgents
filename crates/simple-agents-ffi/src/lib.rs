@@ -13,8 +13,8 @@ use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, Si
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
+    workflow_execution, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
@@ -402,18 +402,194 @@ pub unsafe extern "C" fn sa_run_workflow(
             .lock()
             .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
 
+        let request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(std::path::Path::new(&path)),
+            workflow_input: &input,
+            executor: YamlWorkflowExecutorBinding::Client(&ffi.client),
+            custom_worker: None,
+            options: &YamlWorkflowRunOptions::default(),
+            flags: YamlWorkflowExecutionFlags::default(),
+        };
+
         let output = runtime
-            .block_on(
-                run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-                    std::path::Path::new(&path),
-                    &input,
-                    &ffi.client,
-                    None,
-                    None,
-                    &YamlWorkflowRunOptions::default(),
-                    YamlWorkflowExecutionFlags::default(),
-                ),
-            )
+            .block_on(workflow_execution::run(request))
+            .map_err(|e| SimpleAgentsError::Config(format!("workflow execution failed: {e}")))?;
+
+        serde_json::to_string(&output)
+            .map_err(|e| SimpleAgentsError::Config(format!("failed to serialize output: {e}")))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// sa_stream_workflow — stream a YAML workflow with C callback for events
+// ---------------------------------------------------------------------------
+
+/// Stream a YAML workflow file, delivering each event as a JSON string to
+/// `callback`. Return 0 from the callback to continue, non-zero to cancel.
+///
+/// Returns 0 on success, -1 on error (check `sa_last_error_message`).
+///
+/// # Safety
+///
+/// `client` must be a live pointer from `sa_client_new`.
+/// `yaml_path` and `input_json` must be valid null-terminated UTF-8 strings.
+/// `callback` must remain valid for the duration of the call.
+#[no_mangle]
+pub unsafe extern "C" fn sa_stream_workflow(
+    client: *mut SaClient,
+    yaml_path: *const c_char,
+    input_json: *const c_char,
+    callback: SaStreamCallback,
+    user_data: *mut c_void,
+) -> i32 {
+    if client.is_null() {
+        set_last_error("client cannot be null");
+        return -1;
+    }
+
+    let Some(callback) = callback else {
+        set_last_error("callback cannot be null");
+        return -1;
+    };
+
+    ffi_guard_status(|| {
+        let path = cstr_to_string(yaml_path, "yaml_path")?;
+        let input_str = cstr_to_string(input_json, "input_json")?;
+        let input: JsonValue = serde_json::from_str(&input_str)
+            .map_err(|e| SimpleAgentsError::Config(format!("invalid input JSON: {e}")))?;
+
+        let ffi = &(*client).inner;
+        let runtime = ffi
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        // Bridge: collect events and deliver each one via the C callback.
+        use std::cell::Cell;
+        struct FfiEventSink {
+            callback: extern "C" fn(*const c_char, *mut c_void) -> i32,
+            user_data: *mut c_void,
+            cancelled: Cell<bool>,
+        }
+
+        // Safety: The callback and user_data are valid for the duration of the
+        // `block_on` call on this thread. FfiEventSink is not `Send` but we
+        // don't move it across threads.
+        unsafe impl Send for FfiEventSink {}
+        unsafe impl Sync for FfiEventSink {}
+
+        impl simple_agents_workflow::yaml_runner::YamlWorkflowEventSink for FfiEventSink {
+            fn emit(&self, event: &simple_agents_workflow::yaml_runner::YamlWorkflowEvent) {
+                if self.cancelled.get() {
+                    return;
+                }
+                let payload = match serde_json::to_string(event) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                let c_payload = match std::ffi::CString::new(payload) {
+                    Ok(s) => s,
+                    Err(_) => return,
+                };
+                let status = (self.callback)(c_payload.as_ptr(), self.user_data);
+                if status != 0 {
+                    self.cancelled.set(true);
+                }
+            }
+
+            fn is_cancelled(&self) -> bool {
+                self.cancelled.get()
+            }
+        }
+
+        let event_sink = FfiEventSink {
+            callback,
+            user_data,
+            cancelled: Cell::new(false),
+        };
+
+        let request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(std::path::Path::new(&path)),
+            workflow_input: &input,
+            executor: YamlWorkflowExecutorBinding::Client(&ffi.client),
+            custom_worker: None,
+            options: &YamlWorkflowRunOptions::default(),
+            flags: YamlWorkflowExecutionFlags {
+                workflow_streaming: true,
+                ..YamlWorkflowExecutionFlags::default()
+            },
+        };
+
+        runtime
+            .block_on(workflow_execution::stream(request, &event_sink))
+            .map_err(|e| SimpleAgentsError::Config(format!("workflow stream failed: {e}")))?;
+
+        Ok(())
+    })
+}
+
+// ---------------------------------------------------------------------------
+// sa_resume — resume from a serialized checkpoint JSON
+// ---------------------------------------------------------------------------
+
+/// Resume a workflow from a previously captured checkpoint JSON string.
+///
+/// `checkpoint_json` — JSON string matching the `WorkflowCheckpoint` schema
+/// (returned as part of a failed workflow output).
+///
+/// Returns a JSON string with `YamlWorkflowRunOutput`, or null on error.
+///
+/// # Safety
+///
+/// `client` must be a live pointer from `sa_client_new`.
+/// `checkpoint_json` must be a valid null-terminated UTF-8 JSON string.
+/// The returned pointer must be freed with `sa_string_free`.
+#[no_mangle]
+pub unsafe extern "C" fn sa_resume(
+    client: *mut SaClient,
+    checkpoint_json: *const c_char,
+) -> *mut c_char {
+    if client.is_null() {
+        set_last_error("client cannot be null");
+        return std::ptr::null_mut();
+    }
+
+    ffi_guard(|| {
+        let checkpoint_str = cstr_to_string(checkpoint_json, "checkpoint_json")?;
+        let checkpoint: serde_json::Value = serde_json::from_str(&checkpoint_str)
+            .map_err(|e| SimpleAgentsError::Config(format!("invalid checkpoint JSON: {e}")))?;
+
+        let workflow_path = checkpoint
+            .get("workflow_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| {
+                SimpleAgentsError::Config("checkpoint must have workflow_path".to_string())
+            })?
+            .to_string();
+
+        let messages_val = checkpoint
+            .get("original_messages")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+        let input = serde_json::json!({ "messages": messages_val });
+
+        let ffi = &(*client).inner;
+        let runtime = ffi
+            .runtime
+            .lock()
+            .map_err(|_| SimpleAgentsError::Config("runtime lock poisoned".to_string()))?;
+
+        let request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(std::path::Path::new(&workflow_path)),
+            workflow_input: &input,
+            executor: YamlWorkflowExecutorBinding::Client(&ffi.client),
+            custom_worker: None,
+            options: &YamlWorkflowRunOptions::default(),
+            flags: YamlWorkflowExecutionFlags::default(),
+        };
+
+        let output = runtime
+            .block_on(workflow_execution::run(request))
             .map_err(|e| SimpleAgentsError::Config(format!("workflow execution failed: {e}")))?;
 
         serde_json::to_string(&output)
