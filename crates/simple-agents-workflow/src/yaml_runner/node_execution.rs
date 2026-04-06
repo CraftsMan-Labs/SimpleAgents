@@ -1,4 +1,3 @@
-use super::events::{emit_llm_input_resolved, ensure_event_sink_active};
 use super::*;
 
 pub(super) struct NodeExecutionOutcome {
@@ -150,15 +149,32 @@ pub(super) async fn execute_llm_node(
         span.set_attribute("langfuse.observation.input", node_input.as_str());
     }
 
-    emit_llm_input_resolved(
-        event_sink,
-        node.id.as_str(),
-        started.elapsed().as_millis(),
-        &request,
-    );
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "resolved_llm_input".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some("llm_call".to_string()),
+            streamable: None,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(started.elapsed().as_millis()),
+            metadata: Some(json!({
+                "bindings": request.prompt_bindings,
+                "model": request.model,
+                "prompt": request.prompt,
+            })),
+        });
+    }
 
     llm_node_models.insert(node.id.clone(), request.model.clone());
-    ensure_event_sink_active(event_sink)?;
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let llm_result = executor
         .complete_structured(request, event_sink)
@@ -270,7 +286,11 @@ pub(super) async fn execute_custom_worker_node(
     let worker_context =
         custom_worker_context_with_trace(&context, &worker_trace_context, &options.trace.tenant);
 
-    ensure_event_sink_active(event_sink)?;
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
         custom_worker_executor

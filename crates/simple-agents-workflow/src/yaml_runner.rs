@@ -1,7 +1,12 @@
+use std::collections::{BTreeMap, HashMap};
+use std::time::Instant;
+
 use serde_json::{json, Value};
+use simple_agent_type::message::Message;
+use simple_agent_type::tool::{ToolChoice, ToolChoiceMode, ToolChoiceTool, ToolDefinition};
 use simple_agents_core::SimpleAgentsClient;
 
-use crate::observability::tracing::TraceContext;
+use crate::observability::tracing::{SpanKind, TraceContext, workflow_tracer, flush_workflow_tracer};
 
 mod api;
 mod client_executor;
@@ -149,28 +154,6 @@ pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_opti
     .await
 }
 
-pub async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options_typed(
-    workflow: &YamlWorkflow,
-    workflow_input: &Value,
-    client: &SimpleAgentsClient,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-    execution_flags: YamlWorkflowExecutionFlags,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
-        workflow,
-        workflow_input,
-        client,
-        custom_worker,
-        event_sink,
-        options,
-        execution_flags,
-    )
-    .await
-    .map(|output| output.to_typed_output(workflow))
-}
-
 pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
@@ -190,28 +173,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
         execution_flags,
     )
     .await
-}
-
-pub async fn run_workflow_yaml_with_custom_worker_and_events_and_options_typed(
-    workflow: &YamlWorkflow,
-    workflow_input: &Value,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-    execution_flags: YamlWorkflowExecutionFlags,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_workflow_yaml_with_custom_worker_and_events_and_options(
-        workflow,
-        workflow_input,
-        executor,
-        custom_worker,
-        event_sink,
-        options,
-        execution_flags,
-    )
-    .await
-    .map(|output| output.to_typed_output(workflow))
 }
 
 #[cfg(test)]
@@ -236,10 +197,6 @@ mod tests {
 
     struct RecordingSink {
         events: Mutex<Vec<YamlWorkflowEvent>>,
-    }
-
-    struct RecordingTypedSink {
-        events: Mutex<Vec<YamlWorkflowTypedEvent>>,
     }
 
     struct CancelAfterFirstEventSink {
@@ -598,15 +555,6 @@ mod tests {
             self.events
                 .lock()
                 .expect("recording sink lock should not be poisoned")
-                .push(event.clone());
-        }
-    }
-
-    impl YamlWorkflowTypedEventSink for RecordingTypedSink {
-        fn emit_typed(&self, event: &YamlWorkflowTypedEvent) {
-            self.events
-                .lock()
-                .expect("recording typed sink lock should not be poisoned")
                 .push(event.clone());
         }
     }
@@ -1216,43 +1164,6 @@ nodes:
 
         assert_eq!(output_1.workflow_id, output_2.workflow_id);
         assert_eq!(output_1.terminal_node, output_2.terminal_node);
-    }
-
-    #[tokio::test]
-    async fn typed_wrapper_entrypoints_produce_equivalent_outputs() {
-        let yaml = r#"
-id: typed-wrapper
-entry_node: classify
-nodes:
-  - id: classify
-    node_type:
-      llm_call:
-        model: gpt-4.1
-    config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
-      output_schema:
-        type: object
-        properties:
-          category: { type: string }
-        required: [category]
-"#;
-
-        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
-        let input = json!({"email_text": "hello"});
-
-        let typed_output = run_workflow_yaml_with_custom_worker_and_events_and_options_typed(
-            &workflow,
-            &input,
-            &MockExecutor,
-            None,
-            None,
-            &YamlWorkflowRunOptions::default(),
-            YamlWorkflowExecutionFlags::default(),
-        )
-        .await
-        .expect("typed wrapper should succeed");
-
-        assert_eq!(typed_output.workflow_id, "typed-wrapper");
     }
 
     #[tokio::test]
@@ -2383,240 +2294,6 @@ nodes:
         assert_eq!(result, "hello");
     }
 
-    #[test]
-    fn to_typed_output_maps_node_kinds_from_workflow_definition() {
-        let workflow_yaml = r#"
-id: typed-output-demo
-entry_node: classify
-nodes:
-  - id: classify
-    node_type:
-      llm_call:
-        model: gpt-4.1
-  - id: route
-    node_type:
-      switch:
-        branches:
-          - condition: '$.nodes.classify.output.state == "ready"'
-            target: worker
-        default: worker
-  - id: worker
-    node_type:
-      custom_worker:
-        handler: do_work
-edges:
-  - from: classify
-    to: route
-  - from: route
-    to: worker
-"#;
-        let workflow: YamlWorkflow =
-            serde_yaml::from_str(workflow_yaml).expect("workflow should parse");
-        let output = YamlWorkflowRunOutput {
-            workflow_id: "typed-output-demo".to_string(),
-            entry_node: "classify".to_string(),
-            trace: vec![
-                "classify".to_string(),
-                "route".to_string(),
-                "worker".to_string(),
-            ],
-            outputs: BTreeMap::from([
-                ("classify".to_string(), json!({"state": "ready"})),
-                ("route".to_string(), json!("worker")),
-                ("worker".to_string(), json!({"ok": true})),
-            ]),
-            terminal_node: "worker".to_string(),
-            terminal_output: Some(json!({"ok": true})),
-            step_timings: Vec::new(),
-            llm_node_metrics: BTreeMap::new(),
-            llm_node_models: BTreeMap::new(),
-            total_elapsed_ms: 0,
-            ttft_ms: None,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_tokens: 0,
-            total_reasoning_tokens: None,
-            tokens_per_second: 0.0,
-            trace_id: None,
-            metadata: None,
-        };
-
-        let typed = output.to_typed_output(&workflow);
-        assert_eq!(typed.node_outputs.len(), 3);
-        assert_eq!(
-            typed
-                .node_outputs
-                .iter()
-                .find(|record| record.node_id == "classify")
-                .map(|record| record.node_kind),
-            Some(YamlWorkflowNodeKind::LlmCall)
-        );
-        assert_eq!(
-            typed
-                .node_outputs
-                .iter()
-                .find(|record| record.node_id == "route")
-                .map(|record| record.node_kind),
-            Some(YamlWorkflowNodeKind::Switch)
-        );
-        assert_eq!(
-            typed
-                .node_outputs
-                .iter()
-                .find(|record| record.node_id == "worker")
-                .map(|record| record.node_kind),
-            Some(YamlWorkflowNodeKind::CustomWorker)
-        );
-        assert_eq!(
-            typed
-                .terminal_output
-                .as_ref()
-                .map(|record| record.node_kind),
-            Some(YamlWorkflowNodeKind::CustomWorker)
-        );
-    }
-
-    #[test]
-    fn to_typed_output_marks_unknown_node_ids() {
-        let workflow_yaml = r#"
-id: typed-output-unknown
-entry_node: start
-nodes:
-  - id: start
-    node_type:
-      llm_call:
-        model: gpt-4.1
-"#;
-        let workflow: YamlWorkflow =
-            serde_yaml::from_str(workflow_yaml).expect("workflow should parse");
-        let output = YamlWorkflowRunOutput {
-            workflow_id: "typed-output-unknown".to_string(),
-            entry_node: "start".to_string(),
-            trace: vec!["start".to_string(), "not-in-graph".to_string()],
-            outputs: BTreeMap::from([("not-in-graph".to_string(), json!({"v": 1}))]),
-            terminal_node: "not-in-graph".to_string(),
-            terminal_output: Some(json!({"v": 1})),
-            step_timings: Vec::new(),
-            llm_node_metrics: BTreeMap::new(),
-            llm_node_models: BTreeMap::new(),
-            total_elapsed_ms: 0,
-            ttft_ms: None,
-            total_input_tokens: 0,
-            total_output_tokens: 0,
-            total_tokens: 0,
-            total_reasoning_tokens: None,
-            tokens_per_second: 0.0,
-            trace_id: None,
-            metadata: None,
-        };
-
-        let typed = output.to_typed_output(&workflow);
-        assert_eq!(typed.node_outputs.len(), 1);
-        assert_eq!(
-            typed.node_outputs[0].node_kind,
-            YamlWorkflowNodeKind::Unknown
-        );
-        assert_eq!(
-            typed
-                .terminal_output
-                .as_ref()
-                .map(|record| record.node_kind),
-            Some(YamlWorkflowNodeKind::Unknown)
-        );
-    }
-
-    #[test]
-    fn to_typed_event_maps_known_event_type() {
-        let event = YamlWorkflowEvent {
-            event_type: "node_completed".to_string(),
-            node_id: Some("classify".to_string()),
-            step_id: Some("classify".to_string()),
-            node_kind: Some("llm_call".to_string()),
-            streamable: Some(false),
-            message: None,
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(42),
-            metadata: None,
-        };
-        let typed = event.to_typed_event();
-        assert_eq!(typed.event_type, YamlWorkflowEventType::NodeCompleted);
-    }
-
-    #[test]
-    fn to_typed_event_marks_unknown_event_type() {
-        let event = YamlWorkflowEvent {
-            event_type: "something_new".to_string(),
-            node_id: None,
-            step_id: None,
-            node_kind: None,
-            streamable: None,
-            message: None,
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: None,
-            metadata: None,
-        };
-        let typed = event.to_typed_event();
-        assert_eq!(typed.event_type, YamlWorkflowEventType::Unknown);
-    }
-
-    #[tokio::test]
-    async fn workflow_runner_can_emit_typed_events() {
-        let yaml = r#"
-id: typed-events
-entry_node: classify
-nodes:
-  - id: classify
-    node_type:
-      llm_call:
-        model: gpt-4.1
-    config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
-      output_schema:
-        type: object
-        properties:
-          category: { type: string }
-        required: [category]
-"#;
-
-        let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
-        let typed_sink = RecordingTypedSink {
-            events: Mutex::new(Vec::new()),
-        };
-        let sink = RecordingSink {
-            events: Mutex::new(Vec::new()),
-        };
-
-        let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
-            &workflow,
-            &json!({"email_text": "hello"}),
-            &MockExecutor,
-            None,
-            Some(&sink),
-            &YamlWorkflowRunOptions::default(),
-            YamlWorkflowExecutionFlags::default(),
-        )
-        .await
-        .expect("typed run should succeed");
-
-        let events = sink.events.lock().expect("sink lock");
-        for event in events.iter() {
-            typed_sink.emit_typed(&event.to_typed_event());
-        }
-
-        assert_eq!(output.workflow_id, "typed-events");
-        let events = typed_sink
-            .events
-            .lock()
-            .expect("typed sink lock should not be poisoned");
-        assert!(!events.is_empty());
-        assert!(events
-            .iter()
-            .any(|event| event.event_type == YamlWorkflowEventType::WorkflowCompleted));
-    }
 }
 
 #[tokio::test]

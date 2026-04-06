@@ -1,4 +1,35 @@
-use super::*;
+use std::collections::HashMap;
+use std::time::Instant;
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use serde_json::{json, Value};
+use simple_agent_type::message::Message;
+use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::response::FinishReason;
+use simple_agent_type::tool::{ToolCall, ToolType};
+use simple_agents_core::{CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient};
+
+use crate::observability::tracing::{SpanKind, TraceContext};
+
+use super::contracts::{
+    event_sink_is_cancelled, workflow_event_sink_cancelled_message,
+    YamlLlmExecutionRequest, YamlResolvedTool, YamlWorkflowCustomWorkerExecutor,
+    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor,
+    YamlWorkflowRunError, YamlWorkflowTokenKind,
+};
+use super::stream_filters::{StructuredJsonDeltaFilter, StreamJsonAsTextFormatter, parse_streamed_structured_payload};
+use super::telemetry::{
+    apply_trace_identity_attributes, apply_trace_tenant_attributes_from_tenant,
+    payload_for_span, payload_for_tool_trace, split_stream_deltas_enabled,
+};
+use super::types::{
+    YamlLlmExecutionResult, YamlLlmTokenUsage, YamlToolCallTrace, YamlToolTraceMode,
+    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
+};
+use super::validation::{schema_expects_object, validate_schema_instance};
+use super::subworkflow::execute_subworkflow_tool_call;
+use crate::observability::tracing::workflow_tracer;
 
 pub(super) struct BorrowedClientExecutor<'a> {
     pub(super) client: &'a SimpleAgentsClient,
@@ -105,7 +136,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }
@@ -132,7 +163,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }
@@ -159,7 +190,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }

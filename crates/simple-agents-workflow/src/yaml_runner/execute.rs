@@ -1,7 +1,3 @@
-use super::events::{
-    emit_node_completed, emit_node_started, emit_workflow_completed, emit_workflow_started,
-    ensure_event_sink_active,
-};
 use super::node_execution::{
     execute_custom_worker_node, execute_llm_node, CustomWorkerEnv, CustomWorkerState, LlmNodeEnv,
     LlmNodeState,
@@ -41,19 +37,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
 
     validate_custom_worker_handler_files(workflow, custom_worker)?;
 
-    if let Some(output) = super::try_run_yaml_via_ir_runtime(
-        workflow,
-        workflow_input,
-        executor,
-        custom_worker,
-        options,
-        execution_flags,
-    )
-    .await?
-    {
-        return Ok(output);
-    }
-
     let parent_trace_context = trace_context_from_options(options);
     let telemetry_context = resolve_telemetry_context(options, parent_trace_context.as_ref());
 
@@ -68,11 +51,33 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     let run_result = async {
         let mut run_context = prepare_run_context(workflow)?;
 
-        emit_workflow_started(event_sink, workflow.id.as_str());
-        ensure_event_sink_active(event_sink)?;
+        if let Some(sink) = event_sink {
+            sink.emit(&YamlWorkflowEvent {
+                event_type: "workflow_started".to_string(),
+                node_id: None,
+                step_id: None,
+                node_kind: None,
+                streamable: None,
+                message: Some(format!("workflow '{}' started", workflow.id)),
+                delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
+                elapsed_ms: None,
+                metadata: None,
+            });
+        }
+        if event_sink_is_cancelled(event_sink) {
+            return Err(YamlWorkflowRunError::EventSinkCancelled {
+                message: workflow_event_sink_cancelled_message().to_string(),
+            });
+        }
 
         loop {
-            ensure_event_sink_active(event_sink)?;
+            if event_sink_is_cancelled(event_sink) {
+                return Err(YamlWorkflowRunError::EventSinkCancelled {
+                    message: workflow_event_sink_cancelled_message().to_string(),
+                });
+            }
 
             let next = execute_single_node_step(
                 workflow_input,
@@ -306,14 +311,26 @@ async fn execute_single_node_step(
     });
     let workflow_elapsed_before_node_ms = state.started.elapsed().as_millis();
 
-    emit_node_started(
-        event_sink,
-        node.id.as_str(),
-        node.kind_name(),
-        node_streamable,
-        workflow_elapsed_before_node_ms,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "node_started".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some(node.kind_name().to_string()),
+            streamable: node_streamable,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(workflow_elapsed_before_node_ms),
+            metadata: None,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let mut node_usage: Option<YamlLlmTokenUsage> = None;
     let mut node_model_name: Option<String> = None;
@@ -400,14 +417,26 @@ async fn execute_single_node_step(
         &mut state.llm_node_metrics,
     );
 
-    emit_node_completed(
-        event_sink,
-        node.id.as_str(),
-        node.kind_name(),
-        node_streamable,
-        elapsed_ms,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "node_completed".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some(node.kind_name().to_string()),
+            streamable: node_streamable,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(elapsed_ms),
+            metadata: None,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     Ok(next)
 }
@@ -515,13 +544,26 @@ fn finalize_workflow_output(
         None
     };
 
-    emit_workflow_completed(
-        event_sink,
-        output.terminal_node.as_str(),
-        output.total_elapsed_ms,
-        event_metadata,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "workflow_completed".to_string(),
+            node_id: Some(output.terminal_node.clone()),
+            step_id: None,
+            node_kind: None,
+            streamable: None,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(output.total_elapsed_ms),
+            metadata: event_metadata,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     Ok(output)
 }

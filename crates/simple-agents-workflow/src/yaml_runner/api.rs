@@ -4,10 +4,90 @@ use serde_json::Value;
 use simple_agents_core::SimpleAgentsClient;
 
 use super::{
-    WorkflowRunner, YamlWorkflow, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEventSink,
+    YamlWorkflow, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEventSink,
     YamlWorkflowExecutionFlags, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
-    YamlWorkflowRunOptions, YamlWorkflowRunOutput, YamlWorkflowRunTypedOutput,
+    YamlWorkflowRunOptions, YamlWorkflowRunOutput,
 };
+
+async fn run_with_executor<'a>(
+    source: WorkflowApiSource<'a>,
+    input: WorkflowApiInput<'a>,
+    executor: &'a dyn YamlWorkflowLlmExecutor,
+    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let default_options = YamlWorkflowRunOptions::default();
+    let run_options = options.unwrap_or(&default_options);
+    match source {
+        WorkflowApiSource::File(path) => {
+            let (_canonical, workflow) = super::load_workflow_yaml_file(path)?;
+            super::run_workflow_yaml_with_custom_worker_and_events_and_options(
+                &workflow,
+                input.value(),
+                executor,
+                custom_worker,
+                event_sink,
+                run_options,
+                execution_flags,
+            )
+            .await
+        }
+        WorkflowApiSource::Inline(workflow) => {
+            super::run_workflow_yaml_with_custom_worker_and_events_and_options(
+                workflow,
+                input.value(),
+                executor,
+                custom_worker,
+                event_sink,
+                run_options,
+                execution_flags,
+            )
+            .await
+        }
+    }
+}
+
+async fn run_with_client<'a>(
+    source: WorkflowApiSource<'a>,
+    input: WorkflowApiInput<'a>,
+    client: &'a SimpleAgentsClient,
+    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    options: Option<&'a YamlWorkflowRunOptions>,
+    execution_flags: YamlWorkflowExecutionFlags,
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let default_options = YamlWorkflowRunOptions::default();
+    let run_options = options.unwrap_or(&default_options);
+    match source {
+        WorkflowApiSource::File(path) => {
+            let (_canonical, workflow) = super::load_workflow_yaml_file(path)?;
+            super::run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+                &workflow,
+                input.value(),
+                client,
+                custom_worker,
+                event_sink,
+                run_options,
+                execution_flags,
+            )
+            .await
+        }
+        WorkflowApiSource::Inline(workflow) => {
+            super::run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+                workflow,
+                input.value(),
+                client,
+                custom_worker,
+                event_sink,
+                run_options,
+                execution_flags,
+            )
+            .await
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum WorkflowApiSource<'a> {
@@ -20,92 +100,20 @@ enum WorkflowApiInput<'a> {
     Input(&'a Value),
 }
 
-fn runner_for_source<'a>(source: WorkflowApiSource<'a>) -> WorkflowRunner<'a> {
-    match source {
-        WorkflowApiSource::File(path) => WorkflowRunner::from_file(path),
-        WorkflowApiSource::Inline(workflow) => WorkflowRunner::from_workflow(workflow),
+impl<'a> WorkflowApiInput<'a> {
+    fn value(&self) -> &'a Value {
+        match self {
+            WorkflowApiInput::Input(v) => v,
+        }
     }
-}
-
-fn runner_with_input<'a>(
-    runner: WorkflowRunner<'a>,
-    input: WorkflowApiInput<'a>,
-) -> WorkflowRunner<'a> {
-    match input {
-        WorkflowApiInput::Input(workflow_input) => runner.with_input(workflow_input),
-    }
-}
-
-fn runner_with_optional_options<'a>(
-    runner: WorkflowRunner<'a>,
-    options: Option<&'a YamlWorkflowRunOptions>,
-) -> WorkflowRunner<'a> {
-    if let Some(run_options) = options {
-        runner.with_options(run_options)
-    } else {
-        runner
-    }
-}
-
-async fn run_with_executor<'a>(
-    source: WorkflowApiSource<'a>,
-    input: WorkflowApiInput<'a>,
-    executor: &'a dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
-    options: Option<&'a YamlWorkflowRunOptions>,
-    execution_flags: YamlWorkflowExecutionFlags,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    let runner = runner_with_input(runner_for_source(source), input)
-        .with_executor(executor)
-        .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink)
-        .with_execution_flags(execution_flags);
-    runner_with_optional_options(runner, options).run().await
-}
-
-async fn run_with_client<'a>(
-    source: WorkflowApiSource<'a>,
-    input: WorkflowApiInput<'a>,
-    client: &'a SimpleAgentsClient,
-    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
-    options: Option<&'a YamlWorkflowRunOptions>,
-    execution_flags: YamlWorkflowExecutionFlags,
-) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    let runner = runner_with_input(runner_for_source(source), input)
-        .with_client(client)
-        .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink)
-        .with_execution_flags(execution_flags);
-    runner_with_optional_options(runner, options).run().await
-}
-
-async fn run_typed_with_executor<'a>(
-    source: WorkflowApiSource<'a>,
-    input: WorkflowApiInput<'a>,
-    executor: &'a dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
-    options: Option<&'a YamlWorkflowRunOptions>,
-    execution_flags: YamlWorkflowExecutionFlags,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    let runner = runner_with_input(runner_for_source(source), input)
-        .with_executor(executor)
-        .with_custom_worker(custom_worker)
-        .with_event_sink(event_sink)
-        .with_execution_flags(execution_flags);
-    runner_with_optional_options(runner, options)
-        .run_typed()
-        .await
 }
 
 pub async fn run_workflow_yaml_file_typed(
     workflow_path: &Path,
     workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_with_executor(
         WorkflowApiSource::File(workflow_path),
         WorkflowApiInput::Input(workflow_input),
         executor,
@@ -121,8 +129,8 @@ pub async fn run_workflow_yaml_typed(
     workflow: &YamlWorkflow,
     workflow_input: &Value,
     executor: &dyn YamlWorkflowLlmExecutor,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
         executor,
@@ -141,8 +149,8 @@ pub async fn run_workflow_yaml_file_typed_with_custom_worker_and_events_and_opti
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_with_executor(
         WorkflowApiSource::File(workflow_path),
         WorkflowApiInput::Input(workflow_input),
         executor,
@@ -161,8 +169,8 @@ pub async fn run_workflow_yaml_typed_with_custom_worker_and_events_and_options(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
-) -> Result<YamlWorkflowRunTypedOutput, YamlWorkflowRunError> {
-    run_typed_with_executor(
+) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    run_with_executor(
         WorkflowApiSource::Inline(workflow),
         WorkflowApiInput::Input(workflow_input),
         executor,
@@ -374,7 +382,6 @@ pub async fn run_workflow_yaml_with_custom_worker_and_events(
     .await
 }
 
-/// Canonical typed workflow execution API (three entrypoints: `run`, `run_async`, `stream`).
 pub mod workflow_execution {
     use super::super::{
         dispatch_yaml_workflow_execution, load_workflow_yaml_file,
@@ -383,7 +390,6 @@ pub mod workflow_execution {
         YamlWorkflowSource, YamlWorkflowStreamFilterSink,
     };
 
-    /// Blocking-style async run with no workflow event sink (`workflow_streaming` must be false).
     pub async fn run(
         request: YamlWorkflowExecutionRequest<'_>,
     ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
@@ -426,7 +432,6 @@ pub mod workflow_execution {
         }
     }
 
-    /// Explicit future-style entry for bindings; behavior matches [`run`].
     pub fn run_async<'a>(
         request: YamlWorkflowExecutionRequest<'a>,
     ) -> impl std::future::Future<Output = Result<YamlWorkflowRunOutput, YamlWorkflowRunError>> + Send + 'a
@@ -434,7 +439,6 @@ pub mod workflow_execution {
         run(request)
     }
 
-    /// Same as [`run`] but forwards events to `sink`, subject to `request.flags.workflow_streaming`.
     pub async fn stream(
         request: YamlWorkflowExecutionRequest<'_>,
         sink: &dyn super::super::YamlWorkflowEventSink,
