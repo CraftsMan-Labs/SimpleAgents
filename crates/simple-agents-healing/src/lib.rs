@@ -20,7 +20,6 @@
 //! 3. **Streaming Parser**: Incremental parsing for streaming responses
 //!    - Partial value extraction
 //!    - Progressive emission during streaming
-//!    - Annotation support (stream.not_null, stream.done)
 //!
 //! # Example
 //!
@@ -65,8 +64,8 @@ pub mod string_utils;
 // Re-export commonly used types
 pub use coercion::{CoercionConfig, CoercionEngine};
 pub use parser::{JsonishParser, ParserConfig, ParserResult};
-pub use schema::{Field, ObjectSchema, Schema, StreamAnnotation};
-pub use streaming::{PartialExtractor, StreamingParser};
+pub use schema::{Field, ObjectSchema, Schema};
+pub use streaming::StreamingParser;
 
 // Re-export from simple-agent-type for convenience
 pub use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
@@ -76,8 +75,8 @@ pub use simple_agent_type::error::{HealingError, Result};
 pub mod prelude {
     pub use crate::coercion::{CoercionConfig, CoercionEngine};
     pub use crate::parser::{JsonishParser, ParserConfig, ParserResult};
-    pub use crate::schema::{Field, ObjectSchema, Schema, StreamAnnotation};
-    pub use crate::streaming::{PartialExtractor, StreamingParser};
+    pub use crate::schema::{Field, ObjectSchema, Schema};
+    pub use crate::streaming::StreamingParser;
     pub use simple_agent_type::coercion::{CoercionFlag, CoercionResult};
     pub use simple_agent_type::error::{HealingError, Result};
 }

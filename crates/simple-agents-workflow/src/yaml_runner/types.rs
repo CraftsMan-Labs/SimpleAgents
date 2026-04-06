@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use super::{YamlWorkflow, YamlWorkflowRunError};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct YamlStepTiming {
@@ -37,7 +40,6 @@ pub struct YamlLlmNodeMetrics {
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
-    pub email_text: String,
     pub trace: Vec<String>,
     pub outputs: BTreeMap<String, Value>,
     pub terminal_node: String,
@@ -149,6 +151,94 @@ pub struct YamlWorkflowTraceOptions {
     pub context: Option<YamlWorkflowTraceContextInput>,
     #[serde(default)]
     pub tenant: YamlWorkflowTraceTenantContext,
+}
+
+/// Global execution toggles for a workflow run (orthogonal to per-node YAML `heal` / `stream`).
+///
+/// JSON uses snake_case keys: `healing`, `workflow_streaming`, `node_llm_streaming`,
+/// `split_stream_deltas`. Missing keys deserialize using [`Default`] (see
+/// [`Default::default`] on this type).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct YamlWorkflowExecutionFlags {
+    /// When true, enables the JSON healing path for structured LLM outputs in addition to any
+    /// per-node `heal` setting in YAML.
+    pub healing: bool,
+    /// When false and an event sink is present, token delta events are not forwarded to the sink
+    /// (workflow lifecycle and completion events still flow).
+    pub workflow_streaming: bool,
+    /// When false, LLM nodes never use provider streaming, regardless of YAML `stream`.
+    pub node_llm_streaming: bool,
+    /// When true, emit separate stream events for thinking vs output (`node_stream_thinking_delta`,
+    /// `node_stream_output_delta`) in addition to `node_stream_delta`.
+    pub split_stream_deltas: bool,
+}
+
+impl Default for YamlWorkflowExecutionFlags {
+    /// Matches legacy behavior: YAML controls streaming/healing unless callers override flags.
+    fn default() -> Self {
+        Self {
+            healing: false,
+            workflow_streaming: false,
+            node_llm_streaming: true,
+            split_stream_deltas: false,
+        }
+    }
+}
+
+/// Workflow document location for [`YamlWorkflowExecutionRequest`].
+#[derive(Debug, Clone, Copy)]
+pub enum YamlWorkflowSource<'a> {
+    File(&'a Path),
+    Inline(&'a YamlWorkflow),
+}
+
+/// LLM backend for [`YamlWorkflowExecutionRequest`].
+#[derive(Clone, Copy)]
+pub enum YamlWorkflowExecutorBinding<'a> {
+    Llm(&'a dyn super::YamlWorkflowLlmExecutor),
+    Client(&'a simple_agents_core::SimpleAgentsClient),
+}
+
+/// Canonical typed input for workflow execution (handler names remain YAML-only on `custom_worker` nodes).
+#[derive(Clone, Copy)]
+pub struct YamlWorkflowExecutionRequest<'a> {
+    pub source: YamlWorkflowSource<'a>,
+    pub workflow_input: &'a Value,
+    pub executor: YamlWorkflowExecutorBinding<'a>,
+    pub custom_worker: Option<&'a dyn super::YamlWorkflowCustomWorkerExecutor>,
+    pub options: &'a YamlWorkflowRunOptions,
+    pub flags: YamlWorkflowExecutionFlags,
+}
+
+/// Which public entrypoint is validating the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum YamlWorkflowExecutionSurface {
+    /// `run` / `run_async`: no workflow event sink; `workflow_streaming` must be false.
+    Run,
+    /// `stream`: requires an event sink; `workflow_streaming` may be true or false.
+    Stream,
+}
+
+/// Validate execution flags for the chosen entrypoint (`workflow` is reserved for future graph checks).
+pub fn validate_yaml_workflow_execution(
+    _workflow: &YamlWorkflow,
+    flags: YamlWorkflowExecutionFlags,
+    surface: YamlWorkflowExecutionSurface,
+) -> Result<(), YamlWorkflowRunError> {
+    if matches!(surface, YamlWorkflowExecutionSurface::Run) && flags.workflow_streaming {
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: "workflow_streaming=true is not valid for run/run_async (no event sink); use stream(request, sink) or set workflow_streaming=false".to_string(),
+        });
+    }
+
+    if flags.healing && flags.node_llm_streaming {
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: "healing and node_llm_streaming cannot both be true: streaming structured completion is incompatible with the healing path".to_string(),
+        });
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

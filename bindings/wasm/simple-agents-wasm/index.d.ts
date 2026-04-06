@@ -7,9 +7,23 @@ export interface CompleteOptions {
   schema?: unknown;
 }
 
+/**
+ * Simplified multimodal segment (normalized to OpenAI wire format before send).
+ * You may also pass native OpenAI parts (e.g. `{ type: "image_url", image_url: { url } }`).
+ */
+export interface ContentPartInput {
+  type: "text" | "image" | "audio" | "video";
+  text?: string;
+  /** Base64 payload without data: prefix */
+  data?: string;
+  /** MIME type, e.g. image/png (also accepts camelCase `mediaType`) */
+  media_type?: string;
+  mediaType?: string;
+}
+
 export interface MessageInput {
   role: "system" | "user" | "assistant" | "tool";
-  content: string;
+  content: string | ContentPartInput[];
   name?: string;
   toolCallId?: string;
   toolCalls?: Array<JsToolCall>;
@@ -100,9 +114,43 @@ export interface ClientConfig {
   headers?: Record<string, string>;
 }
 
+/** Matches Rust `YamlWorkflowTelemetryConfig` JSON (snake_case). */
+export interface WorkflowTelemetryConfig {
+  enabled?: boolean;
+  nerdstats?: boolean;
+  sample_rate?: number;
+  payload_mode?: "full_payload" | "redacted_payload";
+  retention_days?: number;
+  multi_tenant?: boolean;
+  tool_trace_mode?: "full" | "redacted" | "off";
+}
+
+export interface WorkflowTraceContext {
+  trace_id?: string;
+  span_id?: string;
+  parent_span_id?: string;
+  traceparent?: string;
+  tracestate?: string;
+  baggage?: Record<string, string>;
+}
+
+export interface WorkflowTraceTenant {
+  workspace_id?: string;
+  user_id?: string;
+  conversation_id?: string;
+  request_id?: string;
+  run_id?: string;
+}
+
+export interface WorkflowTraceConfig {
+  context?: WorkflowTraceContext;
+  tenant?: WorkflowTraceTenant;
+}
+
 export interface WorkflowRunOptions {
-  telemetry?: Record<string, unknown>;
-  trace?: Record<string, unknown>;
+  model?: string;
+  telemetry?: WorkflowTelemetryConfig;
+  trace?: WorkflowTraceConfig;
   onEvent?: (event: Record<string, unknown>) => void;
   functions?: Record<
     string,
@@ -111,6 +159,12 @@ export interface WorkflowRunOptions {
       context: Record<string, unknown>
     ) => unknown | Promise<unknown>
   >;
+}
+
+/** Common workflow `input` fields; extra keys are allowed for workflow-specific payloads. */
+export interface WorkflowInputFields {
+  email_text?: string;
+  [key: string]: unknown;
 }
 
 export interface WorkflowRunEvent {
@@ -124,6 +178,24 @@ export interface WorkflowRunResult {
   context: Record<string, unknown>;
   output?: unknown;
   events: WorkflowRunEvent[];
+}
+
+export interface WorkflowExecutionFlags {
+  model?: string;
+  healing?: boolean;
+  workflow_streaming?: boolean;
+  node_llm_streaming?: boolean;
+  split_stream_deltas?: boolean;
+}
+
+export interface WorkflowExecutionRequest {
+  workflow_yaml: string;
+  messages: MessageInput[];
+  context?: Record<string, unknown>;
+  media?: Record<string, unknown>;
+  input?: WorkflowInputFields;
+  execution?: WorkflowExecutionFlags;
+  workflow_options?: WorkflowRunOptions;
 }
 
 export declare class Client {
@@ -154,6 +226,12 @@ export declare class Client {
     workflowPath: string,
     workflowInput: Record<string, unknown>
   ): Promise<never>;
+  run(request: WorkflowExecutionRequest): Promise<WorkflowRunResult>;
+  runAsync(request: WorkflowExecutionRequest): Promise<WorkflowRunResult>;
+  streamWorkflow(
+    request: WorkflowExecutionRequest,
+    onEvent?: (event: Record<string, unknown>) => void
+  ): Promise<WorkflowRunResult>;
 }
 
 export declare function hasRustBackend(): Promise<boolean>;

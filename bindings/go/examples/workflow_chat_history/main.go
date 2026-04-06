@@ -130,88 +130,18 @@ func initialMessages() []message {
 	}
 }
 
-func renderAssistantReply(output any) string {
-	if output == nil {
+func renderAssistantReply(terminalOutput any) string {
+	if terminalOutput == nil {
 		return ""
 	}
-	if text, ok := output.(string); ok {
+	if text, ok := terminalOutput.(string); ok {
 		return text
 	}
-	encoded, err := json.MarshalIndent(output, "", "  ")
+	encoded, err := json.MarshalIndent(terminalOutput, "", "  ")
 	if err != nil {
 		return ""
 	}
 	return string(encoded)
-}
-
-func printStepJSONSummary(out simpleagents.WorkflowYAMLOutput) {
-	for _, node := range out.Trace {
-		nodeValue, ok := out.Outputs[node]
-		if !ok {
-			continue
-		}
-		payload, ok := nodeValue["output"]
-		if !ok {
-			continue
-		}
-		fmt.Printf("\nStep: %s\n", node)
-		fmt.Println("JSON")
-		encoded, err := json.MarshalIndent(payload, "", "  ")
-		if err != nil {
-			continue
-		}
-		fmt.Println(string(encoded))
-	}
-
-	if out.TerminalNode != "" && out.TerminalOutput != nil {
-		fmt.Printf("\nTerminal Step: %s\n", out.TerminalNode)
-		fmt.Println("JSON")
-		encoded, err := json.MarshalIndent(out.TerminalOutput, "", "  ")
-		if err != nil {
-			return
-		}
-		fmt.Println(string(encoded))
-	}
-}
-
-func extractNerdstatsFromEvents(events []simpleagents.WorkflowEvent) map[string]any {
-	for i := len(events) - 1; i >= 0; i-- {
-		event := events[i]
-		if event.EventType != "workflow_completed" || event.Metadata == nil {
-			continue
-		}
-		nerdstatsRaw, ok := event.Metadata["nerdstats"]
-		if !ok {
-			continue
-		}
-		nerdstats, ok := nerdstatsRaw.(map[string]any)
-		if ok {
-			return nerdstats
-		}
-	}
-	return nil
-}
-
-func renderFallbackStream(reply string, showThinking bool) bool {
-	if strings.TrimSpace(reply) == "" {
-		return false
-	}
-
-	fmt.Println()
-	fmt.Println("Step: terminal")
-	if showThinking {
-		fmt.Print("[output terminal] terminal: ")
-	} else {
-		fmt.Print("Streaming: ")
-	}
-
-	for _, r := range reply {
-		fmt.Print(string(r))
-		time.Sleep(5 * time.Millisecond)
-	}
-	fmt.Println()
-
-	return true
 }
 
 func randomConversationID() string {
@@ -233,22 +163,10 @@ func randomConversationID() string {
 
 func main() {
 	workflowFlag := flag.String("workflow", "workflow_email/email-chat-draft-or-clarify.yaml", "Path to workflow YAML file")
-	includeEventsFlag := flag.Bool("include-events", false, "Include workflow events in each turn response")
 	maxTurnsFlag := flag.Int("max-turns", 8, "Maximum chat turns before exiting")
-	streamFlag := flag.Bool("stream", true, "Stream workflow node deltas live in terminal when YAML nodes have stream=true")
-	showThinkingFlag := flag.Bool("show-thinking", false, "Show raw model stream deltas including thinking tokens")
 	traceDirFlag := flag.String("trace-dir", "examples/workflow_email/traces", "Directory to persist per-turn workflow traces as JSONL")
 	conversationIDFlag := flag.String("conversation-id", "", "Conversation UUID used for trace correlation (auto-generated if omitted)")
-	showStepJSONFlag := flag.Bool("show-step-json", false, "Print per-step JSON summaries after execution")
-	nerdstatsFlag := flag.Bool("nerdstats", true, "Show end-of-stream nerdstats payload")
-	modelFlag := flag.String("model", "", "Override llm_call model for all workflow LLM nodes")
 	flag.Parse()
-
-	if *showThinkingFlag {
-		_ = os.Setenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1")
-	} else {
-		_ = os.Unsetenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW")
-	}
 
 	provider, apiBase, apiKey, err := loadConfig()
 	if err != nil {
@@ -264,7 +182,7 @@ func main() {
 	}
 	workflowRegistry := defaultWorkflowRegistry(workflowPath)
 
-	client, err := simpleagents.NewClientFromEnv(provider)
+	client, err := simpleagents.NewClient(apiKey, apiBase)
 	if err != nil {
 		panic(err)
 	}
@@ -325,161 +243,28 @@ func main() {
 			})
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 		workflowInput := map[string]any{
 			"email_text":        userInput,
 			"messages":          workflowInputMessages,
 			"workflow_registry": workflowRegistry,
 		}
-
-		streamedEvents := make([]simpleagents.WorkflowEvent, 0)
-		lineOpen := false
-		out, runErr := simpleagents.WorkflowYAMLOutput{}, error(nil)
-		workflowOptions := map[string]any{
-			"telemetry": map[string]any{"nerdstats": *nerdstatsFlag},
-			"trace":     map[string]any{"tenant": map[string]any{"conversation_id": conversationID}},
+		inputJSON, err := json.Marshal(workflowInput)
+		if err != nil {
+			cancel()
+			panic(err)
 		}
-		if strings.TrimSpace(*modelFlag) != "" {
-			workflowOptions["model"] = strings.TrimSpace(*modelFlag)
-		}
-		switch {
-		case *streamFlag:
-			currentNode := ""
-			lastTokenLabel := ""
-			rawDebugStreamDetected := false
-			out, runErr = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, func(event simpleagents.WorkflowEvent) {
-				streamedEvents = append(streamedEvents, event)
 
-				isToolLifecycleEvent := event.EventType == "node_tool_call_requested" ||
-					event.EventType == "node_tool_call_completed" ||
-					event.EventType == "node_tool_call_failed" ||
-					event.EventType == "node_tool_roundtrip_completed"
-				if isToolLifecycleEvent {
-					displayNode := "Workflow"
-					if event.NodeID != nil {
-						displayNode = *event.NodeID
-					} else if event.StepID != nil {
-						displayNode = *event.StepID
-					}
-					if lineOpen {
-						fmt.Println()
-						lineOpen = false
-					}
-					message := event.EventType
-					if event.Message != nil {
-						trimmed := strings.TrimSpace(*event.Message)
-						if trimmed != "" {
-							message = trimmed
-						}
-					}
-					fmt.Printf("[tool] %s: %s\n", displayNode, message)
-					return
-				}
-
-				isDisplayedStreamEvent := event.EventType == "node_stream_delta"
-				if *showThinkingFlag {
-					if event.EventType == "node_stream_thinking_delta" || event.EventType == "node_stream_output_delta" {
-						rawDebugStreamDetected = true
-						isDisplayedStreamEvent = true
-					} else {
-						isDisplayedStreamEvent = event.EventType == "node_stream_delta" && !rawDebugStreamDetected
-					}
-				}
-				if !isDisplayedStreamEvent || event.Delta == nil {
-					return
-				}
-				displayNode := "Workflow"
-				if event.NodeID != nil {
-					displayNode = *event.NodeID
-				} else if event.StepID != nil {
-					displayNode = *event.StepID
-				}
-				if currentNode != displayNode {
-					if lineOpen {
-						fmt.Println()
-					}
-					fmt.Printf("\nStep: %s\n", displayNode)
-					fmt.Print("Streaming: ")
-					currentNode = displayNode
-					lineOpen = true
-				}
-				if *showThinkingFlag {
-					tokenLabelParts := make([]string, 0, 2)
-					if event.TokenKind != nil {
-						trimmed := strings.TrimSpace(*event.TokenKind)
-						if trimmed != "" {
-							tokenLabelParts = append(tokenLabelParts, trimmed)
-						}
-					}
-					if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
-						tokenLabelParts = append(tokenLabelParts, "terminal")
-					}
-					tokenLabel := ""
-					if len(tokenLabelParts) > 0 {
-						tokenLabel = "[" + strings.Join(tokenLabelParts, " ") + "] "
-					}
-					if tokenLabel != "" && tokenLabel != lastTokenLabel {
-						if lineOpen {
-							fmt.Println()
-						}
-						fmt.Printf("%s%s: ", tokenLabel, displayNode)
-						lastTokenLabel = tokenLabel
-						lineOpen = true
-					}
-				}
-				fmt.Print(*event.Delta)
-				lineOpen = true
-			})
-		case *includeEventsFlag:
-			out, runErr = client.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, workflowOptions)
-		default:
-			out, runErr = client.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
-		}
+		outJSON, runErr := client.Run(ctx, workflowPath, inputJSON)
 		cancel()
 		if runErr != nil {
 			panic(runErr)
 		}
-		hasVisibleEvents := false
-		if *streamFlag && len(streamedEvents) > 0 {
-			expectedEventTypes := map[string]bool{"node_stream_delta": true}
-			if *showThinkingFlag {
-				expectedEventTypes = map[string]bool{"node_stream_delta": true, "node_stream_thinking_delta": true, "node_stream_output_delta": true}
-			}
-			for _, event := range streamedEvents {
-				if expectedEventTypes[event.EventType] {
-					hasVisibleEvents = true
-				}
-			}
-			if !hasVisibleEvents {
-				if *showThinkingFlag {
-					fmt.Println("[stream] No stream delta events observed. This can happen when the node has tools configured (streaming tool-calls are currently unsupported).")
-				} else {
-					fmt.Println("[stream] No node_stream_delta events observed. Ensure llm_call nodes use stream=true.")
-				}
-			} else if lineOpen {
-				fmt.Println()
-			}
 
-			if *nerdstatsFlag {
-				if nerdstats := extractNerdstatsFromEvents(streamedEvents); nerdstats != nil {
-					encoded, err := json.Marshal(nerdstats)
-					if err == nil {
-						fmt.Printf("Nerdstats: %s\n", string(encoded))
-					}
-				}
-			}
-		}
-
-		if *showStepJSONFlag {
-			printStepJSONSummary(out)
-		}
-
-		eventsValue := any(nil)
-		if *streamFlag {
-			eventsValue = streamedEvents
-		} else if *includeEventsFlag {
-			eventsValue = out.Events
+		var out map[string]any
+		if err := json.Unmarshal(outJSON, &out); err != nil {
+			panic(err)
 		}
 
 		traceRecord := map[string]any{
@@ -487,14 +272,13 @@ func main() {
 			"turn":             turn,
 			"conversation_id":  conversationID,
 			"workflow_path":    workflowPath,
-			"workflow_id":      out.WorkflowID,
-			"terminal_node":    out.TerminalNode,
-			"trace":            out.Trace,
-			"step_timings":     out.StepTimings,
-			"total_elapsed_ms": out.TotalElapsedMS,
+			"workflow_id":      out["workflow_id"],
+			"terminal_node":    out["terminal_node"],
+			"trace":            out["trace"],
+			"step_timings":     out["step_timings"],
+			"total_elapsed_ms": out["total_elapsed_ms"],
 			"user_input":       userInput,
-			"assistant_output": out.TerminalOutput,
-			"events":           eventsValue,
+			"assistant_output": out["terminal_output"],
 		}
 		encodedRecord, marshalErr := json.Marshal(traceRecord)
 		if marshalErr != nil {
@@ -513,19 +297,11 @@ func main() {
 			panic(closeErr)
 		}
 
-		reply := renderAssistantReply(out.TerminalOutput)
-		fallbackStreamRendered := false
-		if *streamFlag && !hasVisibleEvents {
-			fallbackStreamRendered = renderFallbackStream(reply, *showThinkingFlag)
-		}
-		if fallbackStreamRendered {
-			fmt.Println()
-		} else {
-			fmt.Printf("\nAssistant: %s\n\n", reply)
-		}
+		reply := renderAssistantReply(out["terminal_output"])
+		fmt.Printf("\nAssistant: %s\n\n", reply)
 		messages = append(messages, message{Role: "assistant", Content: reply})
 
-		terminalOutputMap, isMap := out.TerminalOutput.(map[string]any)
+		terminalOutputMap, isMap := out["terminal_output"].(map[string]any)
 		decision := ""
 		if isMap {
 			if rawDecision, ok := terminalOutputMap["decision"].(string); ok {
@@ -533,13 +309,14 @@ func main() {
 			}
 		}
 
-		if out.TerminalNode == "terminate_candidate" || out.TerminalNode == "already_terminated" || decision == "terminated" {
+		terminalNode, _ := out["terminal_node"].(string)
+		if terminalNode == "terminate_candidate" || terminalNode == "already_terminated" || decision == "terminated" {
 			interviewClosed = true
 			fmt.Println("Interview closed for this session. Start a new run for a new candidate.")
 			fmt.Println()
 		}
 
-		if out.TerminalNode == "generate_email_draft" {
+		if terminalNode == "generate_email_draft" {
 			fmt.Println("Draft ready. Continue chatting to refine, or type 'exit'.")
 			fmt.Println()
 		}

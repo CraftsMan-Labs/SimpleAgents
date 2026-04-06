@@ -1,106 +1,77 @@
-use reqwest::Client as HttpClient;
 use simple_agent_type::prelude::{ApiKey, Provider, Result, SimpleAgentsError};
-use simple_agents_providers::anthropic::AnthropicProvider;
-use simple_agents_providers::healing_integration::HealingConfig as ProviderHealingConfig;
-use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_providers::openrouter::OpenRouterProvider;
+use simple_agent_type::telemetry::ApiFormat;
+use simple_agents_providers::openai::OpenAiCompatProvider;
 use std::sync::Arc;
-use std::time::Duration;
 
-pub(crate) fn provider_name_exists(providers: &[Arc<dyn Provider>], name: &str) -> bool {
-    providers.iter().any(|p| p.name() == name)
+pub(crate) fn build_provider(
+    api_key: &str,
+    base_url: Option<&str>,
+    api_format: Option<&str>,
+) -> Result<Arc<dyn Provider>> {
+    let key = ApiKey::new(api_key)?;
+    let format = parse_api_format(api_format)?;
+    let provider = match base_url {
+        Some(url) => OpenAiCompatProvider::with_base_url_and_format(key, url.to_string(), format)?,
+        None => OpenAiCompatProvider::new_with_format(key, format)?,
+    };
+    Ok(Arc::new(provider))
 }
 
-pub(crate) fn provider_from_params(
-    provider_name: &str,
+/// Build a provider using the provider-name API.
+///
+/// `provider` must be "openai" (only supported name). `api_key` is used if
+/// provided; otherwise `OPENAI_API_KEY` env var is read. `base_url` overrides
+/// the default endpoint. Any other provider name returns "Unknown provider: X".
+pub(crate) fn build_provider_from_name(
+    provider: &str,
     api_key: Option<&str>,
-    api_base: Option<&str>,
-    enable_healing: bool,
-    timeout: Duration,
+    base_url: Option<&str>,
+    api_format: Option<&str>,
 ) -> Result<Arc<dyn Provider>> {
-    let api_key = match api_key {
-        Some(value) => Some(ApiKey::new(value)?),
-        None => None,
+    let key_required = |name: &str| {
+        api_key.map(str::to_string).ok_or_else(|| {
+            SimpleAgentsError::Config(format!(
+                "api_key is required for provider '{name}' when OPENAI_API_KEY is not used"
+            ))
+        })
     };
 
-    match provider_name {
+    match provider {
         "openai" => {
-            let resolved_api_key = resolve_openai_api_key(api_key)?;
-            let resolved_api_base = resolve_openai_api_base(api_base);
-            let client = build_openai_http_client(resolved_api_base.as_str(), timeout)?;
-            let mut provider =
-                OpenAIProvider::with_client(resolved_api_key, resolved_api_base, client)?;
-            if enable_healing {
-                provider = provider.with_healing(ProviderHealingConfig::default());
-            }
-            Ok(Arc::new(provider))
-        }
-        "anthropic" => {
-            let mut provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        AnthropicProvider::with_base_url(api_key, api_base.to_string())?
-                    }
-                    None => AnthropicProvider::new(api_key)?,
-                },
-                None => AnthropicProvider::from_env()?,
+            let key = if let Some(k) = api_key {
+                k.to_string()
+            } else {
+                std::env::var("OPENAI_API_KEY").map_err(|_| {
+                    SimpleAgentsError::Config(
+                        "OPENAI_API_KEY environment variable not set".to_string(),
+                    )
+                })?
             };
-            if enable_healing {
-                provider = provider.with_healing(ProviderHealingConfig::default());
-            }
-            Ok(Arc::new(provider))
+            build_provider(&key, base_url, api_format)
+        }
+        // OpenAI-compatible HTTP shape; used for multi-provider demos/tests (routing).
+        "anthropic" => {
+            let key = key_required("anthropic")?;
+            let base = base_url.unwrap_or("https://api.anthropic.com/v1");
+            build_provider(&key, Some(base), api_format)
         }
         "openrouter" => {
-            let provider = match api_key {
-                Some(api_key) => match api_base {
-                    Some(api_base) => {
-                        OpenRouterProvider::with_base_url(api_key, api_base.to_string())?
-                    }
-                    None => OpenRouterProvider::new(api_key)?,
-                },
-                None => OpenRouterProvider::from_env()?,
-            };
-            Ok(Arc::new(provider))
+            let key = key_required("openrouter")?;
+            let base = base_url.unwrap_or("https://openrouter.ai/api/v1");
+            build_provider(&key, Some(base), api_format)
         }
-        _ => Err(SimpleAgentsError::Config(format!(
-            "Unknown provider '{provider_name}'"
+        other => Err(SimpleAgentsError::Config(format!(
+            "Unknown provider: {other}"
         ))),
     }
 }
 
-fn is_local_base(api_base: &str) -> bool {
-    api_base.contains("localhost") || api_base.contains("127.0.0.1")
-}
-
-fn resolve_openai_api_key(api_key: Option<ApiKey>) -> Result<ApiKey> {
-    if let Some(value) = api_key {
-        return Ok(value);
+fn parse_api_format(api_format: Option<&str>) -> Result<ApiFormat> {
+    match api_format {
+        Some("responses") => Ok(ApiFormat::Responses),
+        Some("chat_completions") | None => Ok(ApiFormat::ChatCompletions),
+        Some(other) => Err(SimpleAgentsError::Config(format!(
+            "unknown api_format '{other}'; expected 'chat_completions' or 'responses'"
+        ))),
     }
-
-    let from_env = std::env::var("OPENAI_API_KEY").map_err(|_| {
-        SimpleAgentsError::Config("OPENAI_API_KEY environment variable is required".to_string())
-    })?;
-    ApiKey::new(from_env)
-}
-
-fn resolve_openai_api_base(api_base: Option<&str>) -> String {
-    api_base
-        .map(std::string::ToString::to_string)
-        .or_else(|| std::env::var("OPENAI_API_BASE").ok())
-        .unwrap_or_else(|| OpenAIProvider::DEFAULT_BASE_URL.to_string())
-}
-
-fn build_openai_http_client(api_base: &str, timeout: Duration) -> Result<HttpClient> {
-    let mut builder = HttpClient::builder()
-        .timeout(timeout)
-        .pool_max_idle_per_host(10)
-        .pool_idle_timeout(Duration::from_secs(90));
-
-    if is_local_base(api_base) {
-        builder = builder.no_proxy();
-    }
-
-    builder.build().map_err(|error| {
-        SimpleAgentsError::Config(format!("Failed to create HTTP client: {error}"))
-    })
 }

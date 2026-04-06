@@ -18,7 +18,7 @@ serde_json.workspace = true
 serde_yaml = "0.9"
 simple-agent-type.workspace = true
 simple-agents-healing.workspace = true
-simple-agents-core = { path = "../simple-agents-core", version = "0.2.36" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.3.3" }
 thiserror.workspace = true
 tokio.workspace = true
 opentelemetry = { version = "0.24", features = ["trace"] }
@@ -28,8 +28,10 @@ tonic.workspace = true
 jsonschema = "0.18"
 
 [dev-dependencies]
+async-trait.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+futures.workspace = true
 proptest = "1.6"
-criterion = { version = "0.5", features = ["async_tokio", "html_reports"] }
 
 [[bench]]
 name = "runtime_benchmarks"

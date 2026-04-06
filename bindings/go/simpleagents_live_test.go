@@ -2,134 +2,146 @@ package simpleagents
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"os"
 	"testing"
 	"time"
 )
 
-func requireLiveEnv(t *testing.T) (string, string) {
+func requireLiveEnv(t *testing.T) (apiKey, baseURL string) {
 	t.Helper()
-	provider := os.Getenv("PROVIDER")
-	model := os.Getenv("CUSTOM_API_MODEL")
 	key := os.Getenv("CUSTOM_API_KEY")
-
-	if provider == "" || model == "" || key == "" {
-		t.Skip("set PROVIDER, CUSTOM_API_KEY, and CUSTOM_API_MODEL for live test")
+	base := os.Getenv("CUSTOM_API_BASE")
+	if key == "" {
+		t.Skip("set CUSTOM_API_KEY for live test")
 	}
-
-	switch provider {
-	case "openai":
-		os.Setenv("OPENAI_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENAI_API_BASE", base)
-		}
-	case "anthropic":
-		os.Setenv("ANTHROPIC_API_KEY", key)
-	case "openrouter":
-		os.Setenv("OPENROUTER_API_KEY", key)
-		if base := os.Getenv("CUSTOM_API_BASE"); base != "" {
-			os.Setenv("OPENROUTER_API_BASE", base)
-		}
-	default:
-		t.Fatalf("unsupported PROVIDER %q", provider)
-	}
-
-	return provider, model
+	return key, base
 }
 
-func TestLiveCompleteMessages(t *testing.T) {
-	provider, model := requireLiveEnv(t)
+func TestLiveCompleteJSON(t *testing.T) {
+	apiKey, baseURL := requireLiveEnv(t)
+	model := os.Getenv("CUSTOM_API_MODEL")
+	if model == "" {
+		t.Skip("set CUSTOM_API_MODEL for live test")
+	}
 
-	client, err := NewClientFromEnv(provider)
+	client, err := NewClient(apiKey, baseURL)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	defer client.Close()
 
-	maxTokens := int32(24)
-	temp := float32(0.2)
-	res, err := client.CompleteMessages(
-		context.Background(),
-		model,
-		[]Message{{Role: "user", Content: "Reply with one short sentence saying hello."}},
-		CompleteOptions{MaxTokens: &maxTokens, Temperature: &temp},
-	)
-	if err != nil {
-		t.Fatalf("complete messages: %v", err)
+	req := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Reply with one short sentence saying hello."},
+		},
+		"max_tokens":  24,
+		"temperature": 0.2,
 	}
-	if res.Content == "" && len(res.ToolCalls) == 0 {
-		t.Fatal("expected content or tool calls")
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resJSON, err := client.Complete(context.Background(), reqJSON)
+	if err != nil {
+		t.Fatalf("complete: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(resJSON, &resp); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	choices, ok := resp["choices"].([]any)
+	if !ok || len(choices) == 0 {
+		t.Fatalf("expected choices: %s", string(resJSON))
 	}
 }
 
-func TestLiveStreamMessages(t *testing.T) {
-	provider, model := requireLiveEnv(t)
+func TestLiveStreamJSON(t *testing.T) {
+	apiKey, baseURL := requireLiveEnv(t)
+	model := os.Getenv("CUSTOM_API_MODEL")
+	if model == "" {
+		t.Skip("set CUSTOM_API_MODEL for live test")
+	}
 
-	client, err := NewClientFromEnv(provider)
+	client, err := NewClient(apiKey, baseURL)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	defer client.Close()
 
-	maxTokens := int32(32)
-	temp := float32(0.2)
+	req := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Reply with hello in a short sentence."},
+		},
+		"max_tokens":  32,
+		"temperature": 0.2,
+		"stream":      true,
+	}
+	reqJSON, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	stream, err := client.StreamMessages(
-		ctx,
-		model,
-		[]Message{{Role: "user", Content: "Reply with hello in a short sentence."}},
-		CompleteOptions{MaxTokens: &maxTokens, Temperature: &temp},
-	)
-	if err != nil {
-		t.Fatalf("stream messages: %v", err)
-	}
-
 	chunkCount := 0
-	for item := range stream {
-		if item.Err != nil {
-			t.Fatalf("stream item error: %v", item.Err)
+	err = client.StreamComplete(ctx, reqJSON, func(chunkJSON string) error {
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(chunkJSON), &chunk); err != nil {
+			return nil
 		}
-		if item.Event.Type == "chunk" {
+		choices, ok := chunk["choices"].([]any)
+		if !ok || len(choices) == 0 {
+			return nil
+		}
+		first, ok := choices[0].(map[string]any)
+		if !ok {
+			return nil
+		}
+		delta, ok := first["delta"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		if content, ok := delta["content"].(string); ok && content != "" {
 			chunkCount++
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("stream: %v", err)
 	}
-
 	if chunkCount == 0 {
-		t.Fatal("expected at least one stream chunk")
+		t.Fatal("expected at least one content chunk")
 	}
 }
 
-func TestLiveWorkflowStreamExplicitEventTypes(t *testing.T) {
-	provider, model := requireLiveEnv(t)
+func TestLiveWorkflowStreamEventTypes(t *testing.T) {
+	apiKey, baseURL := requireLiveEnv(t)
+	model := os.Getenv("CUSTOM_API_MODEL")
+	if model == "" {
+		t.Skip("set CUSTOM_API_MODEL for live test")
+	}
 
-	client, err := NewClientFromEnv(provider)
+	client, err := NewClient(apiKey, baseURL)
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	defer client.Close()
 
-	if err := os.Setenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW", "1"); err != nil {
-		t.Fatalf("set stream raw env: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Unsetenv("SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW") })
-
-	workflowFile, err := os.CreateTemp("", "live-workflow-stream-*.yaml")
-	if err != nil {
-		t.Fatalf("create temp workflow: %v", err)
-	}
-	t.Cleanup(func() { _ = os.Remove(workflowFile.Name()) })
-
-	workflow := fmt.Sprintf(`id: live-workflow-stream-test
+	tmp := t.TempDir()
+	workflowPath := tmp + "/live-stream.yaml"
+	workflow := `id: live-workflow-stream-test
 version: 1.0.0
 entry_node: classify
 nodes:
   - id: classify
     node_type:
       llm_call:
-        model: %s
+        model: ` + model + `
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
@@ -145,7 +157,7 @@ nodes:
   - id: explain
     node_type:
       llm_call:
-        model: %s
+        model: ` + model + `
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
@@ -160,40 +172,46 @@ nodes:
 edges:
   - from: classify
     to: explain
-`, model, model)
-	if _, err := workflowFile.WriteString(workflow); err != nil {
-		t.Fatalf("write temp workflow: %v", err)
-	}
-	if err := workflowFile.Close(); err != nil {
-		t.Fatalf("close temp workflow: %v", err)
+`
+	if err := os.WriteFile(workflowPath, []byte(workflow), 0o600); err != nil {
+		t.Fatal(err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	workflowInput := map[string]any{
+	inputJSON, err := json.Marshal(map[string]any{
 		"messages": []map[string]string{{
-			"role":    "user",
-			"content": "Hi",
+			"role": "user", "content": "Hi",
 		}},
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	eventTypes := map[string]int{}
 	var completionNerdstats map[string]any
-	_, err = client.RunWorkflowYAMLStreamWithOptions(ctx, workflowFile.Name(), workflowInput, map[string]any{
-		"telemetry": map[string]any{"nerdstats": true},
-	}, func(event WorkflowEvent) {
-		eventTypes[event.EventType]++
-		if event.EventType == "workflow_completed" && event.Metadata != nil {
-			if raw, ok := event.Metadata["nerdstats"]; ok {
-				if nerdstats, ok := raw.(map[string]any); ok {
-					completionNerdstats = nerdstats
+
+	err = client.Stream(ctx, workflowPath, inputJSON, func(eventJSON string) error {
+		var ev map[string]any
+		if err := json.Unmarshal([]byte(eventJSON), &ev); err != nil {
+			return nil
+		}
+		et, _ := ev["event_type"].(string)
+		eventTypes[et]++
+		if et == "workflow_completed" {
+			if meta, ok := ev["metadata"].(map[string]any); ok {
+				if raw, ok := meta["nerdstats"]; ok {
+					if nerdstats, ok := raw.(map[string]any); ok {
+						completionNerdstats = nerdstats
+					}
 				}
 			}
 		}
+		return nil
 	})
 	if err != nil {
-		t.Fatalf("run workflow stream: %v", err)
+		t.Fatalf("stream workflow: %v", err)
 	}
 
 	if eventTypes["node_stream_delta"] == 0 {

@@ -1,24 +1,16 @@
-use crate::schema_helpers::schema_to_json_value;
-use crate::{HealedJsonResult, ResponseWithMetadata};
+use crate::ResponseWithMetadata;
 use futures_util::Stream;
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
-use serde_json::Value;
 use simple_agent_type::message::{parse_messages_value, Message};
 use simple_agent_type::prelude::{CompletionChunk, CompletionRequest, Result, SimpleAgentsError};
-use simple_agent_type::request::{JsonSchemaFormat, ResponseFormat};
+use simple_agent_type::request::ResponseFormat;
 use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolChoice, ToolDefinition};
-use simple_agents_core::CompletionOutcome;
+use simple_agents_core::{CompletionOutcome, HealedJsonResponse, HealedSchemaResponse};
 
 pub(crate) type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
-
-pub(crate) struct ResponsePlan {
-    pub(crate) response_format: Option<ResponseFormat>,
-    pub(crate) schema_value: Option<Value>,
-    pub(crate) expects_json: bool,
-}
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_request_with_messages(
@@ -31,6 +23,7 @@ pub(crate) fn build_request_with_messages(
     tools: Option<Vec<ToolDefinition>>,
     tool_choice: Option<ToolChoice>,
     stream: Option<bool>,
+    json_schema: Option<(String, serde_json::Value)>,
 ) -> Result<CompletionRequest> {
     if model.is_empty() {
         return Err(SimpleAgentsError::Config(
@@ -57,7 +50,9 @@ pub(crate) fn build_request_with_messages(
     if let Some(top_p) = top_p {
         builder = builder.top_p(top_p);
     }
-    if let Some(format) = response_format {
+    if let Some((name, schema)) = json_schema {
+        builder = builder.json_schema(name, schema);
+    } else if let Some(format) = response_format {
         builder = builder.response_format(format);
     }
     if let Some(tools) = tools {
@@ -73,162 +68,47 @@ pub(crate) fn build_request_with_messages(
     builder.build()
 }
 
-pub(crate) fn resolve_response_plan(
-    schema: Option<&Bound<'_, PyAny>>,
-    schema_name: Option<String>,
-    strict: bool,
+pub(crate) fn resolve_response_format(
     response_format: Option<String>,
-) -> PyResult<ResponsePlan> {
-    if let Some(schema_obj) = schema {
-        let schema_json = schema_to_json_value(schema_obj)?;
-        let schema_name = schema_name.unwrap_or_else(|| "schema".to_string());
-        return Ok(ResponsePlan {
-            response_format: Some(ResponseFormat::JsonSchema {
-                json_schema: JsonSchemaFormat {
-                    name: schema_name,
-                    schema: schema_json.clone(),
-                    strict: Some(strict),
-                },
-            }),
-            schema_value: Some(schema_json),
-            expects_json: true,
-        });
+) -> PyResult<Option<ResponseFormat>> {
+    let Some(format) = response_format else {
+        return Ok(None);
+    };
+    match format.to_lowercase().as_str() {
+        "json" | "json_object" => Ok(Some(ResponseFormat::JsonObject)),
+        "text" => Ok(None),
+        _ => Err(PyRuntimeError::new_err(
+            "response_format must be 'json', 'json_object', or 'text'",
+        )),
     }
-
-    if let Some(format) = response_format {
-        match format.to_lowercase().as_str() {
-            "json" | "json_object" => {
-                return Ok(ResponsePlan {
-                    response_format: Some(ResponseFormat::JsonObject),
-                    schema_value: None,
-                    expects_json: true,
-                });
-            }
-            "text" => {
-                return Ok(ResponsePlan {
-                    response_format: None,
-                    schema_value: None,
-                    expects_json: false,
-                });
-            }
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "response_format must be 'json', 'json_object', or 'text'".to_string(),
-                ));
-            }
-        }
-    }
-
-    Ok(ResponsePlan {
-        response_format: None,
-        schema_value: None,
-        expects_json: false,
-    })
 }
 
 pub(crate) fn expect_stream(outcome: CompletionOutcome) -> PyResult<CompletionStream> {
     match outcome {
         CompletionOutcome::Stream(stream) => Ok(stream),
-        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got completion response".to_string(),
-        )),
-        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got healed json response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected streaming response, got schema response".to_string(),
-        )),
-    }
-}
-
-pub(crate) fn expect_healed_json(
-    outcome: CompletionOutcome,
-) -> PyResult<simple_agents_core::HealedJsonResponse> {
-    match outcome {
-        CompletionOutcome::HealedJson(healed) => Ok(healed),
-        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got completion response".to_string(),
-        )),
-        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got streaming response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected healed json response, got schema response".to_string(),
-        )),
+        _ => Err(PyRuntimeError::new_err("expected streaming response")),
     }
 }
 
 pub(crate) fn expect_response(outcome: CompletionOutcome) -> PyResult<CompletionResponse> {
     match outcome {
         CompletionOutcome::Response(response) => Ok(response),
-        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got streaming response".to_string(),
-        )),
-        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got healed json response".to_string(),
-        )),
-        CompletionOutcome::CoercedSchema(_) => Err(PyRuntimeError::new_err(
-            "expected completion response, got schema response".to_string(),
-        )),
+        _ => Err(PyRuntimeError::new_err("expected completion response")),
     }
 }
 
-pub(crate) fn expect_coerced_schema(
-    outcome: CompletionOutcome,
-) -> PyResult<simple_agents_core::HealedSchemaResponse> {
+pub(crate) fn expect_healed_json(outcome: CompletionOutcome) -> PyResult<HealedJsonResponse> {
+    match outcome {
+        CompletionOutcome::HealedJson(healed) => Ok(healed),
+        _ => Err(PyRuntimeError::new_err("expected healed JSON response")),
+    }
+}
+
+pub(crate) fn expect_coerced_schema(outcome: CompletionOutcome) -> PyResult<HealedSchemaResponse> {
     match outcome {
         CompletionOutcome::CoercedSchema(healed) => Ok(healed),
-        CompletionOutcome::Response(_) => Err(PyRuntimeError::new_err(
-            "expected schema response, got completion response".to_string(),
-        )),
-        CompletionOutcome::Stream(_) => Err(PyRuntimeError::new_err(
-            "expected schema response, got streaming response".to_string(),
-        )),
-        CompletionOutcome::HealedJson(_) => Err(PyRuntimeError::new_err(
-            "expected schema response, got healed json response".to_string(),
-        )),
+        _ => Err(PyRuntimeError::new_err("expected schema-coerced response")),
     }
-}
-
-pub(crate) fn healed_json_to_py(
-    py: Python<'_>,
-    healed: simple_agents_core::HealedJsonResponse,
-    latency_ms: u64,
-) -> PyResult<PyObject> {
-    let content = serde_json::to_string(&healed.parsed.value)
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to serialize healed JSON: {}", e)))?;
-    let raw_response = healed.response.content().unwrap_or_default().to_string();
-    let confidence = healed.parsed.confidence;
-    let was_healed = !healed.parsed.flags.is_empty();
-    let flags = healed
-        .parsed
-        .flags
-        .iter()
-        .map(|f| f.description())
-        .collect();
-    let usage = usage_to_pydict(py, &healed.response.usage)?;
-    let finish_reason = healed
-        .response
-        .choices
-        .first()
-        .map(|c| finish_reason_to_str(c.finish_reason).to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let result = HealedJsonResult {
-        content,
-        raw_response,
-        confidence,
-        was_healed,
-        provider: healed.response.provider.clone(),
-        model: healed.response.model.clone(),
-        finish_reason,
-        created: healed.response.created,
-        latency_ms,
-        usage,
-        flags,
-    };
-
-    Ok(Py::new(py, result)?.into_py(py))
 }
 
 pub(crate) fn response_with_metadata_from_response(
@@ -243,21 +123,6 @@ pub(crate) fn response_with_metadata_from_response(
         .first()
         .map(|c| finish_reason_to_str(c.finish_reason).to_string())
         .unwrap_or_else(|| "unknown".to_string());
-
-    let (was_healed, healing_confidence, healing_error, flags) =
-        if let Some(meta) = &response.healing_metadata {
-            (
-                true,
-                Some(meta.confidence),
-                Some(meta.original_error.clone()),
-                meta.flags
-                    .iter()
-                    .map(|f: &simple_agent_type::coercion::CoercionFlag| f.description())
-                    .collect::<Vec<String>>(),
-            )
-        } else {
-            (false, None, None, Vec::new())
-        };
 
     let tool_calls = response
         .choices
@@ -274,10 +139,6 @@ pub(crate) fn response_with_metadata_from_response(
         finish_reason,
         created: response.created,
         latency_ms,
-        was_healed,
-        healing_confidence,
-        healing_error,
-        flags,
         usage,
         tool_calls: tool_calls_obj.into(),
     })
@@ -288,7 +149,7 @@ pub(crate) fn finish_reason_to_str(reason: FinishReason) -> &'static str {
 }
 
 pub(crate) fn parse_messages(messages: &Bound<'_, PyAny>) -> Result<Vec<Message>> {
-    let value: Value = pythonize::depythonize(messages)
+    let value: serde_json::Value = pythonize::depythonize(messages)
         .map_err(|_| SimpleAgentsError::Config("messages must be a list of dicts".to_string()))?;
     parse_messages_value(&value).map_err(SimpleAgentsError::Config)
 }
@@ -318,65 +179,4 @@ pub(crate) fn usage_to_pydict(py: Python<'_>, usage: &Usage) -> PyResult<PyObjec
     dict.set_item("total_tokens", usage.total_tokens)?;
     dict.set_item("reasoning_tokens", usage.reasoning_tokens)?;
     Ok(dict.into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::resolve_response_plan;
-    use pyo3::types::{PyDict, PyDictMethods};
-    use pyo3::Python;
-    use serde_json::json;
-    use simple_agent_type::request::ResponseFormat;
-
-    #[test]
-    fn resolve_response_plan_accepts_schema_inputs() {
-        Python::with_gil(|py| {
-            let schema = PyDict::new_bound(py);
-            schema
-                .set_item("type", "object")
-                .expect("schema dict should be writable");
-
-            let properties = PyDict::new_bound(py);
-            let name_schema = PyDict::new_bound(py);
-            name_schema
-                .set_item("type", "string")
-                .expect("property schema should be writable");
-            properties
-                .set_item("name", name_schema)
-                .expect("properties should be writable");
-            schema
-                .set_item("properties", properties)
-                .expect("schema should accept properties");
-
-            let plan = resolve_response_plan(
-                Some(schema.as_any()),
-                Some("person".to_string()),
-                true,
-                None,
-            )
-            .expect("schema response plan should be produced");
-
-            match plan.response_format {
-                Some(ResponseFormat::JsonSchema { json_schema }) => {
-                    assert_eq!(json_schema.name, "person");
-                    assert_eq!(json_schema.strict, Some(true));
-                    assert_eq!(
-                        json_schema.schema,
-                        json!({
-                            "type": "object",
-                            "properties": {
-                                "name": {
-                                    "type": "string"
-                                }
-                            }
-                        })
-                    );
-                }
-                _ => panic!("expected JsonSchema response format"),
-            }
-
-            assert!(plan.expects_json);
-            assert!(plan.schema_value.is_some());
-        });
-    }
 }

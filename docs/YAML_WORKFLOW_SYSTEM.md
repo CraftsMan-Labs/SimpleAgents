@@ -143,6 +143,21 @@ Use `custom_worker` when code must run deterministically outside the model.
 - `llm_call.provider` is not supported in YAML and is rejected.
 - `custom_worker.language` is not supported in YAML and is rejected.
 
+#### Inputs and outputs
+
+- **`config.payload`**: arbitrary JSON object. Values are interpolated like other templates (`input.*`, `nodes.*`, `globals.*`) before the handler runs. Put every node-specific argument here (for example `topic`, `company_name`). The engine does not validate `payload` against a JSON Schema today (unlike `llm_call` + `config.output_schema`).
+- **Execution context** passed to bindings: JSON object with at least `input` (workflow input), `nodes` (completed node outputs), and `globals`. When tracing is enabled, `trace` is added with correlation and tenant fields (see below).
+- **Handler return value**: must be JSON-serializable. The runner stores it as this node’s structured output. Downstream templates use `nodes.<node_id>.output.<field>` when the handler returns an object (for example `nodes.rag_probation.output.topic`).
+
+#### Binding support (where handlers actually run)
+
+| Surface | Local file handlers | Notes |
+|--------|---------------------|--------|
+| **Python** (`simple-agents-py`) | Yes — default `handlers.py` next to the YAML | Handlers are called with keyword-only `context` and `payload`; see [BINDINGS_PYTHON.md](BINDINGS_PYTHON.md). |
+| **Node** (`simple-agents-napi`) | No in-process executor yet | Runtime performs fail-fast validation when `custom_worker` nodes are present (includes node id + handler) instead of late node-time failure. See [BINDINGS_NODE.md](BINDINGS_NODE.md). |
+| **Go** (FFI) | Same capability boundary as Node | Binding validates and rejects `custom_worker` workflows for this runtime with actionable remediation text. See [BINDINGS_GO.md](BINDINGS_GO.md). |
+| **WASM / browser** (`runWorkflowYamlString`) | Yes — register functions in `workflowOptions.functions` | JS signature is `(args, graphContext)`; see [BINDINGS_WASM.md](BINDINGS_WASM.md). |
+
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
 
 ## A Good First Multi-Node Pattern
@@ -173,14 +188,13 @@ Use globals for run-level state, not for long-term secret storage.
 
 ## Chat-History Workflows
 
-Pass chat arrays in `input.messages`:
+Pass chat arrays in `input.messages` (required for `messages_path: input.messages`). Optional extra keys on the same input object (for example legacy `email_text`) are fine if your prompts still reference `input.*`:
 
 ```json
 {
-  "email_text": "optional scalar input",
   "messages": [
-    {"role":"system","content":"..."},
-    {"role":"user","content":"..."}
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."}
   ]
 }
 ```
@@ -197,7 +211,11 @@ use simple_agents_workflow::run_workflow_yaml_file_with_client;
 
 let output = run_workflow_yaml_file_with_client(
     std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
-    &json!({ "email_text": "Need replacement", "messages": [] }),
+    &json!({
+        "messages": [
+            {"role": "user", "content": "Need replacement for order 9921"}
+        ]
+    }),
     &client,
 ).await?;
 ```
@@ -212,7 +230,11 @@ let output = WorkflowRunner::from_file(
     std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
 )
 .with_client(&client)
-.with_input(&json!({ "email_text": "Need replacement", "messages": [] }))
+.with_input(&json!({
+    "messages": [
+        {"role": "user", "content": "Need replacement for order 9921"}
+    ]
+}))
 .run()
 .await?;
 ```

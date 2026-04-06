@@ -23,6 +23,8 @@ This document defines the current browser-compatible binding surface for
 - `stream(model, promptOrMessages, onChunk, options?)`
 - `streamEvents(model, promptOrMessages, onEvent, options?)`
 - `runWorkflowYamlString(yamlText, workflowInput, workflowOptions?)`
+- `run(request)` / `runAsync(request)` / `streamWorkflow(request, onEvent?)` (typed, messages-first workflow facade)
+- `createWorkflowStreamPrinter({ splitThinking? })` from `simple-agents-wasm/workflow_stream_printer` for a default streaming `onEvent` implementation (Node uses `process.stdout.write` when available; browsers fall back to `console.log`)
 
 ## Deliberate differences vs Node binding
 
@@ -40,9 +42,20 @@ WASM/browser flow support is string/object based:
   - `custom_worker` requires exact handler lookup in `workflowOptions.functions`:
     - without `handler_file`: `workflowOptions.functions[handler]`
     - with `handler_file`: `workflowOptions.functions["<handler_file>#<handler>"]`
+  - Each handler is called as **`(args, graphContext)`** (sync or async/Promise). The first argument includes resolved **`payload`**, **`handler`**, **`nodeId`**, and related metadata; the second is the live graph context (input, nodes, globals). Payload interpolation and `nodes.*.output` template rules match [YAML_WORKFLOW_SYSTEM.md](YAML_WORKFLOW_SYSTEM.md). This differs from Python’s kwargs-only `context` / `payload` call shape, but the **data** is the same.
 - Not supported in browser: `runWorkflowYaml(workflowPath, ...)`
 
 Workflow result contract is strict: `runWorkflowYamlString` expects outputs containing `workflow_id` and `outputs`, and throws if the backend response shape is incompatible.
+
+Unified workflow request shape for browser runtime:
+
+- `workflow_yaml: string` (inline YAML text; browser runtime does not support local filesystem path loading)
+- `messages: MessageInput[]` (required)
+- optional `context`, `media`, `input`, `execution`, `workflow_options`
+
+`workflow_options.telemetry` and `workflow_options.trace` use explicit TypeScript interfaces in `index.d.ts` (`WorkflowTelemetryConfig`, `WorkflowTraceConfig`, etc., snake_case field names to match the Rust runner). `input` may include optional workflow-specific fields (some older examples used a scalar like `email_text`); prefer `messages` as the primary chat payload and keep extra keys only when templates reference `input.*`.
+
+Note: completion APIs already use `stream(...)`, so workflow streaming is exposed as `streamWorkflow(...)` to avoid method-name collision on the shared `Client` surface.
 
 ## Security and deployment notes
 

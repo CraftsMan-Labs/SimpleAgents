@@ -126,35 +126,11 @@ fn test_api_key_security() {
 }
 
 #[test]
-fn test_configuration_types() {
-    // Retry config
+fn test_retry_config_defaults() {
+    use simple_agent_type::provider::RetryConfig;
+
     let retry = RetryConfig::default();
     assert_eq!(retry.max_attempts, 3);
-
-    let backoff0 = retry.calculate_backoff(0);
-    let backoff1 = retry.calculate_backoff(1);
-    // Backoff should increase (with or without jitter)
-    assert!(backoff1 >= backoff0 || retry.jitter);
-
-    // Healing config
-    let strict = HealingConfig::strict();
-    assert!(strict.strict_mode);
-    assert!(!strict.allow_type_coercion);
-    assert_eq!(strict.min_confidence, 0.95);
-
-    let lenient = HealingConfig::lenient();
-    assert!(!lenient.strict_mode);
-    assert!(lenient.allow_type_coercion);
-    assert_eq!(lenient.min_confidence, 0.5);
-
-    // Provider config
-    let provider = ProviderConfig::new("test", "https://api.test.com")
-        .with_api_key("sk-test")
-        .with_default_model("test-model");
-
-    assert_eq!(provider.name, "test");
-    assert_eq!(provider.api_key, Some("sk-test".to_string()));
-    assert_eq!(provider.default_model, Some("test-model".to_string()));
 }
 
 #[test]
@@ -248,51 +224,6 @@ fn test_provider_request_response() {
 }
 
 #[test]
-fn test_router_types() {
-    // Provider metrics
-    let mut metrics = ProviderMetrics::default();
-    assert_eq!(metrics.success_rate(), 1.0);
-
-    metrics.total_requests = 100;
-    metrics.successful_requests = 95;
-    metrics.failed_requests = 5;
-
-    assert!((metrics.success_rate() - 0.95).abs() < 0.01);
-    assert!((metrics.failure_rate() - 0.05).abs() < 0.01);
-
-    // Provider health
-    assert!(ProviderHealth::Healthy.is_available());
-    assert!(ProviderHealth::Degraded.is_available());
-    assert!(!ProviderHealth::Unavailable.is_available());
-
-    // Routing modes
-    assert!(!RoutingMode::Priority.description().is_empty());
-    assert!(!RoutingMode::RoundRobin.description().is_empty());
-}
-
-#[test]
-fn test_cache_key_generation() {
-    use simple_agent_type::cache::CacheKey;
-
-    // Keys should be deterministic
-    let key1 = CacheKey::from_parts("openai", "gpt-4", "test content");
-    let key2 = CacheKey::from_parts("openai", "gpt-4", "test content");
-    assert_eq!(key1, key2);
-
-    // Different content = different key
-    let key3 = CacheKey::from_parts("openai", "gpt-4", "different");
-    assert_ne!(key1, key3);
-
-    // Keys contain provider and model
-    assert!(key1.starts_with("openai:"));
-    assert!(key1.contains("gpt-4"));
-
-    // Namespace keys
-    let ns_key = CacheKey::with_namespace("responses", "abc123");
-    assert_eq!(ns_key, "responses:abc123");
-}
-
-#[test]
 fn test_all_types_are_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
 
@@ -301,12 +232,6 @@ fn test_all_types_are_send_sync() {
     assert_send_sync::<CompletionRequest>();
     assert_send_sync::<CompletionResponse>();
     assert_send_sync::<Usage>();
-
-    // Config types
-    assert_send_sync::<RetryConfig>();
-    assert_send_sync::<HealingConfig>();
-    assert_send_sync::<Capabilities>();
-    assert_send_sync::<ProviderConfig>();
 
     // Error types
     assert_send_sync::<SimpleAgentsError>();
@@ -321,7 +246,4 @@ fn test_all_types_are_send_sync() {
     // Provider types
     assert_send_sync::<ProviderRequest>();
     assert_send_sync::<ProviderResponse>();
-
-    // Router types
-    assert_send_sync::<ProviderMetrics>();
 }

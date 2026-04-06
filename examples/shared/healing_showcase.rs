@@ -1,17 +1,17 @@
 use futures_util::StreamExt;
 use simple_agent_type::prelude::*;
 use simple_agents_healing::prelude::*;
-use simple_agents_providers::metrics::RequestTimer;
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_providers::Provider;
 use std::io::Write;
 
 pub async fn example_streaming_healing(
-    provider: &OpenAIProvider,
+    provider: &OpenAiCompatProvider,
     model: &str,
     metric_source: &str,
     metric_heading: &str,
 ) -> Result<()> {
+    let _ = metric_source;
     println!("\n📤 Streaming JSON response with healing (Large JSON)...\n");
 
     let request = CompletionRequest::builder()
@@ -31,7 +31,6 @@ pub async fn example_streaming_healing(
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start(metric_source, model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
@@ -131,18 +130,16 @@ pub async fn example_streaming_healing(
     println!("  Healing operations: {}", heal_count);
     println!("  Total length: {} characters", full_content.len());
 
-    let estimated_tokens = (full_content.len() as f32 / 4.0) as u32;
-    timer.complete_success(150, estimated_tokens);
-
     Ok(())
 }
 
 pub async fn example_streaming_structured(
-    provider: &OpenAIProvider,
+    provider: &OpenAiCompatProvider,
     model: &str,
     metric_source: &str,
     metric_heading: &str,
 ) -> Result<()> {
+    let _ = metric_source;
     println!("\n📤 Streaming structured JSON with progressive parsing (Large Array)...\n");
 
     let request = CompletionRequest::builder()
@@ -158,7 +155,6 @@ pub async fn example_streaming_structured(
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start(metric_source, model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
@@ -263,18 +259,16 @@ pub async fn example_streaming_structured(
     println!("  Partial parses: {}", partial_count);
     println!("  Total length: {} characters", full_content.len());
 
-    let estimated_tokens = (full_content.len() as f32 / 4.0) as u32;
-    timer.complete_success(100, estimated_tokens);
-
     Ok(())
 }
 
 pub async fn example_streaming_graph(
-    provider: &OpenAIProvider,
+    provider: &OpenAiCompatProvider,
     model: &str,
     metric_source: &str,
     metric_heading: &str,
 ) -> Result<()> {
+    let _ = metric_source;
     println!("\n📤 Streaming graph data with progressive visualization...\n");
 
     let request = CompletionRequest::builder()
@@ -294,7 +288,6 @@ pub async fn example_streaming_graph(
         .stream(true)
         .build()?;
 
-    let timer = RequestTimer::start(metric_source, model);
     let provider_request = provider.transform_request(&request)?;
     let mut stream = provider.execute_stream(provider_request).await?;
 
@@ -480,9 +473,6 @@ pub async fn example_streaming_graph(
     println!("  Chunks: {}", chunk_count);
     println!("  Progressive updates: {}", partial_count);
     println!("  Total length: {} characters", full_content.len());
-
-    let estimated_tokens = (full_content.len() as f32 / 4.0) as u32;
-    timer.complete_success(200, estimated_tokens);
 
     Ok(())
 }

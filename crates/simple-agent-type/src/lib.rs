@@ -9,8 +9,6 @@
 //! SimpleAgents follows a trait-based architecture:
 //!
 //! - **Provider**: Trait for LLM provider implementations
-//! - **Cache**: Trait for caching responses
-//! - **RoutingStrategy**: Trait for provider selection
 //!
 //! # Main Types
 //!
@@ -49,20 +47,20 @@
 #![deny(unsafe_code)]
 
 // Core modules
-pub mod cache;
 pub mod coercion;
-pub mod config;
 pub mod error;
 pub mod message;
 pub mod provider;
 pub mod request;
 pub mod response;
-pub mod router;
+/// Telemetry and tracing configuration types.
+pub mod telemetry;
 pub mod tool;
 pub mod validation;
 
 // Re-export commonly used types at crate root
 pub use error::{HealingError, ProviderError, Result, SimpleAgentsError, ValidationError};
+pub use telemetry::{ApiFormat, OtelProtocol, TelemetryConfig, TraceContext};
 
 /// Prelude module for convenient imports.
 ///
@@ -79,7 +77,9 @@ pub use error::{HealingError, ProviderError, Result, SimpleAgentsError, Validati
 /// ```
 pub mod prelude {
     // Messages
-    pub use crate::message::{Message, Role};
+    pub use crate::message::{
+        mime, ContentPart, ImageUrlContent, MediaContent, Message, MessageContent, Role,
+    };
 
     // Requests and responses
     pub use crate::request::{CompletionRequest, CompletionRequestBuilder};
@@ -96,9 +96,6 @@ pub mod prelude {
     // Validation
     pub use crate::validation::ApiKey;
 
-    // Configuration
-    pub use crate::config::{Capabilities, HealingConfig, ProviderConfig, RetryConfig};
-
     // Coercion
     pub use crate::coercion::{CoercionFlag, CoercionResult};
 
@@ -109,15 +106,10 @@ pub mod prelude {
     };
 
     // Traits
-    pub use crate::cache::Cache;
     pub use crate::provider::Provider;
-    pub use crate::router::RoutingStrategy;
 
     // Provider types
     pub use crate::provider::{ProviderRequest, ProviderResponse};
-
-    // Router types
-    pub use crate::router::{ProviderHealth, ProviderMetrics, RoutingMode};
 }
 
 #[cfg(test)]
@@ -126,7 +118,6 @@ mod tests {
 
     #[test]
     fn test_prelude_imports() {
-        // Test that all major types are importable
         let _msg = Message::user("test");
         let _request = CompletionRequest::builder()
             .model("test")
@@ -196,11 +187,6 @@ mod tests {
         assert_send_sync::<Message>();
         assert_send_sync::<CompletionRequest>();
         assert_send_sync::<CompletionResponse>();
-
-        // Config types
-        assert_send_sync::<RetryConfig>();
-        assert_send_sync::<HealingConfig>();
-        assert_send_sync::<Capabilities>();
 
         // Coercion types
         assert_send_sync::<CoercionFlag>();

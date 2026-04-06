@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
-	"sort"
 	"time"
 
 	"simpleagents"
@@ -17,44 +15,11 @@ type summaryItem struct {
 	Workflow     string `json:"workflow"`
 	Status       string `json:"status"`
 	TerminalNode string `json:"terminal_node,omitempty"`
-	TotalElapsed uint64 `json:"total_elapsed_ms,omitempty"`
+	TotalElapsed any    `json:"total_elapsed_ms,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
-func setProviderEnv(provider string, apiKey string, apiBase string) {
-	switch provider {
-	case "openai":
-		_ = os.Setenv("OPENAI_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENAI_API_BASE", apiBase)
-		}
-	case "anthropic":
-		_ = os.Setenv("ANTHROPIC_API_KEY", apiKey)
-	case "openrouter":
-		_ = os.Setenv("OPENROUTER_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENROUTER_API_BASE", apiBase)
-		}
-	default:
-		log.Fatalf("unsupported provider %q", provider)
-	}
-}
-
-func listWorkflows(baseDir string) ([]string, error) {
-	matches, err := filepath.Glob(filepath.Join(baseDir, "*.yaml"))
-	if err != nil {
-		return nil, err
-	}
-	sort.Strings(matches)
-	return matches, nil
-}
-
 func main() {
-	provider := os.Getenv("WORKFLOW_PROVIDER")
-	if provider == "" {
-		provider = "openai"
-	}
-
 	apiKey := os.Getenv("WORKFLOW_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("CUSTOM_API_KEY")
@@ -69,23 +34,23 @@ func main() {
 		log.Fatal("set WORKFLOW_API_KEY (or CUSTOM_API_KEY)")
 	}
 
-	setProviderEnv(provider, apiKey, apiBase)
+	client, err := simpleagents.NewClient(apiKey, apiBase)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
 
 	emailText := "Please help with a damaged supply order and draft the right response."
 	if len(os.Args) > 1 {
 		emailText = os.Args[1]
 	}
 
-	workflows, err := listWorkflows("examples/workflow_email")
-	if err != nil {
-		log.Fatal(err)
+	// Only workflows without custom_worker nodes run with the FFI (no custom executor).
+	workflows := []string{
+		"examples/workflow_email/email-chat-draft-or-clarify.yaml",
+		"examples/workflow_email/email-chat-draft-with-tool-calling.yaml",
+		"examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml",
 	}
-
-	client, err := simpleagents.NewClientFromEnv(provider)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer client.Close()
 
 	workflowInput := map[string]any{
 		"email_text": emailText,
@@ -100,11 +65,15 @@ func main() {
 			},
 		},
 	}
+	inputJSON, err := json.Marshal(workflowInput)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	summary := make([]summaryItem, 0, len(workflows))
 	for _, workflowPath := range workflows {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		out, runErr := client.RunWorkflowYAML(ctx, workflowPath, workflowInput)
+		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		outJSON, runErr := client.Run(ctx, workflowPath, inputJSON)
 		cancel()
 		if runErr != nil {
 			summary = append(summary, summaryItem{
@@ -115,11 +84,21 @@ func main() {
 			continue
 		}
 
+		var out map[string]any
+		if err := json.Unmarshal(outJSON, &out); err != nil {
+			summary = append(summary, summaryItem{
+				Workflow: workflowPath,
+				Status:   "error",
+				Error:    err.Error(),
+			})
+			continue
+		}
+
 		summary = append(summary, summaryItem{
 			Workflow:     workflowPath,
 			Status:       "ok",
-			TerminalNode: out.TerminalNode,
-			TotalElapsed: out.TotalElapsedMS,
+			TerminalNode: strField(out, "terminal_node"),
+			TotalElapsed: out["total_elapsed_ms"],
 		})
 	}
 
@@ -129,4 +108,12 @@ func main() {
 	}
 
 	fmt.Println(string(payload))
+}
+
+func strField(m map[string]any, key string) string {
+	v, ok := m[key].(string)
+	if !ok {
+		return ""
+	}
+	return v
 }

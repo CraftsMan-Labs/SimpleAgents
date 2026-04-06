@@ -96,7 +96,7 @@ impl CompletionResponse {
     pub fn content(&self) -> Option<&str> {
         self.choices
             .first()
-            .map(|choice| choice.message.content.as_str())
+            .map(|choice| choice.message.content_text())
     }
 
     /// Get the first choice.

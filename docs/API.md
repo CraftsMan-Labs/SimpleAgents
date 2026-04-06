@@ -7,14 +7,11 @@ This document provides a concise map of the API surface. For exhaustive API docs
 - `simple-agent-type`: core request/response contracts and traits.
 - `simple-agents-core`: unified client orchestration.
 - `simple-agents-providers`: provider implementations and utilities.
-- `simple-agents-router`: routing strategies and resilience helpers.
 - `simple-agents-healing`: JSON parsing and schema coercion.
-- `simple-agents-cache`: cache implementations.
-- `simple-agents-cli`: CLI entrypoints.
+- `simple-agents-workflow`: YAML workflow engine.
 - `simple-agents-ffi`: C ABI surface.
-- `simple-agents-napi`: Node bindings.
+- `simple-agents-napi`: Node.js bindings.
 - `simple-agents-py`: Python bindings.
-- `simple-agents-macros`: proc macros.
 
 ## `simple-agent-type`
 
@@ -47,43 +44,47 @@ Utilities and subsystems:
 - Streaming and structured streaming helpers.
 - Metrics instrumentation (optional `prometheus` feature).
 
-## `simple-agents-router`
+## `simple-agents-workflow`
 
-Routing strategies and helpers:
-- `RoundRobinRouter`, `LatencyRouter`, `CostRouter`, `FallbackRouter`.
-- `CircuitBreaker`, `RetryPolicy`, `HealthTracker`.
+YAML workflow engine:
+- `WorkflowClient` wrapping `SimpleAgentsClient` with `run`, `stream`, `resume` methods.
+- `yaml_runner::workflow_execution::{run, stream}` — low-level async execution functions.
+- `YamlWorkflowExecutionRequest`, `YamlWorkflowSource`, `YamlWorkflowExecutorBinding`.
+- `YamlWorkflowRunOptions`, `YamlWorkflowExecutionFlags`.
+- `WorkflowRunOutput`, `WorkflowCheckpoint`.
 
 ## `simple-agents-healing`
 
 Healing APIs:
 - `JsonishParser` + `ParserConfig`.
 - `CoercionEngine` + `CoercionConfig`.
-- `Schema`, `ObjectSchema`, `Field`, `StreamAnnotation`.
-- `StreamingParser`, `PartialExtractor`.
-
-## `simple-agents-cache`
-
-Cache implementations:
-- `InMemoryCache`.
-- `NoOpCache`.
-
-## `simple-agents-cli`
-
-CLI surface:
-- `complete`, `chat`, `benchmark`, `test-provider`.
-- `workflow trace`, `workflow replay`, `workflow inspect`.
-- `workflow mermaid <workflow.yaml|workflow.json>` for graph visualization.
-- Config-driven provider and routing setup.
+- `Schema`, `ObjectSchema`, `Field`.
+- `StreamingParser`.
 
 ## Bindings
 
-- `simple-agents-ffi`: C ABI for completions.
-- `simple-agents-napi`: Node `Client` bindings (standard/healed/schema).
-- `simple-agents-py`: Python client builder, streaming iterators, schema helpers.
+### `simple-agents-ffi`
+C ABI surface for Go and other native consumers:
+- `sa_client_new`, `sa_client_free`, `sa_last_error_message`, `sa_string_free`.
+- `sa_complete`, `sa_stream`.
+- `sa_run_workflow`, `sa_stream_workflow`, `sa_resume`.
 
-## `simple-agents-macros`
+### `simple-agents-napi`
+Node.js `Client` with TypeScript types:
+- `client.complete(messages, opts?)`.
+- `client.stream(workflowPath, messages, opts?)`, `client.run(workflowPath, messages, opts?)`, `client.resume(checkpoint, messages, opts?)`.
+- `MessageInput`, `RunOptions` types.
 
-- `#[derive(PartialType)]` for partial structs used in streaming workflows.
+### `simple-agents-py`
+Python `Client` via PyO3:
+- `client.complete(messages, *, model=None, ...)`.
+- `client.run(workflow_path, messages, *, tools=None, options=None)`.
+- `client.stream(workflow_path, messages, *, on_event=None, tools=None, options=None)`.
+- `client.resume(checkpoint, messages, *, on_event=None)`.
+- `Message`, `Role`, `ContentPart` typed helpers.
+
+### WASM (`simple-agents-wasm`)
+- `Client.runWorkflowYamlString(yaml, input)` / `Client.runYamlString(yaml, input)`.
 
 ## Cargo Features
 

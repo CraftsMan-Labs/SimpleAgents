@@ -33,8 +33,7 @@ use serde_json::json;
 use simple_agent_type::prelude::*;
 use simple_agents_healing::prelude::*;
 use simple_agents_healing::string_utils::jaro_winkler;
-use simple_agents_providers::metrics::RequestTimer;
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_providers::Provider;
 
 #[path = "shared/healing_showcase.rs"]
@@ -49,7 +48,7 @@ async fn main() -> Result<()> {
     println!("╚══════════════════════════════════════════════════════════╝\n");
 
     // Setup provider from environment (optional base URL override)
-    let provider = OpenAIProvider::from_env()?;
+    let provider = OpenAiCompatProvider::from_env()?;
     let model = std::env::var("OPENAI_API_MODEL").unwrap_or_else(|_| "gpt-3.5-turbo".to_string());
 
     println!("✅ API key loaded successfully\n");
@@ -103,7 +102,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn example_basic_json(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_basic_json(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting simple JSON response...\n");
 
     // Create a request that asks for JSON (LLMs often wrap in markdown)
@@ -119,15 +118,9 @@ async fn example_basic_json(provider: &OpenAIProvider, model: &str) -> Result<()
         .max_tokens(150)
         .build()?;
 
-    // Execute with metrics
-    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
-    timer.complete_success(
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-    );
 
     println!("📨 Raw response from LLM:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -162,7 +155,7 @@ async fn example_basic_json(provider: &OpenAIProvider, model: &str) -> Result<()
     Ok(())
 }
 
-async fn example_type_coercion(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_type_coercion(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting data with numeric values as strings...\n");
 
     // LLMs often return numbers as strings in JSON
@@ -179,14 +172,9 @@ async fn example_type_coercion(provider: &OpenAIProvider, model: &str) -> Result
         .max_tokens(150)
         .build()?;
 
-    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
-    timer.complete_success(
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-    );
 
     println!("📨 Raw response:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -240,7 +228,7 @@ async fn example_type_coercion(provider: &OpenAIProvider, model: &str) -> Result
     Ok(())
 }
 
-async fn example_schema_validation(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_schema_validation(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting complex structured data...\n");
 
     let request = CompletionRequest::builder()
@@ -257,14 +245,9 @@ async fn example_schema_validation(provider: &OpenAIProvider, model: &str) -> Re
         .max_tokens(200)
         .build()?;
 
-    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
-    timer.complete_success(
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-    );
 
     println!("📨 Raw response:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -314,7 +297,7 @@ async fn example_schema_validation(provider: &OpenAIProvider, model: &str) -> Re
     Ok(())
 }
 
-async fn example_fuzzy_matching(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_fuzzy_matching(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     println!("\n📤 Requesting data with case variations...\n");
 
     let request = CompletionRequest::builder()
@@ -329,14 +312,9 @@ async fn example_fuzzy_matching(provider: &OpenAIProvider, model: &str) -> Resul
         .max_tokens(150)
         .build()?;
 
-    let timer = RequestTimer::start("openai", model);
     let provider_request = provider.transform_request(&request)?;
     let provider_response = provider.execute(provider_request).await?;
     let response = provider.transform_response(provider_response)?;
-    timer.complete_success(
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-    );
 
     println!("📨 Raw response:");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -494,15 +472,15 @@ fn pick_fuzzy_key(expected: &str) -> (String, f64) {
     (fallback, score)
 }
 
-async fn example_streaming_healing(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_streaming_healing(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     healing_showcase::example_streaming_healing(provider, model, "openai", "📊 Tokens used").await
 }
 
-async fn example_streaming_structured(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_streaming_structured(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     healing_showcase::example_streaming_structured(provider, model, "openai", "📊 Tokens used")
         .await
 }
 
-async fn example_streaming_graph(provider: &OpenAIProvider, model: &str) -> Result<()> {
+async fn example_streaming_graph(provider: &OpenAiCompatProvider, model: &str) -> Result<()> {
     healing_showcase::example_streaming_graph(provider, model, "openai", "📊 Tokens used").await
 }

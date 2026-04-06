@@ -6,30 +6,13 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"simpleagents"
 )
 
-func setProviderEnv(provider, apiKey, apiBase string) {
-	switch provider {
-	case "openai":
-		_ = os.Setenv("OPENAI_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENAI_API_BASE", apiBase)
-		}
-	case "anthropic":
-		_ = os.Setenv("ANTHROPIC_API_KEY", apiKey)
-	case "openrouter":
-		_ = os.Setenv("OPENROUTER_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENROUTER_API_BASE", apiBase)
-		}
-	default:
-		log.Fatalf("unsupported provider %q", provider)
-	}
-}
+// Default workflow has no custom_worker nodes (Go FFI does not inject a custom worker executor).
+// Workflows like email-intake-classification.yaml require custom_worker and will not complete via FFI alone.
 
 func main() {
 	provider := os.Getenv("WORKFLOW_PROVIDER")
@@ -49,9 +32,13 @@ func main() {
 		log.Fatal("set WORKFLOW_API_KEY (or CUSTOM_API_KEY)")
 	}
 
-	setProviderEnv(provider, apiKey, apiBase)
+	client, err := simpleagents.NewClient(apiKey, apiBase)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
 
-	workflowPath := "../../examples/workflow_email/email-intake-classification.yaml"
+	workflowPath := "../../examples/workflow_email/email-chat-draft-or-clarify.yaml"
 	if len(os.Args) > 1 {
 		workflowPath = os.Args[1]
 	}
@@ -61,42 +48,28 @@ func main() {
 		emailText = os.Args[2]
 	}
 
-	client, err := simpleagents.NewClientFromEnv(provider)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer client.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-
-	out, err := client.RunWorkflowYAML(ctx, workflowPath, map[string]any{
+	input := map[string]any{
 		"email_text": emailText,
 		"messages": []map[string]any{
 			{"role": "user", "content": emailText},
 		},
-	})
+	}
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// Execute real Go custom handler functions for custom_worker nodes.
-	for _, step := range out.StepTimings {
-		if step.NodeKind != "custom_worker" {
-			continue
-		}
-		topic := "clarification"
-		if strings.HasPrefix(step.NodeID, "rag_") {
-			topic = strings.TrimPrefix(step.NodeID, "rag_")
-		}
-		handled := getRagData(topic, emailText, len(out.Outputs))
-		if out.Outputs == nil {
-			out.Outputs = map[string]map[string]any{}
-		}
-		out.Outputs[step.NodeID] = map[string]any{"output": handled}
-		if out.TerminalNode == step.NodeID {
-			out.TerminalOutput = handled
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	outJSON, err := client.Run(ctx, workflowPath, inputJSON)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(outJSON, &out); err != nil {
+		log.Fatal(err)
 	}
 
 	payload, err := json.MarshalIndent(out, "", "  ")

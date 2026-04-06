@@ -7,12 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 use simple_agents_core::SimpleAgentsClient;
-use simple_agents_providers::anthropic::AnthropicProvider;
-use simple_agents_providers::openai::OpenAIProvider;
-use simple_agents_providers::openrouter::OpenRouterProvider;
-use simple_agents_workflow::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowRunOptions,
+use simple_agents_providers::openai::OpenAiCompatProvider;
+use simple_agents_workflow::yaml_runner::{
+    workflow_execution, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 
 #[derive(Debug, Clone)]
@@ -143,43 +141,16 @@ fn resolve_workflow_path(workflow: &str) -> Result<PathBuf, String> {
 fn build_client() -> Result<SimpleAgentsClient, Box<dyn std::error::Error>> {
     load_env();
 
-    let provider = env::var("WORKFLOW_PROVIDER")
-        .unwrap_or_else(|_| "openai".to_string())
-        .to_lowercase();
     let api_base = env_or("WORKFLOW_API_BASE", "CUSTOM_API_BASE");
     let api_key = env_or("WORKFLOW_API_KEY", "CUSTOM_API_KEY")
         .ok_or("Set WORKFLOW_API_KEY (or CUSTOM_API_KEY)")?;
 
-    match provider.as_str() {
-        "openai" => {
-            env::set_var("OPENAI_API_KEY", api_key);
-            if let Some(base) = api_base {
-                env::set_var("OPENAI_API_BASE", base);
-            }
-            let provider = OpenAIProvider::from_env()?;
-            Ok(SimpleAgentsClient::builder()
-                .with_provider(Arc::new(provider))
-                .build()?)
-        }
-        "anthropic" => {
-            env::set_var("ANTHROPIC_API_KEY", api_key);
-            let provider = AnthropicProvider::from_env()?;
-            Ok(SimpleAgentsClient::builder()
-                .with_provider(Arc::new(provider))
-                .build()?)
-        }
-        "openrouter" => {
-            env::set_var("OPENROUTER_API_KEY", api_key);
-            if let Some(base) = api_base {
-                env::set_var("OPENROUTER_API_BASE", base);
-            }
-            let provider = OpenRouterProvider::from_env()?;
-            Ok(SimpleAgentsClient::builder()
-                .with_provider(Arc::new(provider))
-                .build()?)
-        }
-        _ => Err(format!("Unsupported WORKFLOW_PROVIDER: {}", provider).into()),
+    env::set_var("OPENAI_API_KEY", api_key);
+    if let Some(base) = api_base {
+        env::set_var("OPENAI_API_BASE", base);
     }
+    let provider = OpenAiCompatProvider::from_env()?;
+    Ok(SimpleAgentsClient::new(Arc::new(provider)))
 }
 
 fn render_output(value: &Option<Value>) -> String {
@@ -259,15 +230,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let result = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-            Path::new(&workflow_path),
-            &workflow_input,
-            &client,
-            None,
-            None,
-            &options,
-        )
-        .await?;
+        let flags = YamlWorkflowExecutionFlags::default();
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(Path::new(&workflow_path)),
+            workflow_input: &workflow_input,
+            executor: YamlWorkflowExecutorBinding::Client(&client),
+            custom_worker: None,
+            options: &options,
+            flags,
+        };
+        let result = workflow_execution::run(execution_request).await?;
 
         let reply = render_output(&result.terminal_output);
         println!("\nAssistant: {}\n", reply);

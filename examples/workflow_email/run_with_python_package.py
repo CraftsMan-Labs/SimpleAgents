@@ -26,7 +26,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-events",
         action="store_true",
-        help="Include workflow events in non-streaming output",
+        help="(unused – kept for backward compat)",
     )
     return parser.parse_args()
 
@@ -63,8 +63,11 @@ def main() -> None:
             if trimmed_path.exists():
                 workflow_path = trimmed_path
 
-    result = client.run_email_workflow_yaml(
-        str(workflow_path), args.email, include_events=args.include_events
+    result = client.run_workflow(
+        {
+            "workflow_path": str(workflow_path),
+            "input": {"email_text": args.email},
+        }
     )
     print(json.dumps(result, indent=2))
 

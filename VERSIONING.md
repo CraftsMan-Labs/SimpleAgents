@@ -37,6 +37,8 @@ Individual crates inherit this version:
 version.workspace = true
 ```
 
+In-tree crates listed under `[workspace.dependencies]` use **`version` and `path` together**: the path keeps local builds on workspace sources, and the version is what remains after `cargo publish` strips `path` (crates.io rejects `workspace = true` dependencies with no version). `make version-sync` keeps those versions aligned with `[workspace.package].version`. `./scripts/verify-workspace-versions.sh` (also run at the end of `make version-sync` and in CI) enforces that alignment and runs `cargo metadata --locked`.
+
 ### Bumping Versions
 
 Use the Makefile commands:
@@ -266,13 +268,13 @@ cargo publish --dry-run --registry test
 Publishing order for SimpleAgents:
 
 1. `simple-agent-type` (no internal deps)
-2. `simple-agents-cache` (no internal deps)
-3. `simple-agents-macros` (no internal deps)
-4. `simple-agents-healing` (depends on types)
-5. `simple-agents-router` (depends on types)
-6. `simple-agents-providers` (depends on types, cache, healing)
-7. `simple-agents-core` (depends on everything)
-8. `simple-agents-ffi` (depends on core)
+2. `simple-agents-healing` (depends on types)
+3. `simple-agents-providers` (depends on types, healing)
+4. `simple-agents-core` (depends on types, providers, healing)
+5. `simple-agents-workflow` (depends on core, types)
+6. `simple-agents-ffi` (depends on workflow, core)
+7. `simple-agents-napi` (depends on workflow, core)
+8. `simple-agents-py` (depends on workflow, core)
 
 The Makefile respects this order automatically.
 

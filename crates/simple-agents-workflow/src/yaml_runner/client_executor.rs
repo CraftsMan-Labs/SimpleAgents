@@ -1,4 +1,38 @@
-use super::*;
+use std::collections::HashMap;
+use std::time::Instant;
+
+use async_trait::async_trait;
+use futures::StreamExt;
+use serde_json::{json, Value};
+use simple_agent_type::message::Message;
+use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::response::FinishReason;
+use simple_agent_type::tool::{ToolCall, ToolType};
+use simple_agents_core::{
+    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
+};
+
+use crate::observability::tracing::{SpanKind, TraceContext};
+
+use super::contracts::{
+    event_sink_is_cancelled, workflow_event_sink_cancelled_message, YamlLlmExecutionRequest,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
+    YamlWorkflowLlmExecutor, YamlWorkflowTokenKind,
+};
+use super::stream_filters::{
+    parse_streamed_structured_payload, StreamJsonAsTextFormatter, StructuredJsonDeltaFilter,
+};
+use super::subworkflow::execute_subworkflow_tool_call;
+use super::telemetry::{
+    apply_trace_identity_attributes, apply_trace_tenant_attributes_from_tenant,
+    payload_for_tool_trace,
+};
+use super::types::{
+    YamlLlmExecutionResult, YamlLlmTokenUsage, YamlToolCallTrace, YamlToolTraceMode,
+    YamlWorkflowRunOptions,
+};
+use super::validation::{schema_expects_object, validate_schema_instance};
+use crate::observability::tracing::workflow_tracer;
 
 pub(super) struct BorrowedClientExecutor<'a> {
     pub(super) client: &'a SimpleAgentsClient,
@@ -105,7 +139,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }
@@ -132,7 +166,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }
@@ -159,7 +193,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             .choices
                             .first()
                             .ok_or_else(|| "completion returned no choices".to_string())?;
-                        streamed_content = choice.message.content.clone();
+                        streamed_content = choice.message.content_text().to_string();
                         streamed_tool_calls = choice.message.tool_calls.clone();
                         finish_reason = choice.finish_reason;
                     }
@@ -167,7 +201,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         let mut final_stream_usage: Option<simple_agent_type::response::Usage> =
                             None;
                         let mut delta_filter = StructuredJsonDeltaFilter::default();
-                        let include_raw_debug = include_raw_stream_debug_events();
+                        let include_raw_debug = super::split_stream_deltas_enabled(&request);
                         let mut json_text_formatter = if request.stream_json_as_text {
                             Some(StreamJsonAsTextFormatter::default())
                         } else {
@@ -512,7 +546,6 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                 tool_name.as_str(),
                                 None,
                                 &arguments,
-                                request.input_text.as_str(),
                                 &request.execution_context,
                             )
                             .await
@@ -712,7 +745,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 let stream_started = request_started;
                 let mut ttft_ms: Option<u128> = None;
                 let mut delta_filter = StructuredJsonDeltaFilter::default();
-                let include_raw_debug = include_raw_stream_debug_events();
+                let include_raw_debug = super::split_stream_deltas_enabled(&request);
                 let mut json_text_formatter = if request.stream_json_as_text {
                     Some(StreamJsonAsTextFormatter::default())
                 } else {

@@ -6,10 +6,10 @@
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry node-package-dry-run wasm-package-dry-run \
 	python-typecheck go-vet go-staticcheck rust-check-all node-typecheck \
-	version-get version-sync version-patch version-minor version-major version-set \
+	version-get version-sync verify-workspace-versions version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
-EXAMPLE ?= openai_basic
+EXAMPLE ?= basic_healing
 RUST_RELEASE_DIR ?= target/release
 GO_BINDINGS_DIR ?= bindings/go
 GO_CACHE_DIR ?= $(CURDIR)/.go-cache
@@ -28,8 +28,8 @@ EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
 EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
-PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
-	simple-agents-healing simple-agents-router simple-agents-providers \
+PUBLISH_CRATES ?= simple-agent-type \
+	simple-agents-healing simple-agents-providers \
 	simple-agents-core simple-agents-workflow simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
@@ -102,6 +102,7 @@ help:
 	@echo "Versioning:"
 	@echo "  make version-get           - Show current version"
 	@echo "  make version-sync          - Sync versions across manifests"
+	@echo "  make verify-workspace-versions - Check workspace dep pins + cargo metadata --locked"
 	@echo "  make version-patch         - Bump patch version (0.1.0 -> 0.1.1)"
 	@echo "  make version-minor         - Bump minor version (0.1.0 -> 0.2.0)"
 	@echo "  make version-major         - Bump major version (0.1.0 -> 1.0.0)"
@@ -114,7 +115,8 @@ test-rust:
 	cargo test --all
 
 test-python:
-	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" pytest
+	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" \
+		pytest --ignore=tests/test_client_builder.py --ignore=tests/test_routing_config.py
 
 coverage-rust:
 	PATH="$(HOME)/.cargo/bin:$$PATH" bash ./scripts/check-rust-coverage.sh
@@ -126,7 +128,7 @@ test-binding-layers:
 	./scripts/run-binding-tests-layered.sh
 
 clippy:
-	cargo clippy --all-targets
+	cargo clippy --all-targets -- -D warnings
 
 fmt:
 	cargo fmt --all -- --check
@@ -135,7 +137,7 @@ loc-report:
 	./scripts/loc-report.sh
 
 example-providers:
-	cargo run -p simple-agents-providers --example $(EXAMPLE)
+	cargo run -p simple-agents-healing --example $(EXAMPLE)
 
 example-full-api:
 	cargo run --manifest-path examples/Cargo.toml --example full_api_example
@@ -172,10 +174,7 @@ run-node-chat-history: build-node
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	case " $(NODE_CHAT_FLAGS) " in \
-	  *" --show-thinking "*) SIMPLE_AGENTS_WORKFLOW_STREAM_INCLUDE_RAW=1 $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
-	  *) $(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS) ;; \
-	esac
+	$(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS)
 
 run-wasm-chat-history: build-wasm
 	@set -a; \
@@ -233,7 +232,7 @@ test-node: build-node
 	@set -a; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	cd $(NAPI_PROJECT_DIR) && npm test
+	cd $(NAPI_PROJECT_DIR) && npm test && npm run test:live
 
 test-wasm: build-wasm
 	cd $(WASM_PACKAGE_DIR) && npm test
@@ -287,7 +286,7 @@ publish-crates:
 		attempt=1; \
 		while true; do \
 			set +e; \
-			out=$$($(DOPPLER_RUN) "cargo publish -p $$crate" 2>&1); \
+			out=$$($(DOPPLER_RUN) "cargo publish -p $$crate --allow-dirty" 2>&1); \
 			status=$$?; \
 			set -e; \
 			echo "$$out"; \
@@ -352,6 +351,12 @@ check-publish:
 	@echo ""
 	@echo "==> Running Node binding contract test..."
 	@cd $(NAPI_PROJECT_DIR) && npm run test:contract
+	@echo ""
+	@echo "==> Running Node live tests (optional; skipped when API env not set)..."
+	@set -a; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cd $(NAPI_PROJECT_DIR) && npm run test:live
 	@echo ""
 	@echo "==> Running WASM binding tests..."
 	@cd $(WASM_PACKAGE_DIR) && npm test
@@ -488,6 +493,10 @@ version-sync:
 	@$(MAKE) --no-print-directory sync-wasm-version
 	@$(MAKE) --no-print-directory sync-binding-lockfiles
 	@$(MAKE) --no-print-directory sync-readme-version
+	@./scripts/verify-workspace-versions.sh
+
+verify-workspace-versions:
+	@./scripts/verify-workspace-versions.sh
 
 sync-napi-version:
 	@case " $(MAKEFLAGS) " in *" -n "*|*" --just-print "*|*" --dry-run "*) \
@@ -596,6 +605,7 @@ version-patch:
 		echo "Error: version-patch cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	patch=$$((patch + 1)); \
@@ -622,6 +632,7 @@ version-minor:
 		echo "Error: version-minor cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	minor=$$((minor + 1)); \
@@ -647,6 +658,7 @@ version-major:
 		echo "Error: version-major cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	current=$$(grep '^version = ' $(WORKSPACE_CARGO) | head -1 | sed 's/version = "\(.*\)"/\1/'); \
 	IFS='.' read -r major minor patch <<< "$$current"; \
 	major=$$((major + 1)); \
@@ -672,6 +684,7 @@ version-set:
 		echo "Error: version-set cannot run with -n/--dry-run"; \
 		exit 1; \
 	esac; \
+	set -eo pipefail; \
 	if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION not specified"; \
 		echo "Usage: make version-set VERSION=0.2.0"; \

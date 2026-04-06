@@ -1,15 +1,27 @@
 {
   "name": "simple-agents-node",
-  "version": "0.2.36",
+  "version": "0.3.3",
   "description": "Node.js bindings for SimpleAgents using napi-rs",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
     "index.js",
     "index.d.ts",
+    "workflow_event.js",
+    "workflow_event.d.ts",
     "README.md",
     "index.node"
   ],
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./workflow_event": {
+      "types": "./workflow_event.d.ts",
+      "default": "./workflow_event.js"
+    }
+  },
   "scripts": {
     "build": "napi build --release",
     "build:debug": "napi build",
@@ -18,7 +30,7 @@
     "pretest:contract": "npm run build:debug",
     "pretest:live": "npm run build:debug",
     "test": "npm run test:unit && npm run test:contract",
-    "test:unit": "node --test test/unit.test.js",
+    "test:unit": "node --test test/unit.test.js test/workflow_event.test.js",
     "test:contract": "node --test test/contract.test.js",
     "test:live": "node --test test/live.test.js",
     "prepublishOnly": "npm run build"

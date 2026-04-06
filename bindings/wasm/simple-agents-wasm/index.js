@@ -30,6 +30,43 @@ function toMessages(promptOrMessages) {
   return promptOrMessages;
 }
 
+function buildWorkflowInputFromExecutionRequest(request) {
+  if (!request || typeof request !== "object") {
+    throw configError("workflow request must be an object");
+  }
+  if (typeof request.workflow_yaml !== "string" || request.workflow_yaml.trim().length === 0) {
+    throw configError("workflow_yaml must be a non-empty string");
+  }
+  if (!Array.isArray(request.messages) || request.messages.length === 0) {
+    throw configError("messages must be a non-empty array");
+  }
+  const input = request.input && typeof request.input === "object" ? { ...request.input } : {};
+  input.messages = request.messages;
+  if (request.context && typeof request.context === "object") {
+    input.context = request.context;
+  }
+  if (request.media && typeof request.media === "object") {
+    input.media = request.media;
+  }
+  return input;
+}
+
+function buildWorkflowOptionsFromExecutionRequest(request, onEvent) {
+  const execution = request.execution && typeof request.execution === "object"
+    ? request.execution
+    : {};
+  const options = request.workflow_options && typeof request.workflow_options === "object"
+    ? { ...request.workflow_options }
+    : {};
+  if (typeof execution.model === "string" && execution.model.trim().length > 0) {
+    options.model = execution.model;
+  }
+  if (typeof onEvent === "function") {
+    options.onEvent = onEvent;
+  }
+  return options;
+}
+
 function toUsage(usage) {
   if (!usage || typeof usage !== "object") {
     return {
@@ -1271,6 +1308,23 @@ export class Client {
     }
     const result = await this.fallbackClient.runWorkflowYaml(workflowPath, workflowInput);
     return assertWorkflowResultShape(normalizeWorkflowResult(result));
+  }
+
+  async run(request) {
+    const workflowInput = buildWorkflowInputFromExecutionRequest(request);
+    const workflowOptions = buildWorkflowOptionsFromExecutionRequest(request, undefined);
+    return this.runWorkflowYamlString(request.workflow_yaml, workflowInput, workflowOptions);
+  }
+
+  async runAsync(request) {
+    return this.run(request);
+  }
+
+  // Workflow-streaming surface (completion streaming already uses `stream`).
+  async streamWorkflow(request, onEvent) {
+    const workflowInput = buildWorkflowInputFromExecutionRequest(request);
+    const workflowOptions = buildWorkflowOptionsFromExecutionRequest(request, onEvent);
+    return this.runWorkflowYamlString(request.workflow_yaml, workflowInput, workflowOptions);
   }
 }
 

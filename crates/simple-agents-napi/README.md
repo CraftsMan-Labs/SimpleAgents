@@ -9,6 +9,11 @@ npm install
 npm run build
 ```
 
+## Testing
+
+- `npm test` — unit tests + binding contract tests (no network).
+- `npm run test:live` — optional integration tests; **skipped** unless `OPENAI_API_KEY` or `CUSTOM_API_KEY`, plus `CUSTOM_API_MODEL` and `PROVIDER` are set. From the repo root, `make test-node` and `make check-publish` load the root `.env` (if present) before running `test:live`.
+
 ## Usage
 
 ```javascript
@@ -88,6 +93,43 @@ async function main() {
     { mode: 'healed_json' },
   );
   console.log('parsed JSON value:', healed.healed?.value);
+
+  // Workflow YAML (sync) — messages-first request (see docs/WORKFLOW_API_MIGRATION.md)
+  const workflowOutput = client.executeWorkflowYaml({
+    workflowPath: 'examples/workflow_email/email-unified-chat-intake-classification.yaml',
+    messages: [
+      { role: 'system', content: 'You are an HR classifier.' },
+      { role: 'user', content: 'Termination request, second warning already issued' },
+    ],
+    healing: false,
+    workflowStreaming: false,
+    nodeLlmStreaming: true,
+    workflowOptions: { includeEvents: true },
+  });
+  console.log('terminal output:', workflowOutput.terminal_output);
+
+  // Workflow YAML (async + live events)
+  const asyncOutput = await client.executeWorkflowYamlStream(
+    {
+      workflowPath: 'examples/workflow_email/email-unified-chat-intake-classification.yaml',
+      messages: [
+        { role: 'system', content: 'You are an HR classifier.' },
+        { role: 'user', content: 'Termination request, second warning already issued' },
+      ],
+      healing: false,
+      workflowStreaming: true,
+      nodeLlmStreaming: true,
+      workflowOptions: { telemetry: { nerdstats: true } },
+    },
+    (err, eventJson) => {
+      if (err) {
+        console.error('event error:', err);
+        return;
+      }
+      console.log('event:', eventJson);
+    },
+  );
+  console.log('async terminal output:', asyncOutput.terminal_output);
 }
 
 main().catch((err) => {
@@ -98,8 +140,8 @@ main().catch((err) => {
 
 ## Notes
 
-- Canonical env contract for examples/tests is: `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `PROVIDER`.
-- Canonical env contract for examples/tests is: `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_BASE` (optional), `CUSTOM_API_MODEL`.
+- `client.executeWorkflowYaml` / `executeWorkflowYamlStream` are the canonical workflow APIs (messages-first `WorkflowYamlRunRequest`). `runWorkflowYaml` / `runWorkflowYamlStream` remain for compatibility. Typed `workflowOptions` use `WorkflowRunOptionsNapi` (`model`, `telemetry`, `trace`, `includeEvents`). For stream events, `require('simple-agents-node/workflow_event').parseWorkflowEvent(eventJson)` parses the JSON string into a typed object.
+- Canonical env contract for examples/tests is: `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_BASE` (optional), `CUSTOM_API_MODEL` (also referenced as `CUSTOM_API_*` in places).
 - For OpenAI provider compatibility, map `CUSTOM_API_*` to `OPENAI_API_*` when needed (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`).
 - `max_tokens`, `temperature`, and `top_p` are optional. Use `mode: "healed_json"` for parsed JSON or `mode: "schema"` with a schema object to coerce/validate.
 - `complete` resolves with the first choice, usage metadata, and optional `healed`/`coerced` metadata.

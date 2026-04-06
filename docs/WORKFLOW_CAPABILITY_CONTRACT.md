@@ -171,8 +171,8 @@ References:
 | Deterministic run model | not workflow-graph aware | step-based deterministic workflow runtime |
 | Trace/replay | provider metrics/logging only | typed trace schema + recorder + replay validator |
 | Scope boundaries | request-level | runtime scoped state with capability checks |
-| YAML workflow execution | not available | `run_workflow_yaml_file_with_client` / `run_workflow_yaml_with_client` (email wrappers remain) |
-| Workflow live events | not available | `run_email_workflow_yaml_with_client_and_custom_worker_and_events` + `YamlWorkflowEventSink` |
+| YAML workflow execution | not available | `WorkflowRunner` (preferred) and compatibility `run_workflow_yaml_*` helpers |
+| Workflow live events | not available | Stream entrypoints + `YamlWorkflowEventSink` (binding-specific `stream` / `Stream` / `executeWorkflowYamlStream`) |
 | YAML workflow verifier | not available | `verify_yaml_workflow` diagnostics before execution |
 | YAML prompt memory | not available | `set_globals` + `update_globals` + `&#123;&#123; globals.* &#125;&#125;` interpolation |
 | Visualization | not available | `workflow_to_mermaid` |
@@ -181,11 +181,12 @@ References:
 
 Rust remains source of truth. Language bindings should wrap Rust behavior, not re-implement core logic.
 
-- FFI: `sa_run_workflow_yaml` returns JSON output from Rust runner (`sa_run_email_workflow_yaml` remains as wrapper).
-- Go: `Client.RunWorkflowYAML(...)` delegates through FFI (`RunEmailWorkflowYAML(...)` remains as wrapper).
-- Node: `Client.runWorkflowYaml(...)` delegates through Rust binding (`runEmailWorkflowYaml(...)` remains as wrapper).
-- Python: `Client.run_workflow_yaml(...)` delegates through Rust binding (`run_email_workflow_yaml(...)` remains as wrapper).
-- Python streaming: `Client.run_workflow_yaml_stream(...)` delegates through Rust event stream + callback sink.
+- FFI: `sa_run_workflow_yaml*` returns JSON output from Rust runner.
+- Go: `Client.Run(...)` / `RunAsync(...)` / `Stream(...)` delegate through FFI (legacy `RunWorkflowYAML*` wrappers retained).
+- Node: `Client.executeWorkflowYaml(...)` / `executeWorkflowYamlStream(...)` delegate through Rust typed execution (legacy `runWorkflowYaml*` wrappers retained).
+- Python: `Client.run(...)` / `run_async(...)` / `stream(...)` delegate through Rust typed execution (legacy `run_workflow_yaml*` wrappers retained).
+
+**Binding parity note:** The `simple_agents_py.workflow_stream` helpers (`workflow_event_callback`, `stream_workflow`) are **Python-only** convenience for mapping workflow events to structured hook methods. Node.js callers use JSON `onEvent` callbacks (or `executeWorkflowYamlStream` with `splitStreamDeltas`). The **`split_stream_deltas`** execution flag is **cross-cutting**: it is implemented in Rust, parsed from Python `execution` objects, and exposed as optional `splitStreamDeltas` on `WorkflowYamlRunRequest` in the N-API binding, and as JSON `workflow_execution_flags_json` on the C/Go stream entrypoint.
 
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 

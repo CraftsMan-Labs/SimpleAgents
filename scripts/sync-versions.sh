@@ -13,6 +13,12 @@ fi
 echo "Workspace version: $WORKSPACE_VERSION"
 echo ""
 
+# Align workspace dependency version pins with workspace.package.version when present
+# (path-only workspace deps skip this; mixed path+version publish pins are updated here)
+sed -i.bak -E "s/(simple-agents-[a-z-]+ = \\{[^\\}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" Cargo.toml
+sed -i.bak -E "s/(simple-agent-type = \\{[^\\}]*version = \")[^\"]+/\1$WORKSPACE_VERSION/" Cargo.toml
+rm -f Cargo.toml.bak
+
 # Update Python package version
 echo "Updating Python package version..."
 sed -i.bak "s/^version = \".*\"/version = \"$WORKSPACE_VERSION\"/" crates/simple-agents-py/Cargo.toml

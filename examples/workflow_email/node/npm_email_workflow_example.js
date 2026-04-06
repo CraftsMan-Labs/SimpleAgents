@@ -74,7 +74,7 @@ function run() {
     process.argv[3] ||
     'Please process supply chain replacement, order 9921 arrived damaged.'
 
-  const result = client.runEmailWorkflowYaml(workflowPath, emailText)
+  const result = client.runWorkflowYaml(workflowPath, { email_text: emailText })
   console.log(JSON.stringify(result, null, 2))
 }
 

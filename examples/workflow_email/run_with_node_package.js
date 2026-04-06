@@ -52,7 +52,7 @@ async function main() {
   const workflowPath = process.argv[2] || 'examples/workflow_email/email-intake-classification.yaml'
   const emailText = process.argv[3] || 'Please process supply chain replacement, order 9921 arrived damaged.'
 
-  const result = client.runEmailWorkflowYaml(workflowPath, emailText)
+  const result = client.runWorkflowYaml(workflowPath, { email_text: emailText })
 
   // Execute real JS custom handlers for custom_worker nodes.
   const started = Date.now()

@@ -55,19 +55,16 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 
 - `crates/simple-agent-type` - canonical request/response types, contracts, and traits.
 - `crates/simple-agents-core` - unified client orchestration.
-- `crates/simple-agents-providers` - provider adapters and provider utilities.
-- `crates/simple-agents-router` - routing strategies and resilience helpers.
-- `crates/simple-agents-cache` - cache backends (in-memory, noop).
+- `crates/simple-agents-providers` - provider adapters and utilities.
 - `crates/simple-agents-healing` - JSON-ish parsing and schema coercion.
-- `crates/simple-agents-workflow` - workflow IR/runtime/validation/tracing.
-- `crates/simple-agents-workflow-workers` - workflow worker gRPC contract and client pool.
-- `crates/simple-agents-cli` - CLI (`complete`, `chat`, `benchmark`, workflow tooling).
-- `crates/simple-agents-ffi` - C ABI surface.
-- `crates/simple-agents-napi` - Node binding crate (`simple-agents-node`).
-- `crates/simple-agents-py` - Python binding package (`simple-agents-py`).
-- `bindings/go` - Go binding over C FFI.
+- `crates/simple-agents-workflow` - YAML workflow engine, IR, validation, tracing.
+- `crates/simple-agents-ffi` - C ABI surface (`sa_run_workflow`, `sa_stream_workflow`, `sa_resume`).
+- `crates/simple-agents-napi` - Node.js binding (`Client.run`, `.stream`, `.resume`).
+- `crates/simple-agents-py` - Python binding (`Client.run`, `.stream`, `.resume`, `Message`, `Role`, `ContentPart`).
+- `bindings/go` - Go binding over C FFI (`Run`, `Stream`, `Resume`).
+- `bindings/wasm` - WASM binding (`Client.runYamlString`).
 - `examples/` - runnable Rust/Python/Node workflow examples.
-- `docs/` - VitePress docs source.
+- `docs/` - project documentation.
 
 ## Quick Start
 
@@ -76,12 +73,6 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 ```bash
 cargo build --all
 cargo test --all
-```
-
-### 2) Try the CLI workflow tooling (no provider call required)
-
-```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/email-chat-draft-or-clarify.yaml
 ```
 
 Want the simplest YAML setup path? Start with `docs/WORKFLOW_QUICKSTART.md`.

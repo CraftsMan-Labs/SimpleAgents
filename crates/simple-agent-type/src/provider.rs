@@ -2,7 +2,6 @@
 //!
 //! Defines the interface for LLM providers with transformation hooks.
 
-use crate::config::{Capabilities, RetryConfig};
 use crate::error::Result;
 use crate::request::CompletionRequest;
 use crate::response::{CompletionChunk, CompletionResponse};
@@ -11,6 +10,46 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::time::Duration;
+
+/// Retry configuration for failed requests.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of retry attempts
+    pub max_attempts: u32,
+    /// Initial backoff duration
+    pub initial_backoff: Duration,
+    /// Maximum backoff duration
+    pub max_backoff: Duration,
+    /// Backoff multiplier for exponential backoff
+    pub backoff_multiplier: f32,
+    /// Add random jitter to backoff
+    pub jitter: bool,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        }
+    }
+}
+
+/// Provider capabilities.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Capabilities {
+    /// Supports streaming responses
+    pub streaming: bool,
+    /// Supports function/tool calling
+    pub function_calling: bool,
+    /// Supports vision/image inputs
+    pub vision: bool,
+    /// Maximum output tokens
+    pub max_tokens: u32,
+}
 
 /// Type alias for HTTP headers (key-value pairs with static lifetime strings)
 pub type Headers = Vec<(Cow<'static, str>, Cow<'static, str>)>;
@@ -270,7 +309,7 @@ pub trait Provider: Send + Sync {
                 index: choice.index,
                 delta: crate::response::MessageDelta {
                     role: Some(choice.message.role),
-                    content: Some(choice.message.content),
+                    content: Some(choice.message.content_text().to_string()),
                     reasoning_content: None,
                     tool_calls: None,
                 },

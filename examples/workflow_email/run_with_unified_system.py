@@ -140,10 +140,11 @@ def main() -> None:
         messages.append({"role": "user", "content": user_input})
         workflow_input = {"email_text": user_input, "messages": messages}
 
-        result = client.run_workflow_yaml(
-            str(workflow_path),
-            workflow_input,
-            include_events=args.include_events,
+        result = client.run_workflow(
+            {
+                "workflow_path": str(workflow_path),
+                "input": workflow_input,
+            }
         )
 
         trace_record = {

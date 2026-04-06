@@ -73,62 +73,6 @@ pub struct Field {
     pub default: Option<serde_json::Value>,
     /// Description of the field (for documentation)
     pub description: Option<String>,
-    /// Streaming annotation (controls emission timing)
-    #[serde(default)]
-    pub stream_annotation: StreamAnnotation,
-}
-
-/// Streaming annotation for field-level emission control.
-///
-/// Controls when a field value should be emitted during streaming parsing.
-///
-/// # Examples
-///
-/// ```
-/// use simple_agents_healing::schema::{StreamAnnotation, Field, Schema};
-///
-/// // Emit as soon as available (default)
-/// let normal_field = Field {
-///     name: "name".to_string(),
-///     schema: Schema::String,
-///     required: true,
-///     aliases: vec![],
-///     default: None,
-///     description: None,
-///     stream_annotation: StreamAnnotation::Normal,
-/// };
-///
-/// // Don't emit until non-null
-/// let id_field = Field {
-///     name: "id".to_string(),
-///     schema: Schema::Int,
-///     required: true,
-///     aliases: vec![],
-///     default: None,
-///     description: None,
-///     stream_annotation: StreamAnnotation::NotNull,
-/// };
-///
-/// // Only emit when complete
-/// let status_field = Field {
-///     name: "status".to_string(),
-///     schema: Schema::String,
-///     required: true,
-///     aliases: vec![],
-///     default: None,
-///     description: None,
-///     stream_annotation: StreamAnnotation::Done,
-/// };
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub enum StreamAnnotation {
-    /// Emit field as soon as it's available (default)
-    #[default]
-    Normal,
-    /// Don't emit until value is non-null (@@stream.not_null)
-    NotNull,
-    /// Only emit when the entire structure is complete (@@stream.done)
-    Done,
 }
 
 impl Schema {
@@ -159,7 +103,6 @@ impl Schema {
                     aliases: Vec::new(),
                     default: None,
                     description: None,
-                    stream_annotation: StreamAnnotation::Normal,
                 })
                 .collect(),
             allow_additional_fields: false,
@@ -243,7 +186,6 @@ impl Field {
             aliases: Vec::new(),
             default: None,
             description: None,
-            stream_annotation: StreamAnnotation::Normal,
         }
     }
 
@@ -256,7 +198,6 @@ impl Field {
             aliases: Vec::new(),
             default: None,
             description: None,
-            stream_annotation: StreamAnnotation::Normal,
         }
     }
 
@@ -275,26 +216,6 @@ impl Field {
     /// Add a description to this field.
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = Some(description.into());
-        self
-    }
-
-    /// Set the streaming annotation for this field.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use simple_agents_healing::schema::{Field, Schema, StreamAnnotation};
-    ///
-    /// // Don't emit until non-null
-    /// let id_field = Field::required("id", Schema::Int)
-    ///     .with_stream_annotation(StreamAnnotation::NotNull);
-    ///
-    /// // Only emit when complete
-    /// let status_field = Field::required("status", Schema::String)
-    ///     .with_stream_annotation(StreamAnnotation::Done);
-    /// ```
-    pub fn with_stream_annotation(mut self, annotation: StreamAnnotation) -> Self {
-        self.stream_annotation = annotation;
         self
     }
 }

@@ -51,6 +51,10 @@ config:
     topic: terminated
 ```
 
+**Python (`simple-agents-py`).** Implement handlers as `def handler_name(*, context: dict, payload: dict):`. Read node-specific fields from `payload` (matches `config.payload` after interpolation). Read workflow-wide input from `context["input"]` (for example `email_text` or `messages`). Return a JSON-serializable object; downstream templates use `nodes.<id>.output.<field>`.
+
+**Other bindings.** Shipped **Node** and **Go** workflow APIs do not run `handlers.py`; **WASM** registers JS functions keyed by handler name. See `docs/YAML_WORKFLOW_SYSTEM.md` and `docs/BINDINGS_*.md`.
+
 ## 6) Common State Enum
 
 Reusable state enum for assistant workflows:

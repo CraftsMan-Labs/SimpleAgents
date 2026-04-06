@@ -1,4 +1,3 @@
-use super::events::{emit_llm_input_resolved, ensure_event_sink_active};
 use super::*;
 
 pub(super) struct NodeExecutionOutcome {
@@ -16,7 +15,7 @@ pub(super) struct LlmNodeEnv<'a> {
     pub(super) executor: &'a dyn YamlWorkflowLlmExecutor,
     pub(super) event_sink: Option<&'a dyn YamlWorkflowEventSink>,
     pub(super) options: &'a YamlWorkflowRunOptions,
-    pub(super) email_text: &'a str,
+    pub(super) execution_flags: super::YamlWorkflowExecutionFlags,
     pub(super) telemetry_context: &'a ResolvedTelemetryContext,
     pub(super) node_span_context: Option<TraceContext>,
     pub(super) node_span: Option<&'a mut Box<dyn crate::observability::tracing::WorkflowSpan>>,
@@ -39,7 +38,6 @@ pub(super) struct CustomWorkerEnv<'a> {
     pub(super) edge_map: &'a HashMap<&'a str, &'a str>,
     pub(super) custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
     pub(super) options: &'a YamlWorkflowRunOptions,
-    pub(super) email_text: &'a str,
     pub(super) telemetry_context: &'a ResolvedTelemetryContext,
     pub(super) workflow_span_context: Option<&'a TraceContext>,
     pub(super) tracer: &'a dyn crate::observability::tracing::WorkflowTracer,
@@ -65,7 +63,7 @@ pub(super) async fn execute_llm_node(
         executor,
         event_sink,
         options,
-        email_text,
+        execution_flags,
         telemetry_context,
         node_span_context,
         node_span,
@@ -103,6 +101,11 @@ pub(super) async fn execute_llm_node(
     let prompt = interpolate_template(prompt_template, &context);
     let schema = llm_output_schema_for_node(node);
 
+    let yaml_heal = llm.heal.unwrap_or(false);
+    let yaml_stream = llm.stream.unwrap_or(false);
+    let heal = yaml_heal || execution_flags.healing;
+    let stream = yaml_stream && execution_flags.node_llm_streaming;
+
     let request = YamlLlmExecutionRequest {
         node_id: node.id.clone(),
         is_terminal_node,
@@ -117,8 +120,8 @@ pub(super) async fn execute_llm_node(
         prompt_template: prompt_template.to_string(),
         prompt_bindings,
         schema,
-        stream: llm.stream.unwrap_or(false),
-        heal: llm.heal.unwrap_or(false),
+        stream,
+        heal,
         tools: normalize_llm_tools(llm).map_err(|message| YamlWorkflowRunError::Llm {
             node_id: node.id.clone(),
             message,
@@ -133,11 +136,11 @@ pub(super) async fn execute_llm_node(
         tool_calls_global_key: llm.tool_calls_global_key.clone(),
         tool_trace_mode: options.telemetry.tool_trace_mode,
         execution_context: context.clone(),
-        input_text: email_text.to_string(),
         trace_id: telemetry_context.trace_id.clone(),
         trace_context: node_span_context,
         tenant_context: options.trace.tenant.clone(),
         trace_sampled: telemetry_context.sampled,
+        split_stream_deltas: execution_flags.split_stream_deltas,
     };
 
     if let Some(span) = node_span.as_mut() {
@@ -146,15 +149,32 @@ pub(super) async fn execute_llm_node(
         span.set_attribute("langfuse.observation.input", node_input.as_str());
     }
 
-    emit_llm_input_resolved(
-        event_sink,
-        node.id.as_str(),
-        started.elapsed().as_millis(),
-        &request,
-    );
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "resolved_llm_input".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some("llm_call".to_string()),
+            streamable: None,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(started.elapsed().as_millis()),
+            metadata: Some(json!({
+                "bindings": request.prompt_bindings,
+                "model": request.model,
+                "prompt": request.prompt,
+            })),
+        });
+    }
 
     llm_node_models.insert(node.id.clone(), request.model.clone());
-    ensure_event_sink_active(event_sink)?;
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let llm_result = executor
         .complete_structured(request, event_sink)
@@ -221,7 +241,6 @@ pub(super) async fn execute_custom_worker_node(
         edge_map,
         custom_worker,
         options,
-        email_text,
         telemetry_context,
         workflow_span_context,
         tracer,
@@ -267,7 +286,11 @@ pub(super) async fn execute_custom_worker_node(
     let worker_context =
         custom_worker_context_with_trace(&context, &worker_trace_context, &options.trace.tenant);
 
-    ensure_event_sink_active(event_sink)?;
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let worker_output_result = if let Some(custom_worker_executor) = custom_worker {
         custom_worker_executor
@@ -275,7 +298,6 @@ pub(super) async fn execute_custom_worker_node(
                 custom.handler.as_str(),
                 custom.handler_file.as_deref(),
                 &payload,
-                email_text,
                 &worker_context,
             )
             .await

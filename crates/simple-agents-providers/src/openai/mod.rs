@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use simple_agent_type::prelude::*;
 use simple_agent_type::request::ResponseFormat;
+use simple_agent_type::telemetry::ApiFormat;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -108,39 +109,48 @@ fn type_includes_object(type_field: Option<&serde_json::Value>) -> bool {
     }
 }
 
-/// OpenAI API provider
+/// OpenAI-compatible API provider.
+///
+/// Supports both the Chat Completions (`/chat/completions`) and Responses (`/responses`)
+/// API formats, selected via [`ApiFormat`].
 #[derive(Clone)]
-pub struct OpenAIProvider {
+pub struct OpenAiCompatProvider {
     api_key: ApiKey,
     base_url: String,
+    api_format: ApiFormat,
     client: Client,
-    rate_limiter: crate::rate_limit::MaybeRateLimiter,
     healing: Option<Arc<HealingIntegration>>,
 }
 
-impl std::fmt::Debug for OpenAIProvider {
+impl std::fmt::Debug for OpenAiCompatProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("OpenAIProvider")
+        f.debug_struct("OpenAiCompatProvider")
             .field("base_url", &self.base_url)
+            .field("api_format", &self.api_format)
             .finish_non_exhaustive()
     }
 }
 
-impl OpenAIProvider {
+impl OpenAiCompatProvider {
     /// Default OpenAI API base URL
     pub const DEFAULT_BASE_URL: &'static str = "https://api.openai.com/v1";
 
-    /// Create a new OpenAI provider with default configuration
-    ///
-    /// # Arguments
-    ///
-    /// * `api_key` - OpenAI API key (starts with "sk-")
-    ///
-    /// # Errors
-    ///
-    /// Returns error if the HTTP client cannot be created
+    /// Create a new OpenAI-compatible provider with default configuration
+    /// (Chat Completions format).
     pub fn new(api_key: ApiKey) -> Result<Self> {
         Self::with_base_url(api_key, Self::DEFAULT_BASE_URL.to_string())
+    }
+
+    /// Create a new OpenAI-compatible provider with a specific API format.
+    pub fn new_with_format(api_key: ApiKey, api_format: ApiFormat) -> Result<Self> {
+        Self::with_base_url_and_format(api_key, Self::DEFAULT_BASE_URL.to_string(), api_format)
+    }
+
+    /// Convenience constructor that returns a provider configured for the
+    /// OpenAI platform with Chat Completions format.
+    pub fn openai(api_key: String) -> Result<Self> {
+        let key = ApiKey::new(api_key)?;
+        Self::new(key)
     }
 
     /// Create a new OpenAI provider from environment variables.
@@ -166,8 +176,6 @@ impl OpenAIProvider {
         if is_local {
             client_builder = client_builder.no_proxy();
         }
-        // Removed http2_prior_knowledge for non-local connections
-        // to allow ALPN negotiation which is more compatible
         let client = client_builder.build().map_err(|e| {
             SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
         })?;
@@ -175,49 +183,21 @@ impl OpenAIProvider {
         Self::with_client(api_key, base_url, client)
     }
 
-    /// Create a new OpenAI provider with custom base URL
-    ///
-    /// # Arguments
-    ///
-    /// * `api_key` - OpenAI API key
-    /// * `base_url` - Custom base URL (e.g., for Azure OpenAI)
-    ///
-    /// # Connection Pooling
-    ///
-    /// The HTTP client uses connection pooling automatically:
-    /// - **Pool size**: 10 idle connections per host (configurable)
-    /// - **Keep-alive**: Connections are reused across requests
-    /// - **HTTP/2**: Enabled by default for multiplexing
-    /// - **Timeout**: 30 seconds per request
-    ///
-    /// This significantly improves performance by reusing TCP connections
-    /// and TLS sessions across multiple API calls.
-    ///
-    /// # Note
-    ///
-    /// For local servers that only support HTTP/1.1 (e.g., vLLM, Ollama),
-    /// use [`with_client`] to provide a custom HTTP client:
-    /// ```rust
-    /// use reqwest::Client;
-    /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agent_type::prelude::*;
-    /// use std::time::Duration;
-    ///
-    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-    /// let base_url = "http://localhost:4000/v1".to_string();
-    /// let client = Client::builder()
-    ///     .timeout(Duration::from_secs(30))
-    ///     .build()
-    ///     .expect("Failed to build reqwest client");
-    ///
-    /// let provider = OpenAIProvider::with_client(api_key, base_url, client).unwrap();
-    /// assert_eq!(provider.base_url(), "http://localhost:4000/v1");
-    /// ```
+    /// Create a new provider with custom base URL (defaults to Chat Completions).
     pub fn with_base_url(api_key: ApiKey, base_url: String) -> Result<Self> {
+        Self::with_base_url_and_format(api_key, base_url, ApiFormat::ChatCompletions)
+    }
+
+    /// Create a new provider with custom base URL and API format.
+    pub fn with_base_url_and_format(
+        api_key: ApiKey,
+        base_url: String,
+        api_format: ApiFormat,
+    ) -> Result<Self> {
         let client = Client::builder()
             .timeout(DEFAULT_TIMEOUT)
-            .pool_max_idle_per_host(10) // Connection pooling configuration
-            .pool_idle_timeout(Duration::from_secs(90)) // Keep connections alive
+            .pool_max_idle_per_host(10)
+            .pool_idle_timeout(Duration::from_secs(90))
             .build()
             .map_err(|e| {
                 SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
@@ -226,147 +206,87 @@ impl OpenAIProvider {
         Ok(Self {
             api_key,
             base_url,
+            api_format,
             client,
-            rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
         })
     }
 
-    /// Enable rate limiting with the given configuration.
-    ///
-    /// # Example
-    /// ```
-    /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agent_type::prelude::*;
-    /// use simple_agent_type::config::RateLimitConfig;
-    ///
-    /// # fn example() -> Result<()> {
-    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
-    /// let provider = OpenAIProvider::new(api_key)?
-    ///     .with_rate_limit(RateLimitConfig::new(50, 100));
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_rate_limit(mut self, config: simple_agent_type::config::RateLimitConfig) -> Self {
-        self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
-        self
-    }
-
     /// Enable healing system for automatic recovery from malformed responses.
-    ///
-    /// When enabled, if native structured output parsing fails, the healing system
-    /// will attempt to recover the response using tolerant parsing and type coercion.
-    ///
-    /// # Example
-    /// ```
-    /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agents_providers::healing_integration::HealingConfig;
-    /// use simple_agent_type::prelude::*;
-    ///
-    /// # fn example() -> Result<()> {
-    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
-    /// let provider = OpenAIProvider::new(api_key)?
-    ///     .with_healing(HealingConfig::default());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn with_healing(mut self, config: HealingConfig) -> Self {
         self.healing = Some(Arc::new(HealingIntegration::new(config)));
         self
     }
 
-    /// Create a new OpenAI provider with a custom HTTP client.
-    ///
-    /// This is useful for:
-    /// - Local servers that only support HTTP/1.1 (e.g., vLLM, Ollama)
-    /// - Custom proxy configurations
-    /// - Testing with mock servers
-    ///
-    /// # Arguments
-    ///
-    /// * `api_key` - OpenAI API key
-    /// * `base_url` - Base URL for API
-    /// * `client` - Custom reqwest client
-    ///
-    /// # Example
-    /// ```
-    /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agent_type::prelude::*;
-    /// use reqwest::Client;
-    /// use std::time::Duration;
-    ///
-    /// # fn example() -> Result<()> {
-    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
-    ///
-    /// // Create client without HTTP/2 for local servers
-    /// let client = Client::builder()
-    ///     .timeout(Duration::from_secs(30))
-    ///     .pool_max_idle_per_host(10)
-    ///     .pool_idle_timeout(Duration::from_secs(90))
-    ///     .build()
-    ///     .expect("Failed to build reqwest client");
-    ///
-    /// let provider = OpenAIProvider::with_client(
-    ///     api_key,
-    ///     "http://localhost:4000/v1".to_string(),
-    ///     client
-    /// )?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// Create a new provider with a custom HTTP client (defaults to Chat Completions).
     pub fn with_client(api_key: ApiKey, base_url: String, client: Client) -> Result<Self> {
         Ok(Self {
             api_key,
             base_url,
+            api_format: ApiFormat::ChatCompletions,
             client,
-            rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
         })
     }
 
-    /// Get the base URL for this provider
+    /// Get the base URL for this provider.
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+
+    /// Get the API format for this provider.
+    pub fn api_format(&self) -> &ApiFormat {
+        &self.api_format
     }
 }
 
 #[async_trait]
-impl Provider for OpenAIProvider {
+impl Provider for OpenAiCompatProvider {
     fn name(&self) -> &str {
         "openai"
     }
 
     fn transform_request(&self, req: &CompletionRequest) -> Result<ProviderRequest> {
-        // Build OpenAI-specific request (borrowing messages to avoid cloning)
-        let openai_request = OpenAICompletionRequest {
-            model: &req.model,
-            messages: &req.messages,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            top_p: req.top_p,
-            n: req.n,
-            stream: req.stream,
-            stream_options: req.stream.and_then(|streaming| {
-                if streaming {
-                    Some(OpenAIStreamOptions {
-                        include_usage: true,
-                    })
-                } else {
-                    None
-                }
-            }),
-            stop: req.stop.as_ref(),
-            response_format: req.response_format.as_ref(),
-            tools: req.tools.as_ref(),
-            tool_choice: req.tool_choice.as_ref(),
+        let (url, body) = match self.api_format {
+            ApiFormat::Responses => {
+                let body = crate::responses::build_responses_request(req);
+                let url = format!("{}/responses", self.base_url);
+                (url, body)
+            }
+            ApiFormat::ChatCompletions => {
+                let openai_request = OpenAICompletionRequest {
+                    model: &req.model,
+                    messages: &req.messages,
+                    temperature: req.temperature,
+                    max_tokens: req.max_tokens,
+                    top_p: req.top_p,
+                    n: req.n,
+                    stream: req.stream,
+                    stream_options: req.stream.and_then(|streaming| {
+                        if streaming {
+                            Some(OpenAIStreamOptions {
+                                include_usage: true,
+                            })
+                        } else {
+                            None
+                        }
+                    }),
+                    stop: req.stop.as_ref(),
+                    response_format: req.response_format.as_ref(),
+                    tools: req.tools.as_ref(),
+                    tool_choice: req.tool_choice.as_ref(),
+                };
+
+                let mut body = serde_json::to_value(&openai_request)?;
+                normalize_openai_strict_json_schema(&mut body);
+                self.embed_healing_schema(&mut body, req)?;
+                let url = format!("{}/chat/completions", self.base_url);
+                (url, body)
+            }
         };
 
-        let mut body = serde_json::to_value(&openai_request)?;
-        normalize_openai_strict_json_schema(&mut body);
-        self.embed_healing_schema(&mut body, req)?;
-
         Ok(ProviderRequest {
-            url: format!("{}/chat/completions", self.base_url),
+            url,
             headers: vec![
                 (
                     std::borrow::Cow::Borrowed(simple_agent_type::provider::headers::AUTHORIZATION),
@@ -385,17 +305,6 @@ impl Provider for OpenAIProvider {
     async fn execute(&self, mut req: ProviderRequest) -> Result<ProviderResponse> {
         let healing_schema = Self::take_healing_schema(&mut req.body);
 
-        // Apply rate limiting
-        self.rate_limiter
-            .until_ready(Some(self.api_key.expose()))
-            .await;
-
-        // Extract model for metrics
-        let model = req.body["model"].as_str().unwrap_or("unknown");
-
-        // Start metrics timer
-        let timer = crate::metrics::RequestTimer::start(self.name(), model);
-
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
@@ -403,7 +312,7 @@ impl Provider for OpenAIProvider {
         // Make HTTP request
         let response = crate::utils::send_json_request(&self.client, &req.url, headers, &req.body)
             .await
-            .map_err(|e| crate::utils::map_transport_error_with_timer(e, timer.clone()))?;
+            .map_err(crate::utils::map_transport_error)?;
 
         let response = match crate::utils::ensure_success_response(response).await {
             Ok(response) => response,
@@ -420,16 +329,12 @@ impl Provider for OpenAIProvider {
                     error_context.retry_after,
                 );
 
-                // Log additional context for debugging
                 tracing::debug!(
                     status = %error_context.status,
                     headers = ?Self::redacted_headers(&error_context.headers_debug),
                     error_type = ?openai_error,
                     "OpenAI API error details"
                 );
-
-                // Record error metrics
-                timer.complete_error(format!("http_{}", error_context.status.as_u16()));
 
                 return Err(SimpleAgentsError::Provider(openai_error.into()));
             }
@@ -438,32 +343,15 @@ impl Provider for OpenAIProvider {
         let status_code = response.status().as_u16();
 
         // Parse successful response
-        let mut body = match crate::utils::parse_json_body(response).await {
-            Ok(body) => body,
-            Err(error) => {
-                timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(error));
-            }
-        };
-
-        // Extract token usage for metrics
-        let prompt_tokens = Self::safe_token_count(
-            body["usage"]["prompt_tokens"].as_u64(),
-            "usage.prompt_tokens",
-        );
-        let completion_tokens = Self::safe_token_count(
-            body["usage"]["completion_tokens"].as_u64(),
-            "usage.completion_tokens",
-        );
+        let mut body = crate::utils::parse_json_body(response)
+            .await
+            .map_err(SimpleAgentsError::Provider)?;
 
         if let Some(schema) = healing_schema {
             if let serde_json::Value::Object(map) = &mut body {
                 map.insert(Self::HEALING_SCHEMA_KEY.to_string(), schema);
             }
         }
-
-        // Record success metrics
-        timer.complete_success(prompt_tokens, completion_tokens);
 
         Ok(ProviderResponse {
             status: status_code,
@@ -473,11 +361,14 @@ impl Provider for OpenAIProvider {
     }
 
     fn transform_response(&self, mut resp: ProviderResponse) -> Result<CompletionResponse> {
+        if self.api_format == ApiFormat::Responses {
+            return crate::responses::parse_responses_response(resp.body)
+                .map_err(|e| SimpleAgentsError::Provider(ProviderError::InvalidResponse(e)));
+        }
+
         Self::normalize_tool_message_content(&mut resp.body);
-        // Try native parsing first (fast path)
         match serde_json::from_value::<OpenAICompletionResponse>(resp.body.clone()) {
             Ok(openai_response) => {
-                // Native parsing succeeded - transform to unified format
                 let choices: Vec<CompletionChoice> = openai_response
                     .choices
                     .iter()
@@ -515,7 +406,6 @@ impl Provider for OpenAIProvider {
                 })
             }
             Err(parse_error) => {
-                // Native parsing failed - try healing if enabled
                 if self.healing.is_some() {
                     self.try_healing(&resp, parse_error)
                 } else {
@@ -535,7 +425,7 @@ impl Provider for OpenAIProvider {
     }
 }
 
-impl OpenAIProvider {
+impl OpenAiCompatProvider {
     const HEALING_SCHEMA_KEY: &'static str = "_simple_agents_healing_schema";
 
     fn embed_healing_schema(
@@ -709,11 +599,6 @@ impl OpenAIProvider {
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         let _ = Self::take_healing_schema(&mut req.body);
 
-        // Apply rate limiting
-        self.rate_limiter
-            .until_ready(Some(self.api_key.expose()))
-            .await;
-
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
@@ -843,15 +728,15 @@ mod tests {
     #[test]
     fn test_provider_creation() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
         assert_eq!(provider.name(), "openai");
-        assert_eq!(provider.base_url(), OpenAIProvider::DEFAULT_BASE_URL);
+        assert_eq!(provider.base_url(), OpenAiCompatProvider::DEFAULT_BASE_URL);
     }
 
     #[test]
     fn test_transform_request() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4")
@@ -876,7 +761,7 @@ mod tests {
     #[test]
     fn test_transform_request_with_streaming() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4")
@@ -897,7 +782,7 @@ mod tests {
     #[test]
     fn test_transform_request_normalizes_strict_json_schema_objects() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4.1")
@@ -941,7 +826,7 @@ mod tests {
     #[test]
     fn test_transform_request_does_not_normalize_non_strict_json_schema() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4.1")
@@ -981,7 +866,7 @@ mod tests {
             ("Content-Type".to_string(), "application/json".to_string()),
         ];
 
-        let redacted = OpenAIProvider::redacted_headers(&headers);
+        let redacted = OpenAiCompatProvider::redacted_headers(&headers);
         assert_eq!(
             redacted,
             vec![
@@ -995,7 +880,7 @@ mod tests {
     #[test]
     fn test_transform_request_does_not_normalize_when_strict_omitted() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4.1")
@@ -1027,7 +912,7 @@ mod tests {
     #[test]
     fn test_transform_request_preserves_existing_additional_properties_schema() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4.1")
@@ -1056,7 +941,7 @@ mod tests {
     #[test]
     fn test_transform_response_allows_null_message_content_for_tool_calls() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let response = ProviderResponse {
             status: 200,
@@ -1098,7 +983,7 @@ mod tests {
             .transform_response(response)
             .expect("response should parse");
         let choice = parsed.choices.first().expect("choice should exist");
-        assert_eq!(choice.message.content, "");
+        assert_eq!(choice.message.content_text(), "");
         assert_eq!(choice.finish_reason, FinishReason::ToolCalls);
         assert!(choice.message.tool_calls.is_some());
     }
@@ -1106,7 +991,7 @@ mod tests {
     #[test]
     fn test_transform_response_maps_reasoning_tokens_from_usage_details() {
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::new(api_key).unwrap();
+        let provider = OpenAiCompatProvider::new(api_key).unwrap();
 
         let response = ProviderResponse {
             status: 200,
@@ -1185,7 +1070,7 @@ mod tests {
             .build()
             .expect("client should build");
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::with_client(api_key, base_url, client).unwrap();
+        let provider = OpenAiCompatProvider::with_client(api_key, base_url, client).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4")
@@ -1210,7 +1095,7 @@ mod tests {
         )
         .await;
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::with_base_url(api_key, base_url).unwrap();
+        let provider = OpenAiCompatProvider::with_base_url(api_key, base_url).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4")
@@ -1231,7 +1116,7 @@ mod tests {
     async fn test_execute_stream_handles_unreadable_error_body() {
         let base_url = spawn_malformed_chunked_error_server().await;
         let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890").unwrap();
-        let provider = OpenAIProvider::with_base_url(api_key, base_url).unwrap();
+        let provider = OpenAiCompatProvider::with_base_url(api_key, base_url).unwrap();
 
         let request = CompletionRequest::builder()
             .model("gpt-4")
@@ -1254,7 +1139,7 @@ mod tests {
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("OPENAI_API_BASE");
 
-        let result = OpenAIProvider::from_env();
+        let result = OpenAiCompatProvider::from_env();
         assert!(matches!(result, Err(SimpleAgentsError::Config(_))));
     }
 
@@ -1267,7 +1152,7 @@ mod tests {
         );
         std::env::set_var("OPENAI_API_BASE", "http://localhost:9999/v1");
 
-        let provider = OpenAIProvider::from_env().expect("from_env should build provider");
+        let provider = OpenAiCompatProvider::from_env().expect("from_env should build provider");
         assert_eq!(provider.base_url(), "http://localhost:9999/v1");
 
         std::env::remove_var("OPENAI_API_KEY");

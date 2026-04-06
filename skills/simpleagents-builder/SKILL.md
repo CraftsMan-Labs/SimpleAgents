@@ -21,7 +21,8 @@ Author YAML workflows that are deterministic, testable, and compatible with Simp
 3. Keep switch routing deterministic and explicit.
 4. Keep chat systems one-question-at-a-time unless user asks otherwise.
 5. Keep business policy in prompts/routing, not hidden in bindings.
-6. For `custom_worker`, verify `handler` matches a real function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted).
+6. For `custom_worker`, verify `handler` matches a real function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted). For **`simple-agents-py`**, that function must use **`def handler_name(*, context, payload):`** (keyword-only); put node parameters in YAML `config.payload` and read shared workflow input from `context["input"]`. File-based `handlers.py` runs automatically only in **Python**; **Node** and **Go** packaged APIs do not execute local handlers today; **WASM** uses `workflowOptions.functions` with a JS `(args, graphContext)` signature (see repo `docs/BINDINGS_*.md` and `docs/YAML_WORKFLOW_SYSTEM.md`).
+7. Prefer unified workflow run APIs: Python `Client.run` / `run_async` / `stream`, Node `executeWorkflowYaml` / `executeWorkflowYamlStream`, Go `Run` / `RunAsync` / `Stream`, WASM `streamWorkflow` (see `docs/WORKFLOW_API_MIGRATION.md`). Use legacy `run_workflow_yaml*` / `runWorkflowYaml*` only for compatibility. Keep streaming/healing controlled by YAML `execution` / node flags and `workflow_options`, not ad-hoc wrapper selection.
 
 ## Required Structure
 
@@ -62,7 +63,7 @@ edges:
 - worker/action nodes: `llm_call` for generation, `custom_worker` only when handler is intentional.
 - terminal behavior: explicit node with final message/question.
 
-Example `custom_worker` declaration:
+Example `custom_worker` declaration (with `config.payload` for handler inputs):
 
 ```yaml
 - id: rag_lookup
@@ -70,6 +71,9 @@ Example `custom_worker` declaration:
     custom_worker:
       handler: get_rag_data
       handler_file: handlers.py
+  config:
+    payload:
+      topic: probation
 ```
 
 ## Routing Pattern
@@ -105,12 +109,13 @@ Before finalizing YAML:
 - Required fields align with routing conditions
 - `edges` cover intended flow transitions
 - No ambiguous multi-question prompts in interview/chat flows
-- For `custom_worker` nodes, `handler` matches a function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted)
+- For `custom_worker` nodes, `handler` matches a function in `handler_file` (defaults to `handlers.py` next to the YAML when omitted); for Python runs, signature is `*, context, payload`.
+- Workflow examples use the unified run/stream APIs, not legacy email-specific wrappers
 
 For examples and reusable templates, read:
 - `references/patterns.md`
 - `references/checklist.md`
 
-Working examples:
-- `examples/email-chat-draft-or-clarify.yaml`
-- `examples/python-intern-fun-interview-system.yaml`
+Working examples (under `examples/workflow_email/` and `skills/simpleagents-builder/examples/`):
+- `examples/workflow_email/email-chat-draft-or-clarify.yaml`
+- `skills/simpleagents-builder/examples/python-intern-fun-interview-system.yaml`

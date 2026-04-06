@@ -1,24 +1,7 @@
-use serde_json::{json, Value};
+use serde_json::Value;
 use simple_agent_type::message::{Message, Role};
 
 use super::{WorkflowMessage, YamlTemplateBinding, YamlWorkflowRunError};
-
-pub(super) fn build_yaml_context_from_ir_scope(scoped_input: &Value) -> Value {
-    let input = scoped_input.get("input").cloned().unwrap_or(Value::Null);
-
-    let mut nodes = serde_json::Map::new();
-    if let Some(node_outputs) = scoped_input.get("node_outputs").and_then(Value::as_object) {
-        for (node_id, output) in node_outputs {
-            nodes.insert(node_id.clone(), json!({"output": output.clone()}));
-        }
-    }
-
-    json!({
-        "input": input,
-        "nodes": Value::Object(nodes),
-        "globals": Value::Object(serde_json::Map::new())
-    })
-}
 
 pub(super) fn evaluate_switch_condition(
     condition: &str,
@@ -91,7 +74,7 @@ pub(super) fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value
         })
 }
 
-pub(super) fn interpolate_template(template: &str, context: &Value) -> String {
+pub(crate) fn interpolate_template(template: &str, context: &Value) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
 

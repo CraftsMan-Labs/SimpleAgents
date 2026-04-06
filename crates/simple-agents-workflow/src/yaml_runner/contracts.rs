@@ -132,6 +132,42 @@ pub trait YamlWorkflowEventSink: Send + Sync {
     }
 }
 
+/// Returns true for token delta events that should be gated by `workflow_streaming`.
+pub fn is_workflow_stream_delta_event(event_type: &str) -> bool {
+    matches!(
+        event_type,
+        "node_stream_delta" | "node_stream_thinking_delta" | "node_stream_output_delta"
+    )
+}
+
+/// Forwards events to `inner` unless `workflow_streaming` is false and the event is a stream delta.
+pub struct YamlWorkflowStreamFilterSink<'a> {
+    inner: &'a dyn YamlWorkflowEventSink,
+    workflow_streaming: bool,
+}
+
+impl<'a> YamlWorkflowStreamFilterSink<'a> {
+    pub fn new(inner: &'a dyn YamlWorkflowEventSink, workflow_streaming: bool) -> Self {
+        Self {
+            inner,
+            workflow_streaming,
+        }
+    }
+}
+
+impl YamlWorkflowEventSink for YamlWorkflowStreamFilterSink<'_> {
+    fn emit(&self, event: &YamlWorkflowEvent) {
+        if !self.workflow_streaming && is_workflow_stream_delta_event(event.event_type.as_str()) {
+            return;
+        }
+        self.inner.emit(event);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.inner.is_cancelled()
+    }
+}
+
 pub struct NoopYamlWorkflowEventSink;
 
 impl YamlWorkflowEventSink for NoopYamlWorkflowEventSink {
@@ -179,11 +215,12 @@ pub struct YamlLlmExecutionRequest {
     pub tool_calls_global_key: Option<String>,
     pub tool_trace_mode: YamlToolTraceMode,
     pub execution_context: Value,
-    pub input_text: String,
     pub trace_id: Option<String>,
     pub trace_context: Option<TraceContext>,
     pub tenant_context: YamlWorkflowTraceTenantContext,
     pub trace_sampled: bool,
+    /// Split thinking/output stream events (mirrors [`YamlWorkflowExecutionFlags::split_stream_deltas`]).
+    pub split_stream_deltas: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -208,7 +245,6 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
         handler: &str,
         handler_file: Option<&str>,
         payload: &Value,
-        input_text: &str,
         context: &Value,
     ) -> Result<Value, String>;
 }

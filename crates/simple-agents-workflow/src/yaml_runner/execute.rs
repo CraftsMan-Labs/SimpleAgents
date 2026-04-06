@@ -1,7 +1,3 @@
-use super::events::{
-    emit_node_completed, emit_node_started, emit_workflow_completed, emit_workflow_started,
-    ensure_event_sink_active,
-};
 use super::node_execution::{
     execute_custom_worker_node, execute_llm_node, CustomWorkerEnv, CustomWorkerState, LlmNodeEnv,
     LlmNodeState,
@@ -16,6 +12,7 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
+    execution_flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
@@ -24,11 +21,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     }
 
     validate_sample_rate(options.telemetry.sample_rate)?;
-
-    let email_text = workflow_input
-        .get("email_text")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
 
     let diagnostics = verify_yaml_workflow(workflow);
     let errors: Vec<YamlWorkflowDiagnostic> = diagnostics
@@ -45,13 +37,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
 
     validate_custom_worker_handler_files(workflow, custom_worker)?;
 
-    if let Some(output) =
-        try_run_yaml_via_ir_runtime(workflow, workflow_input, executor, custom_worker, options)
-            .await?
-    {
-        return Ok(output);
-    }
-
     let parent_trace_context = trace_context_from_options(options);
     let telemetry_context = resolve_telemetry_context(options, parent_trace_context.as_ref());
 
@@ -66,11 +51,33 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     let run_result = async {
         let mut run_context = prepare_run_context(workflow)?;
 
-        emit_workflow_started(event_sink, workflow.id.as_str());
-        ensure_event_sink_active(event_sink)?;
+        if let Some(sink) = event_sink {
+            sink.emit(&YamlWorkflowEvent {
+                event_type: "workflow_started".to_string(),
+                node_id: None,
+                step_id: None,
+                node_kind: None,
+                streamable: None,
+                message: Some(format!("workflow '{}' started", workflow.id)),
+                delta: None,
+                token_kind: None,
+                is_terminal_node_token: None,
+                elapsed_ms: None,
+                metadata: None,
+            });
+        }
+        if event_sink_is_cancelled(event_sink) {
+            return Err(YamlWorkflowRunError::EventSinkCancelled {
+                message: workflow_event_sink_cancelled_message().to_string(),
+            });
+        }
 
         loop {
-            ensure_event_sink_active(event_sink)?;
+            if event_sink_is_cancelled(event_sink) {
+                return Err(YamlWorkflowRunError::EventSinkCancelled {
+                    message: workflow_event_sink_cancelled_message().to_string(),
+                });
+            }
 
             let next = execute_single_node_step(
                 workflow_input,
@@ -78,7 +85,7 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
                 custom_worker,
                 event_sink,
                 options,
-                email_text,
+                execution_flags,
                 tracer,
                 &telemetry_context,
                 workflow_span_context.as_ref(),
@@ -113,7 +120,6 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
             event_sink,
             &telemetry_context,
             started,
-            email_text,
             trace,
             outputs,
             step_timings,
@@ -175,6 +181,13 @@ fn validate_custom_worker_handler_files(
                 ),
             });
         }
+
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: format!(
+                "node '{}' declares custom_worker with handler='{}', but no custom worker executor is configured; register a custom worker executor or remove this node",
+                node.id, worker.handler
+            ),
+        });
     }
 
     Ok(())
@@ -262,7 +275,7 @@ async fn execute_single_node_step(
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     options: &YamlWorkflowRunOptions,
-    email_text: &str,
+    execution_flags: YamlWorkflowExecutionFlags,
     tracer: &dyn crate::observability::tracing::WorkflowTracer,
     telemetry_context: &ResolvedTelemetryContext,
     workflow_span_context: Option<&TraceContext>,
@@ -289,21 +302,35 @@ async fn execute_single_node_step(
         node.kind_name(),
     );
 
-    let node_streamable = node
-        .node_type
-        .llm_call
-        .as_ref()
-        .map(|llm| llm.stream.unwrap_or(false) && !llm.heal.unwrap_or(false));
+    let node_streamable = node.node_type.llm_call.as_ref().map(|llm| {
+        let yaml_heal = llm.heal.unwrap_or(false);
+        let yaml_stream = llm.stream.unwrap_or(false);
+        let effective_heal = yaml_heal || execution_flags.healing;
+        let effective_stream = yaml_stream && execution_flags.node_llm_streaming;
+        effective_stream && !effective_heal
+    });
     let workflow_elapsed_before_node_ms = state.started.elapsed().as_millis();
 
-    emit_node_started(
-        event_sink,
-        node.id.as_str(),
-        node.kind_name(),
-        node_streamable,
-        workflow_elapsed_before_node_ms,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "node_started".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some(node.kind_name().to_string()),
+            streamable: node_streamable,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(workflow_elapsed_before_node_ms),
+            metadata: None,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     let mut node_usage: Option<YamlLlmTokenUsage> = None;
     let mut node_model_name: Option<String> = None;
@@ -320,7 +347,7 @@ async fn execute_single_node_step(
                     executor,
                     event_sink,
                     options,
-                    email_text,
+                    execution_flags,
                     telemetry_context,
                     node_span_context: node_span_context.clone(),
                     node_span: node_span.as_mut(),
@@ -353,7 +380,6 @@ async fn execute_single_node_step(
                     edge_map,
                     custom_worker,
                     options,
-                    email_text,
                     telemetry_context,
                     workflow_span_context,
                     tracer,
@@ -391,14 +417,26 @@ async fn execute_single_node_step(
         &mut state.llm_node_metrics,
     );
 
-    emit_node_completed(
-        event_sink,
-        node.id.as_str(),
-        node.kind_name(),
-        node_streamable,
-        elapsed_ms,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "node_completed".to_string(),
+            node_id: Some(node.id.clone()),
+            step_id: Some(node.id.clone()),
+            node_kind: Some(node.kind_name().to_string()),
+            streamable: node_streamable,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(elapsed_ms),
+            metadata: None,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     Ok(next)
 }
@@ -449,7 +487,6 @@ fn finalize_workflow_output(
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     telemetry_context: &ResolvedTelemetryContext,
     started: Instant,
-    email_text: &str,
     trace: Vec<String>,
     outputs: BTreeMap<String, Value>,
     step_timings: Vec<YamlStepTiming>,
@@ -474,7 +511,6 @@ fn finalize_workflow_output(
     let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
-        email_text: email_text.to_string(),
         trace,
         outputs,
         terminal_node,
@@ -508,13 +544,26 @@ fn finalize_workflow_output(
         None
     };
 
-    emit_workflow_completed(
-        event_sink,
-        output.terminal_node.as_str(),
-        output.total_elapsed_ms,
-        event_metadata,
-    );
-    ensure_event_sink_active(event_sink)?;
+    if let Some(sink) = event_sink {
+        sink.emit(&YamlWorkflowEvent {
+            event_type: "workflow_completed".to_string(),
+            node_id: Some(output.terminal_node.clone()),
+            step_id: None,
+            node_kind: None,
+            streamable: None,
+            message: None,
+            delta: None,
+            token_kind: None,
+            is_terminal_node_token: None,
+            elapsed_ms: Some(output.total_elapsed_ms),
+            metadata: event_metadata,
+        });
+    }
+    if event_sink_is_cancelled(event_sink) {
+        return Err(YamlWorkflowRunError::EventSinkCancelled {
+            message: workflow_event_sink_cancelled_message().to_string(),
+        });
+    }
 
     Ok(output)
 }

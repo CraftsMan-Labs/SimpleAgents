@@ -1,5 +1,6 @@
 {
   "include": ["."],
-  "extraPaths": ["../crates/simple-agents-py"],
-  "typeCheckingMode": "basic"
+  "extraPaths": ["../crates/simple-agents-py", "../crates/simple-agents-py/python"],
+  "typeCheckingMode": "basic",
+  "reportMissingModuleSource": false
 }

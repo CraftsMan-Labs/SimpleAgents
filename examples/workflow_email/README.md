@@ -34,8 +34,8 @@ Primary workflow file:
 ## Implementation Plan
 
 1. Reuse existing workflow YAML files so behavior remains consistent across languages.
-2. Add a minimal npm example (`node/npm_email_workflow_example.js`) that maps workflow env vars and runs `runEmailWorkflowYaml`.
-3. Add a minimal Go example (`bindings/go/examples/workflow_email/main.go`) that maps workflow env vars and runs `RunEmailWorkflowYAML`.
+2. Add a minimal npm example (`node/npm_email_workflow_example.js`) that maps workflow env vars and runs `runWorkflowYaml`.
+3. Add a minimal Go example (`bindings/go/examples/workflow_email/main.go`) that maps workflow env vars and runs `RunWorkflowYAML`.
 4. Update language-specific docs (`node/README.md`, `go/README.md`) and this top-level README with run commands.
 5. Keep advanced custom-worker examples available separately for deeper integration demos.
 
@@ -43,8 +43,8 @@ Primary workflow file:
 flowchart LR
     A[User input email text] --> B[Load WORKFLOW_* env]
     B --> C{Language example}
-    C -->|npm| D[Node Client.runEmailWorkflowYaml]
-    C -->|Go| E[Go Client.RunEmailWorkflowYAML]
+    C -->|npm| D[Node Client.runWorkflowYaml]
+    C -->|Go| E[Go Client.RunWorkflowYAML]
     D --> F[Rust workflow engine executes YAML]
     E --> F
     F --> G[JSON result: terminal_output, timings, token metrics, total_elapsed_ms]
@@ -82,35 +82,35 @@ Legacy fallback vars still work:
 
 ## Python (package API)
 
-Use the package directly (recommended):
+Use the package directly (recommended). **Canonical** API: one messages-first request and `Client.run` / `run_async` / `stream` (see `docs/BINDINGS_PYTHON.md` and `docs/WORKFLOW_API_MIGRATION.md`).
 
 ```python
 from simple_agents_py import Client
 
 client = Client("openai", api_base="...", api_key="...")
-result = client.run_email_workflow_yaml(
-    "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
-)
+request = {
+    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    "messages": [
+        {"role": "system", "content": "You are an assistant helping draft professional emails."},
+        {"role": "user", "content": "Please draft a response for damaged order #9921 and offer expedited replacement."},
+    ],
+}
+result = client.run(request)
 print(result["terminal_output"])
 print(result["step_timings"])
 print(result["total_elapsed_ms"])
 ```
 
-Chat-history workflow input example (`messages` list of typed message objects):
+**Legacy** path + workflow input dict (still supported):
 
 ```python
 result = client.run_workflow_yaml(
-    "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    {
-        "email_text": "Conversation-driven workflow input",
-        "messages": [
-            {"role": "system", "content": "You are an assistant helping draft professional emails."},
-            {"role": "user", "content": "Please draft a response for damaged order #9921 and offer expedited replacement."},
-        ],
-    },
+    "examples/workflow_email/email-intake-classification.yaml",
+    {"email_text": "Termination request, second warning already issued"},
 )
 ```
+
+Graphs that use `messages_path: input.messages` need a `messages` list on the workflow input (or in the unified request). Graphs that only template `{{ input.email_text }}` need that scalar on the input (legacy dict or `request["input"]["email_text"]`).
 
 Ready-to-run helper file:
 
@@ -226,7 +226,7 @@ Pass a custom email inline:
 uv run --directory examples python workflow_email/run_yaml.py email-intake-classification.yaml --email "Termination request, second warning already issued"
 ```
 
-`custom_worker.handler: get_rag_data` is executed by the exact Python function `handlers.get_rag_data(...)` in `examples/workflow_email/handlers.py`.
+`custom_worker.handler: get_rag_data` is executed by the Python function `get_rag_data` in `examples/workflow_email/handlers.py`. The package calls it with **keyword-only** arguments `context` and `payload` (resolved `config.payload` plus execution context with `input`, `nodes`, `globals`, and optional `trace`). See `docs/BINDINGS_PYTHON.md`.
 
 ## Node.js / TypeScript (package API)
 
@@ -236,9 +236,9 @@ Use `simple-agents-node` and call the new method:
 import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
-const result = client.runEmailWorkflowYaml(
+const result = client.runWorkflowYaml(
   "examples/workflow_email/email-intake-classification.yaml",
-  "Please process supply chain replacement, order 9921 arrived damaged."
+  { email_text: "Please process supply chain replacement, order 9921 arrived damaged." }
 )
 
 console.log(result.terminal_output)
@@ -269,7 +269,7 @@ node examples/workflow_email/run_with_node_package.js
 
 ## Go (package API)
 
-Use the Go binding and call `RunEmailWorkflowYAML`:
+Use the Go binding and call `RunWorkflowYAML`:
 
 ```go
 ctx := context.Background()
@@ -279,10 +279,10 @@ if err != nil {
 }
 defer client.Close()
 
-out, err := client.RunEmailWorkflowYAML(
+out, err := client.RunWorkflowYAML(
     ctx,
     "examples/workflow_email/email-intake-classification.yaml",
-    "Termination request, second warning already issued",
+    map[string]any{"email_text": "Termination request, second warning already issued"},
 )
 if err != nil {
     panic(err)

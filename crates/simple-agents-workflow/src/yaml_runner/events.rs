@@ -1,143 +1,194 @@
-use super::*;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-pub(super) fn ensure_event_sink_active(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-) -> Result<(), YamlWorkflowRunError> {
-    if event_sink_is_cancelled(event_sink) {
-        return Err(YamlWorkflowRunError::EventSinkCancelled {
-            message: workflow_event_sink_cancelled_message().to_string(),
-        });
-    }
-    Ok(())
+/// Typed workflow event for streaming and observation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkflowEvent {
+    /// Workflow execution has begun.
+    WorkflowStarted { workflow_id: String },
+    /// A workflow node has started executing.
+    NodeStarted {
+        node_id: String,
+        node_type: NodeType,
+    },
+    /// A token delta from an LLM node (streaming).
+    LlmTokenDelta {
+        node_id: String,
+        token: String,
+        token_kind: TokenKind,
+    },
+    /// A workflow node has finished executing.
+    NodeCompleted { node_id: String, output: Value },
+    /// An LLM node requested a tool call.
+    ToolCallRequested {
+        node_id: String,
+        tool_name: String,
+        arguments: Value,
+    },
+    /// A tool call has finished.
+    ToolCallCompleted {
+        node_id: String,
+        tool_name: String,
+        output: Value,
+    },
+    /// A node is retrying after failure.
+    NodeRetrying {
+        node_id: String,
+        attempt: u8,
+        error: String,
+    },
+    /// A node has failed permanently.
+    NodeFailed { node_id: String, error: String },
+    /// Workflow execution completed.
+    WorkflowCompleted {
+        output: Value,
+        metadata: Option<Value>,
+    },
 }
 
-pub(super) fn emit_workflow_started(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    workflow_id: &str,
-) {
-    if let Some(sink) = event_sink {
-        sink.emit(&YamlWorkflowEvent {
-            event_type: "workflow_started".to_string(),
-            node_id: None,
-            step_id: None,
-            node_kind: None,
-            streamable: None,
-            message: Some(format!("workflow_id={workflow_id}")),
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(0),
-            metadata: None,
-        });
+/// The type of workflow node.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum NodeType {
+    LlmCall,
+    Switch,
+    End,
+}
+
+/// The kind of LLM token in a streaming delta.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenKind {
+    Output,
+    Reasoning,
+}
+
+/// Trait for receiving workflow events.
+pub trait WorkflowEventSink: Send + Sync {
+    /// Called for each workflow event.
+    fn emit(&self, event: &WorkflowEvent);
+    /// Return true to request cancellation.
+    fn is_cancelled(&self) -> bool {
+        false
     }
 }
 
-pub(super) fn emit_node_started(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    node_id: &str,
-    node_kind: &str,
-    node_streamable: Option<bool>,
-    elapsed_ms: u128,
-) {
-    if let Some(sink) = event_sink {
-        sink.emit(&YamlWorkflowEvent {
-            event_type: "node_started".to_string(),
-            node_id: Some(node_id.to_string()),
-            step_id: Some(node_id.to_string()),
-            node_kind: Some(node_kind.to_string()),
-            streamable: node_streamable,
-            message: if node_streamable == Some(false) {
-                Some("Node is not streamable; status events only".to_string())
-            } else {
-                None
+/// Wraps a closure as a WorkflowEventSink.
+pub struct CallbackSink<F: Fn(&WorkflowEvent) + Send + Sync>(pub F);
+
+impl<F: Fn(&WorkflowEvent) + Send + Sync> WorkflowEventSink for CallbackSink<F> {
+    fn emit(&self, event: &WorkflowEvent) {
+        (self.0)(event);
+    }
+}
+
+/// No-op sink that discards all events.
+pub struct NoopSink;
+impl WorkflowEventSink for NoopSink {
+    fn emit(&self, _event: &WorkflowEvent) {}
+}
+
+/// Built-in pretty-printer for workflow events.
+/// Streams LLM tokens to stdout, logs node lifecycle to stderr.
+pub struct DefaultEventPrinter;
+
+impl WorkflowEventSink for DefaultEventPrinter {
+    fn emit(&self, event: &WorkflowEvent) {
+        match event {
+            WorkflowEvent::WorkflowStarted { workflow_id } => {
+                eprintln!("[workflow] started: {workflow_id}");
+            }
+            WorkflowEvent::NodeStarted { node_id, node_type } => {
+                eprintln!("[node] {node_id} ({node_type:?}) started");
+            }
+            WorkflowEvent::LlmTokenDelta {
+                token, token_kind, ..
+            } => {
+                if *token_kind == TokenKind::Output {
+                    use std::io::Write;
+                    let _ = std::io::stdout().write_all(token.as_bytes());
+                    let _ = std::io::stdout().flush();
+                }
+            }
+            WorkflowEvent::NodeCompleted { node_id, .. } => {
+                eprintln!("[node] {node_id} completed");
+            }
+            WorkflowEvent::ToolCallRequested {
+                tool_name, node_id, ..
+            } => {
+                eprintln!("[tool] {node_id} calling {tool_name}");
+            }
+            WorkflowEvent::ToolCallCompleted {
+                tool_name, node_id, ..
+            } => {
+                eprintln!("[tool] {node_id} {tool_name} done");
+            }
+            WorkflowEvent::NodeRetrying {
+                node_id,
+                attempt,
+                error,
+            } => {
+                eprintln!("[retry] {node_id} attempt #{attempt}: {error}");
+            }
+            WorkflowEvent::NodeFailed { node_id, error } => {
+                eprintln!("[error] {node_id}: {error}");
+            }
+            WorkflowEvent::WorkflowCompleted { .. } => {
+                eprintln!("[workflow] completed");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+fn emit(sink: Option<&dyn WorkflowEventSink>, event: WorkflowEvent) {
+    if let Some(s) = sink {
+        s.emit(&event);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn test_callback_sink_collects_events() {
+        let events: Arc<Mutex<Vec<WorkflowEvent>>> = Arc::new(Mutex::new(vec![]));
+        let events_clone = events.clone();
+        let sink = CallbackSink(move |e: &WorkflowEvent| {
+            events_clone.lock().unwrap().push(e.clone());
+        });
+        emit(
+            Some(&sink),
+            WorkflowEvent::WorkflowStarted {
+                workflow_id: "test".into(),
             },
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(elapsed_ms),
-            metadata: None,
-        });
+        );
+        assert_eq!(events.lock().unwrap().len(), 1);
     }
-}
 
-pub(super) fn emit_llm_input_resolved(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    node_id: &str,
-    elapsed_ms: u128,
-    request: &YamlLlmExecutionRequest,
-) {
-    if let Some(sink) = event_sink {
-        sink.emit(&YamlWorkflowEvent {
-            event_type: "node_llm_input_resolved".to_string(),
-            node_id: Some(node_id.to_string()),
-            step_id: Some(node_id.to_string()),
-            node_kind: Some("llm_call".to_string()),
-            streamable: Some(request.stream),
-            message: Some("resolved llm input for telemetry".to_string()),
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(elapsed_ms),
-            metadata: Some(json!({
-                "model": request.model.clone(),
-                "stream_requested": request.stream,
-                "stream_json_as_text": request.stream_json_as_text,
-                "heal_requested": request.heal,
-                "effective_stream": request.stream,
-                "prompt_template": request.prompt_template.clone(),
-                "prompt": request.prompt.clone(),
-                "schema": request.schema.clone(),
-                "bindings": request.prompt_bindings.clone(),
-                "tools_count": request.tools.len(),
-                "max_tool_roundtrips": request.max_tool_roundtrips,
-            })),
-        });
+    #[test]
+    fn test_event_serialization() {
+        let event = WorkflowEvent::NodeStarted {
+            node_id: "classify".into(),
+            node_type: NodeType::LlmCall,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["type"], "node_started");
+        assert_eq!(json["node_id"], "classify");
+        assert_eq!(json["node_type"], "llm_call");
     }
-}
 
-pub(super) fn emit_node_completed(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    node_id: &str,
-    node_kind: &str,
-    node_streamable: Option<bool>,
-    elapsed_ms: u128,
-) {
-    if let Some(sink) = event_sink {
-        sink.emit(&YamlWorkflowEvent {
-            event_type: "node_completed".to_string(),
-            node_id: Some(node_id.to_string()),
-            step_id: Some(node_id.to_string()),
-            node_kind: Some(node_kind.to_string()),
-            streamable: node_streamable,
-            message: None,
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(elapsed_ms),
-            metadata: None,
-        });
-    }
-}
-
-pub(super) fn emit_workflow_completed(
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    terminal_node: &str,
-    elapsed_ms: u128,
-    metadata: Option<Value>,
-) {
-    if let Some(sink) = event_sink {
-        sink.emit(&YamlWorkflowEvent {
-            event_type: "workflow_completed".to_string(),
-            node_id: None,
-            step_id: None,
-            node_kind: None,
-            streamable: None,
-            message: Some(format!("terminal_node={terminal_node}")),
-            delta: None,
-            token_kind: None,
-            is_terminal_node_token: None,
-            elapsed_ms: Some(elapsed_ms),
-            metadata,
-        });
+    #[test]
+    fn test_noop_sink_does_not_panic() {
+        let sink = NoopSink;
+        emit(
+            Some(&sink),
+            WorkflowEvent::WorkflowStarted {
+                workflow_id: "x".into(),
+            },
+        );
     }
 }

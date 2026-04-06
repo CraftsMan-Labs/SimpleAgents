@@ -67,7 +67,12 @@ console.log(coerced.coerced?.value);
 
 ## Environment Variables
 
-The bindings read provider configuration from environment variables:
+The bindings support both explicit credentials and environment-based fallback:
+
+- Explicit: `Client.withProviderConfig({ provider, apiKey, apiBase? })`
+- Fallback: `new Client(provider)` (reads environment variables)
+
+Environment variables used by fallback:
 
 - OpenAI: `OPENAI_API_KEY`, optional `OPENAI_API_BASE`
 - Anthropic: `ANTHROPIC_API_KEY`
@@ -79,38 +84,61 @@ The test/examples convention also supports:
 ## API Surface (Types)
 
 ```ts
-new Client(provider: string)
+new Client(provider: string) // env fallback
+Client.withProviderConfig(config: { provider: string; apiKey?: string; apiBase?: string })
 client.complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions)
 client.stream(model: string, promptOrMessages: string | MessageInput[], onChunk, options?: CompleteOptions)
-client.runEmailWorkflowYaml(workflowPath: string, emailText: string)
+client.runWorkflowYaml(workflowPath: string, workflowInput)
 client.runWorkflowYamlWithEvents(workflowPath: string, workflowInput, workflowOptions?)
 client.runWorkflowYamlStream(workflowPath: string, workflowInput, onEvent, workflowOptions?)
+client.executeWorkflowYaml(request: WorkflowYamlRunRequest)
+client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 ```
+
+`WorkflowYamlRunRequest` includes optional `splitStreamDeltas` (default false when omitted): when true, the Rust runner emits split thinking/output stream events.
 
 `CompleteOptions` supports `maxTokens`, `temperature`, `topP`, `mode`, and `schema`.
 
 ## Workflow YAML Runner (Rust-backed)
 
+Prefer the **messages-first** APIs (see [Workflow API Migration](WORKFLOW_API_MIGRATION.md)):
+
 ```ts
 import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
-const result = client.runEmailWorkflowYaml(
-  "examples/workflow_email/email-intake-classification.yaml",
-  "Please process supply chain replacement, order 9921 arrived damaged.",
-)
+const result = client.executeWorkflowYaml({
+  workflowPath: "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+  messages: [
+    {
+      role: "user",
+      content: "Please process supply chain replacement, order 9921 arrived damaged.",
+    },
+  ],
+  healing: false,
+  workflowStreaming: false,
+  nodeLlmStreaming: true,
+})
 
 console.log(result.terminal_output)
 console.log(result.step_timings)
 console.log(result.total_elapsed_ms)
 ```
 
-This method delegates to Rust `simple-agents-workflow` as the source of truth.
+Use `extraWorkflowInput` for additional keys merged into runner input (for example legacy `email_text` when the YAML still references it).
 
-Workflow events parity with Python is also available:
+**Streaming:** `executeWorkflowYamlStream(request, onEvent)` emits live workflow events via `onEvent(err, eventJson)` (JSON strings) and resolves to the final structured output.
+
+### Legacy path helpers
+
+`runWorkflowYaml`, `runWorkflowYamlWithEvents`, and `runWorkflowYamlStream` take `(workflowPath, workflowInput)` and remain for compatibility. Prefer `executeWorkflowYaml` / `executeWorkflowYamlStream` for new code.
+
+This stack delegates to Rust `simple-agents-workflow` as the source of truth.
+
+Workflow events parity with Python:
 
 - `runWorkflowYamlWithEvents(...)` returns output with `events` attached.
-- `runWorkflowYamlStream(...)` emits live workflow events via `onEvent(eventJson)` as JSON strings and returns the final structured output object.
+- Legacy stream: `runWorkflowYamlStream(...)` — same callback shape as `executeWorkflowYamlStream`.
 
 Workflow telemetry options follow Rust runner semantics:
 
@@ -126,7 +154,11 @@ Tracing exporter env configuration is shared across runtimes:
 - `OTEL_EXPORTER_OTLP_HEADERS`
 - `OTEL_SERVICE_NAME`
 
-Workflow YAML execution in Node currently does not execute local custom handler files directly. If a workflow uses `custom_worker.handler_file`, execution fails fast unless a custom worker executor is configured in the runtime layer.
+### Custom workers (`custom_worker`)
+
+Node binding now performs startup validation for this runtime: if a workflow contains any `custom_worker` node and no executor is registered, execution is rejected before node execution starts with an actionable error that includes the node id and handler name.
+
+This keeps YAML handler naming authoritative while preventing late-runtime failures. Use Python or WASM for local custom worker execution until a Node callback executor is exposed.
 
 ## Testing Notes
 

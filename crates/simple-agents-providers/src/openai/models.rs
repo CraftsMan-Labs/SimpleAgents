@@ -269,17 +269,10 @@ pub struct OpenAIStreamToolCallFunctionDelta {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use simple_agent_type::prelude::Role;
 
     #[test]
     fn test_serialize_request() {
-        let messages = vec![Message {
-            role: Role::User,
-            content: "Hello".to_string(),
-            name: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let messages = vec![Message::user("Hello")];
 
         let request = OpenAICompletionRequest {
             model: "gpt-4",
@@ -328,7 +321,7 @@ mod tests {
         assert_eq!(response.id, "chatcmpl-123");
         assert_eq!(response.model, "gpt-4");
         assert_eq!(response.choices.len(), 1);
-        assert_eq!(response.choices[0].message.content, "Hello there!");
+        assert_eq!(response.choices[0].message.content_text(), "Hello there!");
         assert_eq!(response.usage.total_tokens, 30);
         assert_eq!(response.usage.reasoning_tokens(), None);
     }

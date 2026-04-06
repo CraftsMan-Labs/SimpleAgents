@@ -12,14 +12,13 @@ Ensure the dynamic library is on your loader path (for example `LD_LIBRARY_PATH=
 
 ## Environment contract
 
-Use the same canonical env contract as other bindings:
+Examples that need credentials use the same env names as other bindings (see each example’s header). Typical workflow examples use:
 
-- `PROVIDER` - `openai`, `anthropic`, or `openrouter`
-- `CUSTOM_API_KEY`
-- `CUSTOM_API_BASE` (optional for providers with a base URL)
-- `CUSTOM_API_MODEL`
+- `WORKFLOW_API_KEY` or `CUSTOM_API_KEY`
+- `WORKFLOW_API_BASE` or `CUSTOM_API_BASE` (optional)
+- `WORKFLOW_PROVIDER` (optional; used when mapping keys for documentation; `NewClient` takes key and base URL explicitly)
 
-The Go example maps `CUSTOM_API_*` to provider-specific variables expected by the Rust providers.
+The `examples/client` example uses `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, and optional `CUSTOM_API_BASE`.
 
 ## Usage
 
@@ -28,37 +27,39 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "fmt"
     "log"
+    "os"
     "time"
 
     "simpleagents"
 )
 
 func main() {
-    client, err := simpleagents.NewClientFromEnv("openai")
+    client, err := simpleagents.NewClient(os.Getenv("OPENAI_API_KEY"), "")
     if err != nil {
         log.Fatal(err)
     }
     defer client.Close()
 
+    req, _ := json.Marshal(map[string]any{
+        "model": "gpt-4",
+        "messages": []map[string]string{
+            {"role": "user", "content": "Say hello in one sentence."},
+        },
+        "max_tokens":  64,
+        "temperature": 0.2,
+    })
+
     ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
     defer cancel()
 
-    maxTokens := int32(64)
-    temperature := float32(0.2)
-
-    result, err := client.CompleteMessages(
-        ctx,
-        "gpt-4",
-        []simpleagents.Message{{Role: "user", Content: "Say hello in one sentence."}},
-        simpleagents.CompleteOptions{MaxTokens: &maxTokens, Temperature: &temperature},
-    )
+    resJSON, err := client.Complete(ctx, req)
     if err != nil {
         log.Fatal(err)
     }
-
-    fmt.Println(result.Content)
+    fmt.Println(string(resJSON))
 }
 ```
 
@@ -66,23 +67,16 @@ See runnable example: `bindings/go/examples/client/main.go`.
 
 ## API summary
 
-- `NewClientFromEnv(provider string) (*Client, error)`
-- `(*Client).CompletePrompt(ctx, model, prompt, maxTokens, temperature)` (canonical prompt API)
-- `(*Client).CompleteWithContext(ctx, model, prompt, maxTokens, temperature)` (compatibility alias)
-- `(*Client).CompleteMessages(ctx, model, messages, opts)` (message API, structured/healing outputs)
-- `(*Client).StreamMessages(ctx, model, messages, opts)` (streaming channel API)
-- `(*Client).RunWorkflowYAML(ctx, workflowPath, workflowInput)` (generic workflow input)
-- `(*Client).RunEmailWorkflowYAML(ctx, workflowPath, emailText)` (compatibility wrapper)
-- `(*Client).Complete(...)` (backward-compatible prompt helper)
+- `NewClient(apiKey, baseURL string) (*Client, error)` — empty `baseURL` uses the default OpenAI-compatible endpoint.
+- `(*Client).Complete(ctx, requestJSON []byte) ([]byte, error)` — JSON `CompletionRequest` in, `CompletionResponse` JSON out.
+- `(*Client).StreamComplete(ctx, requestJSON, onChunk)` — request must include `"stream": true`.
+- `(*Client).Run(ctx, workflowPath, inputJSON []byte) ([]byte, error)` — workflow output JSON (`YamlWorkflowRunOutput`).
+- `(*Client).Stream(ctx, workflowPath, inputJSON, onEvent)` — one JSON event string per callback.
+- `(*Client).Resume(ctx, checkpointJSON []byte) ([]byte, error)`
+- `ParseWorkflowOutput(raw []byte)` — convenience `map[string]interface{}` parse.
 - `(*Client).Close()`
 
-## Option validation
-
-`CompleteOptions.Mode` supports `standard`, `healed_json`, and `schema`.
-
-- `schema` mode requires `CompleteOptions.Schema`.
-- `Schema` is rejected for non-`schema` modes.
-- Streaming currently supports only `standard` mode.
+Runtime `custom_worker` executors are not available from Go; workflows that require them cannot complete through this FFI alone.
 
 ## Test layers
 
@@ -98,6 +92,6 @@ LD_LIBRARY_PATH="$(pwd)/../../target/release:${LD_LIBRARY_PATH}" \
 go test ./...
 ```
 
-- Unit: `go test ./... -run 'TestValidate|TestCompleteMessagesUninitializedClient|TestCompleteWithContextUninitializedClient|TestStreamMessagesUninitializedClient'`
-- Contract: `go test ./... -run 'TestGoBindingsFollowSharedContractFixture|TestValidateCompleteOptionsGoldenCases'`
-- Live: `go test ./... -run 'TestLive'` (env-gated)
+- Unit: `go test ./... -short`
+- Contract: `go test ./... -run 'TestGoBindingsFollowSharedContractFixture'`
+- Live: `go test ./... -run 'TestLive'` (requires `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, and optional `CUSTOM_API_BASE`)
