@@ -253,18 +253,28 @@ Rust core API:
 
 ```rust
 use serde_json::json;
-use simple_agents_workflow::run_workflow_yaml_file_with_client;
+use simple_agents_workflow::yaml_runner::{
+    workflow_execution, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
+};
 
-let output = run_workflow_yaml_file_with_client(
-    std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
-    &json!({
-        "messages": [
-            {"role": "user", "content": "Termination request, second warning already issued"}
-        ]
-    }),
-    &client,
-)
-.await?;
+let workflow_input = json!({
+    "messages": [
+        {"role": "user", "content": "Termination request, second warning already issued"}
+    ]
+});
+let options = YamlWorkflowRunOptions::default();
+let execution_request = YamlWorkflowExecutionRequest {
+    source: YamlWorkflowSource::File(std::path::Path::new(
+        "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    )),
+    workflow_input: &workflow_input,
+    executor: YamlWorkflowExecutorBinding::Client(&client),
+    custom_worker: None,
+    options: &options,
+    flags: YamlWorkflowExecutionFlags::default(),
+};
+let output = workflow_execution::run(execution_request).await?;
 
 println!("terminal: {}", output.terminal_node);
 println!("total_ms: {}", output.total_elapsed_ms);

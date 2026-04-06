@@ -140,7 +140,7 @@ If rate limited by crates.io:
 # Wait 10-60 minutes, then retry
 # Or publish crates one at a time with delays
 
-for crate in simple-agent-type simple-agents-cache; do
+for crate in simple-agent-type simple-agents-healing simple-agents-providers simple-agents-core simple-agents-workflow; do
   doppler run -- cargo publish -p $crate
   sleep 60  # Wait between publishes
 done

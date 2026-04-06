@@ -10,16 +10,13 @@ Only two crates currently expose Cargo feature flags.
 | Crate | Default features | Named features | Notes |
 |---|---|---|---|
 | `simple-agent-type` | n/a | none | No `[features]` section |
-| `simple-agents-cache` | n/a | none | No `[features]` section |
-| `simple-agents-cli` | n/a | none | No `[features]` section |
 | `simple-agents-core` | n/a | none | No `[features]` section |
 | `simple-agents-ffi` | n/a | none | No `[features]` section |
 | `simple-agents-healing` | `[]` | `regex-support = ["regex"]` | Enables regex-based unquoted-key fixing in parser |
-| `simple-agents-macros` | n/a | none | No `[features]` section |
 | `simple-agents-napi` | n/a | none | No `[features]` section |
 | `simple-agents-providers` | `[]` | `prometheus = ["dep:metrics-exporter-prometheus"]` | Enables Prometheus exporter support in metrics module |
 | `simple-agents-py` | n/a | none | No `[features]` section |
-| `simple-agents-router` | n/a | none | No `[features]` section |
+| `simple-agents-workflow` | n/a | none | No `[features]` section |
 
 ## 2) Crate Runtime/System Features (API-level)
 
@@ -38,10 +35,14 @@ Only two crates currently expose Cargo feature flags.
 - Healing settings (`HealingSettings`) and completion modes (`CompletionMode`).
 - Middleware lifecycle hooks (before/after/error/cache-hit/after-stream).
 
-### `simple-agents-router`
-- Routing strategies: `RoundRobinRouter`, `LatencyRouter`, `CostRouter`, `FallbackRouter`.
-- Resilience helpers: `CircuitBreaker`, `RetryPolicy`, `HealthTracker`.
-- Retry helper (`execute_with_retry`) for router-level execution paths.
+### `simple-agents-workflow`
+- YAML workflow engine: load, validate, execute multi-step LLM graphs.
+- `WorkflowClient` wrapping `SimpleAgentsClient` with `run`, `stream`, `resume`.
+- `workflow_execution::{run, stream}` low-level async entry points.
+- Execution flags: `YamlWorkflowExecutionFlags` (healing, streaming, split-deltas).
+- Options: `YamlWorkflowRunOptions` (telemetry, trace context, model override).
+- Checkpoint/resume via `WorkflowCheckpoint`.
+- Observability: nerdstats, telemetry, tracing.
 
 ### `simple-agents-providers`
 - Provider implementations: OpenAI, Anthropic, OpenRouter.
@@ -58,37 +59,25 @@ Only two crates currently expose Cargo feature flags.
 - Streaming parse support (`StreamingParser`).
 - Optional regex-powered unquoted-key repair (`regex-support`).
 
-### `simple-agents-cache`
-- `InMemoryCache` with TTL, expiry cleanup, and LRU-style eviction.
-- `NoOpCache` for disabled caching/testing.
-- Re-exports `Cache` trait from `simple-agent-type`.
-
-### `simple-agents-cli`
-- CLI subcommands: `complete`, `chat`, `benchmark`, `test-provider`.
-- Config file support (TOML/YAML) for providers/defaults/routing.
-- Output formats: plain, JSON, Markdown.
-
 ### `simple-agents-ffi`
-- C-compatible API for client lifecycle and completions.
-- Completion helpers: `sa_complete`, `sa_complete_messages_json`.
-- Error handling helpers: `sa_last_error_message`, `sa_string_free`.
-- Completion modes exposed as JSON options (`standard`, `healed_json`, `schema`).
+- C-compatible API for client lifecycle, completions, and workflows.
+- Completion: `sa_complete`, `sa_stream`.
+- Workflow: `sa_run_workflow`, `sa_stream_workflow`, `sa_resume`.
+- Error handling: `sa_last_error_message`, `sa_string_free`.
 
 ### `simple-agents-napi`
-- Node bindings with a `Client` class.
-- `complete()` supports standard/healed-json/schema modes.
-- `stream()` supports standard streaming callbacks.
-- Schema parsing bridge for structured/coerced responses.
+- Node.js `Client` class via NAPI.
+- `complete()` for direct LLM calls (standard/healed-json/schema modes).
+- `run(workflowPath, messages, opts?)`, `stream(...)`, `resume(checkpoint, opts?)`.
+- `MessageInput`, `RunOptions` TypeScript types.
 
 ### `simple-agents-py`
-- Python bindings via PyO3.
-- Client builder, streaming iterators, and structured streaming events.
-- Healing parser/coercion helpers and schema builder utilities.
-- Routing/cache/healing configuration APIs exposed to Python.
-
-### `simple-agents-macros`
-- `#[derive(PartialType)]` proc macro.
-- Generates partial structs + merge/from-partial helpers for streaming workflows.
+- Python `Client` via PyO3.
+- `complete()`, `stream_complete()` for direct LLM calls.
+- `run(workflow_path, messages, *, tools=None, options=None)`.
+- `stream(workflow_path, messages, *, on_event=None, tools=None, options=None)`.
+- `resume(checkpoint, *, options=None)`.
+- Typed helpers: `Message`, `Role`, `ContentPart`.
 
 ## 3) Feature Summary
 
