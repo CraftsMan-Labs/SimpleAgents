@@ -17,7 +17,7 @@ tracing = "0.1"
 futures-core = "0.3"
 
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.3.1" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.3.2" }
 
 [dev-dependencies]
 async-trait.workspace = true

@@ -3,7 +3,7 @@ members = ["crates/*", "examples"]
 resolver = "2"
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.75"
 authors = ["SimpleAgents Contributors"]
@@ -30,6 +30,6 @@ futures-util = "0.3"
 metrics = "0.23"
 metrics-exporter-prometheus = "0.15"
 governor = "0.6"
-simple-agent-type = { version = "0.3.1", path = "crates/simple-agent-type" }
-simple-agents-healing = { version = "0.3.1", path = "crates/simple-agents-healing" }
-simple-agents-providers = { version = "0.3.1", path = "crates/simple-agents-providers" }
+simple-agent-type = { version = "0.3.2", path = "crates/simple-agent-type" }
+simple-agents-healing = { version = "0.3.2", path = "crates/simple-agents-healing" }
+simple-agents-providers = { version = "0.3.2", path = "crates/simple-agents-providers" }
