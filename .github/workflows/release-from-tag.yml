@@ -36,8 +36,10 @@ jobs:
               sys.exit(1)
 
           lines = changelog_path.read_text(encoding="utf-8").splitlines()
+          # Match Keep a Changelog headings like `## [x.y.z] - YYYY-MM-DD` (word boundary
+          # after `]` fails because `]` and space are both non-word chars).
           header_pattern = re.compile(
-              rf"^##\s+\[(?:{re.escape(version)}|{re.escape(tag_name)})\]\b"
+              rf"^##\s+\[(?:{re.escape(version)}|{re.escape(tag_name)})\]\s*"
           )
           section_start = None
           section_end = None
