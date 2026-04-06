@@ -98,16 +98,80 @@ impl MessageContent {
         }
     }
 
+    /// Returns true if the message has no usable content (empty string, empty parts,
+    /// or every part is empty).
+    pub fn is_empty_content(&self) -> bool {
+        match self {
+            Self::Text(s) => s.is_empty(),
+            Self::Parts(parts) => {
+                parts.is_empty()
+                    || parts.iter().all(|p| match p {
+                        ContentPart::Text { text } => text.is_empty(),
+                        ContentPart::ImageUrl { image_url } => image_url.url.is_empty(),
+                        ContentPart::Audio { input_audio } => input_audio.data.is_empty(),
+                        ContentPart::Video { video } => video.data.is_empty(),
+                    })
+            }
+        }
+    }
+
     /// Returns true if the content contains a null byte.
     pub fn contains_null(&self) -> bool {
         match self {
             Self::Text(s) => s.contains('\0'),
             Self::Parts(parts) => parts.iter().any(|p| match p {
                 ContentPart::Text { text } => text.contains('\0'),
-                _ => false,
+                ContentPart::ImageUrl { image_url } => image_url.url.contains('\0'),
+                ContentPart::Audio { input_audio } => {
+                    input_audio.data.contains('\0') || input_audio.media_type.contains('\0')
+                }
+                ContentPart::Video { video } => {
+                    video.data.contains('\0') || video.media_type.contains('\0')
+                }
             }),
         }
     }
+}
+
+/// Well-known MIME type constants for multimodal content.
+pub mod mime {
+    /// PNG image.
+    pub const IMAGE_PNG: &str = "image/png";
+    /// JPEG image.
+    pub const IMAGE_JPEG: &str = "image/jpeg";
+    /// WebP image.
+    pub const IMAGE_WEBP: &str = "image/webp";
+    /// GIF image.
+    pub const IMAGE_GIF: &str = "image/gif";
+    /// MP3 audio.
+    pub const AUDIO_MP3: &str = "audio/mpeg";
+    /// WAV audio.
+    pub const AUDIO_WAV: &str = "audio/wav";
+    /// FLAC audio.
+    pub const AUDIO_FLAC: &str = "audio/flac";
+    /// OGG audio.
+    pub const AUDIO_OGG: &str = "audio/ogg";
+    /// MP4 video.
+    pub const VIDEO_MP4: &str = "video/mp4";
+    /// WebM video.
+    pub const VIDEO_WEBM: &str = "video/webm";
+    /// MOV video.
+    pub const VIDEO_MOV: &str = "video/quicktime";
+    /// MKV video.
+    pub const VIDEO_MKV: &str = "video/x-matroska";
+}
+
+/// Base64-encoded media content with its MIME type.
+///
+/// Used by [`ContentPart::Audio`] and [`ContentPart::Video`] to carry inline
+/// media data. The same struct works for both input (user uploads) and output
+/// (model-generated audio/video).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MediaContent {
+    /// MIME type (e.g. `"image/png"`, `"audio/wav"`). See [`mime`] for constants.
+    pub media_type: String,
+    /// Base64-encoded media bytes.
+    pub data: String,
 }
 
 /// A single content part in a multimodal message.
@@ -120,17 +184,23 @@ pub enum ContentPart {
         /// The text string.
         text: String,
     },
-    /// Image URL content.
+    /// Image content (base64 data URI for OpenAI wire compatibility).
     #[serde(rename = "image_url")]
     ImageUrl {
         /// The image URL and optional detail level.
         image_url: ImageUrlContent,
     },
-    /// Video URL content.
-    #[serde(rename = "video_url")]
+    /// Audio content (inline base64).
+    #[serde(rename = "input_audio")]
+    Audio {
+        /// The audio media payload.
+        input_audio: MediaContent,
+    },
+    /// Video content (inline base64).
+    #[serde(rename = "video")]
     Video {
-        /// The video URL.
-        url: String,
+        /// The video media payload.
+        video: MediaContent,
     },
 }
 
@@ -140,7 +210,44 @@ impl ContentPart {
         Self::Text { text: text.into() }
     }
 
-    /// Create an image URL content part.
+    /// Create an image content part from base64 data.
+    ///
+    /// Wraps the data as a `data:` URI in [`ImageUrlContent`] for OpenAI wire
+    /// compatibility.
+    pub fn image(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        let mt = media_type.into();
+        let d = data.into();
+        Self::ImageUrl {
+            image_url: ImageUrlContent {
+                url: format!("data:{mt};base64,{d}"),
+                detail: None,
+            },
+        }
+    }
+
+    /// Create an audio content part from base64 data.
+    pub fn audio(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Audio {
+            input_audio: MediaContent {
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+        }
+    }
+
+    /// Create a video content part from base64 data.
+    pub fn video(media_type: impl Into<String>, data: impl Into<String>) -> Self {
+        Self::Video {
+            video: MediaContent {
+                media_type: media_type.into(),
+                data: data.into(),
+            },
+        }
+    }
+
+    /// Create an image URL content part (legacy).
+    ///
+    /// Prefer [`ContentPart::image`] for inline base64 data.
     pub fn image_url(url: impl Into<String>) -> Self {
         Self::ImageUrl {
             image_url: ImageUrlContent {
@@ -154,7 +261,7 @@ impl ContentPart {
 /// Image URL content with optional detail level.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ImageUrlContent {
-    /// The image URL.
+    /// The image URL (or `data:` URI for inline base64 images).
     pub url: String,
     /// Optional detail level (e.g. "low", "high", "auto").
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -332,7 +439,7 @@ pub fn parse_messages_value(value: &Value) -> Result<Vec<Message>, String> {
         .into_iter()
         .enumerate()
         .map(|(idx, wire)| {
-            if wire.content.text_len() == 0 {
+            if wire.content.is_empty_content() {
                 return Err(format!("message[{idx}].content cannot be empty"));
             }
 
@@ -499,6 +606,38 @@ mod tests {
             ContentPart::image_url("https://example.com/img.jpg"),
         ]);
         assert_eq!(msg.content_text(), "what is this?");
+    }
+
+    #[test]
+    fn test_content_part_image_inline_serde() {
+        let part = ContentPart::image(mime::IMAGE_PNG, "abc");
+        let v = serde_json::to_value(&part).unwrap();
+        assert_eq!(v["type"], "image_url");
+        assert!(v["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        let parsed: ContentPart = serde_json::from_value(v).unwrap();
+        assert_eq!(parsed, part);
+    }
+
+    #[test]
+    fn test_content_part_audio_video_serde() {
+        let audio = ContentPart::audio(mime::AUDIO_WAV, "dGVzdA==");
+        let json = serde_json::to_string(&audio).unwrap();
+        let parsed: ContentPart = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, audio);
+
+        let video = ContentPart::video(mime::VIDEO_MP4, "dGVzdA==");
+        let json = serde_json::to_string(&video).unwrap();
+        let parsed: ContentPart = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, video);
+    }
+
+    #[test]
+    fn test_message_parts_image_only_not_empty() {
+        let msg = Message::user_parts(vec![ContentPart::image(mime::IMAGE_JPEG, "e30=")]);
+        assert!(!msg.content.is_empty_content());
     }
 
     #[test]

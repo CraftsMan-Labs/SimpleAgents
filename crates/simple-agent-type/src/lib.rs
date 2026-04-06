@@ -77,7 +77,9 @@ pub use telemetry::{ApiFormat, OtelProtocol, TelemetryConfig, TraceContext};
 /// ```
 pub mod prelude {
     // Messages
-    pub use crate::message::{ContentPart, ImageUrlContent, Message, MessageContent, Role};
+    pub use crate::message::{
+        mime, ContentPart, ImageUrlContent, MediaContent, Message, MessageContent, Role,
+    };
 
     // Requests and responses
     pub use crate::request::{CompletionRequest, CompletionRequestBuilder};
