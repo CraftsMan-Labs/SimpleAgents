@@ -195,7 +195,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-wasm-rust"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "js-sys",
  "serde",

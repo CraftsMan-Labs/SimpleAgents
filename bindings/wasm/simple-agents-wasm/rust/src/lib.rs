@@ -2000,6 +2000,37 @@ impl WasmClient {
             "workflow file paths are not supported in browser runtime: {workflow_path}"
         )))
     }
+
+    /// Run a YAML workflow from a YAML text string (new unified API alias).
+    ///
+    /// This is an alias for `runWorkflowYamlString` using the new naming convention.
+    /// WASM cannot use file paths; pass the YAML document text directly.
+    ///
+    /// ```js
+    /// const result = await client.runYamlString(yamlText, messages);
+    /// ```
+    #[wasm_bindgen(js_name = runYamlString)]
+    pub async fn run_yaml_string(
+        &self,
+        yaml_text: String,
+        messages: JsValue,
+        options: Option<JsValue>,
+    ) -> Result<JsValue, JsValue> {
+        // Build workflow input envelope from the messages arg
+        let messages_value: serde_json::Value = if messages.is_array() || messages.is_object() {
+            serde_wasm_bindgen::from_value(messages)
+                .unwrap_or(serde_json::json!([]))
+        } else if let Some(prompt) = messages.as_string() {
+            serde_json::json!([{"role": "user", "content": prompt}])
+        } else {
+            serde_json::json!([])
+        };
+
+        let input_js = serde_wasm_bindgen::to_value(&serde_json::json!({ "messages": messages_value }))
+            .map_err(|_| js_error("failed to serialize messages input"))?;
+
+        self.run_workflow_yaml_string(yaml_text, input_js, options).await
+    }
 }
 
 #[wasm_bindgen(js_name = supportsRustWasm)]
