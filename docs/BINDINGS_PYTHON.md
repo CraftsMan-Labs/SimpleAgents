@@ -31,7 +31,11 @@ for chunk in client.complete("gpt-4o-mini", messages, max_tokens=64, stream=True
 print()
 ```
 
-## Structured Output (Schema)
+Each yielded item is a `StreamChunk` with `.content`, `.finish_reason`, `.model`, and `.index`.
+
+## Structured Output (Schema + Streaming)
+
+Pass a JSON Schema dict as `schema=...`. When `stream=True`, the iterator yields `PyStructuredEvent` objects; when `stream=False`, the response is the usual `ResponseWithMetadata` (healing/coercion is applied at the caller level via `heal_json` / `coerce_to_schema`).
 
 ```python
 from simple_agents_py import Client
@@ -43,156 +47,180 @@ schema = {
     "required": ["name", "age"],
 }
 messages = [{"role": "user", "content": "Extract name and age: Alice is 28."}]
-json_text = client.complete("gpt-4o-mini", messages, schema=schema, schema_name="person")
-print(json_text)
+
+# Non-streaming: returns ResponseWithMetadata
+result = client.complete("gpt-4o-mini", messages, schema=schema)
+print(result.content)
+
+# Streaming: yields PyStructuredEvent objects
+for event in client.complete("gpt-4o-mini", messages, schema=schema, stream=True):
+    if event.is_complete:
+        print(event.value)          # parsed Python dict
+        print(event.confidence)     # float 0.0–1.0
+        print(event.was_healed)     # bool
+    else:
+        print(event.partial_value)  # partially parsed value
 ```
 
-When `stream=True` with `schema=...`, the iterator yields structured events with partial and complete values.
+`schema` must be a `dict`; passing any other type raises `RuntimeError`.
 
-## Healing
+## Healing Utilities
 
-```python
-from simple_agents_py import Client
-
-client = Client("openai")
-messages = [{"role": "user", "content": "Return JSON: {\"name\":\"Sam\",\"age\":30}"}]
-healed = client.complete(
-    "gpt-4o-mini",
-    messages,
-    response_format="json",
-    heal=True,
-)
-print(healed.content, healed.was_healed, healed.confidence)
-```
-
-Healing is enabled by default for structured outputs. You can disable it per client:
+Use `heal_json` and `coerce_to_schema` to parse and validate LLM output directly:
 
 ```python
-client = Client("openai", healing=False)
-```
+from simple_agents_py import heal_json, coerce_to_schema
 
-## ClientBuilder (Routing, Cache, Middleware)
+result = heal_json('{"name": "Sam", "age": 30,}')  # trailing comma fixed automatically
+print(result.value)        # Python dict
+print(result.confidence)   # float 0.0–1.0
+print(result.was_healed)   # bool
+print(result.flags)        # list of strings describing applied repairs
 
-```python
-from simple_agents_py import (
-    CacheConfig,
-    ClientBuilder,
-    HealingConfig,
-    ProviderConfig,
-    RoutingPolicy,
-)
-
-class TimingMiddleware:
-    def before_request(self, request):
-        print("sending", request.model)
-
-client = (
-    ClientBuilder()
-    .add_provider_config(ProviderConfig("openai", api_key="sk-..."))
-    .with_routing_policy(RoutingPolicy.direct())
-    .with_cache_config(CacheConfig(ttl_seconds=60))
-    .with_healing(HealingConfig(enabled=True, min_confidence=0.7))
-    .add_middleware(TimingMiddleware())
-    .build()
-)
-print(client.complete("gpt-4o-mini", "Give me one idea.").content)
-```
-
-## Schema Utilities
-
-```python
-from simple_agents_py import SchemaBuilder, heal_json, coerce_to_schema
-
-builder = SchemaBuilder()
-builder.field("name", "string", required=True)
-builder.field("age", "int", required=True)
-schema = builder.build()
-
-result = heal_json('{"name": "Sam", "age": 30}')
+schema = {
+    "type": "object",
+    "properties": {"name": {"type": "string"}, "age": {"type": "number"}},
+    "required": ["name", "age"],
+}
 coerced = coerce_to_schema(result.value, schema)
-print(coerced.value)
+print(coerced.value)       # coerced Python dict
+print(coerced.was_coerced) # bool
 ```
+
+### Incremental streaming parser
+
+`StreamingParser` accumulates token chunks and heals incrementally:
+
+```python
+from simple_agents_py import StreamingParser
+
+parser = StreamingParser()
+parser.feed('{"name": "Sam"')
+partial = parser.try_parse()   # ParseResult or None
+parser.feed(', "age": 30}')
+final = parser.finalize()      # ParseResult (raises if buffer is empty)
+print(final.value, final.was_healed)
+```
+
+## Exported Types
+
+| Name | Description |
+|------|-------------|
+| `Client` | Main completion and workflow client |
+| `ResponseWithMetadata` | Non-streaming `complete()` result: `.content`, `.model`, `.provider`, `.finish_reason`, `.latency_ms`, `.usage`, `.tool_calls` |
+| `StreamChunk` | One streaming delta: `.content`, `.finish_reason`, `.model`, `.index` |
+| `PyStreamIterator` | Iterator returned by `complete(..., stream=True)` without schema |
+| `PyStructuredStreamIterator` | Iterator returned by `complete(..., stream=True, schema=...)` |
+| `PyStructuredEvent` | Item from `PyStructuredStreamIterator`: `.is_partial`, `.is_complete`, `.value`, `.partial_value`, `.confidence`, `.was_healed` |
+| `ParseResult` | Result of `heal_json()` or `StreamingParser.finalize()`: `.value`, `.confidence`, `.was_healed`, `.flags` |
+| `CoercionResult` | Result of `coerce_to_schema()`: `.value`, `.confidence`, `.was_coerced`, `.flags` |
+| `HealedJsonResult` | Raw string result from healing: `.content`, `.confidence`, `.was_healed`, `.flags` |
+| `StreamingParser` | Incremental JSON healing parser |
 
 ## Notes
 
-- `Client` reads provider API keys from environment variables when `api_key` is omitted.
+- `Client` reads provider API keys from environment variables when `api_key` is omitted (e.g. `OPENAI_API_KEY`).
 - `complete()` accepts a prompt string or a list of message dicts.
-- `response_format="json"` enables JSON parsing when paired with `heal=True`.
+- `stream=True` and `heal=True` cannot be combined; pass one or the other.
+- `schema` must be a `dict` when provided.
 
 ## Workflow YAML Runner (Rust-backed)
 
-Workflow execution is **messages-first**: one request mapping (or Pydantic model) is used for sync run, async-backed run, and streaming. The Rust `simple-agents-workflow` crate remains the source of truth. See [Workflow API Migration](WORKFLOW_API_MIGRATION.md) for the cross-language contract.
+Workflow execution is driven by the Rust `simple-agents-workflow` crate. The Python `Client` exposes three methods for running YAML workflows.
 
-### Canonical entrypoints
+### Client methods
 
-- `client.run(request)` — run to completion
-- `client.run_async(request)` — same outcome via the Rust async runtime (still a blocking Python call from the interpreter’s perspective unless you offload, for example with `asyncio.to_thread`)
-- `client.stream(request, on_event=..., include_events_in_output=...)` — live workflow events; omit `on_event` when you only want recorded events on the result (where applicable)
+- `client.run_workflow(request)` — run to completion, returns output dict
+- `client.stream_workflow(request, on_event=None, include_events_in_output=False)` — run with live events
+- `client.run_workflow_yaml_stream(workflow_path, input, *, on_event=None, workflow_options=None)` — convenience wrapper that takes the YAML path and input dict separately
 
-**Minimal request**
+**`request` shape for `run_workflow` / `stream_workflow`**
 
 ```python
-from simple_agents_py import Client
-
-client = Client("openai", api_base="https://...", api_key="...")
 request = {
     "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
     "messages": [
         {"role": "user", "content": "Termination request, second warning already issued"},
     ],
 }
-result = client.run(request)
-
+result = client.run_workflow(request)
 print(result["terminal_output"])
-print(result["step_timings"])      # per-node elapsed ms + optional token usage
-print(result["llm_node_metrics"])   # llm node token/tps metrics by node id
+print(result["step_timings"])       # per-node elapsed ms + optional token usage
+print(result["llm_node_metrics"])   # token/tps metrics by node id
 print(result["total_elapsed_ms"])   # end-to-end runtime
-print(result["total_input_tokens"])
-print(result["total_output_tokens"])
 print(result["total_tokens"])
-print(result["total_reasoning_tokens"])  # null when provider does not expose it
-print(result["tokens_per_second"])       # completion tokens / second
 ```
 
 Optional top-level keys:
 
-- `input` — extra workflow fields merged into runner input (for YAML `input.*` and `messages_path: input.messages`); use for workflow-specific scalars or legacy fields such as `email_text` when the graph still references them.
+- `input` — extra workflow fields merged into runner input (for `input.*` references in YAML).
 - `execution` — `healing`, `workflow_streaming`, `node_llm_streaming`, `split_stream_deltas`, optional `model`.
 - `workflow_options` — `telemetry`, `trace`, `model` (matches Rust `YamlWorkflowRunOptions`).
 
-**Validation:** request-level `execution.healing` and `execution.node_llm_streaming` cannot both be `true` (structured healing and node LLM streaming are mutually exclusive at this layer). Per-node YAML `heal` / `stream` still apply independently.
+**Validation:** `execution.healing` and `execution.node_llm_streaming` cannot both be `true`. Per-node YAML `heal` / `stream` still apply independently.
 
-`execution.model` overrides `workflow_options.model` when both are provided.
-
-**Async and stream (same request)**
+**Streaming with `stream_workflow`**
 
 ```python
-result_async = client.run_async(request)
-
-def on_event(event: dict[str, object]) -> None:
+def on_event(event: dict) -> None:
     print(event.get("event_type"))
 
-streamed = client.stream(request, on_event=on_event)
+streamed = client.stream_workflow(request, on_event=on_event)
 ```
 
-**Events on the result**
-
-Use `client.stream(request, include_events_in_output=True)` or read `result.get("events")` when the runner records them. Legacy: `run_workflow_yaml(..., include_events=True)`.
-
-### Legacy path helpers
-
-`client.run_workflow_yaml(path, workflow_input)` and `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)` take a filesystem path plus a **workflow input** dict (`messages` and any other keys the YAML reads from `input`). Prefer the canonical `run` / `run_async` / `stream` request form for new code.
+**`run_workflow_yaml_stream` convenience method**
 
 ```python
-result = client.run_workflow_yaml(
+result = client.run_workflow_yaml_stream(
     "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    {
-        "messages": [{"role": "user", "content": "Termination request, second warning already issued"}],
-    },
+    {"messages": [{"role": "user", "content": "Termination request"}]},
+    on_event=on_event,
+    workflow_options={"telemetry": {"nerdstats": True}},
 )
 ```
 
-Workflows that still template `{{ input.email_text }}` without `messages_path: input.messages` need `input.email_text` (or `email_text` on the legacy workflow input dict) in addition to any `messages` you pass.
+### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
+
+Higher-level helpers that add structured hooks, display modes, and Pydantic request coercion:
+
+```python
+from simple_agents_py.workflow_stream import (
+    stream_workflow,
+    run_workflow_request,
+    run_workflow_request_async,
+    run_workflow_yaml_stream_typed,
+)
+```
+
+These accept the same `request` dict **or** a `WorkflowExecutionRequest` Pydantic model from `simple_agents_py.workflow_request`. They wrap `client.stream_workflow` / `client.run_workflow` with extra conveniences:
+
+- `stream_workflow(client, request, hooks=None, *, on_event=None, stream_display=None)` — structured event hooks, terminal printing, and execution flag merging.
+- `stream_display="merged"` prints merged `node_stream_delta` tokens to stdout.
+- `stream_display="split"` prints thinking vs output deltas and forces `split_stream_deltas`.
+- `run_workflow_yaml_stream_typed(client, request, *, workflow_path=Path(...))` — override the path as a `pathlib.Path`.
+
+### Pydantic request models (`simple_agents_py.workflow_request`)
+
+```python
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+    WorkflowRunOptions,
+    WorkflowTelemetryConfig,
+    WorkflowInput,
+)
+
+request = WorkflowExecutionRequest(
+    workflow_path="path/to/workflow.yaml",
+    messages=[WorkflowMessage(role=WorkflowRole.user, content="Hello")],
+    workflow_options=WorkflowRunOptions(
+        telemetry=WorkflowTelemetryConfig(nerdstats=True)
+    ),
+)
+```
+
+Requires `pip install simple-agents-py[pydantic]`.
 
 ### `custom_worker` handlers (Python)
 
@@ -205,14 +233,14 @@ def my_handler(*, context: dict, payload: dict):
     ...
 ```
 
-- **`payload`**: the resolved `config.payload` object from YAML after template interpolation. Put per-node parameters here (for example `topic`, `company_name`).
+- **`payload`**: the resolved `config.payload` object from YAML after template interpolation.
 - **`context`**: execution context with:
   - `input`: merged workflow input from your request (`messages` and any `input` fields).
-  - `nodes`: map of completed node outputs (same structure templates use under `nodes.*`).
+  - `nodes`: map of completed node outputs.
   - `globals`: workflow globals map.
-  - `trace` (when tracing is active): nested object with `context` (trace ids, `traceparent`, etc.) and `tenant` (workspace/user/conversation ids when set via run options).
+  - `trace` (when tracing is active): nested object with `context` and `tenant`.
 
-**Return value.** Must be JSON-serializable (dict, list, str, number, bool, null). It becomes this node’s output; downstream prompts use `nodes.<node_id>.output` and fields on that object.
+**Return value.** Must be JSON-serializable. It becomes this node's output.
 
 **Minimal example.**
 
@@ -233,29 +261,11 @@ def get_seller_name(*, context, payload):
     return {"company_name": name, "stakeholder_name": "..."}
 ```
 
-**Troubleshooting.** `TypeError: ... unexpected keyword argument 'context'` means the handler still uses an old signature (positional `topic`, or legacy kwargs). Use `*, context, payload` and read shared fields from `context["input"]`.
-
-### Workflow stream DX (`simple_agents_py.workflow_stream`)
-
-- **Low-level (full control):** `Client.stream(request, on_event=...)`.
-- **Structured hooks (recommended):** `stream_workflow(client, request, hooks=...)` or `stream_workflow(client, request, on_event=...)` — *not both*.
-- **Terminal printing without callbacks:** `stream_workflow(..., stream_display="merged")` prints merged `node_stream_delta` tokens; `stream_display="split"` prints thinking vs output deltas and turns on `split_stream_deltas` when execution defaults are merged. Incompatible with `hooks` / `on_event`.
-- **Path override helper:** `run_workflow_yaml_stream_typed(client, request, workflow_path=Path(...))` coerces the path string sent to Rust (still uses the unified request body).
-- **Typed requests (Pydantic):** `pip install simple-agents-py[pydantic]`, then import from `simple_agents_py.workflow_request`:
-  - `WorkflowExecutionRequest` with `workflow_path` as `str`, `pathlib.Path`, or any `os.PathLike[str]`
-  - `WorkflowMessage` with `WorkflowRole` (`system`, `user`, `assistant`, `tool`) or a string role
-  - `WorkflowInput` for per-workflow fields beyond messages (for example `WorkflowInput(email_text="...")` when the YAML still references `input.email_text`)
-  - `WorkflowRunOptions` with nested `WorkflowTelemetryConfig` and `WorkflowTraceConfig` (keys must match Rust `YamlWorkflowRunOptions`; arbitrary extra keys are rejected by the runner)
-
-Helpers: `run_workflow_request`, `run_workflow_request_async`, and `stream_workflow` accept the same request objects. Plain `dict` requests work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
-
-Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
-
-**Split thinking vs. merged stream deltas.** Set `execution["split_stream_deltas"] = True` on the request when you want separate thinking vs output stream events, or use `stream_display="split"` on `stream_workflow`.
+**Troubleshooting.** `TypeError: ... unexpected keyword argument 'context'` means the handler still uses an old signature. Use `*, context, payload` and read shared fields from `context["input"]`.
 
 ### Live workflow events + LLM deltas
 
-Prefer `client.stream` with the same request dict. Set `execution.workflow_streaming` to `true` when you want token deltas delivered to `on_event` (lifecycle events still fire either way).
+Set `execution.workflow_streaming` to `true` when you want token deltas delivered to `on_event` (lifecycle events still fire either way).
 
 ```python
 request = {
@@ -268,41 +278,28 @@ request = {
     },
 }
 
-def on_event(event: dict[str, object]) -> None:
+def on_event(event: dict) -> None:
     if event.get("event_type") == "node_stream_delta":
         print(event.get("delta", ""), end="", flush=True)
     else:
         print(event)
 
-result = client.stream(request, on_event=on_event)
+result = client.stream_workflow(request, on_event=on_event)
 ```
-
-Legacy equivalent: `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)`.
 
 Notes:
 
 - Streamability is node-aware; non-streamable nodes emit status events with explanatory text.
-- Structured `node_stream_delta` content is sanitized to JSON object payload content, so reasoning/preamble/trailing chatter is not forwarded to callbacks.
-- If a YAML `llm_call` sets `stream_json_as_text: true`, non-thinking stream tokens are emitted as plain text lines (`key: value`) instead of raw JSON token chunks.
-- Token stream events include token attribution fields:
-  - `step_id`: workflow step/node id for token attribution
-  - `token_kind`: `output` or `thinking`
-  - `is_terminal_node_token`: `true` when token is emitted from a terminal node
-- `node_llm_input_resolved` is emitted before each `llm_call` with `metadata` containing:
-  - resolved `prompt` and `prompt_template`
-  - selected `model`, `schema`, and effective stream/heal flags
-  - `bindings[]` entries that map each template expression to its source path and resolved value
-- `workflow_completed` includes `metadata.nerdstats` by default (`telemetry.nerdstats=true`), with end-of-run timing/token metrics for turn-level summaries.
-- When available for streamed runs, nerdstats includes `ttft_ms` (time-to-first-token in milliseconds).
-- Nerdstats uses `step_details` for per-node timing details.
-- Nerdstats uses `step_details[].model_name` for model attribution.
-- For providers that do not emit token usage on streaming responses, nerdstats includes `token_metrics_available=false`, `token_metrics_source="provider_stream_usage_unavailable"`, and `llm_nodes_without_usage`.
-- Disable nerdstats emission for streaming callbacks with `workflow_options={"telemetry": {"nerdstats": False}}`.
-- `workflow_options["telemetry"]["sample_rate"]` controls deterministic per-trace sampling (`0.0` to `1.0` inclusive).
-- Workflow output metadata includes `metadata.telemetry.sampled` so callers can branch on sampled vs unsampled traces.
-- You can pass chat/session identity into trace metadata with `workflow_options={"trace": {"tenant": {"conversation_id": "<uuid>"}}}`; it is attached to workflow trace attributes and output metadata.
+- Structured `node_stream_delta` content is sanitized to JSON object payload content.
+- If a YAML `llm_call` sets `stream_json_as_text: true`, non-thinking stream tokens are emitted as plain text lines instead of raw JSON token chunks.
+- Token stream events include `step_id`, `token_kind` (`output` or `thinking`), and `is_terminal_node_token`.
+- `node_llm_input_resolved` is emitted before each `llm_call` with resolved `prompt`, `model`, `schema`, and `bindings[]`.
+- `workflow_completed` includes `metadata.nerdstats` when `telemetry.nerdstats=true`.
+- Disable nerdstats: `workflow_options={"telemetry": {"nerdstats": False}}`.
+- `workflow_options["telemetry"]["sample_rate"]` controls deterministic per-trace sampling (`0.0` to `1.0`).
+- Pass session identity: `workflow_options={"trace": {"tenant": {"conversation_id": "<uuid>"}}}`.
 
-Tracing exporter env configuration is shared across runtimes:
+Tracing exporter env configuration:
 
 - `SIMPLE_AGENTS_TRACING_ENABLED`
 - `OTEL_EXPORTER_OTLP_ENDPOINT`

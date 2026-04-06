@@ -139,10 +139,10 @@ impl PyStructuredStreamIterator {
         }
 
         slf.yielded = true;
-        let (json_val, confidence, was_healed) = slf
-            .result
-            .take()
-            .unwrap_or((serde_json::Value::Null, 0.0, false));
+        let (json_val, confidence, was_healed) =
+            slf.result
+                .take()
+                .unwrap_or((serde_json::Value::Null, 0.0, false));
         let py_value = serde_json_to_py(py, &json_val)?;
         let event = PyStructuredEvent {
             is_partial: false,
@@ -626,8 +626,8 @@ impl Client {
             serde_json::Value::String(workflow_path.to_string()),
         );
         if let Some(wo) = workflow_options {
-            let wo_json: serde_json::Value = pythonize::depythonize(wo)
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let wo_json: serde_json::Value =
+                pythonize::depythonize(wo).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             request_map.insert("workflow_options".to_string(), wo_json);
         }
         let request_value = serde_json::Value::Object(request_map);
@@ -863,9 +863,7 @@ impl PyStreamingParser {
             return Err(PyRuntimeError::new_err("Parser already finalized"));
         }
         if self.buffer.trim().is_empty() {
-            return Err(PyRuntimeError::new_err(
-                "Parsing failed: buffer is empty",
-            ));
+            return Err(PyRuntimeError::new_err("Parsing failed: buffer is empty"));
         }
         let result = JsonishParser::new()
             .parse(&self.buffer)
@@ -945,8 +943,8 @@ fn coerce_to_schema(
         pythonize::depythonize(value).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     let schema_json: serde_json::Value =
         pythonize::depythonize(schema).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    let schema =
-        schema_converter::convert(&schema_json).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let schema = schema_converter::convert(&schema_json)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     let engine = CoercionEngine::new();
     let result = engine
         .coerce(&value_json, &schema)
