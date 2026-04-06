@@ -250,13 +250,14 @@ pub(super) async fn execute_custom_worker_node(
     let CustomWorkerState { outputs, globals } = state;
 
     let mut node_span = node_span;
-    let payload = node
+    let raw_payload = node
         .config
         .as_ref()
         .and_then(|cfg| cfg.payload.as_ref())
         .cloned()
         .unwrap_or_else(|| json!({}));
     let context = build_execution_context(workflow_input, outputs, globals);
+    let payload = interpolate_json(&raw_payload, &context);
 
     if let Some(span) = node_span.as_mut() {
         span.set_attribute("handler_name", custom.handler.as_str());

@@ -104,6 +104,26 @@ pub(crate) fn interpolate_template(template: &str, context: &Value) -> String {
     out
 }
 
+/// Recursively interpolates `{{ ... }}` templates in every string leaf of `value`, using the same
+/// rules as [`interpolate_template`] (e.g. `nodes.foo.output.bar` and `$.input.x`).
+pub(crate) fn interpolate_json(value: &Value, context: &Value) -> Value {
+    match value {
+        Value::String(s) => Value::String(interpolate_template(s, context)),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| interpolate_json(item, context))
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), interpolate_json(v, context)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub(super) fn collect_template_bindings(
     template: &str,
     context: &Value,
