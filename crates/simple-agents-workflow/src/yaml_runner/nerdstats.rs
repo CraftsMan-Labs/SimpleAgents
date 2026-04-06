@@ -64,7 +64,7 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    use super::super::types::{YamlLlmNodeMetrics, YamlStepTiming};
+    use super::super::types::YamlStepTiming;
 
     #[test]
     fn workflow_nerdstats_marks_stream_token_metrics_unavailable() {
@@ -102,11 +102,15 @@ mod tests {
         let nerdstats = workflow_nerdstats(&output);
 
         assert_eq!(
-            nerdstats.get("token_metrics_available").and_then(|v| v.as_bool()),
+            nerdstats
+                .get("token_metrics_available")
+                .and_then(|v| v.as_bool()),
             Some(false)
         );
         assert_eq!(
-            nerdstats.get("token_metrics_source").and_then(|v| v.as_str()),
+            nerdstats
+                .get("token_metrics_source")
+                .and_then(|v| v.as_str()),
             Some("provider_stream_usage_unavailable")
         );
         assert!(nerdstats.get("total_input_tokens").unwrap().is_null());
@@ -157,10 +161,7 @@ mod tests {
 
         let nerdstats = workflow_nerdstats(&output);
 
-        assert_eq!(
-            nerdstats.get("ttft_ms").and_then(|v| v.as_u64()),
-            Some(42)
-        );
+        assert_eq!(nerdstats.get("ttft_ms").and_then(|v| v.as_u64()), Some(42));
     }
 
     #[test]
@@ -197,7 +198,9 @@ mod tests {
         };
 
         let nerdstats = workflow_nerdstats(&output);
-        let obj = nerdstats.as_object().expect("nerdstats should be an object");
+        let obj = nerdstats
+            .as_object()
+            .expect("nerdstats should be an object");
 
         let required_keys = [
             "workflow_id",

@@ -1,7 +1,7 @@
 //! Shared utilities for provider implementations.
 
-use simple_agent_type::error::SimpleAgentsError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use simple_agent_type::error::SimpleAgentsError;
 use simple_agent_type::ProviderError;
 use std::borrow::Cow;
 use std::time::{Duration, SystemTime};

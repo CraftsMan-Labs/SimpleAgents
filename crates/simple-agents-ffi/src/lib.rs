@@ -9,9 +9,7 @@
 
 use futures_util::StreamExt;
 use serde_json::Value as JsonValue;
-use simple_agent_type::prelude::{
-    ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError,
-};
+use simple_agent_type::prelude::{ApiKey, CompletionRequest, Provider, Result, SimpleAgentsError};
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{

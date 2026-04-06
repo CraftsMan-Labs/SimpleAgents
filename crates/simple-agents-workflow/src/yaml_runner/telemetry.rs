@@ -3,11 +3,11 @@ use serde_json::{json, Value};
 use crate::observability::tracing::{TraceContext, WorkflowSpan};
 
 use super::context::json_type_name;
+use super::contracts::YamlLlmExecutionRequest;
 use super::types::{
     YamlLlmTokenUsage, YamlToolTraceMode, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
     YamlWorkflowRunOutput, YamlWorkflowTraceTenantContext,
 };
-use super::contracts::YamlLlmExecutionRequest;
 
 static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -219,7 +219,10 @@ pub(crate) fn apply_trace_tenant_attributes_from_tenant(
     }
 }
 
-pub(crate) fn apply_trace_tenant_attributes(span: &mut dyn WorkflowSpan, options: &YamlWorkflowRunOptions) {
+pub(crate) fn apply_trace_tenant_attributes(
+    span: &mut dyn WorkflowSpan,
+    options: &YamlWorkflowRunOptions,
+) {
     apply_trace_tenant_attributes_from_tenant(span, &options.trace.tenant);
 }
 
@@ -495,11 +498,10 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
 
-    use crate::observability::tracing::WorkflowSpan;
     use super::super::types::{
-        YamlLlmNodeMetrics, YamlStepTiming, YamlWorkflowTraceContextInput,
-        YamlWorkflowTraceOptions,
+        YamlStepTiming, YamlWorkflowTraceContextInput, YamlWorkflowTraceOptions,
     };
+    use crate::observability::tracing::WorkflowSpan;
 
     #[derive(Default)]
     struct CapturingSpan {
@@ -613,7 +615,9 @@ mod tests {
         apply_trace_tenant_attributes_from_tenant(&mut span, &tenant);
 
         assert_eq!(
-            span.attributes.get("tenant.workspace_id").map(String::as_str),
+            span.attributes
+                .get("tenant.workspace_id")
+                .map(String::as_str),
             Some("ws-42"),
         );
         assert_eq!(
@@ -639,7 +643,9 @@ mod tests {
             Some("conv-99"),
         );
         assert_eq!(
-            span.attributes.get("langfuse.session.id").map(String::as_str),
+            span.attributes
+                .get("langfuse.session.id")
+                .map(String::as_str),
             Some("conv-99"),
         );
         assert_eq!(

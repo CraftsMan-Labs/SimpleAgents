@@ -223,7 +223,6 @@ fn test_provider_request_response() {
     assert!(error_resp.is_server_error());
 }
 
-
 #[test]
 fn test_all_types_are_send_sync() {
     fn assert_send_sync<T: Send + Sync>() {}

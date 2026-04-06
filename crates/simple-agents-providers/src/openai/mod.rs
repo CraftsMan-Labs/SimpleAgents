@@ -362,9 +362,8 @@ impl Provider for OpenAiCompatProvider {
 
     fn transform_response(&self, mut resp: ProviderResponse) -> Result<CompletionResponse> {
         if self.api_format == ApiFormat::Responses {
-            return crate::responses::parse_responses_response(resp.body).map_err(|e| {
-                SimpleAgentsError::Provider(ProviderError::InvalidResponse(e))
-            });
+            return crate::responses::parse_responses_response(resp.body)
+                .map_err(|e| SimpleAgentsError::Provider(ProviderError::InvalidResponse(e)));
         }
 
         Self::normalize_tool_message_content(&mut resp.body);

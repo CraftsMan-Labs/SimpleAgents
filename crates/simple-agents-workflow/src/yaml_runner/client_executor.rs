@@ -8,27 +8,30 @@ use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
 use simple_agent_type::response::FinishReason;
 use simple_agent_type::tool::{ToolCall, ToolType};
-use simple_agents_core::{CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient};
+use simple_agents_core::{
+    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
+};
 
 use crate::observability::tracing::{SpanKind, TraceContext};
 
 use super::contracts::{
-    event_sink_is_cancelled, workflow_event_sink_cancelled_message,
-    YamlLlmExecutionRequest, YamlResolvedTool, YamlWorkflowCustomWorkerExecutor,
-    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowLlmExecutor,
-    YamlWorkflowRunError, YamlWorkflowTokenKind,
+    event_sink_is_cancelled, workflow_event_sink_cancelled_message, YamlLlmExecutionRequest,
+    YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
+    YamlWorkflowLlmExecutor, YamlWorkflowTokenKind,
 };
-use super::stream_filters::{StructuredJsonDeltaFilter, StreamJsonAsTextFormatter, parse_streamed_structured_payload};
+use super::stream_filters::{
+    parse_streamed_structured_payload, StreamJsonAsTextFormatter, StructuredJsonDeltaFilter,
+};
+use super::subworkflow::execute_subworkflow_tool_call;
 use super::telemetry::{
     apply_trace_identity_attributes, apply_trace_tenant_attributes_from_tenant,
-    payload_for_span, payload_for_tool_trace, split_stream_deltas_enabled,
+    payload_for_tool_trace,
 };
 use super::types::{
     YamlLlmExecutionResult, YamlLlmTokenUsage, YamlToolCallTrace, YamlToolTraceMode,
-    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
+    YamlWorkflowRunOptions,
 };
 use super::validation::{schema_expects_object, validate_schema_instance};
-use super::subworkflow::execute_subworkflow_tool_call;
 use crate::observability::tracing::workflow_tracer;
 
 pub(super) struct BorrowedClientExecutor<'a> {

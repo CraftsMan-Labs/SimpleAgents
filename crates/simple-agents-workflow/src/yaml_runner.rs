@@ -6,7 +6,9 @@ use simple_agent_type::message::Message;
 use simple_agent_type::tool::{ToolChoice, ToolChoiceMode, ToolChoiceTool, ToolDefinition};
 use simple_agents_core::SimpleAgentsClient;
 
-use crate::observability::tracing::{SpanKind, TraceContext, workflow_tracer, flush_workflow_tracer};
+use crate::observability::tracing::{
+    flush_workflow_tracer, workflow_tracer, SpanKind, TraceContext,
+};
 
 mod api;
 mod client_executor;
@@ -15,8 +17,8 @@ mod contracts;
 mod events;
 mod execute;
 mod globals;
-mod loader;
 mod llm_tools;
+mod loader;
 mod nerdstats;
 mod node_execution;
 mod output;
@@ -41,8 +43,8 @@ pub use api::{
 };
 use client_executor::BorrowedClientExecutor;
 use context::{
-    collect_template_bindings, evaluate_switch_condition,
-    interpolate_template, parse_messages_from_context, resolve_path,
+    collect_template_bindings, evaluate_switch_condition, interpolate_template,
+    parse_messages_from_context, resolve_path,
 };
 use contracts::{event_sink_is_cancelled, workflow_event_sink_cancelled_message};
 pub use contracts::{
@@ -56,15 +58,16 @@ pub use contracts::{
     YamlWorkflowEventSink, YamlWorkflowLlmExecutor, YamlWorkflowRunError,
     YamlWorkflowStreamFilterSink, YamlWorkflowTokenKind,
 };
-use globals::{apply_set_globals, apply_update_globals};
-use llm_tools::{
-    llm_output_schema_for_node, normalize_llm_tools,
-    normalize_tool_choice,
+pub use events::{
+    CallbackSink, DefaultEventPrinter, NodeType, NoopSink, TokenKind, WorkflowEvent,
+    WorkflowEventSink,
 };
+use globals::{apply_set_globals, apply_update_globals};
+use llm_tools::{llm_output_schema_for_node, normalize_llm_tools, normalize_tool_choice};
 pub(crate) use loader::load_workflow_yaml_file;
 pub(crate) use nerdstats::workflow_nerdstats;
-pub(crate) use stream_filters::*;
-pub(crate) use subworkflow::execute_subworkflow_tool_call;
+pub use output::{RunMetadata, StepTiming, TokenTotals, WorkflowRunOutput};
+pub use recovery::{PartialWorkflowOutput, WorkflowCheckpoint};
 pub(crate) use telemetry::*;
 use types::{
     completion_tokens_per_second, resolve_requested_model, validate_sample_rate, YamlTokenTotals,
@@ -78,13 +81,6 @@ pub use types::{
     YamlWorkflowTraceContextInput, YamlWorkflowTraceOptions, YamlWorkflowTraceTenantContext,
 };
 pub use validation::verify_yaml_workflow;
-pub(crate) use validation::{validate_schema_instance, schema_expects_object};
-pub use events::{WorkflowEvent, WorkflowEventSink, CallbackSink, DefaultEventPrinter, NoopSink, NodeType, TokenKind};
-pub use output::{WorkflowRunOutput, RunMetadata, StepTiming, TokenTotals};
-pub use recovery::{WorkflowCheckpoint, PartialWorkflowOutput};
-
-const YAML_START_NODE_ID: &str = "__yaml_start";
-const YAML_LLM_TOOL_ID: &str = "__yaml_llm_call";
 
 pub(super) async fn dispatch_yaml_workflow_execution<'a>(
     workflow: &'a YamlWorkflow,
@@ -181,17 +177,14 @@ mod tests {
     use async_trait::async_trait;
     use simple_agent_type::message::{Message, Role};
     use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
-    use simple_agent_type::response::{CompletionChoice, CompletionResponse, FinishReason, Usage};
     use simple_agent_type::request::CompletionRequest;
+    use simple_agent_type::response::{CompletionChoice, CompletionResponse, FinishReason, Usage};
     use simple_agent_type::tool::{ToolCall, ToolCallFunction, ToolType};
     use simple_agent_type::{Result as SaResult, SimpleAgentsError};
     use simple_agents_core::SimpleAgentsClient;
-    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
-
-    use crate::observability::tracing::WorkflowSpan;
 
     struct MockExecutor;
 
@@ -232,21 +225,6 @@ mod tests {
     struct ReasoningUsageProvider;
 
     struct ToolLoopReasoningProvider;
-
-    #[derive(Default)]
-    struct CapturingSpan {
-        attributes: BTreeMap<String, String>,
-    }
-
-    impl WorkflowSpan for CapturingSpan {
-        fn set_attribute(&mut self, key: &str, value: &str) {
-            self.attributes.insert(key.to_string(), value.to_string());
-        }
-
-        fn add_event(&mut self, _name: &str) {}
-
-        fn end(self: Box<Self>) {}
-    }
 
     #[async_trait]
     impl Provider for ToolLoopProvider {
@@ -871,9 +849,7 @@ nodes:
             Some("input.email_text")
         );
         assert_eq!(
-            first_binding
-                .get("resolved")
-                .and_then(Value::as_str),
+            first_binding.get("resolved").and_then(Value::as_str),
             Some("hello")
         );
     }
@@ -1489,7 +1465,9 @@ nodes:
         .await
         .expect_err("custom_worker without executor should fail");
 
-        assert!(err.to_string().contains("no custom worker executor is configured"));
+        assert!(err
+            .to_string()
+            .contains("no custom worker executor is configured"));
     }
 
     #[tokio::test]
@@ -1751,7 +1729,10 @@ nodes:
             .expect("trace_id should be present");
         assert!(!trace_id.is_empty());
 
-        let metadata = output.metadata.as_ref().expect("metadata should be present");
+        let metadata = output
+            .metadata
+            .as_ref()
+            .expect("metadata should be present");
         let metadata_trace_id = metadata
             .get("telemetry")
             .and_then(|t| t.get("trace_id"))
@@ -1800,7 +1781,10 @@ nodes:
         .await
         .expect("workflow should execute");
 
-        let metadata = output.metadata.as_ref().expect("metadata should be present");
+        let metadata = output
+            .metadata
+            .as_ref()
+            .expect("metadata should be present");
         let sampled = metadata
             .get("telemetry")
             .and_then(|t| t.get("sampled"))
@@ -1857,7 +1841,10 @@ nodes:
         let trace_id = output.trace_id.as_ref().expect("trace_id should be set");
         assert_eq!(trace_id, "4bf92f3577b34da6a3ce929d0e0e4736");
 
-        let metadata = output.metadata.as_ref().expect("metadata should be present");
+        let metadata = output
+            .metadata
+            .as_ref()
+            .expect("metadata should be present");
         let source = metadata
             .get("telemetry")
             .and_then(|t| t.get("trace_id_source"))
@@ -1906,7 +1893,10 @@ nodes:
         .await
         .expect("workflow should execute");
 
-        let metadata = output.metadata.as_ref().expect("metadata should be present");
+        let metadata = output
+            .metadata
+            .as_ref()
+            .expect("metadata should be present");
         let sampled = metadata
             .get("telemetry")
             .and_then(|t| t.get("sampled"))
@@ -2121,11 +2111,11 @@ nodes:
         .await
         .expect("workflow should execute with explicit options");
 
-        assert_eq!(
-            output.trace_id.as_deref(),
-            Some("explicit-trace-abc123")
-        );
-        let metadata = output.metadata.as_ref().expect("metadata should be present");
+        assert_eq!(output.trace_id.as_deref(), Some("explicit-trace-abc123"));
+        let metadata = output
+            .metadata
+            .as_ref()
+            .expect("metadata should be present");
         let source = metadata
             .get("telemetry")
             .and_then(|t| t.get("trace_id_source"))
@@ -2286,7 +2276,6 @@ nodes:
         let result = interpolate_template("{{ $.input.email_text }}", &context);
         assert_eq!(result, "hello");
     }
-
 }
 
 #[tokio::test]

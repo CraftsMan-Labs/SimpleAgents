@@ -253,7 +253,10 @@ mod tests {
     fn streamed_payload_parser_extracts_last_json_object() {
         let raw = "Some thinking text here...\n\n{\"subject\":\"hello\",\"body\":\"world\"}";
         let result = parse_streamed_structured_payload(raw, false).expect("should parse");
-        assert_eq!(result.payload.get("subject").unwrap().as_str(), Some("hello"));
+        assert_eq!(
+            result.payload.get("subject").unwrap().as_str(),
+            Some("hello")
+        );
         assert!(result.heal_confidence.is_none());
     }
 

@@ -3,29 +3,23 @@
 use serde::{Deserialize, Serialize};
 
 /// Which API format to use when communicating with a provider.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum ApiFormat {
     /// OpenAI Chat Completions API format.
+    #[default]
     ChatCompletions,
     /// OpenAI Responses API format.
     Responses,
 }
 
-impl Default for ApiFormat {
-    fn default() -> Self { Self::ChatCompletions }
-}
-
 /// The OTLP export protocol to use.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub enum OtelProtocol {
     /// gRPC protocol.
+    #[default]
     Grpc,
     /// HTTP/protobuf protocol.
     HttpProtobuf,
-}
-
-impl Default for OtelProtocol {
-    fn default() -> Self { Self::Grpc }
 }
 
 /// Configuration for OpenTelemetry telemetry export.
@@ -77,9 +71,15 @@ impl TelemetryConfig {
                     .collect()
             })
             .unwrap_or_default();
-        let service_name = std::env::var("OTEL_SERVICE_NAME")
-            .unwrap_or_else(|_| "simple-agents".into());
-        Self { enabled, endpoint, protocol, headers, service_name }
+        let service_name =
+            std::env::var("OTEL_SERVICE_NAME").unwrap_or_else(|_| "simple-agents".into());
+        Self {
+            enabled,
+            endpoint,
+            protocol,
+            headers,
+            service_name,
+        }
     }
 }
 

@@ -3,7 +3,9 @@
 use serde_json::{json, Value};
 use simple_agent_type::message::Message;
 use simple_agent_type::request::CompletionRequest;
-use simple_agent_type::response::{CompletionChoice, CompletionChunk, CompletionResponse, FinishReason, Usage};
+use simple_agent_type::response::{
+    CompletionChoice, CompletionChunk, CompletionResponse, FinishReason, Usage,
+};
 
 /// Build the JSON body for `POST /v1/responses`.
 pub fn build_responses_request(req: &CompletionRequest) -> Value {
@@ -146,8 +148,7 @@ mod tests {
 
     #[test]
     fn test_build_responses_request_with_stream() {
-        let mut req = CompletionRequest::new("gpt-4o")
-            .messages(vec![Message::user("hello")]);
+        let mut req = CompletionRequest::new("gpt-4o").messages(vec![Message::user("hello")]);
         req.stream = Some(true);
         let body = build_responses_request(&req);
         assert_eq!(body["stream"], true);

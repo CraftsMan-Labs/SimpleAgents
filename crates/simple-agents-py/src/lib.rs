@@ -244,7 +244,15 @@ impl Client {
         let resp_format = completion_helpers::resolve_response_format(response_format)?;
 
         let request = build_request_with_messages(
-            model, messages, max_tokens, temperature, top_p, resp_format, tools, tool_choice, None,
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            resp_format,
+            tools,
+            tool_choice,
+            None,
         )
         .map_err(py_err)?;
 
@@ -255,7 +263,9 @@ impl Client {
         let start = Instant::now();
 
         let outcome = py
-            .allow_threads(|| runtime.block_on(self.client.complete(&request, CompletionOptions::default())))
+            .allow_threads(|| {
+                runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+            })
             .map_err(py_err)?;
 
         let latency_ms = start.elapsed().as_millis() as u64;
@@ -286,7 +296,15 @@ impl Client {
         };
 
         let request = build_request_with_messages(
-            model, messages, max_tokens, temperature, top_p, None, None, None, Some(true),
+            model,
+            messages,
+            max_tokens,
+            temperature,
+            top_p,
+            None,
+            None,
+            None,
+            Some(true),
         )
         .map_err(py_err)?;
 
@@ -296,7 +314,9 @@ impl Client {
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
 
         let outcome = py
-            .allow_threads(|| runtime.block_on(self.client.complete(&request, CompletionOptions::default())))
+            .allow_threads(|| {
+                runtime.block_on(self.client.complete(&request, CompletionOptions::default()))
+            })
             .map_err(py_err)?;
         let stream = expect_stream(outcome)?;
 

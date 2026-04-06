@@ -1,8 +1,8 @@
+use super::output::{RunMetadata, StepTiming, TokenTotals};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simple_agent_type::message::Message;
 use std::collections::BTreeMap;
-use super::output::{RunMetadata, StepTiming, TokenTotals};
 
 /// Checkpoint captured on workflow failure, enabling retry from the failed node.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +55,10 @@ mod tests {
             workflow_path: "test.yaml".into(),
             failed_node_id: "node_b".into(),
             completed_trace: vec!["node_a".into()],
-            completed_outputs: BTreeMap::from([("node_a".into(), serde_json::json!({"result": 1}))]),
+            completed_outputs: BTreeMap::from([(
+                "node_a".into(),
+                serde_json::json!({"result": 1}),
+            )]),
             globals: BTreeMap::new(),
             original_messages: vec![Message::user("hello")],
             step_timings: vec![],

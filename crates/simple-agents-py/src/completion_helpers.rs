@@ -83,18 +83,14 @@ pub(crate) fn resolve_response_format(
 pub(crate) fn expect_stream(outcome: CompletionOutcome) -> PyResult<CompletionStream> {
     match outcome {
         CompletionOutcome::Stream(stream) => Ok(stream),
-        _ => Err(PyRuntimeError::new_err(
-            "expected streaming response",
-        )),
+        _ => Err(PyRuntimeError::new_err("expected streaming response")),
     }
 }
 
 pub(crate) fn expect_response(outcome: CompletionOutcome) -> PyResult<CompletionResponse> {
     match outcome {
         CompletionOutcome::Response(response) => Ok(response),
-        _ => Err(PyRuntimeError::new_err(
-            "expected completion response",
-        )),
+        _ => Err(PyRuntimeError::new_err("expected completion response")),
     }
 }
 

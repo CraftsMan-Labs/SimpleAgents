@@ -218,7 +218,6 @@ impl Field {
         self.description = Some(description.into());
         self
     }
-
 }
 
 impl ObjectSchema {

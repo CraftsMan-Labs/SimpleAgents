@@ -1,7 +1,7 @@
+use super::events::WorkflowEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use super::events::WorkflowEvent;
 
 /// The final output of a successful workflow run.
 #[derive(Debug, Clone, Serialize, Deserialize)]

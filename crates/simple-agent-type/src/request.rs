@@ -479,7 +479,10 @@ mod tests {
 
         assert_eq!(request.model, "gpt-4");
         assert_eq!(request.messages.len(), 1);
-        assert_eq!(request.messages[0].content, MessageContent::Text("Hello".to_string()));
+        assert_eq!(
+            request.messages[0].content,
+            MessageContent::Text("Hello".to_string())
+        );
     }
 
     #[test]

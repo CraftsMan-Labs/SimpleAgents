@@ -105,7 +105,9 @@ fn trace_context_to_value(c: &WorkflowTraceContextNapi) -> Result<JsonValue> {
             m.insert(
                 "baggage".into(),
                 serde_json::to_value(b).map_err(|error| {
-                    Error::from_reason(format!("trace.context.baggage serialization failed: {error}"))
+                    Error::from_reason(format!(
+                        "trace.context.baggage serialization failed: {error}"
+                    ))
                 })?,
             );
         }

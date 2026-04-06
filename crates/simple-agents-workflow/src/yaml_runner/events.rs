@@ -8,46 +8,79 @@ pub enum WorkflowEvent {
     /// Workflow execution has begun.
     WorkflowStarted { workflow_id: String },
     /// A workflow node has started executing.
-    NodeStarted { node_id: String, node_type: NodeType },
+    NodeStarted {
+        node_id: String,
+        node_type: NodeType,
+    },
     /// A token delta from an LLM node (streaming).
-    LlmTokenDelta { node_id: String, token: String, token_kind: TokenKind },
+    LlmTokenDelta {
+        node_id: String,
+        token: String,
+        token_kind: TokenKind,
+    },
     /// A workflow node has finished executing.
     NodeCompleted { node_id: String, output: Value },
     /// An LLM node requested a tool call.
-    ToolCallRequested { node_id: String, tool_name: String, arguments: Value },
+    ToolCallRequested {
+        node_id: String,
+        tool_name: String,
+        arguments: Value,
+    },
     /// A tool call has finished.
-    ToolCallCompleted { node_id: String, tool_name: String, output: Value },
+    ToolCallCompleted {
+        node_id: String,
+        tool_name: String,
+        output: Value,
+    },
     /// A node is retrying after failure.
-    NodeRetrying { node_id: String, attempt: u8, error: String },
+    NodeRetrying {
+        node_id: String,
+        attempt: u8,
+        error: String,
+    },
     /// A node has failed permanently.
     NodeFailed { node_id: String, error: String },
     /// Workflow execution completed.
-    WorkflowCompleted { output: Value, metadata: Option<Value> },
+    WorkflowCompleted {
+        output: Value,
+        metadata: Option<Value>,
+    },
 }
 
 /// The type of workflow node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum NodeType { LlmCall, Switch, End }
+pub enum NodeType {
+    LlmCall,
+    Switch,
+    End,
+}
 
 /// The kind of LLM token in a streaming delta.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub enum TokenKind { Output, Reasoning }
+pub enum TokenKind {
+    Output,
+    Reasoning,
+}
 
 /// Trait for receiving workflow events.
 pub trait WorkflowEventSink: Send + Sync {
     /// Called for each workflow event.
     fn emit(&self, event: &WorkflowEvent);
     /// Return true to request cancellation.
-    fn is_cancelled(&self) -> bool { false }
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 /// Wraps a closure as a WorkflowEventSink.
 pub struct CallbackSink<F: Fn(&WorkflowEvent) + Send + Sync>(pub F);
 
 impl<F: Fn(&WorkflowEvent) + Send + Sync> WorkflowEventSink for CallbackSink<F> {
-    fn emit(&self, event: &WorkflowEvent) { (self.0)(event); }
+    fn emit(&self, event: &WorkflowEvent) {
+        (self.0)(event);
+    }
 }
 
 /// No-op sink that discards all events.
@@ -69,7 +102,9 @@ impl WorkflowEventSink for DefaultEventPrinter {
             WorkflowEvent::NodeStarted { node_id, node_type } => {
                 eprintln!("[node] {node_id} ({node_type:?}) started");
             }
-            WorkflowEvent::LlmTokenDelta { token, token_kind, .. } => {
+            WorkflowEvent::LlmTokenDelta {
+                token, token_kind, ..
+            } => {
                 if *token_kind == TokenKind::Output {
                     use std::io::Write;
                     let _ = std::io::stdout().write_all(token.as_bytes());
@@ -79,13 +114,21 @@ impl WorkflowEventSink for DefaultEventPrinter {
             WorkflowEvent::NodeCompleted { node_id, .. } => {
                 eprintln!("[node] {node_id} completed");
             }
-            WorkflowEvent::ToolCallRequested { tool_name, node_id, .. } => {
+            WorkflowEvent::ToolCallRequested {
+                tool_name, node_id, ..
+            } => {
                 eprintln!("[tool] {node_id} calling {tool_name}");
             }
-            WorkflowEvent::ToolCallCompleted { tool_name, node_id, .. } => {
+            WorkflowEvent::ToolCallCompleted {
+                tool_name, node_id, ..
+            } => {
                 eprintln!("[tool] {node_id} {tool_name} done");
             }
-            WorkflowEvent::NodeRetrying { node_id, attempt, error } => {
+            WorkflowEvent::NodeRetrying {
+                node_id,
+                attempt,
+                error,
+            } => {
                 eprintln!("[retry] {node_id} attempt #{attempt}: {error}");
             }
             WorkflowEvent::NodeFailed { node_id, error } => {
@@ -98,8 +141,11 @@ impl WorkflowEventSink for DefaultEventPrinter {
     }
 }
 
-pub(crate) fn emit(sink: Option<&dyn WorkflowEventSink>, event: WorkflowEvent) {
-    if let Some(s) = sink { s.emit(&event); }
+#[cfg(test)]
+fn emit(sink: Option<&dyn WorkflowEventSink>, event: WorkflowEvent) {
+    if let Some(s) = sink {
+        s.emit(&event);
+    }
 }
 
 #[cfg(test)]
@@ -114,7 +160,12 @@ mod tests {
         let sink = CallbackSink(move |e: &WorkflowEvent| {
             events_clone.lock().unwrap().push(e.clone());
         });
-        emit(Some(&sink), WorkflowEvent::WorkflowStarted { workflow_id: "test".into() });
+        emit(
+            Some(&sink),
+            WorkflowEvent::WorkflowStarted {
+                workflow_id: "test".into(),
+            },
+        );
         assert_eq!(events.lock().unwrap().len(), 1);
     }
 
@@ -133,6 +184,11 @@ mod tests {
     #[test]
     fn test_noop_sink_does_not_panic() {
         let sink = NoopSink;
-        emit(Some(&sink), WorkflowEvent::WorkflowStarted { workflow_id: "x".into() });
+        emit(
+            Some(&sink),
+            WorkflowEvent::WorkflowStarted {
+                workflow_id: "x".into(),
+            },
+        );
     }
 }
