@@ -332,6 +332,13 @@ impl Client {
         };
 
         if stream.unwrap_or(false) {
+            if let Some(schema_ref) = schema {
+                if schema_ref.downcast::<pyo3::types::PyDict>().is_err() {
+                    return Err(PyRuntimeError::new_err(
+                        "schema must be a dict/mapping object",
+                    ));
+                }
+            }
             let request = build_request_with_messages(
                 model,
                 messages,
@@ -594,6 +601,39 @@ impl Client {
         let py_value = pythonize::pythonize(py, &value)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         Ok(py_value.into_py(py))
+    }
+
+    /// Stream a YAML workflow using separate positional path + input arguments.
+    ///
+    /// Signature mirrors the Python test expectation:
+    ///   `client.run_workflow_yaml_stream(path, input_dict, *, on_event=..., workflow_options=...)`
+    #[pyo3(signature = (workflow_path, input, *, on_event=None, workflow_options=None))]
+    fn run_workflow_yaml_stream(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        input: &Bound<'_, PyAny>,
+        on_event: Option<Py<PyAny>>,
+        workflow_options: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let mut request_map: serde_json::Map<String, serde_json::Value> =
+            pythonize::depythonize::<serde_json::Value>(input)
+                .ok()
+                .and_then(|v| v.as_object().cloned())
+                .unwrap_or_default();
+        request_map.insert(
+            "workflow_path".to_string(),
+            serde_json::Value::String(workflow_path.to_string()),
+        );
+        if let Some(wo) = workflow_options {
+            let wo_json: serde_json::Value = pythonize::depythonize(wo)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            request_map.insert("workflow_options".to_string(), wo_json);
+        }
+        let request_value = serde_json::Value::Object(request_map);
+        let py_request = pythonize::pythonize(py, &request_value)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        self.stream_workflow(py, &py_request, on_event, false)
     }
 }
 
@@ -863,7 +903,7 @@ impl PyStreamingParser {
         format!(
             "StreamingParser(buffer_len={}, finalized={})",
             self.buffer.len(),
-            self.finalized
+            if self.finalized { "True" } else { "False" }
         )
     }
 
@@ -933,6 +973,7 @@ fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<(
     module.add_class::<Client>()?;
     module.add_class::<StreamChunk>()?;
     module.add_class::<PyStreamIterator>()?;
+    module.add_class::<PyStructuredStreamIterator>()?;
     module.add_class::<ResponseWithMetadata>()?;
     // Healing types
     module.add_class::<ParseResult>()?;
