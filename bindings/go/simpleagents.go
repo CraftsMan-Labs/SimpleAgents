@@ -1,3 +1,27 @@
+// Package simpleagents provides Go bindings for the SimpleAgents library.
+//
+// The unified API surface is:
+//
+//	client, _ := simpleagents.NewClient(apiKey, "")
+//	defer client.Close()
+//
+//	// Direct LLM completion
+//	result, _ := client.Complete(ctx, requestJSON)
+//
+//	// Streaming LLM completion
+//	_ = client.StreamComplete(ctx, requestJSON, func(chunkJSON string) error { ... })
+//
+//	// Workflow (blocking)
+//	output, _ := client.Run(ctx, "workflow.yaml", inputJSON)
+//
+//	// Workflow (streaming events)
+//	output, _ := client.Stream(ctx, "workflow.yaml", inputJSON, func(eventJSON string) error { ... })
+//
+//	// Resume from checkpoint
+//	output, _ := client.Resume(ctx, checkpointJSON)
+//
+// Tools are included in the workflow YAML definition and are executed by the
+// Rust engine. Runtime tool executors are not yet supported from Go.
 package simpleagents
 
 /*
@@ -8,117 +32,26 @@ package simpleagents
 #include <stdint.h>
 #include "simple_agents.h"
 
-char *sa_run_workflow_yaml(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json
-);
+// Bridge callbacks: Go callbacks can't be passed as C function pointers directly.
+// We use an integer "handle" as user_data and call back into Go via the exported bridge.
+extern int32_t saGoStreamCallbackBridge(char *event_json, size_t user_handle);
 
-char *sa_run_workflow_yaml_with_options(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
-);
-
-char *sa_run_workflow_yaml_with_events(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
-);
-
-char *sa_run_workflow_yaml_stream_events(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json,
-    const char *workflow_execution_flags_json,
-    int32_t (*callback)(const char *event_json, void *user_data),
-    void *user_data
-);
-
-extern int32_t sa_go_stream_callback_export(char *event_json, size_t user_handle);
-extern int32_t sa_go_workflow_event_callback_export(char *event_json, size_t user_handle);
-
-static int32_t sa_go_stream_callback_bridge(const char *event_json, void *user_data) {
-    return sa_go_stream_callback_export((char *)event_json, (size_t)user_data);
+static int32_t sa_stream_callback_trampoline(const char *event_json, void *user_data) {
+    return saGoStreamCallbackBridge((char *)event_json, (size_t)user_data);
 }
 
-static int32_t sa_stream_messages_go(
+static int32_t sa_stream_go(SAClient *client, const char *request_json, size_t user_handle) {
+    return sa_stream(client, request_json, sa_stream_callback_trampoline, (void *)user_handle);
+}
+
+static int32_t sa_stream_workflow_go(
     SAClient *client,
-    const char *model,
-    const SAMessage *messages,
-    size_t messages_len,
-    int32_t max_tokens,
-    float temperature,
-    float top_p,
+    const char *yaml_path,
+    const char *input_json,
     size_t user_handle
 ) {
-    return sa_stream_messages(
-        client,
-        model,
-        messages,
-        messages_len,
-        max_tokens,
-        temperature,
-        top_p,
-        sa_go_stream_callback_bridge,
-        (void *)user_handle
-    );
+    return sa_stream_workflow(client, yaml_path, input_json, sa_stream_callback_trampoline, (void *)user_handle);
 }
-
-static char *sa_run_workflow_yaml_with_options_go(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
-) {
-    return sa_run_workflow_yaml_with_options(
-        client,
-        workflow_path,
-        workflow_input_json,
-        workflow_options_json
-    );
-}
-
-static char *sa_run_workflow_yaml_with_events_go(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json
-) {
-    return sa_run_workflow_yaml_with_events(
-        client,
-        workflow_path,
-        workflow_input_json,
-        workflow_options_json
-    );
-}
-
-static int32_t sa_go_workflow_event_callback_bridge(const char *event_json, void *user_data) {
-    return sa_go_workflow_event_callback_export((char *)event_json, (size_t)user_data);
-}
-
-static char *sa_run_workflow_yaml_stream_events_go(
-    SAClient *client,
-    const char *workflow_path,
-    const char *workflow_input_json,
-    const char *workflow_options_json,
-    const char *workflow_execution_flags_json,
-    size_t user_handle
-) {
-    return sa_run_workflow_yaml_stream_events(
-        client,
-        workflow_path,
-        workflow_input_json,
-        workflow_options_json,
-        workflow_execution_flags_json,
-        sa_go_workflow_event_callback_bridge,
-        (void *)user_handle
-    );
-}
-
 */
 import "C"
 
@@ -127,15 +60,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"regexp"
 	"runtime/cgo"
-	"strings"
-	"sync"
 	"unsafe"
 )
 
-// Message represents a chat message for message-based completions.
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+// MessageRole is the role of a conversation message.
 type MessageRole string
 
 const (
@@ -145,1708 +78,225 @@ const (
 	MessageRoleTool      MessageRole = "tool"
 )
 
+// Message is a single conversation turn.
 type Message struct {
-	Role       MessageRole
-	Content    string
-	Name       string
-	ToolCallID string
-}
-
-// WorkflowInputMessage is a typed workflow chat message payload.
-type WorkflowInputMessage struct {
 	Role       MessageRole `json:"role"`
 	Content    string      `json:"content"`
 	Name       string      `json:"name,omitempty"`
 	ToolCallID string      `json:"tool_call_id,omitempty"`
 }
 
-// TypedWorkflowInput is a typed workflow input envelope.
-// Additional keeps compatibility for arbitrary JSON fields used by existing workflows.
-type TypedWorkflowInput struct {
-	Messages   []WorkflowInputMessage     `json:"messages,omitempty"`
-	Additional map[string]json.RawMessage `json:"-"`
+// WorkflowInput is a convenience wrapper for the messages envelope that YAML
+// workflows expect.
+type WorkflowInput struct {
+	Messages []Message              `json:"messages"`
+	Extra    map[string]interface{} `json:"-"`
 }
 
-// NewTypedWorkflowInput builds a workflow input with required messages and an empty Additional map.
-func NewTypedWorkflowInput(messages []WorkflowInputMessage) *TypedWorkflowInput {
-	return &TypedWorkflowInput{
-		Messages:   messages,
-		Additional: make(map[string]json.RawMessage),
+// MarshalJSON merges Extra fields with Messages into a single JSON object.
+func (w WorkflowInput) MarshalJSON() ([]byte, error) {
+	m := make(map[string]interface{}, len(w.Extra)+1)
+	for k, v := range w.Extra {
+		m[k] = v
 	}
+	m["messages"] = w.Messages
+	return json.Marshal(m)
 }
 
-// WithExtraJSON adds or replaces one extra workflow input field after JSON marshaling.
-// The key "messages" is reserved; use the Messages field instead.
-func (t *TypedWorkflowInput) WithExtraJSON(key string, v any) (*TypedWorkflowInput, error) {
-	if key == "messages" {
-		return nil, fmt.Errorf("workflow extra key %q is reserved; use Messages field", key)
-	}
-	if t == nil {
-		return nil, errors.New("TypedWorkflowInput is nil")
-	}
-	raw, err := json.Marshal(v)
-	if err != nil {
-		return nil, fmt.Errorf("marshal extra field %q: %w", key, err)
-	}
-	if t.Additional == nil {
-		t.Additional = make(map[string]json.RawMessage)
-	}
-	t.Additional[key] = raw
-	return t, nil
+// RunOpts holds optional per-run settings.
+type RunOpts struct {
+	// WorkflowOptionsJSON is an optional JSON object matching YamlWorkflowRunOptions.
+	// Pass nil to use defaults.
+	WorkflowOptionsJSON []byte
 }
 
-// CompleteOptions controls completion behavior for CompleteMessages.
-type CompleteOptions struct {
-	MaxTokens   *int32
-	Temperature *float32
-	TopP        *float32
-	// Mode supports: standard, healed_json, schema
-	Mode string
-	// Schema is required when Mode is "schema".
-	Schema any
-}
+// ---------------------------------------------------------------------------
+// Client
+// ---------------------------------------------------------------------------
 
-// ToolCallFunction is a function payload emitted by tool calls.
-type ToolCallFunction struct {
-	Name      string `json:"name"`
-	Arguments string `json:"arguments"`
-}
-
-// ToolCall is a tool-call response emitted by the model.
-type ToolCall struct {
-	ID       string           `json:"id"`
-	ToolType string           `json:"tool_type"`
-	Function ToolCallFunction `json:"function"`
-}
-
-// CompletionUsage contains token accounting for a completion.
-type CompletionUsage struct {
-	PromptTokens     int32 `json:"prompt_tokens"`
-	CompletionTokens int32 `json:"completion_tokens"`
-	TotalTokens      int32 `json:"total_tokens"`
-}
-
-// HealingData contains parsed/coerced data with transparency metadata.
-type HealingData struct {
-	Value      any     `json:"value"`
-	Flags      any     `json:"flags"`
-	Confidence float32 `json:"confidence"`
-}
-
-// CompletionResult is the structured result payload returned by CompleteMessages.
-type CompletionResult struct {
-	ID           string          `json:"id"`
-	Model        string          `json:"model"`
-	Role         string          `json:"role"`
-	Content      string          `json:"content"`
-	ToolCalls    []ToolCall      `json:"tool_calls"`
-	FinishReason string          `json:"finish_reason"`
-	Usage        CompletionUsage `json:"usage"`
-	Raw          string          `json:"raw"`
-	Healed       *HealingData    `json:"healed"`
-	Coerced      *HealingData    `json:"coerced"`
-}
-
-// StreamMessageDelta is the message delta payload for one streamed choice.
-type StreamMessageDelta struct {
-	Role    string `json:"role,omitempty"`
-	Content string `json:"content,omitempty"`
-}
-
-// StreamChoiceDelta is one streamed choice delta.
-type StreamChoiceDelta struct {
-	Index        uint32             `json:"index"`
-	Delta        StreamMessageDelta `json:"delta"`
-	FinishReason string             `json:"finish_reason,omitempty"`
-}
-
-// StreamChunk mirrors the Rust CompletionChunk payload for streaming.
-type StreamChunk struct {
-	ID      string              `json:"id"`
-	Model   string              `json:"model"`
-	Choices []StreamChoiceDelta `json:"choices"`
-	Created *int64              `json:"created,omitempty"`
-}
-
-// StreamEvent is emitted by StreamMessages.
-type StreamEvent struct {
-	Type    string       `json:"type"`
-	Chunk   *StreamChunk `json:"chunk,omitempty"`
-	Message string       `json:"message,omitempty"`
-}
-
-// StreamResult represents one streamed item or terminal error.
-type StreamResult struct {
-	Event StreamEvent
-	Err   error
-}
-
-type WorkflowStepTiming struct {
-	NodeID           string   `json:"node_id"`
-	NodeKind         string   `json:"node_kind"`
-	ElapsedMS        uint64   `json:"elapsed_ms"`
-	PromptTokens     *uint32  `json:"prompt_tokens,omitempty"`
-	CompletionTokens *uint32  `json:"completion_tokens,omitempty"`
-	TotalTokens      *uint32  `json:"total_tokens,omitempty"`
-	ReasoningTokens  *uint32  `json:"reasoning_tokens,omitempty"`
-	TokensPerSecond  *float64 `json:"tokens_per_second,omitempty"`
-}
-
-type WorkflowLlmNodeMetrics struct {
-	ElapsedMS        uint64  `json:"elapsed_ms"`
-	PromptTokens     uint32  `json:"prompt_tokens"`
-	CompletionTokens uint32  `json:"completion_tokens"`
-	TotalTokens      uint32  `json:"total_tokens"`
-	ReasoningTokens  *uint32 `json:"reasoning_tokens,omitempty"`
-	TokensPerSecond  float64 `json:"tokens_per_second"`
-}
-
-type WorkflowEvent struct {
-	EventType           string         `json:"event_type"`
-	NodeID              *string        `json:"node_id,omitempty"`
-	StepID              *string        `json:"step_id,omitempty"`
-	NodeKind            *string        `json:"node_kind,omitempty"`
-	Streamable          *bool          `json:"streamable,omitempty"`
-	Message             *string        `json:"message,omitempty"`
-	Delta               *string        `json:"delta,omitempty"`
-	TokenKind           *string        `json:"token_kind,omitempty"`
-	IsTerminalNodeToken *bool          `json:"is_terminal_node_token,omitempty"`
-	ElapsedMS           *uint64        `json:"elapsed_ms,omitempty"`
-	Metadata            map[string]any `json:"metadata,omitempty"`
-}
-
-type WorkflowNodeKind string
-
-const (
-	WorkflowNodeKindLlmCall      WorkflowNodeKind = "llm_call"
-	WorkflowNodeKindSwitch       WorkflowNodeKind = "switch"
-	WorkflowNodeKindCustomWorker WorkflowNodeKind = "custom_worker"
-	WorkflowNodeKindUnknown      WorkflowNodeKind = "unknown"
-)
-
-type WorkflowNodeOutputRecord struct {
-	NodeID   string           `json:"node_id"`
-	NodeKind WorkflowNodeKind `json:"node_kind"`
-	Value    any              `json:"value"`
-}
-
-type WorkflowRunTypedOutput struct {
-	WorkflowID     string                     `json:"workflow_id"`
-	EntryNode      string                     `json:"entry_node"`
-	Trace          []string                   `json:"trace"`
-	TerminalNode   string                     `json:"terminal_node"`
-	TerminalOutput *WorkflowNodeOutputRecord  `json:"terminal_output,omitempty"`
-	NodeOutputs    []WorkflowNodeOutputRecord `json:"node_outputs"`
-}
-
-type WorkflowEventType string
-
-const (
-	WorkflowEventTypeWorkflowStarted       WorkflowEventType = "workflow_started"
-	WorkflowEventTypeWorkflowCompleted     WorkflowEventType = "workflow_completed"
-	WorkflowEventTypeNodeStarted           WorkflowEventType = "node_started"
-	WorkflowEventTypeNodeCompleted         WorkflowEventType = "node_completed"
-	WorkflowEventTypeNodeLlmInputResolved  WorkflowEventType = "node_llm_input_resolved"
-	WorkflowEventTypeNodeStreamDelta       WorkflowEventType = "node_stream_delta"
-	WorkflowEventTypeNodeStreamThinking    WorkflowEventType = "node_stream_thinking_delta"
-	WorkflowEventTypeNodeStreamOutput      WorkflowEventType = "node_stream_output_delta"
-	WorkflowEventTypeNodeToolCallRequested WorkflowEventType = "node_tool_call_requested"
-	WorkflowEventTypeNodeToolCallCompleted WorkflowEventType = "node_tool_call_completed"
-	WorkflowEventTypeNodeToolCallFailed    WorkflowEventType = "node_tool_call_failed"
-	WorkflowEventTypeNodeToolRoundtrip     WorkflowEventType = "node_tool_roundtrip_completed"
-	WorkflowEventTypeNodeHealed            WorkflowEventType = "node_healed"
-	WorkflowEventTypeUnknown               WorkflowEventType = "unknown"
-)
-
-type WorkflowTypedEvent struct {
-	EventType           WorkflowEventType `json:"event_type"`
-	RawEventType        string            `json:"raw_event_type"`
-	NodeID              *string           `json:"node_id,omitempty"`
-	StepID              *string           `json:"step_id,omitempty"`
-	NodeKind            *string           `json:"node_kind,omitempty"`
-	Streamable          *bool             `json:"streamable,omitempty"`
-	Message             *string           `json:"message,omitempty"`
-	Delta               *string           `json:"delta,omitempty"`
-	TokenKind           *string           `json:"token_kind,omitempty"`
-	IsTerminalNodeToken *bool             `json:"is_terminal_node_token,omitempty"`
-	ElapsedMS           *uint64           `json:"elapsed_ms,omitempty"`
-	Metadata            map[string]any    `json:"metadata,omitempty"`
-}
-
-func workflowEventTypeFromString(value string) WorkflowEventType {
-	switch value {
-	case string(WorkflowEventTypeWorkflowStarted):
-		return WorkflowEventTypeWorkflowStarted
-	case string(WorkflowEventTypeWorkflowCompleted):
-		return WorkflowEventTypeWorkflowCompleted
-	case string(WorkflowEventTypeNodeStarted):
-		return WorkflowEventTypeNodeStarted
-	case string(WorkflowEventTypeNodeCompleted):
-		return WorkflowEventTypeNodeCompleted
-	case string(WorkflowEventTypeNodeLlmInputResolved):
-		return WorkflowEventTypeNodeLlmInputResolved
-	case string(WorkflowEventTypeNodeStreamDelta):
-		return WorkflowEventTypeNodeStreamDelta
-	case string(WorkflowEventTypeNodeStreamThinking):
-		return WorkflowEventTypeNodeStreamThinking
-	case string(WorkflowEventTypeNodeStreamOutput):
-		return WorkflowEventTypeNodeStreamOutput
-	case string(WorkflowEventTypeNodeToolCallRequested):
-		return WorkflowEventTypeNodeToolCallRequested
-	case string(WorkflowEventTypeNodeToolCallCompleted):
-		return WorkflowEventTypeNodeToolCallCompleted
-	case string(WorkflowEventTypeNodeToolCallFailed):
-		return WorkflowEventTypeNodeToolCallFailed
-	case string(WorkflowEventTypeNodeToolRoundtrip):
-		return WorkflowEventTypeNodeToolRoundtrip
-	case string(WorkflowEventTypeNodeHealed):
-		return WorkflowEventTypeNodeHealed
-	default:
-		return WorkflowEventTypeUnknown
-	}
-}
-
-func (event WorkflowEvent) ToTypedEvent() WorkflowTypedEvent {
-	return WorkflowTypedEvent{
-		EventType:           workflowEventTypeFromString(event.EventType),
-		RawEventType:        event.EventType,
-		NodeID:              event.NodeID,
-		StepID:              event.StepID,
-		NodeKind:            event.NodeKind,
-		Streamable:          event.Streamable,
-		Message:             event.Message,
-		Delta:               event.Delta,
-		TokenKind:           event.TokenKind,
-		IsTerminalNodeToken: event.IsTerminalNodeToken,
-		ElapsedMS:           event.ElapsedMS,
-		Metadata:            event.Metadata,
-	}
-}
-
-type workflowStreamPrintState struct {
-	currentNode       *string
-	lineOpen          bool
-	lastTokenLabel    *string
-}
-
-// DefaultWorkflowStreamPrinter returns an onEvent handler that prints LLM stream tokens to stdout
-// (CLI-style). When splitThinking is true, only node_stream_thinking_delta and
-// node_stream_output_delta are printed; otherwise node_stream_delta is printed.
-// Use with RunWorkflowYAMLStreamWithTypedInputAndRunOptions and
-// DefaultWorkflowExecutionFlags().WithSplitStreamDeltas(true) when splitThinking is true.
-func DefaultWorkflowStreamPrinter(splitThinking bool) func(WorkflowEvent) {
-	state := &workflowStreamPrintState{}
-	return func(event WorkflowEvent) {
-		eventType := event.EventType
-		delta := ""
-		if event.Delta != nil {
-			delta = *event.Delta
-		}
-
-		isStream := eventType == string(WorkflowEventTypeNodeStreamDelta)
-		if splitThinking {
-			isStream = eventType == string(WorkflowEventTypeNodeStreamThinking) ||
-				eventType == string(WorkflowEventTypeNodeStreamOutput)
-		}
-
-		if isStream && delta != "" {
-			displayID := ""
-			if event.NodeID != nil && *event.NodeID != "" {
-				displayID = *event.NodeID
-			} else if event.StepID != nil && *event.StepID != "" {
-				displayID = *event.StepID
-			}
-			if displayID == "" {
-				displayID = "?"
-			}
-
-			if state.currentNode == nil || *state.currentNode != displayID {
-				if state.lineOpen {
-					fmt.Fprintln(os.Stdout)
-				}
-				fmt.Fprintf(os.Stdout, "\nStep: %s\nStreaming: ", displayID)
-				idCopy := displayID
-				state.currentNode = &idCopy
-				state.lineOpen = true
-				state.lastTokenLabel = nil
-			}
-
-			if splitThinking {
-				var parts []string
-				if event.TokenKind != nil {
-					trimmed := strings.TrimSpace(*event.TokenKind)
-					if trimmed != "" {
-						parts = append(parts, trimmed)
-					}
-				}
-				if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
-					parts = append(parts, "terminal")
-				}
-				tokenLabel := ""
-				if len(parts) > 0 {
-					tokenLabel = "[" + strings.Join(parts, " ") + "] "
-				}
-				prev := ""
-				if state.lastTokenLabel != nil {
-					prev = *state.lastTokenLabel
-				}
-				if tokenLabel != "" && tokenLabel != prev {
-					if state.lineOpen {
-						fmt.Fprintln(os.Stdout)
-					}
-					fmt.Fprintf(os.Stdout, "%s%s: ", tokenLabel, displayID)
-					lbl := tokenLabel
-					state.lastTokenLabel = &lbl
-					state.lineOpen = true
-				}
-				fmt.Fprint(os.Stdout, delta)
-			} else {
-				fmt.Fprint(os.Stdout, delta)
-			}
-			return
-		}
-
-		if eventType == string(WorkflowEventTypeWorkflowStarted) ||
-			eventType == string(WorkflowEventTypeWorkflowCompleted) {
-			return
-		}
-	}
-}
-
-type WorkflowYAMLOutput struct {
-	WorkflowID           string                            `json:"workflow_id"`
-	EntryNode            string                            `json:"entry_node"`
-	Trace                []string                          `json:"trace"`
-	Outputs              map[string]map[string]any         `json:"outputs"`
-	NodeOutputs          []WorkflowNodeOutputRecord        `json:"node_outputs,omitempty"`
-	TerminalNode         string                            `json:"terminal_node"`
-	TerminalOutput       any                               `json:"terminal_output"`
-	StepTimings          []WorkflowStepTiming              `json:"step_timings"`
-	LlmNodeMetrics       map[string]WorkflowLlmNodeMetrics `json:"llm_node_metrics"`
-	TotalElapsedMS       uint64                            `json:"total_elapsed_ms"`
-	TTFTMS               *uint64                           `json:"ttft_ms,omitempty"`
-	TotalInputTokens     uint64                            `json:"total_input_tokens"`
-	TotalOutputTokens    uint64                            `json:"total_output_tokens"`
-	TotalTokens          uint64                            `json:"total_tokens"`
-	TotalReasoningTokens *uint64                           `json:"total_reasoning_tokens,omitempty"`
-	TokensPerSecond      float64                           `json:"tokens_per_second"`
-	TraceID              string                            `json:"trace_id,omitempty"`
-	Metadata             map[string]any                    `json:"metadata,omitempty"`
-	Events               []WorkflowEvent                   `json:"events,omitempty"`
-}
-
-func (out WorkflowYAMLOutput) ToTypedOutput() WorkflowRunTypedOutput {
-	nodeOutputs := make([]WorkflowNodeOutputRecord, len(out.NodeOutputs))
-	copy(nodeOutputs, out.NodeOutputs)
-
-	var terminalOutput *WorkflowNodeOutputRecord
-	if out.TerminalOutput != nil {
-		nodeKind := WorkflowNodeKindUnknown
-		for _, record := range nodeOutputs {
-			if record.NodeID == out.TerminalNode {
-				nodeKind = record.NodeKind
-				break
-			}
-		}
-		terminalOutput = &WorkflowNodeOutputRecord{
-			NodeID:   out.TerminalNode,
-			NodeKind: nodeKind,
-			Value:    out.TerminalOutput,
-		}
-	} else {
-		for i := range nodeOutputs {
-			if nodeOutputs[i].NodeID == out.TerminalNode {
-				record := nodeOutputs[i]
-				terminalOutput = &record
-				break
-			}
-		}
-	}
-
-	return WorkflowRunTypedOutput{
-		WorkflowID:     out.WorkflowID,
-		EntryNode:      out.EntryNode,
-		Trace:          out.Trace,
-		TerminalNode:   out.TerminalNode,
-		TerminalOutput: terminalOutput,
-		NodeOutputs:    nodeOutputs,
-	}
-}
-
-type WorkflowRunOptions struct {
-	Telemetry map[string]any `json:"telemetry,omitempty"`
-	Trace     map[string]any `json:"trace,omitempty"`
-	Model     string         `json:"model,omitempty"`
-}
-
-// WorkflowTraceContext carries optional upstream trace propagation fields.
-type WorkflowTraceContext struct {
-	TraceID      *string           `json:"trace_id,omitempty"`
-	SpanID       *string           `json:"span_id,omitempty"`
-	ParentSpanID *string           `json:"parent_span_id,omitempty"`
-	Traceparent  *string           `json:"traceparent,omitempty"`
-	Tracestate   *string           `json:"tracestate,omitempty"`
-	Baggage      map[string]string `json:"baggage,omitempty"`
-}
-
-// WorkflowTraceTenant carries optional multi-tenant correlation metadata.
-type WorkflowTraceTenant struct {
-	WorkspaceID    *string `json:"workspace_id,omitempty"`
-	UserID         *string `json:"user_id,omitempty"`
-	ConversationID *string `json:"conversation_id,omitempty"`
-	RequestID      *string `json:"request_id,omitempty"`
-	RunID          *string `json:"run_id,omitempty"`
-}
-
-// WorkflowTraceConfig nests trace context and tenant attributes.
-type WorkflowTraceConfig struct {
-	Context *WorkflowTraceContext `json:"context,omitempty"`
-	Tenant  *WorkflowTraceTenant  `json:"tenant,omitempty"`
-}
-
-// WorkflowTelemetryConfig controls workflow telemetry behavior.
-type WorkflowTelemetryConfig struct {
-	Enabled       *bool    `json:"enabled,omitempty"`
-	Nerdstats     *bool    `json:"nerdstats,omitempty"`
-	SampleRate    *float32 `json:"sample_rate,omitempty"`
-	PayloadMode   *string  `json:"payload_mode,omitempty"`
-	RetentionDays *uint32  `json:"retention_days,omitempty"`
-	MultiTenant   *bool    `json:"multi_tenant,omitempty"`
-	ToolTraceMode *string  `json:"tool_trace_mode,omitempty"`
-}
-
-// TypedWorkflowRunOptions is a typed alternative to map-based workflow options.
-type TypedWorkflowRunOptions struct {
-	Telemetry *WorkflowTelemetryConfig `json:"telemetry,omitempty"`
-	Trace     *WorkflowTraceConfig     `json:"trace,omitempty"`
-	Model     *string                  `json:"model,omitempty"`
-}
-
-// WorkflowExecutionFlags mirrors Rust YamlWorkflowExecutionFlags (workflow run toggles).
-//
-// Prefer starting from DefaultWorkflowExecutionFlags() and mutating fields, or With* helpers,
-// so you never rely on Go zero values (all false would incorrectly set node_llm_streaming to false).
-//
-// MarshalJSON always emits all four keys so logs and FFI payloads show explicit values.
-type WorkflowExecutionFlags struct {
-	Healing            bool `json:"healing,omitempty"`
-	WorkflowStreaming  bool `json:"workflow_streaming,omitempty"`
-	NodeLlmStreaming   bool `json:"node_llm_streaming,omitempty"`
-	SplitStreamDeltas  bool `json:"split_stream_deltas,omitempty"`
-}
-
-// DefaultWorkflowExecutionFlags returns the same values as Rust YamlWorkflowExecutionFlags::default().
-func DefaultWorkflowExecutionFlags() WorkflowExecutionFlags {
-	return WorkflowExecutionFlags{
-		Healing:            false,
-		WorkflowStreaming:  false,
-		NodeLlmStreaming:     true,
-		SplitStreamDeltas:  false,
-	}
-}
-
-// MarshalJSON always serializes all four booleans (never omits keys) for clear wire format and DX.
-func (f WorkflowExecutionFlags) MarshalJSON() ([]byte, error) {
-	// Use a map so keys are always emitted; a convertible struct copy is invalid here because
-	// wire JSON tags differ from WorkflowExecutionFlags (omitempty vs required on the wire).
-	return json.Marshal(map[string]bool{
-		"healing":              f.Healing,
-		"workflow_streaming":   f.WorkflowStreaming,
-		"node_llm_streaming":   f.NodeLlmStreaming,
-		"split_stream_deltas":  f.SplitStreamDeltas,
-	})
-}
-
-// UnmarshalJSON merges with DefaultWorkflowExecutionFlags so partial JSON (e.g. only split_stream_deltas)
-// does not zero out node_llm_streaming.
-func (f *WorkflowExecutionFlags) UnmarshalJSON(data []byte) error {
-	var aux struct {
-		Healing            *bool `json:"healing,omitempty"`
-		WorkflowStreaming  *bool `json:"workflow_streaming,omitempty"`
-		NodeLlmStreaming   *bool `json:"node_llm_streaming,omitempty"`
-		SplitStreamDeltas  *bool `json:"split_stream_deltas,omitempty"`
-	}
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-	def := DefaultWorkflowExecutionFlags()
-	if aux.Healing != nil {
-		def.Healing = *aux.Healing
-	}
-	if aux.WorkflowStreaming != nil {
-		def.WorkflowStreaming = *aux.WorkflowStreaming
-	}
-	if aux.NodeLlmStreaming != nil {
-		def.NodeLlmStreaming = *aux.NodeLlmStreaming
-	}
-	if aux.SplitStreamDeltas != nil {
-		def.SplitStreamDeltas = *aux.SplitStreamDeltas
-	}
-	*f = def
-	return nil
-}
-
-// WithSplitStreamDeltas returns a copy with SplitStreamDeltas set (common override).
-func (f WorkflowExecutionFlags) WithSplitStreamDeltas(v bool) WorkflowExecutionFlags {
-	f.SplitStreamDeltas = v
-	return f
-}
-
-// WorkflowRunRequest is the messages-first workflow execution envelope for Run, RunAsync, and Stream.
-type WorkflowRunRequest struct {
-	WorkflowPath string
-	Input        *TypedWorkflowInput
-}
-
-// WorkflowRunFlags carries optional run options for unified workflow helpers.
-//
-// ExecutionFlags is optional: nil means default Rust execution flags (see WorkflowExecutionFlags).
-type WorkflowRunFlags struct {
-	RunOptions       *TypedWorkflowRunOptions
-	ExecutionFlags *WorkflowExecutionFlags
-}
-
-var workflowCustomWorkerKeyRE = regexp.MustCompile(`(?m)^[\t ]*custom_worker[\t ]*:`)
-
-func typedWorkflowRunOptionsToMap(options *TypedWorkflowRunOptions) (map[string]any, error) {
-	if options == nil {
-		return nil, nil
-	}
-
-	encoded, err := json.Marshal(options)
-	if err != nil {
-		return nil, fmt.Errorf("marshal typed workflow options: %w", err)
-	}
-
-	var decoded map[string]any
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		return nil, fmt.Errorf("unmarshal typed workflow options: %w", err)
-	}
-
-	if len(decoded) == 0 {
-		return nil, nil
-	}
-
-	return decoded, nil
-}
-
-func typedWorkflowInputToMap(workflowInput *TypedWorkflowInput) (map[string]any, error) {
-	if workflowInput == nil {
-		return nil, errors.New("workflowInput cannot be nil")
-	}
-
-	decoded := make(map[string]any, len(workflowInput.Additional)+2)
-	for key, rawValue := range workflowInput.Additional {
-		if key == "messages" {
-			return nil, fmt.Errorf("workflowInput additional field %q is reserved; use typed fields instead", key)
-		}
-		if len(rawValue) == 0 {
-			return nil, fmt.Errorf("workflowInput additional field %q has empty JSON payload", key)
-		}
-		if !json.Valid(rawValue) {
-			return nil, fmt.Errorf("workflowInput additional field %q has invalid JSON payload", key)
-		}
-		decoded[key] = json.RawMessage(rawValue)
-	}
-
-	if workflowInput.Messages != nil {
-		decoded["messages"] = workflowInput.Messages
-	}
-
-	return decoded, nil
-}
-
-func validateWorkflowRunRequest(req WorkflowRunRequest) error {
-	if strings.TrimSpace(req.WorkflowPath) == "" {
-		return errors.New("workflow path cannot be empty")
-	}
-	if req.Input == nil {
-		return errors.New("workflow input cannot be nil")
-	}
-	if len(req.Input.Messages) == 0 {
-		return errors.New("workflow input must include at least one message")
-	}
-	return nil
-}
-
-func errWorkflowCustomWorkerUnsupported(workflowPath string) error {
-	return fmt.Errorf(
-		"workflow %q uses custom_worker, which the Go binding does not support (no worker subprocess is started); use a workflow without custom_worker or run it from Rust/Python",
-		workflowPath,
-	)
-}
-
-func workflowYAMLDeclaresCustomWorker(workflowPath string) (bool, error) {
-	data, err := os.ReadFile(workflowPath)
-	if err != nil {
-		return false, fmt.Errorf("read workflow file: %w", err)
-	}
-	return workflowCustomWorkerKeyRE.Match(data), nil
-}
-
-func guardWorkflowRunRequest(req WorkflowRunRequest) error {
-	if err := validateWorkflowRunRequest(req); err != nil {
-		return err
-	}
-	hasCustomWorker, err := workflowYAMLDeclaresCustomWorker(req.WorkflowPath)
-	if err != nil {
-		return err
-	}
-	if hasCustomWorker {
-		return errWorkflowCustomWorkerUnsupported(req.WorkflowPath)
-	}
-	return nil
-}
-
-type streamBridge struct {
-	ctx context.Context
-	out chan StreamResult
-}
-
-type workflowEventBridge struct {
-	ctx     context.Context
-	onEvent func(WorkflowEvent)
-	out     chan WorkflowEventResult
-}
-
+// Client wraps the Rust SimpleAgents FFI client.
 type Client struct {
-	mu       sync.Mutex
-	ptr      *C.SAClient
-	closed   bool
-	inFlight sync.WaitGroup
+	ptr *C.SAClient
 }
 
-type WorkflowEventResult struct {
-	Event WorkflowEvent
-	Err   error
-}
-
-func NewClientFromEnv(provider string) (*Client, error) {
-	cProvider := C.CString(provider)
-	defer C.free(unsafe.Pointer(cProvider))
-
-	ptr := C.sa_client_new_from_env(cProvider)
-	if ptr == nil {
-		return nil, lastError()
-	}
-
-	return &Client{ptr: ptr}, nil
-}
-
-// ProviderConfig holds explicit LLM credentials for NewClientWithProvider.
-// Provider must be openai, anthropic, or openrouter (case-insensitive).
-// APIBase is optional; when empty, the provider default base URL is used.
-type ProviderConfig struct {
-	Provider string
-	APIKey   string
-	APIBase  string
-}
-
-// NewClientWithProvider builds a client from explicit credentials (no environment variables required).
-func NewClientWithProvider(cfg ProviderConfig) (*Client, error) {
-	prov := strings.TrimSpace(cfg.Provider)
-	if prov == "" {
-		return nil, errors.New("provider cannot be empty")
-	}
-	prov = strings.ToLower(prov)
-	if cfg.APIKey == "" {
-		return nil, errors.New("api key cannot be empty")
-	}
-
-	cProvider := C.CString(prov)
-	cKey := C.CString(cfg.APIKey)
-	defer C.free(unsafe.Pointer(cProvider))
+// NewClient creates a new client from an explicit API key.
+// Pass baseURL as empty string to use the OpenAI default.
+func NewClient(apiKey, baseURL string) (*Client, error) {
+	cKey := C.CString(apiKey)
 	defer C.free(unsafe.Pointer(cKey))
 
 	var cBase *C.char
-	if strings.TrimSpace(cfg.APIBase) != "" {
-		b := C.CString(strings.TrimSpace(cfg.APIBase))
-		defer C.free(unsafe.Pointer(b))
-		cBase = b
+	if baseURL != "" {
+		cBase = C.CString(baseURL)
+		defer C.free(unsafe.Pointer(cBase))
 	}
 
-	ptr := C.sa_client_new_with_credentials(cProvider, cKey, cBase)
+	ptr := C.sa_client_new(cKey, nil, cBase)
 	if ptr == nil {
-		return nil, lastError()
+		return nil, fmt.Errorf("sa_client_new failed: %s", lastError())
 	}
-
 	return &Client{ptr: ptr}, nil
 }
 
+// Close frees the underlying Rust client. Must be called when done.
 func (c *Client) Close() {
-	if c == nil {
-		return
+	if c.ptr != nil {
+		C.sa_client_free(c.ptr)
+		c.ptr = nil
 	}
+}
 
-	c.mu.Lock()
-	if c.ptr == nil || c.closed {
-		c.mu.Unlock()
-		return
+// ---------------------------------------------------------------------------
+// Direct LLM calls
+// ---------------------------------------------------------------------------
+
+// Complete sends a completion request (JSON in, JSON out).
+// requestJSON must be a JSON object matching the CompletionRequest schema.
+func (c *Client) Complete(_ context.Context, requestJSON []byte) ([]byte, error) {
+	cReq := C.CString(string(requestJSON))
+	defer C.free(unsafe.Pointer(cReq))
+
+	result := C.sa_complete(c.ptr, cReq)
+	if result == nil {
+		return nil, fmt.Errorf("sa_complete failed: %s", lastError())
 	}
-	c.closed = true
-	ptr := c.ptr
-	c.ptr = nil
-	c.mu.Unlock()
-
-	go func() {
-		c.inFlight.Wait()
-		C.sa_client_free(ptr)
-	}()
+	defer C.sa_string_free(result)
+	return []byte(C.GoString(result)), nil
 }
 
-func (c *Client) beginCall() (*C.SAClient, error) {
-	if c == nil {
-		return nil, errors.New("client is not initialized")
+// StreamComplete streams a completion, calling onChunk for each chunk JSON.
+// requestJSON must have "stream": true.
+func (c *Client) StreamComplete(_ context.Context, requestJSON []byte, onChunk func(chunkJSON string) error) error {
+	handle := cgo.NewHandle(onChunk)
+	defer handle.Delete()
+
+	cReq := C.CString(string(requestJSON))
+	defer C.free(unsafe.Pointer(cReq))
+
+	status := C.sa_stream_go(c.ptr, cReq, C.size_t(handle))
+	if status != 0 {
+		return fmt.Errorf("sa_stream failed: %s", lastError())
 	}
+	return nil
+}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// ---------------------------------------------------------------------------
+// Workflow calls
+// ---------------------------------------------------------------------------
 
-	if c.ptr == nil || c.closed {
-		return nil, errors.New("client is not initialized")
+// Run executes a YAML workflow file and returns the output JSON.
+// inputJSON is a JSON object (at minimum {"messages": [...]}).
+func (c *Client) Run(_ context.Context, workflowPath string, inputJSON []byte) ([]byte, error) {
+	cPath := C.CString(workflowPath)
+	defer C.free(unsafe.Pointer(cPath))
+	cInput := C.CString(string(inputJSON))
+	defer C.free(unsafe.Pointer(cInput))
+
+	result := C.sa_run_workflow(c.ptr, cPath, cInput)
+	if result == nil {
+		return nil, fmt.Errorf("sa_run_workflow failed: %s", lastError())
 	}
-
-	c.inFlight.Add(1)
-	return c.ptr, nil
+	defer C.sa_string_free(result)
+	return []byte(C.GoString(result)), nil
 }
 
-func (c *Client) endCall() {
-	c.inFlight.Done()
-}
-
-// Complete preserves the original prompt-based API.
-func (c *Client) Complete(model, prompt string, maxTokens int32, temperature float32) (string, error) {
-	return c.CompleteWithContext(context.Background(), model, prompt, maxTokens, temperature)
-}
-
-// CompletePrompt is the canonical prompt-based API with explicit context.
-func (c *Client) CompletePrompt(
-	ctx context.Context,
-	model, prompt string,
-	maxTokens int32,
-	temperature float32,
-) (string, error) {
-	return c.CompleteWithContext(ctx, model, prompt, maxTokens, temperature)
-}
-
-// RunWorkflowYAML executes the Rust workflow YAML runner with arbitrary workflow input.
-func (c *Client) RunWorkflowYAML(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-) (WorkflowYAMLOutput, error) {
-	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, nil)
-}
-
-// RunWorkflowYAMLWithTypedInput executes workflow YAML with typed workflow input.
-func (c *Client) RunWorkflowYAMLWithTypedInput(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput *TypedWorkflowInput,
-) (WorkflowYAMLOutput, error) {
-	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
+// RunWithMessages is a convenience wrapper around Run that accepts typed messages.
+func (c *Client) RunWithMessages(ctx context.Context, workflowPath string, messages []Message, opts *RunOpts) ([]byte, error) {
+	input := WorkflowInput{Messages: messages}
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		return WorkflowYAMLOutput{}, err
+		return nil, fmt.Errorf("marshal input: %w", err)
 	}
-
-	return c.RunWorkflowYAML(ctx, workflowPath, workflowInputMap)
+	return c.Run(ctx, workflowPath, inputJSON)
 }
 
-// RunWorkflowYAMLTyped executes workflow YAML and projects output into typed records.
-func (c *Client) RunWorkflowYAMLTyped(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunWorkflowYAML(ctx, workflowPath, workflowInput)
+// Stream executes a YAML workflow file, calling onEvent for each event JSON.
+// Tools are configured in the YAML — onEvent is for observability, not tool dispatch.
+func (c *Client) Stream(_ context.Context, workflowPath string, inputJSON []byte, onEvent func(eventJSON string) error) error {
+	handle := cgo.NewHandle(onEvent)
+	defer handle.Delete()
+
+	cPath := C.CString(workflowPath)
+	defer C.free(unsafe.Pointer(cPath))
+	cInput := C.CString(string(inputJSON))
+	defer C.free(unsafe.Pointer(cInput))
+
+	status := C.sa_stream_workflow_go(c.ptr, cPath, cInput, C.size_t(handle))
+	if status != 0 {
+		return fmt.Errorf("sa_stream_workflow failed: %s", lastError())
+	}
+	return nil
+}
+
+// StreamWithMessages is a convenience wrapper around Stream that accepts typed messages.
+func (c *Client) StreamWithMessages(ctx context.Context, workflowPath string, messages []Message, onEvent func(eventJSON string) error, opts *RunOpts) error {
+	input := WorkflowInput{Messages: messages}
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
-		return WorkflowRunTypedOutput{}, err
+		return fmt.Errorf("marshal input: %w", err)
 	}
-	return out.ToTypedOutput(), nil
+	return c.Stream(ctx, workflowPath, inputJSON, onEvent)
 }
 
-// RunWorkflowYAMLWithRunOptions executes workflow YAML with typed workflow options.
-func (c *Client) RunWorkflowYAMLWithRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options *TypedWorkflowRunOptions,
-) (WorkflowYAMLOutput, error) {
-	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
+// Resume restarts a workflow from a serialized checkpoint JSON.
+// checkpointJSON is the JSON-encoded WorkflowCheckpoint from a failed run.
+func (c *Client) Resume(_ context.Context, checkpointJSON []byte) ([]byte, error) {
+	cCheckpoint := C.CString(string(checkpointJSON))
+	defer C.free(unsafe.Pointer(cCheckpoint))
 
-	return c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, workflowOptions)
+	result := C.sa_resume(c.ptr, cCheckpoint)
+	if result == nil {
+		return nil, fmt.Errorf("sa_resume failed: %s", lastError())
+	}
+	defer C.sa_string_free(result)
+	return []byte(C.GoString(result)), nil
 }
 
-// RunWorkflowYAMLWithTypedInputAndRunOptions executes workflow YAML with typed workflow input and options.
-func (c *Client) RunWorkflowYAMLWithTypedInputAndRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput *TypedWorkflowInput,
-	options *TypedWorkflowRunOptions,
-) (WorkflowYAMLOutput, error) {
-	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
+// ---------------------------------------------------------------------------
+// Callback bridge (exported to C)
+// ---------------------------------------------------------------------------
+
+//export saGoStreamCallbackBridge
+func saGoStreamCallbackBridge(eventJSON *C.char, userHandle C.size_t) C.int32_t {
+	h := cgo.Handle(userHandle)
+	fn, ok := h.Value().(func(string) error)
+	if !ok {
+		return -1
+	}
+	if err := fn(C.GoString(eventJSON)); err != nil {
+		return -1
 	}
-
-	return c.RunWorkflowYAMLWithRunOptions(ctx, workflowPath, workflowInputMap, options)
-}
-
-// RunWorkflowYAMLWithTypedInputAndRunOptionsTyped executes workflow YAML with typed input/options and typed output projection.
-func (c *Client) RunWorkflowYAMLWithTypedInputAndRunOptionsTyped(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput *TypedWorkflowInput,
-	options *TypedWorkflowRunOptions,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunWorkflowYAMLWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options)
-	if err != nil {
-		return WorkflowRunTypedOutput{}, err
-	}
-	return out.ToTypedOutput(), nil
-}
-
-// Run executes a YAML workflow synchronously using typed input and options (see RunWorkflowYAMLWithTypedInputAndRunOptions).
-// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
-func (c *Client) Run(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags) (WorkflowYAMLOutput, error) {
-	if err := guardWorkflowRunRequest(req); err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-	return c.RunWorkflowYAMLWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions)
-}
-
-// RunAsync executes a YAML workflow and returns output including recorded events under output.events (see RunWorkflowYAMLWithEventsAndRunOptions).
-// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
-func (c *Client) RunAsync(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags) (WorkflowYAMLOutput, error) {
-	if err := guardWorkflowRunRequest(req); err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-	workflowInputMap, err := typedWorkflowInputToMap(req.Input)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-	return c.RunWorkflowYAMLWithEventsAndRunOptions(ctx, req.WorkflowPath, workflowInputMap, flags.RunOptions)
-}
-
-// Stream executes a YAML workflow and delivers live workflow events to onEvent (see RunWorkflowYAMLStreamWithTypedInputAndRunOptions).
-// The workflow input must include at least one message. Workflows that declare custom_worker are rejected before execution.
-func (c *Client) Stream(ctx context.Context, req WorkflowRunRequest, flags WorkflowRunFlags, onEvent func(WorkflowEvent)) (WorkflowYAMLOutput, error) {
-	if err := guardWorkflowRunRequest(req); err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, req.WorkflowPath, req.Input, flags.RunOptions, flags.ExecutionFlags, onEvent)
-}
-
-// RunWorkflowYAMLWithRunOptionsTyped executes workflow YAML with typed run options and typed output projection.
-func (c *Client) RunWorkflowYAMLWithRunOptionsTyped(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options *TypedWorkflowRunOptions,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunWorkflowYAMLWithRunOptions(ctx, workflowPath, workflowInput, options)
-	if err != nil {
-		return WorkflowRunTypedOutput{}, err
-	}
-	return out.ToTypedOutput(), nil
-}
-
-// RunWorkflowYAMLWithOptions executes the Rust workflow YAML runner with telemetry options.
-func (c *Client) RunWorkflowYAMLWithOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options map[string]any,
-) (WorkflowYAMLOutput, error) {
-	if workflowPath == "" {
-		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
-	}
-	if workflowInput == nil {
-		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	workflowInputJSON, err := json.Marshal(workflowInput)
-	if err != nil {
-		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
-	}
-
-	workflowOptionsJSON := ""
-	if options != nil {
-		encoded, marshalErr := json.Marshal(options)
-		if marshalErr != nil {
-			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
-		}
-		workflowOptionsJSON = string(encoded)
-	}
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	resultCh := make(chan workflowRunResult, 1)
-	go func() {
-		defer c.endCall()
-		cWorkflowPath := C.CString(workflowPath)
-		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
-		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
-		defer C.free(unsafe.Pointer(cWorkflowPath))
-		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
-		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
-
-		response := C.sa_run_workflow_yaml_with_options_go(
-			ptr,
-			cWorkflowPath,
-			cWorkflowInputJSON,
-			cWorkflowOptionsJSON,
-		)
-		if response == nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
-			return
-		}
-		defer C.sa_string_free(response)
-
-		var output WorkflowYAMLOutput
-		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
-			return
-		}
-
-		sendIfWaiting(resultCh, workflowRunResult{output, nil})
-	}()
-
-	select {
-	case <-ctx.Done():
-		return WorkflowYAMLOutput{}, ctx.Err()
-	case result := <-resultCh:
-		if result.err != nil {
-			return WorkflowYAMLOutput{}, result.err
-		}
-		return result.value, nil
-	}
-}
-
-// RunWorkflowYAMLWithOptionsTyped executes workflow YAML with options and returns typed output records.
-func (c *Client) RunWorkflowYAMLWithOptionsTyped(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options map[string]any,
-) (WorkflowRunTypedOutput, error) {
-	out, err := c.RunWorkflowYAMLWithOptions(ctx, workflowPath, workflowInput, options)
-	if err != nil {
-		return WorkflowRunTypedOutput{}, err
-	}
-	return out.ToTypedOutput(), nil
-}
-
-// RunWorkflowYAMLWithEvents executes workflow YAML and includes recorded runtime events in output.events.
-func (c *Client) RunWorkflowYAMLWithEvents(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options map[string]any,
-) (WorkflowYAMLOutput, error) {
-	if workflowPath == "" {
-		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
-	}
-	if workflowInput == nil {
-		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	workflowInputJSON, err := json.Marshal(workflowInput)
-	if err != nil {
-		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
-	}
-
-	workflowOptionsJSON := ""
-	if options != nil {
-		encoded, marshalErr := json.Marshal(options)
-		if marshalErr != nil {
-			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
-		}
-		workflowOptionsJSON = string(encoded)
-	}
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	resultCh := make(chan workflowRunResult, 1)
-	go func() {
-		defer c.endCall()
-		cWorkflowPath := C.CString(workflowPath)
-		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
-		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
-		defer C.free(unsafe.Pointer(cWorkflowPath))
-		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
-		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
-
-		response := C.sa_run_workflow_yaml_with_events_go(
-			ptr,
-			cWorkflowPath,
-			cWorkflowInputJSON,
-			cWorkflowOptionsJSON,
-		)
-		if response == nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
-			return
-		}
-		defer C.sa_string_free(response)
-
-		var output WorkflowYAMLOutput
-		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
-			return
-		}
-
-		sendIfWaiting(resultCh, workflowRunResult{output, nil})
-	}()
-
-	select {
-	case <-ctx.Done():
-		return WorkflowYAMLOutput{}, ctx.Err()
-	case result := <-resultCh:
-		if result.err != nil {
-			return WorkflowYAMLOutput{}, result.err
-		}
-		return result.value, nil
-	}
-}
-
-// RunWorkflowYAMLWithEventsAndRunOptions executes workflow YAML with events using typed workflow options.
-func (c *Client) RunWorkflowYAMLWithEventsAndRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options *TypedWorkflowRunOptions,
-) (WorkflowYAMLOutput, error) {
-	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	return c.RunWorkflowYAMLWithEvents(ctx, workflowPath, workflowInput, workflowOptions)
-}
-
-// RunWorkflowYAMLStream emits live workflow events to onEvent while returning final workflow output.
-func (c *Client) RunWorkflowYAMLStream(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	onEvent func(WorkflowEvent),
-) (WorkflowYAMLOutput, error) {
-	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, nil, nil, onEvent)
-}
-
-// RunWorkflowYAMLStreamWithOptions emits live workflow events to onEvent with workflow options.
-//
-// options: nil means no YamlWorkflowRunOptions JSON (telemetry/trace/model defaults).
-// executionFlags: nil selects DefaultWorkflowExecutionFlags(); non-nil values are sent as-is.
-// The FFI always receives explicit JSON for all four flags (never a null pointer).
-func (c *Client) RunWorkflowYAMLStreamWithOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options map[string]any,
-	executionFlags *WorkflowExecutionFlags,
-	onEvent func(WorkflowEvent),
-) (WorkflowYAMLOutput, error) {
-	if workflowPath == "" {
-		return WorkflowYAMLOutput{}, errors.New("workflowPath cannot be empty")
-	}
-	if workflowInput == nil {
-		return WorkflowYAMLOutput{}, errors.New("workflowInput cannot be nil")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	workflowInputJSON, err := json.Marshal(workflowInput)
-	if err != nil {
-		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow input: %w", err)
-	}
-
-	workflowOptionsJSON := ""
-	if options != nil {
-		encoded, marshalErr := json.Marshal(options)
-		if marshalErr != nil {
-			return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow options: %w", marshalErr)
-		}
-		workflowOptionsJSON = string(encoded)
-	}
-
-	effectiveFlags := DefaultWorkflowExecutionFlags()
-	if executionFlags != nil {
-		effectiveFlags = *executionFlags
-	}
-	encodedFlags, marshalErr := json.Marshal(effectiveFlags)
-	if marshalErr != nil {
-		return WorkflowYAMLOutput{}, fmt.Errorf("marshal workflow execution flags: %w", marshalErr)
-	}
-	cWorkflowExecutionFlagsJSON := C.CString(string(encodedFlags))
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	bridge := &workflowEventBridge{
-		ctx:     ctx,
-		onEvent: onEvent,
-		out:     make(chan WorkflowEventResult, 16),
-	}
-	handle := cgo.NewHandle(bridge)
-
-	resultCh := make(chan workflowRunResult, 1)
-	go func() {
-		defer c.endCall()
-		defer close(bridge.out)
-		defer handle.Delete()
-
-		cWorkflowPath := C.CString(workflowPath)
-		cWorkflowInputJSON := C.CString(string(workflowInputJSON))
-		cWorkflowOptionsJSON := C.CString(workflowOptionsJSON)
-		defer C.free(unsafe.Pointer(cWorkflowPath))
-		defer C.free(unsafe.Pointer(cWorkflowInputJSON))
-		defer C.free(unsafe.Pointer(cWorkflowOptionsJSON))
-		defer C.free(unsafe.Pointer(cWorkflowExecutionFlagsJSON))
-
-		response := C.sa_run_workflow_yaml_stream_events_go(
-			ptr,
-			cWorkflowPath,
-			cWorkflowInputJSON,
-			cWorkflowOptionsJSON,
-			cWorkflowExecutionFlagsJSON,
-			C.size_t(handle),
-		)
-		if response == nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, lastError()})
-			return
-		}
-		defer C.sa_string_free(response)
-
-		var output WorkflowYAMLOutput
-		if err := json.Unmarshal([]byte(C.GoString(response)), &output); err != nil {
-			sendIfWaiting(resultCh, workflowRunResult{WorkflowYAMLOutput{}, err})
-			return
-		}
-
-		sendIfWaiting(resultCh, workflowRunResult{output, nil})
-	}()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return WorkflowYAMLOutput{}, ctx.Err()
-		case ev, ok := <-bridge.out:
-			if !ok {
-				bridge.out = nil
-				continue
-			}
-			if ev.Err != nil {
-				return WorkflowYAMLOutput{}, ev.Err
-			}
-		case result := <-resultCh:
-			if result.err != nil {
-				return WorkflowYAMLOutput{}, result.err
-			}
-			return result.value, nil
-		}
-	}
-}
-
-// RunWorkflowYAMLStreamWithRunOptions emits workflow events with typed workflow options.
-//
-// executionFlags: nil means default Rust execution flags (see WorkflowExecutionFlags).
-func (c *Client) RunWorkflowYAMLStreamWithRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput map[string]any,
-	options *TypedWorkflowRunOptions,
-	executionFlags *WorkflowExecutionFlags,
-	onEvent func(WorkflowEvent),
-) (WorkflowYAMLOutput, error) {
-	workflowOptions, err := typedWorkflowRunOptionsToMap(options)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	return c.RunWorkflowYAMLStreamWithOptions(ctx, workflowPath, workflowInput, workflowOptions, executionFlags, onEvent)
-}
-
-// RunWorkflowYAMLStreamWithTypedInputAndRunOptions emits workflow events with typed input and options.
-//
-// executionFlags: nil means default Rust execution flags (see WorkflowExecutionFlags).
-func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptions(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput *TypedWorkflowInput,
-	options *TypedWorkflowRunOptions,
-	executionFlags *WorkflowExecutionFlags,
-	onEvent func(WorkflowEvent),
-) (WorkflowYAMLOutput, error) {
-	workflowInputMap, err := typedWorkflowInputToMap(workflowInput)
-	if err != nil {
-		return WorkflowYAMLOutput{}, err
-	}
-
-	return c.RunWorkflowYAMLStreamWithRunOptions(ctx, workflowPath, workflowInputMap, options, executionFlags, onEvent)
-}
-
-// RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents emits typed workflow events with typed input and options.
-func (c *Client) RunWorkflowYAMLStreamWithTypedInputAndRunOptionsTypedEvents(
-	ctx context.Context,
-	workflowPath string,
-	workflowInput *TypedWorkflowInput,
-	options *TypedWorkflowRunOptions,
-	executionFlags *WorkflowExecutionFlags,
-	onEvent func(WorkflowTypedEvent),
-) (WorkflowYAMLOutput, error) {
-	callback := func(event WorkflowEvent) {
-		if onEvent == nil {
-			return
-		}
-		onEvent(event.ToTypedEvent())
-	}
-
-	return c.RunWorkflowYAMLStreamWithTypedInputAndRunOptions(ctx, workflowPath, workflowInput, options, executionFlags, callback)
-}
-
-type completeResult struct {
-	value string
-	err   error
-}
-
-type completeMessagesResult struct {
-	value CompletionResult
-	err   error
-}
-
-type workflowRunResult struct {
-	value WorkflowYAMLOutput
-	err   error
-}
-
-func sendIfWaiting[T any](ch chan<- T, value T) {
-	select {
-	case ch <- value:
-	default:
-	}
-}
-
-// CompleteWithContext executes prompt-based completion with context cancellation support.
-func (c *Client) CompleteWithContext(
-	ctx context.Context,
-	model, prompt string,
-	maxTokens int32,
-	temperature float32,
-) (string, error) {
-	if err := validatePromptInput(model, prompt); err != nil {
-		return "", err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return "", err
-	}
-
-	resultCh := make(chan completeResult, 1)
-	go func() {
-		defer c.endCall()
-		cModel := C.CString(model)
-		defer C.free(unsafe.Pointer(cModel))
-		cPrompt := C.CString(prompt)
-		defer C.free(unsafe.Pointer(cPrompt))
-
-		response := C.sa_complete(ptr, cModel, cPrompt, C.int32_t(maxTokens), C.float(temperature))
-		if response == nil {
-			sendIfWaiting(resultCh, completeResult{"", lastError()})
-			return
-		}
-		defer C.sa_string_free(response)
-		sendIfWaiting(resultCh, completeResult{C.GoString(response), nil})
-	}()
-
-	select {
-	case res := <-resultCh:
-		return res.value, res.err
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
-// CompleteMessages executes message-based completion and returns structured output.
-func (c *Client) CompleteMessages(
-	ctx context.Context,
-	model string,
-	messages []Message,
-	opts CompleteOptions,
-) (CompletionResult, error) {
-	if err := validateMessagesInput(model, messages); err != nil {
-		return CompletionResult{}, err
-	}
-	if err := validateCompleteOptions(opts, false); err != nil {
-		return CompletionResult{}, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return CompletionResult{}, err
-	}
-
-	maxTokens := int32(0)
-	if opts.MaxTokens != nil {
-		maxTokens = *opts.MaxTokens
-	}
-	temperature := float32(-1)
-	if opts.Temperature != nil {
-		temperature = *opts.Temperature
-	}
-	topP := float32(-1)
-	if opts.TopP != nil {
-		topP = *opts.TopP
-	}
-
-	modeValue := opts.Mode
-	if modeValue == "" {
-		modeValue = "standard"
-	}
-
-	var schemaJSONString string
-	if opts.Schema != nil {
-		schemaJSON, err := json.Marshal(opts.Schema)
-		if err != nil {
-			return CompletionResult{}, fmt.Errorf("marshal schema: %w", err)
-		}
-		schemaJSONString = string(schemaJSON)
-	}
-
-	messagesCopy := append([]Message(nil), messages...)
-
-	resultCh := make(chan completeMessagesResult, 1)
-	go func() {
-		defer c.endCall()
-		cModel := C.CString(model)
-		defer C.free(unsafe.Pointer(cModel))
-		cMode := C.CString(modeValue)
-		defer C.free(unsafe.Pointer(cMode))
-
-		var cSchemaJSON *C.char
-		if schemaJSONString != "" {
-			cSchemaJSON = C.CString(schemaJSONString)
-			defer C.free(unsafe.Pointer(cSchemaJSON))
-		}
-
-		cMessages := make([]C.SAMessage, len(messagesCopy))
-		allocated := make([]*C.char, 0, len(messagesCopy)*4)
-		freeAll := func() {
-			for _, p := range allocated {
-				if p != nil {
-					C.free(unsafe.Pointer(p))
-				}
-			}
-		}
-		defer freeAll()
-
-		for i, msg := range messagesCopy {
-			role := C.CString(string(msg.Role))
-			content := C.CString(msg.Content)
-			allocated = append(allocated, role, content)
-			cMessages[i].role = role
-			cMessages[i].content = content
-
-			if msg.Name != "" {
-				name := C.CString(msg.Name)
-				allocated = append(allocated, name)
-				cMessages[i].name = name
-			}
-			if msg.ToolCallID != "" {
-				toolCallID := C.CString(msg.ToolCallID)
-				allocated = append(allocated, toolCallID)
-				cMessages[i].tool_call_id = toolCallID
-			}
-		}
-
-		response := C.sa_complete_messages_json(
-			ptr,
-			cModel,
-			(*C.SAMessage)(unsafe.Pointer(&cMessages[0])),
-			C.size_t(len(cMessages)),
-			C.int32_t(maxTokens),
-			C.float(temperature),
-			C.float(topP),
-			cMode,
-			cSchemaJSON,
-		)
-		if response == nil {
-			sendIfWaiting(resultCh, completeMessagesResult{CompletionResult{}, lastError()})
-			return
-		}
-		defer C.sa_string_free(response)
-
-		var parsed CompletionResult
-		if err := json.Unmarshal([]byte(C.GoString(response)), &parsed); err != nil {
-			sendIfWaiting(resultCh, completeMessagesResult{CompletionResult{}, fmt.Errorf("unmarshal completion result: %w", err)})
-			return
-		}
-		sendIfWaiting(resultCh, completeMessagesResult{parsed, nil})
-	}()
-
-	select {
-	case res := <-resultCh:
-		return res.value, res.err
-	case <-ctx.Done():
-		return CompletionResult{}, ctx.Err()
-	}
-}
-
-// StreamMessages executes message-based completion in streaming mode.
-//
-// The returned channel is closed on completion, cancellation, or error.
-// Callers should range over the channel until closed.
-func (c *Client) StreamMessages(
-	ctx context.Context,
-	model string,
-	messages []Message,
-	opts CompleteOptions,
-) (<-chan StreamResult, error) {
-	if err := validateMessagesInput(model, messages); err != nil {
-		return nil, err
-	}
-	if err := validateCompleteOptions(opts, true); err != nil {
-		return nil, err
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
-	ptr, err := c.beginCall()
-	if err != nil {
-		return nil, err
-	}
-
-	maxTokens := int32(0)
-	if opts.MaxTokens != nil {
-		maxTokens = *opts.MaxTokens
-	}
-	temperature := float32(-1)
-	if opts.Temperature != nil {
-		temperature = *opts.Temperature
-	}
-	topP := float32(-1)
-	if opts.TopP != nil {
-		topP = *opts.TopP
-	}
-
-	messagesCopy := append([]Message(nil), messages...)
-	out := make(chan StreamResult, 16)
-	bridge := &streamBridge{ctx: ctx, out: out}
-	handle := cgo.NewHandle(bridge)
-
-	go func() {
-		defer c.endCall()
-		defer close(out)
-		defer handle.Delete()
-
-		cModel := C.CString(model)
-		defer C.free(unsafe.Pointer(cModel))
-
-		cMessages := make([]C.SAMessage, len(messagesCopy))
-		allocated := make([]*C.char, 0, len(messagesCopy)*4)
-		freeAll := func() {
-			for _, p := range allocated {
-				if p != nil {
-					C.free(unsafe.Pointer(p))
-				}
-			}
-		}
-		defer freeAll()
-
-		for i, msg := range messagesCopy {
-			role := C.CString(string(msg.Role))
-			content := C.CString(msg.Content)
-			allocated = append(allocated, role, content)
-			cMessages[i].role = role
-			cMessages[i].content = content
-
-			if msg.Name != "" {
-				name := C.CString(msg.Name)
-				allocated = append(allocated, name)
-				cMessages[i].name = name
-			}
-			if msg.ToolCallID != "" {
-				toolCallID := C.CString(msg.ToolCallID)
-				allocated = append(allocated, toolCallID)
-				cMessages[i].tool_call_id = toolCallID
-			}
-		}
-
-		status := C.sa_stream_messages_go(
-			ptr,
-			cModel,
-			(*C.SAMessage)(unsafe.Pointer(&cMessages[0])),
-			C.size_t(len(cMessages)),
-			C.int32_t(maxTokens),
-			C.float(temperature),
-			C.float(topP),
-			C.size_t(handle),
-		)
-
-		if status != 0 {
-			err := lastError()
-			if ctx.Err() != nil {
-				err = ctx.Err()
-			}
-			sendIfWaiting(out, StreamResult{Err: err})
-		}
-	}()
-
-	return out, nil
-}
-
-//export sa_go_stream_callback_export
-func sa_go_stream_callback_export(eventJSON *C.char, userHandle C.size_t) C.int32_t {
-	handle := cgo.Handle(uintptr(userHandle))
-	bridge, ok := handle.Value().(*streamBridge)
-	if !ok || bridge == nil {
-		return 1
-	}
-
-	select {
-	case <-bridge.ctx.Done():
-		return 1
-	default:
-	}
-
-	var event StreamEvent
-	if err := json.Unmarshal([]byte(C.GoString(eventJSON)), &event); err != nil {
-		sendIfWaiting(bridge.out, StreamResult{Err: fmt.Errorf("unmarshal stream event: %w", err)})
-		return 1
-	}
-
-	if event.Type == "error" {
-		sendIfWaiting(bridge.out, StreamResult{Err: errors.New(event.Message)})
-		return 1
-	}
-
-	select {
-	case bridge.out <- StreamResult{Event: event}:
-		return 0
-	case <-bridge.ctx.Done():
-		return 1
-	}
-}
-
-//export sa_go_workflow_event_callback_export
-func sa_go_workflow_event_callback_export(eventJSON *C.char, userHandle C.size_t) C.int32_t {
-	handle := cgo.Handle(uintptr(userHandle))
-	bridge, ok := handle.Value().(*workflowEventBridge)
-	if !ok || bridge == nil {
-		return 1
-	}
-
-	select {
-	case <-bridge.ctx.Done():
-		return 1
-	default:
-	}
-
-	var event WorkflowEvent
-	if err := json.Unmarshal([]byte(C.GoString(eventJSON)), &event); err != nil {
-		sendIfWaiting(bridge.out, WorkflowEventResult{Err: fmt.Errorf("unmarshal workflow event: %w", err)})
-		return 1
-	}
-
-	if bridge.onEvent != nil {
-		bridge.onEvent(event)
-	}
-
-	sendIfWaiting(bridge.out, WorkflowEventResult{Event: event})
 	return 0
 }
 
-func validatePromptInput(model, prompt string) error {
-	if model == "" {
-		return errors.New("model cannot be empty")
-	}
-	if prompt == "" {
-		return errors.New("prompt cannot be empty")
-	}
-	return nil
-}
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
-func validateMessagesInput(model string, messages []Message) error {
-	if model == "" {
-		return errors.New("model cannot be empty")
-	}
-	if len(messages) == 0 {
-		return errors.New("messages cannot be empty")
-	}
-	for i, msg := range messages {
-		if msg.Role == "" {
-			return fmt.Errorf("messages[%d].role cannot be empty", i)
-		}
-		switch msg.Role {
-		case MessageRoleSystem, MessageRoleUser, MessageRoleAssistant, MessageRoleTool:
-		default:
-			return fmt.Errorf("messages[%d].role must be one of: system, user, assistant, tool", i)
-		}
-		if msg.Content == "" {
-			return fmt.Errorf("messages[%d].content cannot be empty", i)
-		}
-	}
-	return nil
-}
-
-func validateCompleteOptions(opts CompleteOptions, streaming bool) error {
-	mode := opts.Mode
-	if mode == "" {
-		mode = "standard"
-	}
-
-	switch mode {
-	case "standard", "healed_json", "schema":
-	default:
-		return fmt.Errorf("unsupported mode %q", mode)
-	}
-
-	if mode == "schema" && opts.Schema == nil {
-		return errors.New("schema mode requires schema")
-	}
-
-	if mode != "schema" && opts.Schema != nil {
-		return errors.New("schema is only valid when mode is \"schema\"")
-	}
-
-	if streaming && mode != "standard" {
-		return errors.New("streaming only supports mode \"standard\"")
-	}
-
-	return nil
-}
-
-func lastError() error {
+func lastError() string {
 	msg := C.sa_last_error_message()
 	if msg == nil {
-		return errors.New("unknown error")
+		return "(no error message)"
 	}
 	defer C.sa_string_free(msg)
-	return errors.New(C.GoString(msg))
+	return C.GoString(msg)
+}
+
+// ErrWorkflow wraps a workflow execution error with its message.
+type ErrWorkflow struct {
+	Msg string
+}
+
+func (e *ErrWorkflow) Error() string { return e.Msg }
+
+// ParseWorkflowOutput parses a raw JSON workflow output into a map.
+func ParseWorkflowOutput(raw []byte) (map[string]interface{}, error) {
+	if len(raw) == 0 {
+		return nil, errors.New("empty output")
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("unmarshal workflow output: %w", err)
+	}
+	return out, nil
 }
