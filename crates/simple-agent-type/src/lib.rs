@@ -53,11 +53,14 @@ pub mod message;
 pub mod provider;
 pub mod request;
 pub mod response;
+/// Telemetry and tracing configuration types.
+pub mod telemetry;
 pub mod tool;
 pub mod validation;
 
 // Re-export commonly used types at crate root
 pub use error::{HealingError, ProviderError, Result, SimpleAgentsError, ValidationError};
+pub use telemetry::{ApiFormat, OtelProtocol, TelemetryConfig, TraceContext};
 
 /// Prelude module for convenient imports.
 ///
@@ -74,7 +77,7 @@ pub use error::{HealingError, ProviderError, Result, SimpleAgentsError, Validati
 /// ```
 pub mod prelude {
     // Messages
-    pub use crate::message::{Message, Role};
+    pub use crate::message::{ContentPart, ImageUrlContent, Message, MessageContent, Role};
 
     // Requests and responses
     pub use crate::request::{CompletionRequest, CompletionRequestBuilder};

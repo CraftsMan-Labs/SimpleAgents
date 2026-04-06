@@ -309,7 +309,7 @@ pub trait Provider: Send + Sync {
                 index: choice.index,
                 delta: crate::response::MessageDelta {
                     role: Some(choice.message.role),
-                    content: Some(choice.message.content),
+                    content: Some(choice.message.content_text().to_string()),
                     reasoning_content: None,
                     tool_calls: None,
                 },

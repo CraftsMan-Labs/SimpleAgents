@@ -79,9 +79,65 @@ pub struct CompletionRequest {
     /// Tool choice configuration.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<ToolChoice>,
+    /// System instructions (Responses API)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instructions: Option<String>,
+    /// Previous response ID for multi-turn (Responses API)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_response_id: Option<String>,
+    /// Whether to store the response (Responses API)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub store: Option<bool>,
 }
 
 impl CompletionRequest {
+    /// Create a new request with the given model and default fields.
+    pub fn new(model: impl Into<String>) -> Self {
+        Self {
+            messages: Vec::new(),
+            model: model.into(),
+            max_tokens: None,
+            temperature: None,
+            top_p: None,
+            stream: None,
+            n: None,
+            stop: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            user: None,
+            response_format: None,
+            tools: None,
+            tool_choice: None,
+            instructions: None,
+            previous_response_id: None,
+            store: None,
+        }
+    }
+
+    /// Set messages on the request (builder-style).
+    pub fn messages(mut self, messages: Vec<Message>) -> Self {
+        self.messages = messages;
+        self
+    }
+
+    /// Set system instructions (Responses API).
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Set previous response ID for multi-turn (Responses API).
+    pub fn previous_response_id(mut self, id: impl Into<String>) -> Self {
+        self.previous_response_id = Some(id.into());
+        self
+    }
+
+    /// Set whether to store the response (Responses API).
+    pub fn store(mut self, store: bool) -> Self {
+        self.store = Some(store);
+        self
+    }
+
     /// Create a new builder.
     ///
     /// # Example
@@ -127,7 +183,7 @@ impl CompletionRequest {
         // Validate each message content size (max 1MB)
         const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
         for (i, msg) in self.messages.iter().enumerate() {
-            if msg.content.len() > MAX_MESSAGE_SIZE {
+            if msg.content.text_len() > MAX_MESSAGE_SIZE {
                 return Err(ValidationError::TooLong {
                     field: format!("messages[{}].content", i),
                     max: MAX_MESSAGE_SIZE,
@@ -135,8 +191,7 @@ impl CompletionRequest {
                 .into());
             }
 
-            // Security: no null bytes
-            if msg.content.contains('\0') {
+            if msg.content.contains_null() {
                 return Err(ValidationError::InvalidFormat {
                     field: format!("messages[{}].content", i),
                     reason: "contains null bytes".to_string(),
@@ -147,7 +202,7 @@ impl CompletionRequest {
 
         // Validate total request size (max 10MB)
         const MAX_TOTAL_REQUEST_SIZE: usize = 10 * 1024 * 1024;
-        let total_size: usize = self.messages.iter().map(|m| m.content.len()).sum();
+        let total_size: usize = self.messages.iter().map(|m| m.content.text_len()).sum();
         if total_size > MAX_TOTAL_REQUEST_SIZE {
             return Err(ValidationError::TooLong {
                 field: "total_request_size".to_string(),
@@ -246,6 +301,9 @@ pub struct CompletionRequestBuilder {
     response_format: Option<ResponseFormat>,
     tools: Option<Vec<ToolDefinition>>,
     tool_choice: Option<ToolChoice>,
+    instructions: Option<String>,
+    previous_response_id: Option<String>,
+    store: Option<bool>,
 }
 
 impl CompletionRequestBuilder {
@@ -339,6 +397,24 @@ impl CompletionRequestBuilder {
         self
     }
 
+    /// Set system instructions (Responses API).
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
+    /// Set previous response ID for multi-turn (Responses API).
+    pub fn previous_response_id(mut self, id: impl Into<String>) -> Self {
+        self.previous_response_id = Some(id.into());
+        self
+    }
+
+    /// Set whether to store the response (Responses API).
+    pub fn store(mut self, store: bool) -> Self {
+        self.store = Some(store);
+        self
+    }
+
     /// Enable JSON object mode (no schema validation).
     pub fn json_mode(mut self) -> Self {
         self.response_format = Some(ResponseFormat::JsonObject);
@@ -378,6 +454,9 @@ impl CompletionRequestBuilder {
             response_format: self.response_format,
             tools: self.tools,
             tool_choice: self.tool_choice,
+            instructions: self.instructions,
+            previous_response_id: self.previous_response_id,
+            store: self.store,
         };
 
         request.validate()?;
@@ -388,6 +467,7 @@ impl CompletionRequestBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::message::MessageContent;
 
     #[test]
     fn test_builder_basic() {
@@ -399,7 +479,7 @@ mod tests {
 
         assert_eq!(request.model, "gpt-4");
         assert_eq!(request.messages.len(), 1);
-        assert_eq!(request.messages[0].content, "Hello");
+        assert_eq!(request.messages[0].content, MessageContent::Text("Hello".to_string()));
     }
 
     #[test]
@@ -519,6 +599,18 @@ mod tests {
             result.unwrap_err(),
             crate::error::SimpleAgentsError::Validation(ValidationError::TooLong { .. })
         ));
+    }
+
+    #[test]
+    fn test_responses_api_fields() {
+        let req = CompletionRequest::new("gpt-4o")
+            .messages(vec![Message::user("hello")])
+            .instructions("You are helpful")
+            .store(true)
+            .previous_response_id("resp_abc");
+        assert_eq!(req.instructions.as_deref(), Some("You are helpful"));
+        assert_eq!(req.store, Some(true));
+        assert_eq!(req.previous_response_id.as_deref(), Some("resp_abc"));
     }
 
     #[test]

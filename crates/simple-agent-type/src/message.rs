@@ -60,13 +60,114 @@ impl FromStr for Role {
     }
 }
 
+/// Content of a message — either plain text or a list of multimodal parts.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum MessageContent {
+    /// Plain text content.
+    Text(String),
+    /// Multimodal content parts (text, images, video, etc.).
+    Parts(Vec<ContentPart>),
+}
+
+impl From<String> for MessageContent {
+    fn from(s: String) -> Self {
+        Self::Text(s)
+    }
+}
+
+impl From<&str> for MessageContent {
+    fn from(s: &str) -> Self {
+        Self::Text(s.to_string())
+    }
+}
+
+impl MessageContent {
+    /// Returns the text content length for validation purposes.
+    /// For Parts, sums the text lengths of all text parts.
+    pub fn text_len(&self) -> usize {
+        match self {
+            Self::Text(s) => s.len(),
+            Self::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    ContentPart::Text { text } => text.len(),
+                    _ => 0,
+                })
+                .sum(),
+        }
+    }
+
+    /// Returns true if the content contains a null byte.
+    pub fn contains_null(&self) -> bool {
+        match self {
+            Self::Text(s) => s.contains('\0'),
+            Self::Parts(parts) => parts.iter().any(|p| match p {
+                ContentPart::Text { text } => text.contains('\0'),
+                _ => false,
+            }),
+        }
+    }
+}
+
+/// A single content part in a multimodal message.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ContentPart {
+    /// Text content.
+    #[serde(rename = "text")]
+    Text {
+        /// The text string.
+        text: String,
+    },
+    /// Image URL content.
+    #[serde(rename = "image_url")]
+    ImageUrl {
+        /// The image URL and optional detail level.
+        image_url: ImageUrlContent,
+    },
+    /// Video URL content.
+    #[serde(rename = "video_url")]
+    Video {
+        /// The video URL.
+        url: String,
+    },
+}
+
+impl ContentPart {
+    /// Create a text content part.
+    pub fn text(text: impl Into<String>) -> Self {
+        Self::Text { text: text.into() }
+    }
+
+    /// Create an image URL content part.
+    pub fn image_url(url: impl Into<String>) -> Self {
+        Self::ImageUrl {
+            image_url: ImageUrlContent {
+                url: url.into(),
+                detail: None,
+            },
+        }
+    }
+}
+
+/// Image URL content with optional detail level.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImageUrlContent {
+    /// The image URL.
+    pub url: String,
+    /// Optional detail level (e.g. "low", "high", "auto").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 /// A message in a conversation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     /// Role of the message sender
     pub role: Role,
     /// Content of the message
-    pub content: String,
+    pub content: MessageContent,
     /// Optional name (for multi-user conversations or tool calls)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -87,12 +188,12 @@ impl Message {
     ///
     /// let msg = Message::user("Hello!");
     /// assert_eq!(msg.role, Role::User);
-    /// assert_eq!(msg.content, "Hello!");
+    /// assert_eq!(msg.content_text(), "Hello!");
     /// ```
     pub fn user(content: impl Into<String>) -> Self {
         Self {
             role: Role::User,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -111,7 +212,7 @@ impl Message {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -130,7 +231,7 @@ impl Message {
     pub fn system(content: impl Into<String>) -> Self {
         Self {
             role: Role::System,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             name: None,
             tool_call_id: None,
             tool_calls: None,
@@ -150,10 +251,39 @@ impl Message {
     pub fn tool(content: impl Into<String>, tool_call_id: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
-            content: content.into(),
+            content: MessageContent::Text(content.into()),
             name: None,
             tool_call_id: Some(tool_call_id.into()),
             tool_calls: None,
+        }
+    }
+
+    /// Create a user message with multimodal content parts.
+    pub fn user_parts(parts: Vec<ContentPart>) -> Self {
+        Self {
+            role: Role::User,
+            content: MessageContent::Parts(parts),
+            name: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// Extract the first text string from the message content.
+    ///
+    /// For `MessageContent::Text`, returns the string directly.
+    /// For `MessageContent::Parts`, returns the text of the first `Text` part.
+    /// Returns `""` if no text is found.
+    pub fn content_text(&self) -> &str {
+        match &self.content {
+            MessageContent::Text(s) => s.as_str(),
+            MessageContent::Parts(parts) => parts
+                .iter()
+                .find_map(|p| match p {
+                    ContentPart::Text { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .unwrap_or(""),
         }
     }
 
@@ -181,7 +311,7 @@ impl Message {
 #[derive(Debug, Clone, Deserialize)]
 struct MessageInputWire {
     role: Role,
-    content: String,
+    content: MessageContent,
     #[serde(default)]
     name: Option<String>,
     #[serde(default, alias = "toolCallId")]
@@ -202,15 +332,35 @@ pub fn parse_messages_value(value: &Value) -> Result<Vec<Message>, String> {
         .into_iter()
         .enumerate()
         .map(|(idx, wire)| {
-            if wire.content.is_empty() {
+            if wire.content.text_len() == 0 {
                 return Err(format!("message[{idx}].content cannot be empty"));
             }
 
+            let content = wire.content;
+
             let mut msg = match wire.role {
-                Role::System => Message::system(wire.content),
-                Role::User => Message::user(wire.content),
+                Role::System => Message {
+                    role: Role::System,
+                    content,
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
+                Role::User => Message {
+                    role: Role::User,
+                    content,
+                    name: None,
+                    tool_call_id: None,
+                    tool_calls: None,
+                },
                 Role::Assistant => {
-                    let mut m = Message::assistant(wire.content);
+                    let mut m = Message {
+                        role: Role::Assistant,
+                        content,
+                        name: None,
+                        tool_call_id: None,
+                        tool_calls: None,
+                    };
                     if let Some(calls) = wire.tool_calls {
                         if !calls.is_empty() {
                             m = m.with_tool_calls(calls);
@@ -222,7 +372,13 @@ pub fn parse_messages_value(value: &Value) -> Result<Vec<Message>, String> {
                     let call_id = wire.tool_call_id.ok_or_else(|| {
                         format!("message[{idx}].tool_call_id is required for tool role")
                     })?;
-                    Message::tool(wire.content, call_id)
+                    Message {
+                        role: Role::Tool,
+                        content,
+                        name: None,
+                        tool_call_id: Some(call_id),
+                        tool_calls: None,
+                    }
                 }
             };
 
@@ -252,7 +408,8 @@ mod tests {
     fn test_message_user() {
         let msg = Message::user("test");
         assert_eq!(msg.role, Role::User);
-        assert_eq!(msg.content, "test");
+        assert_eq!(msg.content, MessageContent::Text("test".to_string()));
+        assert_eq!(msg.content_text(), "test");
         assert_eq!(msg.name, None);
         assert_eq!(msg.tool_call_id, None);
         assert_eq!(msg.tool_calls, None);
@@ -262,7 +419,7 @@ mod tests {
     fn test_message_assistant() {
         let msg = Message::assistant("response");
         assert_eq!(msg.role, Role::Assistant);
-        assert_eq!(msg.content, "response");
+        assert_eq!(msg.content_text(), "response");
         assert_eq!(msg.tool_calls, None);
     }
 
@@ -270,7 +427,7 @@ mod tests {
     fn test_message_system() {
         let msg = Message::system("instruction");
         assert_eq!(msg.role, Role::System);
-        assert_eq!(msg.content, "instruction");
+        assert_eq!(msg.content_text(), "instruction");
         assert_eq!(msg.tool_calls, None);
     }
 
@@ -278,7 +435,7 @@ mod tests {
     fn test_message_tool() {
         let msg = Message::tool("result", "call_123");
         assert_eq!(msg.role, Role::Tool);
-        assert_eq!(msg.content, "result");
+        assert_eq!(msg.content_text(), "result");
         assert_eq!(msg.tool_call_id, Some("call_123".to_string()));
         assert_eq!(msg.tool_calls, None);
     }
@@ -326,5 +483,40 @@ mod tests {
         let msg = Message::user("test").with_name("Alice");
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json.get("name").and_then(|v| v.as_str()), Some("Alice"));
+    }
+
+    #[test]
+    fn test_message_user_text() {
+        let msg = Message::user("hello");
+        assert_eq!(msg.role, Role::User);
+        assert_eq!(msg.content_text(), "hello");
+    }
+
+    #[test]
+    fn test_message_multimodal() {
+        let msg = Message::user_parts(vec![
+            ContentPart::text("what is this?"),
+            ContentPart::image_url("https://example.com/img.jpg"),
+        ]);
+        assert_eq!(msg.content_text(), "what is this?");
+    }
+
+    #[test]
+    fn test_message_content_serialization() {
+        let msg = Message::user("hello");
+        let json = serde_json::to_value(&msg).unwrap();
+        assert_eq!(json["content"], "hello");
+        let msg2 = Message::user_parts(vec![ContentPart::text("hi")]);
+        let json2 = serde_json::to_value(&msg2).unwrap();
+        assert!(json2["content"].is_array());
+    }
+
+    #[test]
+    fn test_message_content_from_string() {
+        let content: MessageContent = "hello".into();
+        assert_eq!(content, MessageContent::Text("hello".to_string()));
+
+        let content: MessageContent = String::from("world").into();
+        assert_eq!(content, MessageContent::Text("world".to_string()));
     }
 }
