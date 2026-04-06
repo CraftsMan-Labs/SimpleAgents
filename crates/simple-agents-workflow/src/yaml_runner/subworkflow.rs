@@ -3,10 +3,11 @@ use std::path::Path;
 use serde_json::{json, Value};
 use simple_agents_core::SimpleAgentsClient;
 
-use super::api::run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options;
+use super::api::workflow_execution;
 use super::contracts::YamlWorkflowCustomWorkerExecutor;
 use super::types::{
-    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions, YamlWorkflowTraceContextInput,
+    YamlWorkflowExecutionFlags, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
+    YamlWorkflowSource, YamlWorkflowTraceContextInput,
 };
 
 use crate::observability::tracing::TraceContext;
@@ -95,17 +96,19 @@ pub(crate) async fn execute_subworkflow_tool_call(
     let subworkflow_options =
         build_subworkflow_options(parent_options, parent_trace_context, resolved_trace_id);
 
-    let output = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-        Path::new(workflow_path),
-        &Value::Object(subworkflow_input),
-        client,
+    use super::types::YamlWorkflowExecutionRequest;
+    let request = YamlWorkflowExecutionRequest {
+        source: YamlWorkflowSource::File(Path::new(workflow_path)),
+        workflow_input: &Value::Object(subworkflow_input),
+        executor: YamlWorkflowExecutorBinding::Client(client),
         custom_worker,
-        None,
-        &subworkflow_options,
-        YamlWorkflowExecutionFlags::default(),
-    )
-    .await
-    .map_err(|error| format!("subworkflow '{}' failed: {}", workflow_id, error))?;
+        options: &subworkflow_options,
+        flags: YamlWorkflowExecutionFlags::default(),
+    };
+
+    let output = workflow_execution::run(request)
+        .await
+        .map_err(|error| format!("subworkflow '{}' failed: {}", workflow_id, error))?;
 
     Ok(json!({
         "workflow_id": workflow_id,

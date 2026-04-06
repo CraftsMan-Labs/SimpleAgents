@@ -74,7 +74,7 @@ pub(super) fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value
         })
 }
 
-pub(super) fn interpolate_template(template: &str, context: &Value) -> String {
+pub(crate) fn interpolate_template(template: &str, context: &Value) -> String {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
 
