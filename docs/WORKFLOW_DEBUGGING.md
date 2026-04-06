@@ -121,7 +121,7 @@ Compare timeline events and retry groups; structural replay validity does not gu
 
 ### Missing timings in output
 
-Language bindings return the same timing fields on the workflow result (`total_elapsed_ms`, `step_timings`, etc.) for canonical APIs: Python `Client.run` / `stream`, Go `Client.Run` / `Stream`, Node `executeWorkflowYaml` / `executeWorkflowYamlStream`, and Rust `WorkflowRunner` (or the compatibility `run_workflow_yaml_*` helpers). If timings are absent, confirm you are reading the returned workflow output object, not only stderr logs.
+Language bindings return the same timing fields on the workflow result (`total_elapsed_ms`, `step_timings`, etc.) for canonical APIs: Python `Client.run` / `stream`, Node `executeWorkflowYaml` / `executeWorkflowYamlStream`, and Rust `WorkflowRunner` (or the compatibility `run_workflow_yaml_*` helpers). If timings are absent, confirm you are reading the returned workflow output object, not only stderr logs.
 
 ### Resume from checkpoint fails
 

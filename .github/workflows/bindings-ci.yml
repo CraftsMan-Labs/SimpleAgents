@@ -26,9 +26,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify workspace Cargo version consistency
         run: ./scripts/verify-workspace-versions.sh
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.21"
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -37,17 +34,6 @@ jobs:
       - uses: astral-sh/setup-uv@v4
       - name: Run cross-language capability contract gates
         run: ./scripts/run-binding-contracts.sh
-
-  go-bindings:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.21"
-      - name: Test Go bindings
-        run: make test-go-bindings
 
   node-bindings:
     runs-on: ubuntu-latest

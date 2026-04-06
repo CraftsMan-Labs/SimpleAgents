@@ -27,7 +27,7 @@ SimpleAgents is designed as a provider-agnostic core with optional capabilities 
 | Providers | API-specific request/response transforms and execution | `simple-agents-providers` |
 | Caching | Response memoization and eviction/TTL policy | `simple-agents-cache` |
 | Healing | JSON repair and schema coercion modes | `simple-agents-healing` |
-| Language surfaces | CLI + FFI + Node + Python entry points | `simple-agents-cli`, `simple-agents-ffi`, `simple-agents-napi`, `simple-agents-py` |
+| Language surfaces | CLI + Node + Python entry points | `simple-agents-cli`, `simple-agents-napi`, `simple-agents-py` |
 
 High-level map:
 
@@ -81,7 +81,6 @@ YAML and code-first workflow surfaces are kept aligned with parity fixtures.
 - Rust verifier: `crates/simple-agents-workflow/tests/workflow_dsl_ir_fixtures.rs`
 - Python verifier: `crates/simple-agents-py/tests/test_contract_fixtures.py`
 - Node verifier: `crates/simple-agents-napi/test/contract.test.js`
-- Go verifier: `bindings/go/contract_fixture_test.go`
 
 When migrating between YAML and code, preserve node ids and edge semantics to keep replay/debug outputs deterministic.
 

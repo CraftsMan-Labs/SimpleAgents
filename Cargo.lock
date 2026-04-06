@@ -2374,19 +2374,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "simple-agents-ffi"
-version = "0.3.6"
-dependencies = [
- "futures-util",
- "serde_json",
- "simple-agent-type",
- "simple-agents-core",
- "simple-agents-providers",
- "simple-agents-workflow",
- "tokio",
-]
-
-[[package]]
 name = "simple-agents-healing"
 version = "0.3.6"
 dependencies = [

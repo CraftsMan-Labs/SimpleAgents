@@ -181,12 +181,10 @@ References:
 
 Rust remains source of truth. Language bindings should wrap Rust behavior, not re-implement core logic.
 
-- FFI: `sa_run_workflow_yaml*` returns JSON output from Rust runner.
-- Go: `Client.Run(...)` / `RunAsync(...)` / `Stream(...)` delegate through FFI (legacy `RunWorkflowYAML*` wrappers retained).
 - Node: `Client.executeWorkflowYaml(...)` / `executeWorkflowYamlStream(...)` delegate through Rust typed execution (legacy `runWorkflowYaml*` wrappers retained).
 - Python: `Client.run(...)` / `run_async(...)` / `stream(...)` delegate through Rust typed execution (legacy `run_workflow_yaml*` wrappers retained).
 
-**Binding parity note:** The `simple_agents_py.workflow_stream` helpers (`workflow_event_callback`, `stream_workflow`) are **Python-only** convenience for mapping workflow events to structured hook methods. Node.js callers use JSON `onEvent` callbacks (or `executeWorkflowYamlStream` with `splitStreamDeltas`). The **`split_stream_deltas`** execution flag is **cross-cutting**: it is implemented in Rust, parsed from Python `execution` objects, and exposed as optional `splitStreamDeltas` on `WorkflowYamlRunRequest` in the N-API binding, and as JSON `workflow_execution_flags_json` on the C/Go stream entrypoint.
+**Binding parity note:** The `simple_agents_py.workflow_stream` helpers (`workflow_event_callback`, `stream_workflow`) are **Python-only** convenience for mapping workflow events to structured hook methods. Node.js callers use JSON `onEvent` callbacks (or `executeWorkflowYamlStream` with `splitStreamDeltas`). The **`split_stream_deltas`** execution flag is **cross-cutting**: it is implemented in Rust, parsed from Python `execution` objects, and exposed as optional `splitStreamDeltas` on `WorkflowYamlRunRequest` in the N-API binding.
 
 All binding outputs include terminal output, trace, per-step timing, and total runtime.
 

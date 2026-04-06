@@ -10,7 +10,7 @@ This section describes **inherent risks** of a YAML-driven agent runtime and wha
 | `custom_worker.handler` | Resolved only inside **host-provided** executors (Python/Node/etc.) | YAML chooses **which registered handler name** to invoke | Host must enforce allowlists and safe handlers |
 | LLM providers | Network egress, API keys | Remote model behavior | Standard prompt-injection and data-exfiltration concerns |
 | File-based workflow load | Paths chosen by host | Symlinks, oversized files | Code uses `canonicalize`, metadata checks, extension allowlist, size/depth limits (see `WORKFLOW_SECURITY.md`) |
-| FFI / WASM | Host process | Callers of `unsafe` C API or browser context | Memory safety and secret exposure depend on caller discipline |
+| WASM | Host process | Browser context callers | Secret exposure risk depends on browser security posture and XSS controls |
 
 ## Controls already documented in-repo
 
@@ -28,7 +28,7 @@ This section describes **inherent risks** of a YAML-driven agent runtime and wha
 
 2. **WASM client patterns** (`bindings/wasm/...`) accept `api_key` in the JS-facing API. In a browser, any secret passed into WASM/JS is **exposed to XSS** and should not be treated as a secure vault. Document “server-side only” or proxy patterns for production.
 
-3. **FFI (`simple-agents-ffi`)** — Expected `unsafe` for C ABI. Consumers must respect documented allocation ownership (`sa_string_free`, etc.). Risk is **incorrect host usage**, not necessarily a defect in the crate.
+3. **WASM/browser key handling** — Browser integrations should avoid embedding long-lived provider keys in client code. Use short-lived tokens or a server proxy for production.
 
 4. **Example `handlers.py`** — Demo logic treats certain substrings in user content as policy violations. That is **not an authentication or authorization control**; security reviewers may flag it unless clearly labeled as demo-only.
 

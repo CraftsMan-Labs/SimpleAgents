@@ -14,7 +14,6 @@ This document explains how the Rust crates in `crates/` fit together, what each 
 
 Language/runtime surfaces sit on top:
 - CLI: `simple-agents-cli`
-- C FFI: `simple-agents-ffi`
 - Node: `simple-agents-napi`
 - Python: `simple-agents-py`
 
@@ -62,7 +61,6 @@ Macro support:
 
 ### Interface crates
 - `simple-agents-cli`: command-line UX (complete/chat/benchmark/test-provider + workflow trace/replay/inspect/mermaid).
-- `simple-agents-ffi`: stable C ABI surface.
 - `simple-agents-napi`: Node API.
 - `simple-agents-py`: Python API + schema/healing helpers.
 - `simple-agents-macros`: derive macro for partial streaming types.

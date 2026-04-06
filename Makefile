@@ -1,18 +1,16 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-go-chat-history run-python-chat-history run-node-chat-history run-wasm-chat-history run-rust-chat-history ensure-wasm-bindgen \
-	release-ffi release-python release-go release-node release-all \
-	build-node test-node build-wasm test-wasm publish-node publish-wasm test-go-bindings \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-python-chat-history run-node-chat-history run-wasm-chat-history run-rust-chat-history ensure-wasm-bindgen \
+	release-python release-node release-all \
+	build-node test-node build-wasm test-wasm publish-node publish-wasm \
 	publish-node-doppler \
 	npm-login \
 	publish-crates publish-python publish-all \
 	check-publish publish-crates-dry publish-python-dry node-package-dry-run wasm-package-dry-run \
-	python-typecheck go-vet go-staticcheck rust-check-all node-typecheck \
+	python-typecheck rust-check-all node-typecheck \
 	version-get version-sync verify-workspace-versions version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
 EXAMPLE ?= basic_healing
 RUST_RELEASE_DIR ?= target/release
-GO_BINDINGS_DIR ?= bindings/go
-GO_CACHE_DIR ?= $(CURDIR)/.go-cache
 PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
 PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
@@ -30,11 +28,10 @@ EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type \
 	simple-agents-healing simple-agents-providers \
-	simple-agents-core simple-agents-workflow simple-agents-ffi
+	simple-agents-core simple-agents-workflow
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
 WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
-GO_CHAT_FLAGS ?= --stream --show-thinking
 PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
 NODE_CHAT_FLAGS ?= --stream --show-thinking
 WASM_CHAT_FLAGS ?= --max-turns 3
@@ -43,7 +40,6 @@ JS_RUNTIME ?= node
 WASM_BINDGEN_CLI_VERSION ?= 0.2.117
 CARGO_HOME ?= $(HOME)/.cargo
 PYRIGHT_VERSION ?= 1.1.405
-GO_STATICCHECK_VERSION ?= v0.7.0
 
 help:
 	@echo "Testing & Quality:"
@@ -58,7 +54,6 @@ help:
 	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
 	@echo "  make example-full-api      - Run examples/full_api_example.rs"
 	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
-	@echo "  make run-go-chat-history   - Run Go chat-history workflow example (WORKFLOW_YAML=... GO_CHAT_FLAGS='...')"
 	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
 	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
 	@echo "  make run-wasm-chat-history - Run WASM chat-history workflow quick check (WORKFLOW_YAML=... WASM_CHAT_FLAGS='...')"
@@ -66,9 +61,7 @@ help:
 	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
-	@echo "  make release-ffi           - Build C FFI library (for Go/C/other langs)"
 	@echo "  make release-python        - Build Python wheels via uv"
-	@echo "  make release-go            - Build Go bindings against release FFI"
 	@echo "  make release-node          - Build Node napi module (Rust cdylib)"
 	@echo "  make build-node            - npm install + napi build (Node package)"
 	@echo "  make build-wasm            - npm install for wasm JS package"
@@ -77,10 +70,7 @@ help:
 	@echo "Testing:"
 	@echo "  make test-node             - Build Node addon then run node --test"
 	@echo "  make test-wasm             - Run WASM JS binding tests"
-	@echo "  make test-go-bindings      - Build FFI + run Go binding tests"
 	@echo "  make python-typecheck      - Run pinned pyright checks"
-	@echo "  make go-vet                - Run go vet on Go bindings"
-	@echo "  make go-staticcheck        - Run pinned staticcheck on Go bindings"
 	@echo "  make rust-check-all        - Run cargo check on all targets/features"
 	@echo "  make node-typecheck        - Run TypeScript checks for Node bindings"
 	@echo "  make node-package-dry-run  - Validate Node package publish payload"
@@ -150,18 +140,6 @@ example-node: build-node
 
 examples: example-providers example-full-api example-node
 
-run-go-chat-history: release-ffi
-	@set -a; \
-	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	cd $(GO_BINDINGS_DIR) && \
-	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
-	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	GOCACHE="$(GO_CACHE_DIR)" \
-	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-	go run ./examples/workflow_chat_history --workflow ../../$(WORKFLOW_YAML) $(GO_CHAT_FLAGS)
-
 run-python-chat-history:
 	@set -a; \
 	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
@@ -190,19 +168,8 @@ run-rust-chat-history:
 	set +a; \
 	cargo run --manifest-path examples/Cargo.toml --example workflow_chat_history_rust -- --workflow $(WORKFLOW_YAML) $(RUST_CHAT_FLAGS)
 
-release-ffi:
-	cargo build -p simple-agents-ffi --release
-
 release-python:
 	cd $(PYTHON_PROJECT_DIR) && uv build
-
-release-go: release-ffi
-	cd $(GO_BINDINGS_DIR) && \
-	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
-	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	GOCACHE="$(GO_CACHE_DIR)" \
-	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-	go build ./...
 
 release-node:
 	cargo build -p $(NAPI_CRATE) --release
@@ -226,7 +193,7 @@ ensure-wasm-bindgen:
 build-wasm: ensure-wasm-bindgen
 	cd $(WASM_PACKAGE_DIR) && PATH="$(CARGO_HOME)/bin:$$PATH" npm install && PATH="$(CARGO_HOME)/bin:$$PATH" npm run build
 
-release-all: release-ffi release-python release-go release-node
+release-all: release-python release-node
 
 test-node: build-node
 	@set -a; \
@@ -237,33 +204,9 @@ test-node: build-node
 test-wasm: build-wasm
 	cd $(WASM_PACKAGE_DIR) && npm test
 
-test-go-bindings: release-ffi
-	cd $(GO_BINDINGS_DIR) && \
-	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
-	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	GOCACHE="$(GO_CACHE_DIR)" \
-	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-	go test ./...
-
 python-typecheck:
 	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p pyrightconfig.json
 	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p examples/pyrightconfig.json
-
-go-vet: release-ffi
-	cd $(GO_BINDINGS_DIR) && \
-	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
-	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	GOCACHE="$(GO_CACHE_DIR)" \
-	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-	go vet ./...
-
-go-staticcheck: release-ffi
-	cd $(GO_BINDINGS_DIR) && \
-	CGO_CFLAGS="-I$(PWD)/crates/simple-agents-ffi/include" \
-	CGO_LDFLAGS="-L$(PWD)/$(RUST_RELEASE_DIR)" \
-	GOCACHE="$(GO_CACHE_DIR)" \
-	LD_LIBRARY_PATH="$(PWD)/$(RUST_RELEASE_DIR):$$LD_LIBRARY_PATH" \
-	go run honnef.co/go/tools/cmd/staticcheck@$(GO_STATICCHECK_VERSION) ./...
 
 rust-check-all:
 	cargo check --workspace --all-targets --all-features
@@ -338,10 +281,6 @@ check-publish:
 	@echo ""
 	@echo "==> Running Python type checks..."
 	@$(MAKE) python-typecheck
-	@echo ""
-	@echo "==> Running Go static checks..."
-	@$(MAKE) go-vet
-	@$(MAKE) go-staticcheck
 	@echo ""
 	@echo "==> Running Rust workspace checks..."
 	@$(MAKE) rust-check-all

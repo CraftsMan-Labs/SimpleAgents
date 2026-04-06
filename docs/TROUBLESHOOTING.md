@@ -9,7 +9,6 @@ Common issues and fast checks for core and binding workflows.
   - If needed, set `CUSTOM_API_BASE`.
 - Node tests skip live coverage without env by design.
 - Python tests skip live streaming checks without env by design.
-- Go live tests skip when provider/model/key are not set.
 
 ## Binding Contract Failures
 
@@ -24,15 +23,6 @@ Common issues and fast checks for core and binding workflows.
   - Symbol missing in generated declarations or stubs.
   - Binding API changed without fixture updates.
   - Streaming event shape changed without parity updates.
-
-## FFI and Go Linking Issues
-
-- Ensure the FFI library builds before Go tests.
-- Use the repository `make` target (it wires include/link flags correctly):
-
-```bash
-make test-go-bindings
-```
 
 ## Python Test Runtime Issues
 

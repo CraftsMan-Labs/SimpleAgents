@@ -50,7 +50,6 @@ export default defineConfig({
         items: [
           { text: "Python", link: "/BINDINGS_PYTHON" },
           { text: "Node.js / TypeScript", link: "/BINDINGS_NODE" },
-          { text: "Go", link: "/BINDINGS_GO" },
           { text: "Capability Matrix", link: "/CAPABILITY_MATRIX" },
         ],
       },

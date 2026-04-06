@@ -11,7 +11,6 @@ Only two crates currently expose Cargo feature flags.
 |---|---|---|---|
 | `simple-agent-type` | n/a | none | No `[features]` section |
 | `simple-agents-core` | n/a | none | No `[features]` section |
-| `simple-agents-ffi` | n/a | none | No `[features]` section |
 | `simple-agents-healing` | `[]` | `regex-support = ["regex"]` | Enables regex-based unquoted-key fixing in parser |
 | `simple-agents-napi` | n/a | none | No `[features]` section |
 | `simple-agents-providers` | `[]` | `prometheus = ["dep:metrics-exporter-prometheus"]` | Enables Prometheus exporter support in metrics module |
@@ -58,12 +57,6 @@ Only two crates currently expose Cargo feature flags.
 - Schema model (`Schema`, `ObjectSchema`, `Field`).
 - Streaming parse support (`StreamingParser`).
 - Optional regex-powered unquoted-key repair (`regex-support`).
-
-### `simple-agents-ffi`
-- C-compatible API for client lifecycle, completions, and workflows.
-- Completion: `sa_complete`, `sa_stream`.
-- Workflow: `sa_run_workflow`, `sa_stream_workflow`, `sa_resume`.
-- Error handling: `sa_last_error_message`, `sa_string_free`.
 
 ### `simple-agents-napi`
 - Node.js `Client` class via NAPI.

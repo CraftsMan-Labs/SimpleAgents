@@ -17,7 +17,6 @@ SimpleAgents/
 │   ├── simple-agents-healing/     # JSON healing + schema coercion
 │   ├── simple-agents-macros/      # Proc macros (PartialType)
 │   ├── simple-agents-cli/         # CLI
-│   ├── simple-agents-ffi/         # C ABI
 │   ├── simple-agents-napi/        # Node bindings
 │   └── simple-agents-py/          # Python bindings
 ├── docs/                          # Documentation site
@@ -34,7 +33,7 @@ SimpleAgents/
 - `simple-agents-healing`: JSON-ish parsing and schema coercion.
 - `simple-agents-cache`: cache implementations.
 - `simple-agents-cli`: CLI interface.
-- `simple-agents-ffi` / `simple-agents-napi` / `simple-agents-py`: language bindings.
+- `simple-agents-napi` / `simple-agents-py`: language bindings.
 - `simple-agents-macros`: proc macros for partial streaming types.
 
 ## Building
@@ -98,7 +97,7 @@ cargo test -p simple-agents-healing
 make test-binding-layers
 ```
 
-This runs unit + contract checks for Go/Node/Python by default, and runs live suites only when credentials are provided.
+This runs unit + contract checks for Node/Python by default, and runs live suites only when credentials are provided.
 
 ### Run Workflow Runtime Benchmarks
 

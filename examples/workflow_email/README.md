@@ -29,24 +29,20 @@ Primary workflow file:
 - `check_fragments.py`: validates variant workflows stay aligned with shared mapping fragment
 - `python/`: Python run docs
 - `node/`: Node/npm run docs (`npm_email_workflow_example.js`)
-- `go/`: Go run docs (uses `bindings/go/examples/workflow_email/main.go`)
 
 ## Implementation Plan
 
 1. Reuse existing workflow YAML files so behavior remains consistent across languages.
 2. Add a minimal npm example (`node/npm_email_workflow_example.js`) that maps workflow env vars and runs `runWorkflowYaml`.
-3. Add a minimal Go example (`bindings/go/examples/workflow_email/main.go`) that maps workflow env vars and runs `RunWorkflowYAML`.
-4. Update language-specific docs (`node/README.md`, `go/README.md`) and this top-level README with run commands.
-5. Keep advanced custom-worker examples available separately for deeper integration demos.
+3. Update language-specific docs (`node/README.md`) and this top-level README with run commands.
+4. Keep advanced custom-worker examples available separately for deeper integration demos.
 
 ```mermaid
 flowchart LR
     A[User input email text] --> B[Load WORKFLOW_* env]
     B --> C{Language example}
     C -->|npm| D[Node Client.runWorkflowYaml]
-    C -->|Go| E[Go Client.RunWorkflowYAML]
     D --> F[Rust workflow engine executes YAML]
-    E --> F
     F --> G[JSON result: terminal_output, timings, token metrics, total_elapsed_ms]
 ```
 
@@ -148,7 +144,7 @@ uv run --directory examples python workflow_email/run_with_chat_history.py
 make run-python-chat-history
 ```
 
-Node/Go/chat parity command snippets are maintained in one place:
+Node/Python chat command snippets are maintained in one place:
 
 - `examples/workflow_email/snippets/chat_history_commands.md`
 
@@ -267,59 +263,3 @@ Custom-worker bridge demo (executes real JavaScript handlers for `custom_worker`
 node examples/workflow_email/run_with_node_package.js
 ```
 
-## Go (package API)
-
-Use the Go binding and call `RunWorkflowYAML`:
-
-```go
-ctx := context.Background()
-client, err := simpleagents.NewClientFromEnv("openai")
-if err != nil {
-    panic(err)
-}
-defer client.Close()
-
-out, err := client.RunWorkflowYAML(
-    ctx,
-    "examples/workflow_email/email-intake-classification.yaml",
-    map[string]any{"email_text": "Termination request, second warning already issued"},
-)
-if err != nil {
-    panic(err)
-}
-
-fmt.Println(out.TerminalOutput)
-fmt.Println(out.StepTimings)
-fmt.Println(out.TotalElapsedMS)
-```
-
-Ready-to-run helper file:
-
-```bash
-cargo build -p simple-agents-ffi --release
-CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/target/release" \
-LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
-go run ./bindings/go/examples/workflow_email
-```
-
-Run every workflow YAML in `examples/workflow_email/*.yaml` with shared input:
-
-```bash
-cargo build -p simple-agents-ffi --release
-CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/target/release" \
-LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
-go run ./bindings/go/examples/workflow_email_all \
-  "Please process damaged order 9921 and suggest next actions"
-```
-
-When running locally in this repo, ensure FFI library is built and linker flags are set:
-
-```bash
-cargo build -p simple-agents-ffi --release
-CGO_CFLAGS="-I$PWD/crates/simple-agents-ffi/include" \
-CGO_LDFLAGS="-L$PWD/target/release" \
-LD_LIBRARY_PATH="$PWD/target/release:${LD_LIBRARY_PATH:-}" \
-go test ./...
-```

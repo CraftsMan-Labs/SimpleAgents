@@ -19,7 +19,7 @@ for event in client.stream("workflow.yaml", [Message(role=Role.USER, content="he
 ```
 
 **Core principles:**
-- Rust core, bindings for Python, Node/TS, Go, WASM
+- Rust core, bindings for Python, Node/TS, WASM
 - Low memory footprint
 - `Vec<Message>` is THE universal input — everywhere, always, typed objects never dicts
 - Outputs are either structured (matching `output_schema` with healing/coercion) or plain string — nothing between
@@ -36,7 +36,7 @@ for event in client.stream("workflow.yaml", [Message(role=Role.USER, content="he
 
 ### Line counts:
 - **Total Rust:** 56,264 lines across 13 crates
-- **Bindings (Go/WASM JS):** 27,189 lines
+- **Bindings (WASM JS):** 27,189 lines
 - **Total project (all code):** 345,216 lines
 - **Documentation files:** 173 markdown files
 
@@ -50,7 +50,6 @@ for event in client.stream("workflow.yaml", [Message(role=Role.USER, content="he
 | `simple-agents-py` | 3,531 | **REWRITE** — strip to 5-method API |
 | `simple-agents-router` | 1,785 | **DELETE entirely** |
 | `simple-agents-napi` | 1,739 | **REWRITE** — strip to 5-method API |
-| `simple-agents-ffi` | 1,530 | **REWRITE** — strip to minimal C API |
 | `simple-agents-core` | 1,452 | **SIMPLIFY** — remove routing/middleware/cache |
 | `simple-agents-cli` | 1,279 | **DELETE entirely** |
 | `simple-agents-macros` | 511 | **DELETE entirely** |
@@ -60,7 +59,6 @@ for event in client.stream("workflow.yaml", [Message(role=Role.USER, content="he
 ### Binding locations:
 - **Python:** `crates/simple-agents-py/` (PyO3/Maturin)
 - **Node/TS:** `crates/simple-agents-napi/` (napi-rs)
-- **Go:** `crates/simple-agents-ffi/` (C FFI) + `bindings/go/` (CGO wrapper)
 - **WASM:** `bindings/wasm/simple-agents-wasm/` (wasm-bindgen, **has its own separate workflow engine** — must be rewritten)
 
 ---
@@ -95,7 +93,7 @@ for event in client.stream("workflow.yaml", [Message(role=Role.USER, content="he
 8. **Nerdstats** — TTFT, token counts (input/output/reasoning), model name, tokens/sec — behind feature flag
 9. **Telemetry** — Jaeger + Langfuse via OTLP. Explicit code config primary, env var fallback
 10. **Routing DELETED** — user requirement #10, too much responsibility for this package
-11. **All five languages** — Rust, Python, Node/TS, Go, WASM
+11. **All supported languages** — Rust, Python, Node/TS, WASM
 
 ---
 
@@ -160,7 +158,6 @@ simple-agents-healing    (~1,800 lines)  — JsonishParser, CoercionEngine, Sche
 simple-agents-providers  (~2,500 lines)  — One OpenAI-compatible HTTP provider + SSE streaming
 simple-agents-core       (~1,300 lines)  — SimpleAgentsClient (complete, stream_complete, run, stream, resume)
 simple-agents-workflow   (~2,200 lines)  — YAML loader + state machine executor + events + recovery
-simple-agents-ffi        (~900 lines)    — C ABI for Go
 simple-agents-py         (~900 lines)    — PyO3 binding
 simple-agents-napi       (~700 lines)    — Node binding
 simple-agents-wasm       (~700 lines)    — WASM binding (uses engine via wasm-bindgen)
@@ -354,7 +351,6 @@ pub struct WorkflowCheckpoint {
 ### Phase 6: Rebuild Bindings
 - Python: strip to 5-method API with typed Message/Role/ContentPart
 - Node: strip to 5-method API
-- Go: strip FFI + wrapper to minimal surface
 - WASM: rewrite to use real engine
 
 ### Phase 7: Cleanup

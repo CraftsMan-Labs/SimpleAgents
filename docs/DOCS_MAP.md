@@ -25,7 +25,6 @@ Use this page to jump to the right guide by role and task.
 3. One binding guide:
    - [Python Binding](/BINDINGS_PYTHON)
    - [Node.js / TypeScript Binding](/BINDINGS_NODE)
-   - [Go Binding](/BINDINGS_GO)
    - [Browser/WASM Binding](/BINDINGS_WASM)
 4. [Cross-Language Capability Matrix](/CAPABILITY_MATRIX)
 
@@ -70,7 +69,7 @@ Use this page to jump to the right guide by role and task.
 - First workflow path: [Workflow Quickstart](/WORKFLOW_QUICKSTART)
 - Provider/routing/streaming patterns: [Usage Guide](/USAGE)
 - End-to-end snippets: [Examples](/EXAMPLES)
-- Binding entry points: [Python](/BINDINGS_PYTHON), [Node](/BINDINGS_NODE), [Go](/BINDINGS_GO), [WASM](/BINDINGS_WASM)
+- Binding entry points: [Python](/BINDINGS_PYTHON), [Node](/BINDINGS_NODE), [WASM](/BINDINGS_WASM)
 - Contract and parity checks: [Capability Matrix](/CAPABILITY_MATRIX)
 - Workflow incident debugging: [Workflow Debugging UX](/WORKFLOW_DEBUGGING)
 - Release readiness: [Release Checklist](/RELEASE_CHECKLIST)
