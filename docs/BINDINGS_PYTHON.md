@@ -237,11 +237,19 @@ streamed = client.stream(request, on_event=lambda event: print(event.get("event_
 
 - **Low-level (full control):** `Client.stream(request, on_event=...)`.
 - **Structured hooks (recommended):** `stream_workflow(client, request, hooks=...)` or `stream_workflow(client, request, on_event=...)` — *not both*.
-- **Typed requests (Pydantic):** `pip install simple-agents-py[pydantic]`, then `from simple_agents_py.workflow_request import WorkflowExecutionRequest` and pass the model to `stream_workflow` / `run_workflow_request` / `run_workflow_request_async` (no hand-maintained dicts). Plain `dict` requests still work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
+- **Terminal printing without callbacks:** `stream_workflow(..., stream_display="merged")` prints merged `node_stream_delta` tokens; `stream_display="split"` prints thinking vs output deltas and turns on `split_stream_deltas` when execution defaults are merged. Incompatible with `hooks` / `on_event`.
+- **Path override helper:** `run_workflow_yaml_stream_typed(client, request, workflow_path=Path(...))` coerces the path string sent to Rust.
+- **Typed requests (Pydantic):** `pip install simple-agents-py[pydantic]`, then import from `simple_agents_py.workflow_request`:
+  - `WorkflowExecutionRequest` with `workflow_path` as `str`, `pathlib.Path`, or any `os.PathLike[str]`
+  - `WorkflowMessage` with `WorkflowRole` (`system`, `user`, `assistant`, `tool`) or a string role
+  - `WorkflowInput` for per-workflow fields (`WorkflowInput(email_text="...")` instead of a dict)
+  - `WorkflowRunOptions` with nested `WorkflowTelemetryConfig` and `WorkflowTraceConfig` (keys must match Rust `YamlWorkflowRunOptions`; arbitrary extra keys are rejected by the runner)
+
+Pass the model to `stream_workflow` / `run_workflow_request` / `run_workflow_request_async`. Plain `dict` requests still work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
 
 Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
 
-**Split thinking vs. merged stream deltas.** Set `execution["split_stream_deltas"] = True` on the request when you want separate thinking vs output stream events.
+**Split thinking vs. merged stream deltas.** Set `execution["split_stream_deltas"] = True` on the request when you want separate thinking vs output stream events, or use `stream_display="split"` on `stream_workflow`.
 
 ### Live Workflow Events + LLM Deltas
 

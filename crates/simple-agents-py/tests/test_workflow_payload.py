@@ -73,9 +73,15 @@ def test_stream_workflow_merges_partial_execution() -> None:
 
 def test_pydantic_workflow_execution_request_roundtrip() -> None:
     pytest.importorskip("pydantic")
+    from pathlib import Path
+
     from simple_agents_py.workflow_request import (
         WorkflowExecutionRequest,
+        WorkflowInput,
         WorkflowMessage,
+        WorkflowRole,
+        WorkflowRunOptions,
+        WorkflowTelemetryConfig,
     )
 
     req = WorkflowExecutionRequest(
@@ -87,3 +93,59 @@ def test_pydantic_workflow_execution_request_roundtrip() -> None:
     assert body["workflow_path"] == "demo.yaml"
     assert body["messages"] == [{"role": "user", "content": "hello"}]
     assert "execution" not in body
+
+    path_req = WorkflowExecutionRequest(
+        workflow_path=Path("/tmp/w.yaml"),
+        messages=[WorkflowMessage(role=WorkflowRole.USER, content="x")],
+    )
+    assert workflow_execution_request_to_mapping(path_req)["workflow_path"] == "/tmp/w.yaml"
+
+    with_input = WorkflowExecutionRequest(
+        workflow_path="w.yaml",
+        messages=[WorkflowMessage(role="user", content="a")],
+        input=WorkflowInput(email_text="hello"),
+    )
+    assert workflow_execution_request_to_mapping(with_input)["input"] == {"email_text": "hello"}
+
+    opts = WorkflowRunOptions(
+        model="gpt-4o-mini",
+        telemetry=WorkflowTelemetryConfig(nerdstats=True),
+    )
+    req_opts = WorkflowExecutionRequest(
+        workflow_path="w.yaml",
+        messages=[WorkflowMessage(role="user", content="hi")],
+        workflow_options=opts,
+    )
+    wo = workflow_execution_request_to_mapping(req_opts)["workflow_options"]
+    assert wo["model"] == "gpt-4o-mini"
+    assert wo["telemetry"] == {"nerdstats": True}
+
+
+def test_stream_workflow_stream_display_incompatible_with_hooks() -> None:
+    client = unittest.mock.Mock()
+    with pytest.raises(ValueError, match="stream_display"):
+        stream_workflow(
+            client,
+            {"workflow_path": "w", "messages": [{"role": "user", "content": "c"}]},
+            object(),
+            stream_display="merged",
+        )
+
+
+def test_stream_workflow_split_sets_split_stream_deltas() -> None:
+    client = unittest.mock.Mock()
+    captured: dict = {}
+
+    def capture_stream(*args: object, **kwargs: object) -> dict:
+        captured["payload"] = args[0]
+        return {}
+
+    client.stream.side_effect = capture_stream
+    stream_workflow(
+        client,
+        {"workflow_path": "w.yaml", "messages": [{"role": "user", "content": "hi"}]},
+        stream_display="split",
+    )
+    ex = captured["payload"]["execution"]
+    assert ex["split_stream_deltas"] is True
+    assert ex["node_llm_streaming"] is True

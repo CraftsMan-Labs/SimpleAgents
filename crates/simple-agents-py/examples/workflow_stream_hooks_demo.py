@@ -9,13 +9,18 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 from typing import Any, Mapping
 
 from simple_agents_py import Client
 from simple_agents_py.workflow_request import (
     WorkflowExecutionFlags,
     WorkflowExecutionRequest,
+    WorkflowInput,
     WorkflowMessage,
+    WorkflowRole,
+    WorkflowRunOptions,
+    WorkflowTelemetryConfig,
 )
 from simple_agents_py.workflow_stream import stream_workflow
 
@@ -36,11 +41,13 @@ class Hooks:
 
 
 def main() -> None:
-    workflow_path = os.environ.get(
-        "SIMPLE_AGENTS_DEMO_WORKFLOW",
-        "examples/workflow_email/email-intake-classification.yaml",
+    workflow_path = Path(
+        os.environ.get(
+            "SIMPLE_AGENTS_DEMO_WORKFLOW",
+            "examples/workflow_email/email-intake-classification.yaml",
+        )
     )
-    if not os.path.isfile(workflow_path):
+    if not workflow_path.is_file():
         print(
             f"Set SIMPLE_AGENTS_DEMO_WORKFLOW to a YAML file (missing: {workflow_path})",
             file=sys.stderr,
@@ -51,15 +58,18 @@ def main() -> None:
     request = WorkflowExecutionRequest(
         workflow_path=workflow_path,
         messages=[
-            WorkflowMessage(role="user", content="Classify: short resignation note."),
+            WorkflowMessage(role=WorkflowRole.USER, content="Classify: short resignation note."),
         ],
-        input={
-            "email_text": "I am resigning effective Friday. Thanks for everything.",
-        },
+        input=WorkflowInput(
+            email_text="I am resigning effective Friday. Thanks for everything.",
+        ),
         execution=WorkflowExecutionFlags(
             workflow_streaming=True,
             node_llm_streaming=True,
             split_stream_deltas=True,
+        ),
+        workflow_options=WorkflowRunOptions(
+            telemetry=WorkflowTelemetryConfig(nerdstats=True),
         ),
     )
     result = stream_workflow(client, request, Hooks())

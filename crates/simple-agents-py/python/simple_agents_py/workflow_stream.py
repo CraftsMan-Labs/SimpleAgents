@@ -32,9 +32,13 @@ Rust applies (nothing is “invisible default”). :func:`stream_workflow` merge
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Protocol
+import sys
+from pathlib import Path
+from typing import Any, Callable, Literal, Mapping, Protocol
 
 from .workflow_payload import workflow_execution_request_to_mapping
+
+StreamDisplayMode = Literal["off", "merged", "split"]
 
 WorkflowStreamEvent = Mapping[str, Any]
 
@@ -100,6 +104,80 @@ class WorkflowStreamHooks(Protocol):
     pass
 
 
+def make_terminal_stream_printer(
+    mode: Literal["merged", "split"],
+) -> Callable[[WorkflowStreamEvent], None]:
+    """Print LLM stream tokens to stdout (CLI-style), similar to ``run_with_chat_history --stream``.
+
+    * **merged** — print ``node_stream_delta`` only.
+    * **split** — print ``node_stream_thinking_delta`` and ``node_stream_output_delta`` only
+      (set ``execution.split_stream_deltas=True`` on the request, or use ``stream_workflow`` with
+      ``stream_display='split'`` which sets it when merging execution defaults).
+    """
+
+    state: dict[str, Any] = {"current_node": None, "line_open": False, "last_token_label": None}
+
+    def on_event(event: WorkflowStreamEvent) -> None:
+        event_type = event.get("event_type")
+        node_id = event.get("node_id")
+        step_id = event.get("step_id")
+        delta = event.get("delta")
+        token_kind = event.get("token_kind")
+        is_terminal_node_token = event.get("is_terminal_node_token")
+
+        if mode == "merged":
+            is_stream = event_type == "node_stream_delta"
+        else:
+            is_stream = event_type in (
+                "node_stream_thinking_delta",
+                "node_stream_output_delta",
+            )
+
+        if is_stream and isinstance(delta, str):
+            display_node_id: str | None = None
+            if isinstance(node_id, str):
+                display_node_id = node_id
+            elif isinstance(step_id, str):
+                display_node_id = step_id
+            step_name = display_node_id or "?"
+            current_node = state.get("current_node")
+            line_open = bool(state.get("line_open", False))
+            if current_node != display_node_id:
+                if line_open:
+                    print(file=sys.stdout)
+                print(f"\nStep: {step_name}", file=sys.stdout)
+                print("Streaming:", end=" ", flush=True, file=sys.stdout)
+                state["current_node"] = display_node_id
+                state["line_open"] = True
+                state["last_token_label"] = None
+
+            if mode == "split":
+                token_label_parts: list[str] = []
+                if isinstance(token_kind, str) and token_kind.strip():
+                    token_label_parts.append(token_kind.strip())
+                if is_terminal_node_token is True:
+                    token_label_parts.append("terminal")
+                token_label = (
+                    f"[{' '.join(token_label_parts)}] " if token_label_parts else ""
+                )
+                last_token_label = state.get("last_token_label")
+                if token_label and token_label != last_token_label:
+                    if line_open:
+                        print(file=sys.stdout)
+                    print(f"{token_label}{step_name}: ", end="", flush=True, file=sys.stdout)
+                    state["last_token_label"] = token_label
+                    state["line_open"] = True
+                print(delta, end="", flush=True, file=sys.stdout)
+            else:
+                print(delta, end="", flush=True, file=sys.stdout)
+            return
+
+        if event_type in {"workflow_started", "workflow_completed"}:
+            return
+
+    return on_event
+
+
 def workflow_event_callback(hooks: Any) -> Callable[[WorkflowStreamEvent], Any]:
     """Build an ``on_event`` handler that dispatches to named methods on *hooks*.
 
@@ -140,16 +218,21 @@ def stream_workflow(
     hooks: Any | None = None,
     *,
     on_event: Callable[[WorkflowStreamEvent], Any] | None = None,
+    stream_display: StreamDisplayMode | None = None,
     merge_execution_defaults: bool = True,
 ) -> Any:
-    """Stream a workflow with optional structured *hooks* or a raw *on_event* callback.
+    """Stream a workflow with optional structured *hooks*, *on_event*, or terminal *stream_display*.
 
     *request* may be a mapping or a Pydantic
     :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`.
 
-    Pass **only one** of *hooks* or *on_event*. If both are omitted, uses
-    ``Client.stream`` without a live callback (events recorded on the result when
-    applicable).
+    Pass **only one** of *hooks*, *on_event*, or a non-off *stream_display*. If all are
+    omitted (or *stream_display* is ``\"off\"``), uses ``Client.stream`` without a live
+    callback (events recorded on the result when applicable).
+
+    *stream_display* ``\"merged\"`` prints merged ``node_stream_delta`` tokens;
+    ``\"split\"`` prints thinking vs output deltas and forces ``split_stream_deltas`` when
+    *merge_execution_defaults* is True.
 
     When *merge_execution_defaults* is True (default), if the payload has an
     ``execution`` key that is a mapping, it is merged with
@@ -157,16 +240,65 @@ def stream_workflow(
     mapping (better logs and no “silent” defaults).
     """
     payload = workflow_execution_request_to_mapping(request)
+    display = stream_display or "off"
+    if display not in ("off", "merged", "split"):
+        raise ValueError('stream_display must be "off", "merged", or "split"')
+
+    if display != "off":
+        if hooks is not None or on_event is not None:
+            raise ValueError(
+                "stream_display is incompatible with hooks and on_event; pick one"
+            )
+
     if merge_execution_defaults:
         ex = payload.get("execution")
         if isinstance(ex, Mapping):
             payload["execution"] = merge_workflow_execution(ex)
+        elif display == "split":
+            payload["execution"] = merge_workflow_execution(None)
+
+    if display == "split" and merge_execution_defaults:
+        ex2 = payload.get("execution")
+        if isinstance(ex2, dict):
+            ex2["split_stream_deltas"] = True
+            payload["execution"] = ex2
+
     if hooks is not None and on_event is not None:
         raise ValueError("pass only one of hooks or on_event")
     cb: Callable[[WorkflowStreamEvent], Any] | None
     if hooks is not None:
         cb = workflow_event_callback(hooks)
-    else:
+    elif on_event is not None:
         cb = on_event
+    elif display == "merged":
+        cb = make_terminal_stream_printer("merged")
+    elif display == "split":
+        cb = make_terminal_stream_printer("split")
+    else:
+        cb = None
     return client.stream(payload, on_event=cb)
+
+
+def run_workflow_yaml_stream_typed(
+    client: Any,
+    request: Any,
+    *,
+    workflow_path: Path | str | None = None,
+    hooks: Any | None = None,
+    on_event: Callable[[WorkflowStreamEvent], Any] | None = None,
+    stream_display: StreamDisplayMode | None = None,
+    merge_execution_defaults: bool = True,
+) -> Any:
+    """Like :func:`stream_workflow` but optionally overrides ``workflow_path`` (e.g. pass a :class:`pathlib.Path`)."""
+    payload = workflow_execution_request_to_mapping(request)
+    if workflow_path is not None:
+        payload["workflow_path"] = str(workflow_path)
+    return stream_workflow(
+        client,
+        payload,
+        hooks,
+        on_event=on_event,
+        stream_display=stream_display,
+        merge_execution_defaults=merge_execution_defaults,
+    )
 
