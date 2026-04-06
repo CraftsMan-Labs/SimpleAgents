@@ -11,31 +11,7 @@ import (
 	"simpleagents"
 )
 
-func setProviderEnv(provider string, apiKey string, apiBase string) {
-	switch provider {
-	case "openai":
-		_ = os.Setenv("OPENAI_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENAI_API_BASE", apiBase)
-		}
-	case "anthropic":
-		_ = os.Setenv("ANTHROPIC_API_KEY", apiKey)
-	case "openrouter":
-		_ = os.Setenv("OPENROUTER_API_KEY", apiKey)
-		if apiBase != "" {
-			_ = os.Setenv("OPENROUTER_API_BASE", apiBase)
-		}
-	default:
-		log.Fatalf("unsupported provider %q", provider)
-	}
-}
-
 func main() {
-	provider := os.Getenv("WORKFLOW_PROVIDER")
-	if provider == "" {
-		provider = "openai"
-	}
-
 	apiKey := os.Getenv("WORKFLOW_API_KEY")
 	if apiKey == "" {
 		apiKey = os.Getenv("CUSTOM_API_KEY")
@@ -50,9 +26,13 @@ func main() {
 		log.Fatal("set WORKFLOW_API_KEY (or CUSTOM_API_KEY)")
 	}
 
-	setProviderEnv(provider, apiKey, apiBase)
+	client, err := simpleagents.NewClient(apiKey, apiBase)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
 
-	workflowPath := "examples/workflow_email/email-intake-classification.yaml"
+	workflowPath := "examples/workflow_email/email-chat-draft-or-clarify.yaml"
 	if len(os.Args) > 1 {
 		workflowPath = os.Args[1]
 	}
@@ -62,21 +42,27 @@ func main() {
 		emailText = os.Args[2]
 	}
 
-	client, err := simpleagents.NewClientFromEnv(provider)
+	input := map[string]any{
+		"email_text": emailText,
+		"messages": []map[string]any{
+			{"role": "user", "content": emailText},
+		},
+	}
+	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	out, err := client.RunWorkflowYAML(
-		ctx,
-		workflowPath,
-		map[string]any{"email_text": emailText},
-	)
+	outJSON, err := client.Run(ctx, workflowPath, inputJSON)
 	if err != nil {
+		log.Fatal(err)
+	}
+
+	var out map[string]any
+	if err := json.Unmarshal(outJSON, &out); err != nil {
 		log.Fatal(err)
 	}
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -37,7 +38,7 @@ func main() {
 		log.Fatalf("unsupported provider %q", provider)
 	}
 
-	client, err := simpleagents.NewClientFromEnv(provider)
+	client, err := simpleagents.NewClient(apiKey, apiBase)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -46,24 +47,40 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	maxTokens := int32(64)
-	temperature := float32(0.2)
-	result, err := client.CompleteMessages(
-		ctx,
-		model,
-		[]simpleagents.Message{{Role: "user", Content: "Respond with JSON: {\"status\": \"ok\"}"}},
-		simpleagents.CompleteOptions{
-			Mode:        "healed_json",
-			MaxTokens:   &maxTokens,
-			Temperature: &temperature,
+	maxTokens := uint32(64)
+	temp := float32(0.2)
+	req := map[string]any{
+		"model": model,
+		"messages": []map[string]string{
+			{"role": "user", "content": "Respond with JSON: {\"status\": \"ok\"}"},
 		},
-	)
+		"max_tokens":  maxTokens,
+		"temperature": temp,
+		"response_format": map[string]any{
+			"type": "json_object",
+		},
+	}
+	reqJSON, err := json.Marshal(req)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("content:", result.Content)
-	if result.Healed != nil {
-		fmt.Printf("healed value: %#v\n", result.Healed.Value)
+	resJSON, err := client.Complete(ctx, reqJSON)
+	if err != nil {
+		log.Fatal(err)
 	}
+
+	var resp map[string]any
+	if err := json.Unmarshal(resJSON, &resp); err != nil {
+		log.Fatal(err)
+	}
+	choices, _ := resp["choices"].([]any)
+	if len(choices) == 0 {
+		fmt.Println(string(resJSON))
+		return
+	}
+	first, _ := choices[0].(map[string]any)
+	msg, _ := first["message"].(map[string]any)
+	content, _ := msg["content"].(string)
+	fmt.Println("content:", content)
 }
