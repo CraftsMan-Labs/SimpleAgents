@@ -5,9 +5,14 @@
 use futures_util::{Stream, StreamExt};
 use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{CompletionChunk, Result};
-use simple_agents_core::{CompletionOptions, SimpleAgentsClient};
+use simple_agent_type::request::ResponseFormat;
+use simple_agents_core::{
+    CompletionMode, CompletionOptions, HealedJsonResponse, SimpleAgentsClient,
+};
+use simple_agents_healing::schema::Schema;
 use simple_agents_healing::{CoercionEngine, JsonishParser};
 use simple_agents_providers::schema_converter;
 use simple_agents_workflow::yaml_runner::workflow_execution;
@@ -18,15 +23,19 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+mod client_builder;
 mod completion_helpers;
 mod provider_helpers;
 mod workflow_helpers;
 
+use client_builder::{ClientBuilder, ProviderConfig};
 use completion_helpers::{
-    build_request_with_messages, expect_response, expect_stream, finish_reason_to_str,
-    parse_messages, parse_tool_choice, parse_tools, py_err, response_with_metadata_from_response,
+    build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
+    expect_stream, finish_reason_to_str, parse_messages, parse_tool_choice, parse_tools, py_err,
+    response_with_metadata_from_response, usage_to_pydict,
 };
 use provider_helpers::build_provider_from_name;
+use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
     attach_workflow_events, build_workflow_input_from_execution_request,
     parse_workflow_execution_request, workflow_execution_flags, workflow_execution_options,
@@ -34,7 +43,209 @@ use workflow_helpers::{
     PythonWorkflowEventSink, RecordingWorkflowEventSink,
 };
 
+fn parse_python_schema(schema: &Bound<'_, PyAny>) -> PyResult<(serde_json::Value, Schema)> {
+    let json_value: serde_json::Value = if schema.downcast::<PyDict>().is_ok() {
+        pythonize::depythonize(schema).map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+    } else if schema.hasattr("model_json_schema")? {
+        let schema_dict = schema.call_method0("model_json_schema")?;
+        pythonize::depythonize(&schema_dict).map_err(|e| PyRuntimeError::new_err(e.to_string()))?
+    } else {
+        return Err(PyRuntimeError::new_err(
+            "schema must be a dict or a Pydantic model class",
+        ));
+    };
+    let sch = schema_converter::convert(&json_value)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    Ok((json_value, sch))
+}
+
+fn healed_json_response_to_py(
+    py: Python<'_>,
+    healed: HealedJsonResponse,
+) -> PyResult<HealedJsonResult> {
+    let raw_response = healed.response.content().unwrap_or_default().to_string();
+    let content = serde_json::to_string(&healed.parsed.value)
+        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+    let confidence = healed.parsed.confidence as f64;
+    let was_healed = !healed.parsed.flags.is_empty();
+    let flags: Vec<String> = healed
+        .parsed
+        .flags
+        .iter()
+        .map(|f| f.description())
+        .collect();
+    let usage = usage_to_pydict(py, &healed.response.usage)?;
+    Ok(HealedJsonResult {
+        content,
+        confidence,
+        was_healed,
+        flags,
+        raw_response,
+        usage: usage.into_py(py),
+    })
+}
+
+/// Parse a Python list that can contain either PyMessage objects or plain dicts.
+fn parse_mixed_messages(messages: &Bound<'_, PyAny>) -> PyResult<Vec<Message>> {
+    // First try the entire list via the dict-based parser (handles [{"role": ..., "content": ...}])
+    if let Ok(msgs) = parse_messages(messages) {
+        return Ok(msgs);
+    }
+    // Otherwise, iterate and try each item as a typed PyMessage
+    use pyo3::types::PyList;
+    let list = messages.downcast::<PyList>().map_err(|_| {
+        PyRuntimeError::new_err("messages must be a list of Message objects or dicts")
+    })?;
+    let mut result = Vec::new();
+    for item in list.iter() {
+        if let Ok(py_msg) = item.extract::<PyRef<'_, PyMessage>>() {
+            result.push(py_msg.inner.clone());
+        } else {
+            return Err(PyRuntimeError::new_err(
+                "each message must be a Message object or a dict with 'role' and 'content'",
+            ));
+        }
+    }
+    Ok(result)
+}
+
 type Runtime = tokio::runtime::Runtime;
+
+// ---------------------------------------------------------------------------
+// Typed message classes
+// ---------------------------------------------------------------------------
+
+/// LLM conversation role.
+#[pyclass(eq, eq_int)]
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub enum Role {
+    User,
+    System,
+    Assistant,
+    Tool,
+}
+
+#[pymethods]
+impl Role {
+    fn __repr__(&self) -> String {
+        match self {
+            Role::User => "Role.User".to_string(),
+            Role::System => "Role.System".to_string(),
+            Role::Assistant => "Role.Assistant".to_string(),
+            Role::Tool => "Role.Tool".to_string(),
+        }
+    }
+}
+
+/// A single content part (text or image).
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct ContentPart {
+    inner: simple_agent_type::message::ContentPart,
+}
+
+#[pymethods]
+impl ContentPart {
+    /// Create a text content part.
+    #[staticmethod]
+    fn text(text: &str) -> Self {
+        ContentPart {
+            inner: simple_agent_type::message::ContentPart::Text {
+                text: text.to_string(),
+            },
+        }
+    }
+
+    /// Create an image_url content part.
+    #[staticmethod]
+    fn image_url(url: &str) -> Self {
+        ContentPart {
+            inner: simple_agent_type::message::ContentPart::image_url(url),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        match &self.inner {
+            simple_agent_type::message::ContentPart::Text { text } => {
+                format!(
+                    "ContentPart.text({:?})",
+                    &text.chars().take(40).collect::<String>()
+                )
+            }
+            simple_agent_type::message::ContentPart::ImageUrl { image_url } => {
+                format!(
+                    "ContentPart.image_url({:?})",
+                    &image_url.url.chars().take(60).collect::<String>()
+                )
+            }
+            _ => "ContentPart(other)".to_string(),
+        }
+    }
+}
+
+/// A typed conversation message.
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct PyMessage {
+    inner: Message,
+}
+
+#[pymethods]
+impl PyMessage {
+    /// Create a user message with a plain text string.
+    #[staticmethod]
+    fn user(content: &str) -> Self {
+        PyMessage {
+            inner: Message::user(content),
+        }
+    }
+
+    /// Create a system message.
+    #[staticmethod]
+    fn system(content: &str) -> Self {
+        PyMessage {
+            inner: Message::system(content),
+        }
+    }
+
+    /// Create an assistant message.
+    #[staticmethod]
+    fn assistant(content: &str) -> Self {
+        PyMessage {
+            inner: Message::assistant(content),
+        }
+    }
+
+    /// Create a user message with typed content parts (text + images).
+    #[staticmethod]
+    fn user_parts(parts: Vec<PyRef<'_, ContentPart>>) -> Self {
+        let content: Vec<simple_agent_type::message::ContentPart> =
+            parts.iter().map(|p| p.inner.clone()).collect();
+        PyMessage {
+            inner: Message {
+                role: simple_agent_type::message::Role::User,
+                content: simple_agent_type::message::MessageContent::Parts(content),
+                name: None,
+                tool_call_id: None,
+                tool_calls: None,
+            },
+        }
+    }
+
+    #[getter]
+    fn role(&self) -> Role {
+        match self.inner.role {
+            simple_agent_type::message::Role::User => Role::User,
+            simple_agent_type::message::Role::System => Role::System,
+            simple_agent_type::message::Role::Assistant => Role::Assistant,
+            simple_agent_type::message::Role::Tool => Role::Tool,
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!("Message(role={:?})", self.inner.role)
+    }
+}
 
 /// A single chunk from a streaming completion.
 #[pyclass]
@@ -262,9 +473,15 @@ impl ResponseWithMetadata {
 }
 
 #[pyclass]
-struct Client {
+pub(crate) struct Client {
     runtime: Arc<Mutex<Runtime>>,
     client: SimpleAgentsClient,
+}
+
+impl Client {
+    pub(crate) fn from_parts(runtime: Arc<Mutex<Runtime>>, client: SimpleAgentsClient) -> Self {
+        Self { runtime, client }
+    }
 }
 
 #[pymethods]
@@ -300,7 +517,7 @@ impl Client {
     }
 
     /// Send a completion request.
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -316,6 +533,7 @@ impl Client {
         heal: Option<bool>,
         stream: Option<bool>,
         schema: Option<&Bound<'_, PyAny>>,
+        schema_name: Option<&str>,
     ) -> PyResult<PyObject> {
         if heal.unwrap_or(false) && stream.unwrap_or(false) {
             return Err(PyRuntimeError::new_err(
@@ -333,7 +551,7 @@ impl Client {
 
         if stream.unwrap_or(false) {
             if let Some(schema_ref) = schema {
-                if schema_ref.downcast::<pyo3::types::PyDict>().is_err() {
+                if schema_ref.downcast::<PyDict>().is_err() {
                     return Err(PyRuntimeError::new_err(
                         "schema must be a dict/mapping object",
                     ));
@@ -349,6 +567,7 @@ impl Client {
                 None,
                 None,
                 Some(true),
+                None,
             )
             .map_err(py_err)?;
             let outcome = {
@@ -388,6 +607,79 @@ impl Client {
             None => None,
         };
 
+        if let Some(schema_ref) = schema {
+            let (json_schema_value, healing_schema) = parse_python_schema(schema_ref)?;
+            let json_schema_pair = schema_name.map(|name| (name.to_string(), json_schema_value));
+            let response_format_for_req = if json_schema_pair.is_some() {
+                None
+            } else {
+                Some(ResponseFormat::JsonObject)
+            };
+            let request = build_request_with_messages(
+                model,
+                messages,
+                max_tokens,
+                temperature,
+                top_p,
+                response_format_for_req,
+                tools,
+                tool_choice,
+                None,
+                json_schema_pair,
+            )
+            .map_err(py_err)?;
+            let options = CompletionOptions {
+                mode: CompletionMode::CoercedSchema(healing_schema),
+            };
+            let outcome = {
+                let runtime = self
+                    .runtime
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+                py.allow_threads(|| runtime.block_on(self.client.complete(&request, options)))
+                    .map_err(py_err)?
+            };
+            let coerced = expect_coerced_schema(outcome)?;
+            let json_str = serde_json::to_string(&coerced.coerced.value)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            return Ok(json_str.into_py(py));
+        }
+
+        if heal.unwrap_or(false) {
+            let resp_format = completion_helpers::resolve_response_format(response_format)?;
+            let merged_format = match resp_format {
+                Some(f) => Some(f),
+                None => Some(ResponseFormat::JsonObject),
+            };
+            let request = build_request_with_messages(
+                model,
+                messages,
+                max_tokens,
+                temperature,
+                top_p,
+                merged_format,
+                tools,
+                tool_choice,
+                None,
+                None,
+            )
+            .map_err(py_err)?;
+            let options = CompletionOptions {
+                mode: CompletionMode::HealedJson,
+            };
+            let outcome = {
+                let runtime = self
+                    .runtime
+                    .lock()
+                    .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+                py.allow_threads(|| runtime.block_on(self.client.complete(&request, options)))
+                    .map_err(py_err)?
+            };
+            let healed = expect_healed_json(outcome)?;
+            let healed_py = healed_json_response_to_py(py, healed)?;
+            return Ok(Py::new(py, healed_py)?.into_py(py));
+        }
+
         let resp_format = completion_helpers::resolve_response_format(response_format)?;
 
         let request = build_request_with_messages(
@@ -399,6 +691,7 @@ impl Client {
             resp_format,
             tools,
             tool_choice,
+            None,
             None,
         )
         .map_err(py_err)?;
@@ -452,6 +745,7 @@ impl Client {
             None,
             None,
             Some(true),
+            None,
         )
         .map_err(py_err)?;
 
@@ -603,6 +897,204 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
+    /// Run a YAML workflow (new unified API).
+    ///
+    /// ```python
+    /// result = client.run("workflow.yaml", [
+    ///     Message.user("Hello"),
+    /// ])
+    /// # or with dict messages for convenience:
+    /// result = client.run("workflow.yaml", [{"role": "user", "content": "Hello"}])
+    /// ```
+    #[pyo3(signature = (workflow_path, messages, *, tools=None, options=None))]
+    fn run(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        messages: &Bound<'_, PyAny>,
+        tools: Option<&Bound<'_, PyAny>>,
+        options: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let _ = (tools, options);
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+
+        // Accept both typed PyMessage objects and plain dicts
+        let parsed_messages: Vec<Message> = parse_mixed_messages(messages)?;
+        let workflow_input = serde_json::json!({
+            "messages": parsed_messages.iter()
+                .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
+                .collect::<Vec<_>>()
+        });
+
+        let default_options = YamlWorkflowRunOptions::default();
+        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+            workflow_input: &workflow_input,
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            options: &default_options,
+            flags,
+        };
+
+        let output = py
+            .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    /// Stream a YAML workflow (new unified API).
+    ///
+    /// ```python
+    /// result = client.stream("workflow.yaml", messages, on_event=lambda e: print(e))
+    /// ```
+    #[pyo3(signature = (workflow_path, messages, *, on_event=None, tools=None, options=None))]
+    fn stream(
+        &self,
+        py: Python<'_>,
+        workflow_path: &str,
+        messages: &Bound<'_, PyAny>,
+        on_event: Option<Py<PyAny>>,
+        tools: Option<&Bound<'_, PyAny>>,
+        options: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let _ = (tools, options);
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+
+        let parsed_messages: Vec<Message> = parse_mixed_messages(messages)?;
+        let workflow_input = serde_json::json!({
+            "messages": parsed_messages.iter()
+                .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
+                .collect::<Vec<_>>()
+        });
+
+        let default_options = YamlWorkflowRunOptions::default();
+        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags {
+            workflow_streaming: on_event.is_some(),
+            ..Default::default()
+        };
+
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+
+        let value = if let Some(callback) = on_event {
+            let event_sink = PythonWorkflowEventSink {
+                callback: Some(callback),
+            };
+            let execution_request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+                workflow_input: &workflow_input,
+                executor: YamlWorkflowExecutorBinding::Client(&self.client),
+                custom_worker: Some(&custom_executor),
+                options: &default_options,
+                flags,
+            };
+            let output = py
+                .allow_threads(|| {
+                    runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
+                })
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            serde_json::to_value(output)
+                .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?
+        } else {
+            let recording_sink = RecordingWorkflowEventSink::new();
+            let execution_request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+                workflow_input: &workflow_input,
+                executor: YamlWorkflowExecutorBinding::Client(&self.client),
+                custom_worker: Some(&custom_executor),
+                options: &default_options,
+                flags,
+            };
+            let output = py
+                .allow_threads(|| {
+                    runtime.block_on(workflow_execution::stream(
+                        execution_request,
+                        &recording_sink,
+                    ))
+                })
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let mut v = serde_json::to_value(output)
+                .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
+            attach_workflow_events(&mut v, &recording_sink)?;
+            v
+        };
+
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
+        Ok(py_value.into_py(py))
+    }
+
+    /// Resume a workflow from a checkpoint dict (new unified API).
+    #[pyo3(signature = (checkpoint, *, options=None))]
+    fn resume(
+        &self,
+        py: Python<'_>,
+        checkpoint: &Bound<'_, PyAny>,
+        options: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<PyObject> {
+        let _ = options;
+        // Extract workflow_path and messages from the checkpoint dict, then delegate to run()
+        let checkpoint_val: serde_json::Value = pythonize::depythonize(checkpoint)
+            .map_err(|e| PyRuntimeError::new_err(format!("invalid checkpoint: {e}")))?;
+        let workflow_path = checkpoint_val
+            .get("workflow_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| PyRuntimeError::new_err("checkpoint must have workflow_path"))?
+            .to_string();
+
+        let messages_val = checkpoint_val
+            .get("original_messages")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+
+        let workflow_input = serde_json::json!({ "messages": messages_val });
+        let workflow_path_buf = std::path::PathBuf::from(&workflow_path);
+        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
+        let default_options = YamlWorkflowRunOptions::default();
+        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
+            workflow_input: &workflow_input,
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            options: &default_options,
+            flags,
+        };
+
+        let output = py
+            .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let value = serde_json::to_value(output)
+            .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
+        Ok(py_value.into_py(py))
+    }
+
     /// Stream a YAML workflow using separate positional path + input arguments.
     ///
     /// Signature mirrors the Python test expectation:
@@ -735,7 +1227,6 @@ impl PyCoercionResult {
 
 /// Raw string result of a heal_json call (for backwards-compat tests).
 #[pyclass]
-#[derive(Clone)]
 pub struct HealedJsonResult {
     #[pyo3(get)]
     pub content: String,
@@ -745,23 +1236,33 @@ pub struct HealedJsonResult {
     pub was_healed: bool,
     #[pyo3(get)]
     pub flags: Vec<String>,
+    #[pyo3(get)]
+    pub raw_response: String,
+    #[pyo3(get)]
+    pub(crate) usage: PyObject,
 }
 
 #[pymethods]
 impl HealedJsonResult {
     #[new]
-    #[pyo3(signature = (content, confidence, was_healed, flags))]
+    #[pyo3(signature = (content, confidence, was_healed, flags, *, raw_response=None, usage=None))]
     fn new(
+        py: Python<'_>,
         content: String,
         confidence: f64,
         was_healed: bool,
         flags: Vec<String>,
+        raw_response: Option<String>,
+        usage: Option<PyObject>,
     ) -> PyResult<Self> {
+        let usage = usage.unwrap_or_else(|| PyDict::new_bound(py).into_py(py));
         Ok(Self {
             content,
             confidence,
             was_healed,
             flags,
+            raw_response: raw_response.unwrap_or_default(),
+            usage,
         })
     }
 
@@ -968,10 +1469,22 @@ fn serde_json_to_py(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObj
 
 #[pymodule]
 fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Typed message classes
+    module.add_class::<Role>()?;
+    module.add_class::<ContentPart>()?;
+    module.add_class::<PyMessage>()?;
+    // Expose PyMessage as "Message" for the clean API
+    module.add("Message", module.getattr("PyMessage")?)?;
     module.add_class::<Client>()?;
+    module.add_class::<ClientBuilder>()?;
+    module.add_class::<ProviderConfig>()?;
     module.add_class::<StreamChunk>()?;
     module.add_class::<PyStreamIterator>()?;
     module.add_class::<PyStructuredStreamIterator>()?;
+    module.add(
+        "StructuredStreamIterator",
+        module.getattr("PyStructuredStreamIterator")?,
+    )?;
     module.add_class::<ResponseWithMetadata>()?;
     // Healing types
     module.add_class::<ParseResult>()?;
