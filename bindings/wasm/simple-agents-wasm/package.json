@@ -1,6 +1,6 @@
 {
   "name": "simple-agents-wasm",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Browser-compatible SimpleAgents client for OpenAI-compatible providers",
   "type": "module",
   "main": "index.js",
