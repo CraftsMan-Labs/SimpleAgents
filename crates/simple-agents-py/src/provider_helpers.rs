@@ -28,6 +28,14 @@ pub(crate) fn build_provider_from_name(
     base_url: Option<&str>,
     api_format: Option<&str>,
 ) -> Result<Arc<dyn Provider>> {
+    let key_required = |name: &str| {
+        api_key.map(str::to_string).ok_or_else(|| {
+            SimpleAgentsError::Config(format!(
+                "api_key is required for provider '{name}' when OPENAI_API_KEY is not used"
+            ))
+        })
+    };
+
     match provider {
         "openai" => {
             let key = if let Some(k) = api_key {
@@ -40,6 +48,17 @@ pub(crate) fn build_provider_from_name(
                 })?
             };
             build_provider(&key, base_url, api_format)
+        }
+        // OpenAI-compatible HTTP shape; used for multi-provider demos/tests (routing).
+        "anthropic" => {
+            let key = key_required("anthropic")?;
+            let base = base_url.unwrap_or("https://api.anthropic.com/v1");
+            build_provider(&key, Some(base), api_format)
+        }
+        "openrouter" => {
+            let key = key_required("openrouter")?;
+            let base = base_url.unwrap_or("https://openrouter.ai/api/v1");
+            build_provider(&key, Some(base), api_format)
         }
         other => Err(SimpleAgentsError::Config(format!(
             "Unknown provider: {other}"

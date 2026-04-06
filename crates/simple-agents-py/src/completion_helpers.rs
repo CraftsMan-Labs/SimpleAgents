@@ -8,7 +8,7 @@ use simple_agent_type::prelude::{CompletionChunk, CompletionRequest, Result, Sim
 use simple_agent_type::request::ResponseFormat;
 use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolChoice, ToolDefinition};
-use simple_agents_core::CompletionOutcome;
+use simple_agents_core::{CompletionOutcome, HealedJsonResponse, HealedSchemaResponse};
 
 pub(crate) type CompletionStream = Box<dyn Stream<Item = Result<CompletionChunk>> + Send + Unpin>;
 
@@ -23,6 +23,7 @@ pub(crate) fn build_request_with_messages(
     tools: Option<Vec<ToolDefinition>>,
     tool_choice: Option<ToolChoice>,
     stream: Option<bool>,
+    json_schema: Option<(String, serde_json::Value)>,
 ) -> Result<CompletionRequest> {
     if model.is_empty() {
         return Err(SimpleAgentsError::Config(
@@ -49,7 +50,9 @@ pub(crate) fn build_request_with_messages(
     if let Some(top_p) = top_p {
         builder = builder.top_p(top_p);
     }
-    if let Some(format) = response_format {
+    if let Some((name, schema)) = json_schema {
+        builder = builder.json_schema(name, schema);
+    } else if let Some(format) = response_format {
         builder = builder.response_format(format);
     }
     if let Some(tools) = tools {
@@ -91,6 +94,20 @@ pub(crate) fn expect_response(outcome: CompletionOutcome) -> PyResult<Completion
     match outcome {
         CompletionOutcome::Response(response) => Ok(response),
         _ => Err(PyRuntimeError::new_err("expected completion response")),
+    }
+}
+
+pub(crate) fn expect_healed_json(outcome: CompletionOutcome) -> PyResult<HealedJsonResponse> {
+    match outcome {
+        CompletionOutcome::HealedJson(healed) => Ok(healed),
+        _ => Err(PyRuntimeError::new_err("expected healed JSON response")),
+    }
+}
+
+pub(crate) fn expect_coerced_schema(outcome: CompletionOutcome) -> PyResult<HealedSchemaResponse> {
+    match outcome {
+        CompletionOutcome::CoercedSchema(healed) => Ok(healed),
+        _ => Err(PyRuntimeError::new_err("expected schema-coerced response")),
     }
 }
 
