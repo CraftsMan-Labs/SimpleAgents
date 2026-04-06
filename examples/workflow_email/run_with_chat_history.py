@@ -367,11 +367,12 @@ def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
         workflow_options["model"] = model.strip()
     client_any: Any = request["client"]
     if not request["stream"]:
-        result_any = client_any.run_workflow_yaml(
-            str(request["workflow_path"]),
-            request["workflow_input"],
-            include_events=request["include_events"],
-            workflow_options=workflow_options,
+        result_any = client_any.run_workflow(
+            {
+                "workflow_path": str(request["workflow_path"]),
+                "input": request["workflow_input"],
+                "workflow_options": workflow_options,
+            }
         )
         result = cast(
             WorkflowRunResult,
@@ -412,7 +413,7 @@ def _run_turn(request: RunTurnRequest) -> RunTurnResponse:
         },
     }
 
-    result_any = client_any.stream(stream_request, on_event=on_event)
+    result_any = client_any.stream_workflow(stream_request, on_event=on_event)
     result = cast(
         WorkflowRunResult,
         result_any if isinstance(result_any, dict) else {},

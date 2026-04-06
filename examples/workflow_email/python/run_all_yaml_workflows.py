@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--include-events",
         action="store_true",
-        help="Include workflow events in outputs",
+        help="(unused – kept for backward compat)",
     )
     return parser.parse_args()
 
@@ -65,10 +65,11 @@ def main() -> None:
     summary: list[dict[str, object]] = []
     for workflow in workflows:
         try:
-            result = client.run_workflow_yaml(
-                str(workflow),
-                workflow_input,
-                include_events=args.include_events,
+            result = client.run_workflow(
+                {
+                    "workflow_path": str(workflow),
+                    "input": workflow_input,
+                }
             )
             summary.append(
                 {

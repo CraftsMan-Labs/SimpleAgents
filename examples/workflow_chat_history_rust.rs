@@ -9,8 +9,8 @@ use serde_json::{json, Value};
 use simple_agents_core::SimpleAgentsClient;
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{
-    run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options,
-    YamlWorkflowExecutionFlags, YamlWorkflowRunOptions,
+    workflow_execution, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 
 #[derive(Debug, Clone)]
@@ -230,16 +230,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        let result = run_workflow_yaml_file_with_client_and_custom_worker_and_events_and_options(
-            Path::new(&workflow_path),
-            &workflow_input,
-            &client,
-            None,
-            None,
-            &options,
-            YamlWorkflowExecutionFlags::default(),
-        )
-        .await?;
+        let flags = YamlWorkflowExecutionFlags::default();
+        let execution_request = YamlWorkflowExecutionRequest {
+            source: YamlWorkflowSource::File(Path::new(&workflow_path)),
+            workflow_input: &workflow_input,
+            executor: YamlWorkflowExecutorBinding::Client(&client),
+            custom_worker: None,
+            options: &options,
+            flags,
+        };
+        let result = workflow_execution::run(execution_request).await?;
 
         let reply = render_output(&result.terminal_output);
         println!("\nAssistant: {}\n", reply);
