@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "simple-agents-py"
-version = "0.3.2"
+version = "0.3.3"
 description = "Python bindings for SimpleAgents"
 readme = "README.md"
 requires-python = ">=3.9"

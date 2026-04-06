@@ -162,4 +162,29 @@ export class Client {
   streamComplete(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
   runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Record<string, unknown>
   streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Promise<Record<string, unknown>>
+  /**
+   * Run a YAML workflow (new unified API).
+   *
+   * ```ts
+   * const result = await client.run("workflow.yaml", messages);
+   * const result = await client.run("workflow.yaml", messages, { tools: myTools });
+   * ```
+   */
+  run(workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }): Record<string, unknown>
+  /**
+   * Stream a YAML workflow (new unified API).
+   *
+   * ```ts
+   * const result = await client.stream("workflow.yaml", messages, onEvent);
+   * ```
+   */
+  stream(workflowPath: string, messages: MessageInput[], onEvent?: (err: unknown, eventJson: string) => void, opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }): Promise<Record<string, unknown>>
+  /**
+   * Resume a workflow from a checkpoint (new unified API).
+   *
+   * ```ts
+   * const result = await client.resume(checkpoint);
+   * ```
+   */
+  resume(checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown> }): Record<string, unknown>
 }

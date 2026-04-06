@@ -45,8 +45,8 @@
   },
   "node": {
     "required_type_symbols": [
-      "struct CompletionResult",
-      "struct StreamEvent",
+      "export interface CompletionResult",
+      "export interface StreamEvent",
       "run(",
       "stream(",
       "resume("
