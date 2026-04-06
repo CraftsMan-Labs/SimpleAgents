@@ -647,17 +647,13 @@ func DefaultWorkflowExecutionFlags() WorkflowExecutionFlags {
 
 // MarshalJSON always serializes all four booleans (never omits keys) for clear wire format and DX.
 func (f WorkflowExecutionFlags) MarshalJSON() ([]byte, error) {
-	type explicit struct {
-		Healing            bool `json:"healing"`
-		WorkflowStreaming  bool `json:"workflow_streaming"`
-		NodeLlmStreaming   bool `json:"node_llm_streaming"`
-		SplitStreamDeltas  bool `json:"split_stream_deltas"`
-	}
-	return json.Marshal(explicit{
-		Healing:            f.Healing,
-		WorkflowStreaming:  f.WorkflowStreaming,
-		NodeLlmStreaming:     f.NodeLlmStreaming,
-		SplitStreamDeltas:  f.SplitStreamDeltas,
+	// Use a map so keys are always emitted; a convertible struct copy is invalid here because
+	// wire JSON tags differ from WorkflowExecutionFlags (omitempty vs required on the wire).
+	return json.Marshal(map[string]bool{
+		"healing":              f.Healing,
+		"workflow_streaming":   f.WorkflowStreaming,
+		"node_llm_streaming":   f.NodeLlmStreaming,
+		"split_stream_deltas":  f.SplitStreamDeltas,
 	})
 }
 
