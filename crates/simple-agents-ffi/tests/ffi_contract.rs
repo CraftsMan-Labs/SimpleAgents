@@ -2,7 +2,9 @@ use std::ffi::CString;
 use std::fs;
 use std::path::PathBuf;
 
-use simple_agents_ffi::{sa_client_free, sa_client_new, sa_complete, sa_last_error_message, sa_stream, sa_string_free};
+use simple_agents_ffi::{
+    sa_client_free, sa_client_new, sa_complete, sa_last_error_message, sa_stream, sa_string_free,
+};
 
 // ---------------------------------------------------------------------------
 // sa_client_new / sa_client_free
@@ -40,7 +42,8 @@ fn allows_freeing_null_client() {
 
 #[test]
 fn rejects_null_client_for_complete() {
-    let request = CString::new(r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#).unwrap();
+    let request =
+        CString::new(r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}]}"#).unwrap();
     let response = unsafe { sa_complete(std::ptr::null_mut(), request.as_ptr()) };
     assert!(response.is_null());
 
@@ -74,8 +77,18 @@ fn rejects_invalid_request_json() {
 
 #[test]
 fn rejects_null_client_for_stream() {
-    let request = CString::new(r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}"#).unwrap();
-    let result = unsafe { sa_stream(std::ptr::null_mut(), request.as_ptr(), None, std::ptr::null_mut()) };
+    let request = CString::new(
+        r#"{"model":"gpt-4","messages":[{"role":"user","content":"hi"}],"stream":true}"#,
+    )
+    .unwrap();
+    let result = unsafe {
+        sa_stream(
+            std::ptr::null_mut(),
+            request.as_ptr(),
+            None,
+            std::ptr::null_mut(),
+        )
+    };
     assert_ne!(result, 0);
 
     let err = sa_last_error_message();
