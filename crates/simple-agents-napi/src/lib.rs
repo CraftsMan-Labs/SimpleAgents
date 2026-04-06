@@ -19,7 +19,7 @@ use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
     SimpleAgentsClient, SimpleAgentsClientBuilder,
 };
-use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema, StreamAnnotation};
+use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema};
 use simple_agents_providers::anthropic::AnthropicProvider;
 use simple_agents_providers::openai::OpenAIProvider;
 use simple_agents_providers::openrouter::OpenRouterProvider;
@@ -142,7 +142,6 @@ fn parse_schema_field(value: &JsonValue) -> SaResult<SchemaField> {
         aliases: schema_aliases(value.get("aliases")),
         default: None,
         description: None,
-        stream_annotation: StreamAnnotation::Normal,
     })
 }
 

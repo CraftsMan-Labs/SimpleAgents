@@ -1,4 +1,4 @@
-use simple_agents_healing::streaming::{PartialExtractor, StreamingParser};
+use simple_agents_healing::streaming::StreamingParser;
 
 #[test]
 fn test_streaming_empty_object() {
@@ -201,23 +201,6 @@ fn test_streaming_negative_numbers() {
     let result = parser.finalize().unwrap();
     assert_eq!(result.value["int"], -42);
     assert_eq!(result.value["float"], -2.5);
-}
-
-#[test]
-fn test_partial_extractor_progressive() {
-    let mut extractor = PartialExtractor::new();
-
-    // Simulate progressive JSON building
-    extractor.feed(r#"{"#);
-    // First chunk - incomplete
-
-    extractor.feed(r#""name": "Alice""#);
-    // Second chunk - still incomplete
-
-    extractor.feed(r#"}"#);
-    // Final chunk - complete
-    let result = extractor.finalize().unwrap();
-    assert_eq!(result["name"], "Alice");
 }
 
 #[test]

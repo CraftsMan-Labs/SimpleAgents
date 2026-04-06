@@ -213,42 +213,6 @@ impl Default for StreamingParser {
     }
 }
 
-/// Partial value extractor for streaming with schema support.
-///
-/// Extracts partial values from incomplete JSON buffers, respecting
-/// streaming annotations like `@@stream.not_null` and `@@stream.done`.
-pub struct PartialExtractor {
-    parser: StreamingParser,
-}
-
-impl PartialExtractor {
-    /// Create a new partial extractor.
-    pub fn new() -> Self {
-        Self {
-            parser: StreamingParser::new(),
-        }
-    }
-
-    /// Feed a chunk and try to extract a partial value.
-    ///
-    /// Returns `Some(value)` if a partial value can be extracted.
-    pub fn feed(&mut self, chunk: &str) -> Option<Value> {
-        self.parser.feed(chunk);
-        self.parser.try_parse().map(|result| result.value)
-    }
-
-    /// Get the final complete value.
-    pub fn finalize(self) -> std::result::Result<Value, simple_agent_type::SimpleAgentsError> {
-        self.parser.finalize().map(|result| result.value)
-    }
-}
-
-impl Default for PartialExtractor {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,20 +362,6 @@ mod tests {
             f,
             simple_agent_type::coercion::CoercionFlag::FixedTrailingComma
         )));
-    }
-
-    #[test]
-    fn test_partial_extractor() {
-        let mut extractor = PartialExtractor::new();
-
-        // Feed chunks
-        extractor.feed(r#"{"name": "Alice", "#);
-        extractor.feed(r#""age": 30"#);
-        extractor.feed("}");
-
-        let result = extractor.finalize().unwrap();
-        assert_eq!(result["name"], "Alice");
-        assert_eq!(result["age"], 30);
     }
 
     #[test]

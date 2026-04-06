@@ -7,17 +7,17 @@
 //!
 //! # Supported Providers
 //!
-//! - [`openai`]: OpenAI API (GPT-4, GPT-3.5-Turbo, etc.)
+//! - [`openai`]: OpenAI-compatible API (GPT-4, GPT-3.5-Turbo, etc.)
 //!
 //! # Examples
 //!
 //! ```no_run
-//! use simple_agents_providers::openai::OpenAIProvider;
+//! use simple_agents_providers::openai::OpenAiCompatProvider;
 //! use simple_agent_type::prelude::*;
 //!
 //! # async fn example() -> std::result::Result<(), Box<dyn std::error::Error>> {
 //! let api_key = ApiKey::new("sk-...")?;
-//! let provider = OpenAIProvider::new(api_key)?;
+//! let provider = OpenAiCompatProvider::new(api_key)?;
 //!
 //! let request = CompletionRequest::builder()
 //!     .model("gpt-4")
@@ -36,8 +36,12 @@
 pub mod common;
 pub mod healing_integration;
 pub mod openai;
+pub mod responses;
 pub mod schema_converter;
 mod utils;
+
+// Re-export the renamed provider
+pub use openai::OpenAiCompatProvider;
 
 // Re-export common utilities
 pub use common::{HttpClient, ProviderError, RetryableError};

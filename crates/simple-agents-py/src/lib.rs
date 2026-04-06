@@ -18,7 +18,7 @@ use simple_agents_core::{
 };
 use simple_agents_healing::coercion::CoercionConfig;
 use simple_agents_healing::parser::ParserConfig;
-use simple_agents_healing::schema::{Field as HealingField, ObjectSchema, StreamAnnotation};
+use simple_agents_healing::schema::{Field as HealingField, ObjectSchema};
 use simple_agents_healing::streaming::StreamingParser as RustStreamingParser;
 use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
 use simple_agents_providers::healing_integration::{
@@ -162,9 +162,8 @@ impl SchemaBuilder {
     /// * `aliases` - Optional list of aliases
     /// * `default` - Optional default value
     /// * `description` - Optional description
-    /// * `stream` - Optional stream annotation: "normal", "not_null", "done"
     /// * `items` - For arrays, the item type (string or Schema)
-    #[pyo3(signature = (name, field_type, required=true, aliases=None, default=None, description=None, stream=None, items=None))]
+    #[pyo3(signature = (name, field_type, required=true, aliases=None, default=None, description=None, items=None))]
     #[allow(clippy::too_many_arguments)]
     fn field(
         &mut self,
@@ -175,7 +174,6 @@ impl SchemaBuilder {
         aliases: Option<&Bound<'_, PyAny>>,
         default: Option<&Bound<'_, PyAny>>,
         description: Option<String>,
-        stream: Option<String>,
         items: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<()> {
         let schema = parse_schema_from_py(field_type, items)?;
@@ -197,18 +195,6 @@ impl SchemaBuilder {
             None
         };
 
-        let stream_annotation = match stream.as_deref() {
-            None | Some("normal") => StreamAnnotation::Normal,
-            Some("not_null") => StreamAnnotation::NotNull,
-            Some("done") => StreamAnnotation::Done,
-            Some(other) => {
-                return Err(PyRuntimeError::new_err(format!(
-                    "Unknown stream annotation: {}",
-                    other
-                )))
-            }
-        };
-
         self.fields.push(HealingField {
             name: name.to_string(),
             schema,
@@ -216,7 +202,6 @@ impl SchemaBuilder {
             aliases: aliases_vec,
             default: default_value,
             description,
-            stream_annotation,
         });
 
         Ok(())

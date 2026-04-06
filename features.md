@@ -54,8 +54,8 @@ Only two crates currently expose Cargo feature flags.
 ### `simple-agents-healing`
 - JSON-ish parser (`JsonishParser`) with configurable parsing rules.
 - Schema coercion engine (`CoercionEngine`) with confidence + flags.
-- Schema model (`Schema`, `ObjectSchema`, `Field`, `StreamAnnotation`).
-- Streaming parse support (`StreamingParser`, `PartialExtractor`).
+- Schema model (`Schema`, `ObjectSchema`, `Field`).
+- Streaming parse support (`StreamingParser`).
 - Optional regex-powered unquoted-key repair (`regex-support`).
 
 ### `simple-agents-cache`

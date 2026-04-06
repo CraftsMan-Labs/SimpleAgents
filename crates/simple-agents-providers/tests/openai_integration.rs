@@ -4,7 +4,7 @@
 //! Run with: `cargo test -p simple-agents-providers`
 
 use simple_agent_type::prelude::*;
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::openai::OpenAiCompatProvider;
 fn success_response(model: &str, content: &str) -> serde_json::Value {
     serde_json::json!({
         "id": "chatcmpl-test",
@@ -55,7 +55,7 @@ async fn test_local_proxy_connection() {
     let model = "gpt-4.1";
     let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
         .expect("Failed to create API key");
-    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
+    let provider = OpenAiCompatProvider::new(api_key).expect("Failed to create provider");
 
     // Create a simple test request
     let request = CompletionRequest::builder()
@@ -130,7 +130,7 @@ async fn test_local_proxy_multiple_requests() {
     let model = "gpt-4.1";
     let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
         .expect("Failed to create API key");
-    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
+    let provider = OpenAiCompatProvider::new(api_key).expect("Failed to create provider");
 
     let test_prompts = ["Count from 1 to 3.", "What is 2+2?", "Say 'test complete'."];
 
@@ -174,7 +174,7 @@ async fn test_local_proxy_multiple_requests() {
 async fn test_local_proxy_invalid_model() {
     let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
         .expect("Failed to create API key");
-    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
+    let provider = OpenAiCompatProvider::new(api_key).expect("Failed to create provider");
 
     let request = CompletionRequest::builder()
         .model("invalid-model-that-does-not-exist")
@@ -197,7 +197,7 @@ async fn test_local_proxy_temperature_variations() {
     let model = "gpt-4.1";
     let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
         .expect("Failed to create API key");
-    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
+    let provider = OpenAiCompatProvider::new(api_key).expect("Failed to create provider");
 
     let temperatures = vec![0.0, 0.5, 1.0];
 
@@ -237,7 +237,7 @@ async fn test_local_proxy_conversation() {
     let model = "gpt-4.1";
     let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")
         .expect("Failed to create API key");
-    let provider = OpenAIProvider::new(api_key).expect("Failed to create provider");
+    let provider = OpenAiCompatProvider::new(api_key).expect("Failed to create provider");
 
     let request = CompletionRequest::builder()
         .model(model)

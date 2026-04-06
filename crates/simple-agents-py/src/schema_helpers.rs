@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use serde_json::Value;
 use simple_agent_type::prelude::SimpleAgentsError;
-use simple_agents_healing::schema::{Field, ObjectSchema, StreamAnnotation};
+use simple_agents_healing::schema::{Field, ObjectSchema};
 use simple_agents_healing::Schema;
 
 fn unsigned_integer_hint(map: &serde_json::Map<String, Value>) -> bool {
@@ -166,7 +166,6 @@ pub(crate) fn schema_from_json_schema_value(
                                     aliases: Vec::new(),
                                     default: None,
                                     description: None,
-                                    stream_annotation: StreamAnnotation::Normal,
                                 });
                             }
                         }

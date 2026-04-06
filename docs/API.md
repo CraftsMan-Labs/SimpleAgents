@@ -58,8 +58,8 @@ Routing strategies and helpers:
 Healing APIs:
 - `JsonishParser` + `ParserConfig`.
 - `CoercionEngine` + `CoercionConfig`.
-- `Schema`, `ObjectSchema`, `Field`, `StreamAnnotation`.
-- `StreamingParser`, `PartialExtractor`.
+- `Schema`, `ObjectSchema`, `Field`.
+- `StreamingParser`.
 
 ## `simple-agents-cache`
 
