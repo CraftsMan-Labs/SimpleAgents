@@ -74,7 +74,7 @@ def on_event(event: WorkflowEvent) -> None:
         print(f"[stream:{node_id}] {delta}", end="", flush=True)
         return
 
-    if event_type == "node_llm_input_resolved" and isinstance(metadata, dict):
+    if event_type == "resolved_llm_input" and isinstance(metadata, dict):
         model = metadata.get("model")
         prompt = metadata.get("prompt")
         bindings = metadata.get("bindings")

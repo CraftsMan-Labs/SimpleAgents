@@ -78,6 +78,61 @@ const (
 	MessageRoleTool      MessageRole = "tool"
 )
 
+// WorkflowRunnerEvent is the typed shape of a single event emitted by the Rust YAML workflow
+// runner during streaming. Unmarshal eventJSON into this struct for typed access.
+type WorkflowRunnerEvent struct {
+	EventType          string                 `json:"event_type"`
+	NodeID             string                 `json:"node_id,omitempty"`
+	StepID             string                 `json:"step_id,omitempty"`
+	NodeKind           string                 `json:"node_kind,omitempty"`
+	Streamable         *bool                  `json:"streamable,omitempty"`
+	Message            string                 `json:"message,omitempty"`
+	Delta              string                 `json:"delta,omitempty"`
+	TokenKind          string                 `json:"token_kind,omitempty"`
+	IsTerminalToken    *bool                  `json:"is_terminal_node_token,omitempty"`
+	ElapsedMs          *uint64                `json:"elapsed_ms,omitempty"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// Event type constants for the Rust YAML workflow runner (wire JSON values).
+// Source of truth: crates/simple-agents-workflow/src/yaml_runner/ (execute.rs,
+// client_executor.rs, node_execution.rs).
+const (
+	EventTypeWorkflowStarted            = "workflow_started"
+	EventTypeWorkflowCompleted          = "workflow_completed"
+	EventTypeNodeStarted                = "node_started"
+	EventTypeNodeCompleted              = "node_completed"
+	EventTypeResolvedLlmInput           = "resolved_llm_input"
+	EventTypeNodeStreamDelta            = "node_stream_delta"
+	EventTypeNodeStreamThinkingDelta    = "node_stream_thinking_delta"
+	EventTypeNodeStreamOutputDelta      = "node_stream_output_delta"
+	EventTypeNodeToolCallRequested      = "node_tool_call_requested"
+	EventTypeNodeToolCallFailed         = "node_tool_call_failed"
+	EventTypeNodeToolCallCompleted      = "node_tool_call_completed"
+	EventTypeNodeToolRoundtripCompleted = "node_tool_roundtrip_completed"
+	EventTypeNodeHealed                 = "node_healed"
+)
+
+// DefaultOnEvent is a ready-made Stream/StreamWorkflow callback that prints
+// streamed tokens to stdout and silences lifecycle events.
+//
+// Usage:
+//
+//	output, _ := client.Stream(ctx, "workflow.yaml", inputJSON, simpleagents.DefaultOnEvent)
+func DefaultOnEvent(eventJSON string) error {
+	var event WorkflowRunnerEvent
+	if err := json.Unmarshal([]byte(eventJSON), &event); err != nil {
+		return nil
+	}
+	switch event.EventType {
+	case EventTypeNodeStreamDelta, EventTypeNodeStreamThinkingDelta, EventTypeNodeStreamOutputDelta:
+		if event.Delta != "" {
+			fmt.Print(event.Delta)
+		}
+	}
+	return nil
+}
+
 // MIME type constants for multimodal content (aligned with Rust `simple_agent_type::message::mime`).
 const (
 	MimeImagePNG  = "image/png"

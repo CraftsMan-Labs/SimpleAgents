@@ -85,3 +85,31 @@ export function createWorkflowStreamPrinter(options = {}) {
     }
   };
 }
+
+/**
+ * Ready-made `onEvent` callback that prints streamed tokens inline and silences
+ * lifecycle events. A simpler alternative to {@link createWorkflowStreamPrinter}
+ * (no step headers, no state).
+ *
+ * Usage:
+ * ```js
+ * import { defaultOnEvent } from 'simple-agents-wasm/workflow_stream_printer';
+ * await client.runWorkflow(yaml, input, { onEvent: defaultOnEvent });
+ * ```
+ *
+ * @param {Record<string, unknown>} event
+ */
+export function defaultOnEvent(event) {
+  const eventType = event?.event_type;
+  if (typeof eventType !== "string") return;
+  if (
+    eventType === "node_stream_delta" ||
+    eventType === "node_stream_thinking_delta" ||
+    eventType === "node_stream_output_delta"
+  ) {
+    const delta = event.delta;
+    if (typeof delta === "string") {
+      writeChunk(delta);
+    }
+  }
+}

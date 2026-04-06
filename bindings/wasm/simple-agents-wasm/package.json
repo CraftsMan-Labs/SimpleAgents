@@ -18,6 +18,7 @@
     "index.d.ts",
     "workflow_stream_printer.mjs",
     "workflow_stream_printer.d.ts",
+    "workflow_event.d.ts",
     "runtime",
     "README.md",
     "pkg",
@@ -34,6 +35,9 @@
       "types": "./workflow_stream_printer.d.ts",
       "import": "./workflow_stream_printer.mjs",
       "default": "./workflow_stream_printer.mjs"
+    },
+    "./workflow_event": {
+      "types": "./workflow_event.d.ts"
     }
   },
   "engines": {
