@@ -1,7 +1,7 @@
 """Structured workflow stream hooks for :meth:`simple_agents_py.Client.stream`.
 
 Events are the same dicts the Rust runner emits; shape matches
-:class:`simple_agents_py.WorkflowEvent` in ``simple_agents_py.pyi``.
+:class:`simple_agents_py.WorkflowEvent` in the package stub (``simple_agents_py/simple_agents_py.pyi``).
 
 **Execution flags (explicit keys).** Under the top-level ``execution`` mapping (or
 :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`), these keys are

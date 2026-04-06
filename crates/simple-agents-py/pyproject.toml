@@ -25,7 +25,7 @@ pydantic = ["pydantic>=2.0"]
 bindings = "pyo3"
 module-name = "simple_agents_py"
 python-source = "python"
-include = ["simple_agents_py.pyi", "py.typed"]
+# Stubs and py.typed live under python/simple_agents_py/ (PEP 561 inline package).
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

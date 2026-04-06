@@ -21,7 +21,9 @@ def _workflow_fixture() -> dict:
 def test_python_stub_contains_shared_contract_symbols() -> None:
     fixture = _fixture()
     root = Path(__file__).resolve().parents[1]
-    stub = (root / "simple_agents_py.pyi").read_text(encoding="utf-8")
+    stub = (root / "python" / "simple_agents_py" / "simple_agents_py.pyi").read_text(
+        encoding="utf-8"
+    )
 
     for symbol in fixture["python"]["required_type_symbols"]:
         assert symbol in stub, f"simple_agents_py.pyi should include: {symbol}"
@@ -51,7 +53,9 @@ def test_shared_fixture_cases_are_present_and_stable() -> None:
 
 def test_python_stub_workflow_methods_accept_workflow_options() -> None:
     root = Path(__file__).resolve().parents[1]
-    stub = (root / "simple_agents_py.pyi").read_text(encoding="utf-8")
+    stub = (root / "python" / "simple_agents_py" / "simple_agents_py.pyi").read_text(
+        encoding="utf-8"
+    )
 
     assert (
         "workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None"
