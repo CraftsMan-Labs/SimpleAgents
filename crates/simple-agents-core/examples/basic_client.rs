@@ -1,8 +1,6 @@
 use async_trait::async_trait;
 use simple_agent_type::prelude::*;
-use simple_agents_core::{
-    CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClientBuilder,
-};
+use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 use std::sync::Arc;
 
 struct MockProvider;
@@ -41,10 +39,7 @@ impl Provider for MockProvider {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let client = SimpleAgentsClientBuilder::new()
-        .with_provider(Arc::new(MockProvider))
-        .with_routing_mode(RoutingMode::RoundRobin)
-        .build()?;
+    let client = SimpleAgentsClient::new(Arc::new(MockProvider));
 
     let request = CompletionRequest::builder()
         .model("gpt-4")

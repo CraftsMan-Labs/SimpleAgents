@@ -114,7 +114,6 @@ pub struct OpenAIProvider {
     api_key: ApiKey,
     base_url: String,
     client: Client,
-    rate_limiter: crate::rate_limit::MaybeRateLimiter,
     healing: Option<Arc<HealingIntegration>>,
 }
 
@@ -227,29 +226,8 @@ impl OpenAIProvider {
             api_key,
             base_url,
             client,
-            rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
         })
-    }
-
-    /// Enable rate limiting with the given configuration.
-    ///
-    /// # Example
-    /// ```
-    /// use simple_agents_providers::openai::OpenAIProvider;
-    /// use simple_agent_type::prelude::*;
-    /// use simple_agent_type::config::RateLimitConfig;
-    ///
-    /// # fn example() -> Result<()> {
-    /// let api_key = ApiKey::new("sk-test1234567890123456789012345678901234567890")?;
-    /// let provider = OpenAIProvider::new(api_key)?
-    ///     .with_rate_limit(RateLimitConfig::new(50, 100));
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn with_rate_limit(mut self, config: simple_agent_type::config::RateLimitConfig) -> Self {
-        self.rate_limiter = crate::rate_limit::MaybeRateLimiter::from_config(&config);
-        self
     }
 
     /// Enable healing system for automatic recovery from malformed responses.
@@ -319,7 +297,6 @@ impl OpenAIProvider {
             api_key,
             base_url,
             client,
-            rate_limiter: crate::rate_limit::MaybeRateLimiter::None,
             healing: None,
         })
     }
@@ -385,17 +362,6 @@ impl Provider for OpenAIProvider {
     async fn execute(&self, mut req: ProviderRequest) -> Result<ProviderResponse> {
         let healing_schema = Self::take_healing_schema(&mut req.body);
 
-        // Apply rate limiting
-        self.rate_limiter
-            .until_ready(Some(self.api_key.expose()))
-            .await;
-
-        // Extract model for metrics
-        let model = req.body["model"].as_str().unwrap_or("unknown");
-
-        // Start metrics timer
-        let timer = crate::metrics::RequestTimer::start(self.name(), model);
-
         // Build headers
         let headers = crate::utils::build_headers(req.headers)
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
@@ -403,7 +369,7 @@ impl Provider for OpenAIProvider {
         // Make HTTP request
         let response = crate::utils::send_json_request(&self.client, &req.url, headers, &req.body)
             .await
-            .map_err(|e| crate::utils::map_transport_error_with_timer(e, timer.clone()))?;
+            .map_err(crate::utils::map_transport_error)?;
 
         let response = match crate::utils::ensure_success_response(response).await {
             Ok(response) => response,
@@ -420,16 +386,12 @@ impl Provider for OpenAIProvider {
                     error_context.retry_after,
                 );
 
-                // Log additional context for debugging
                 tracing::debug!(
                     status = %error_context.status,
                     headers = ?Self::redacted_headers(&error_context.headers_debug),
                     error_type = ?openai_error,
                     "OpenAI API error details"
                 );
-
-                // Record error metrics
-                timer.complete_error(format!("http_{}", error_context.status.as_u16()));
 
                 return Err(SimpleAgentsError::Provider(openai_error.into()));
             }
@@ -438,32 +400,15 @@ impl Provider for OpenAIProvider {
         let status_code = response.status().as_u16();
 
         // Parse successful response
-        let mut body = match crate::utils::parse_json_body(response).await {
-            Ok(body) => body,
-            Err(error) => {
-                timer.complete_error("parse_error");
-                return Err(SimpleAgentsError::Provider(error));
-            }
-        };
-
-        // Extract token usage for metrics
-        let prompt_tokens = Self::safe_token_count(
-            body["usage"]["prompt_tokens"].as_u64(),
-            "usage.prompt_tokens",
-        );
-        let completion_tokens = Self::safe_token_count(
-            body["usage"]["completion_tokens"].as_u64(),
-            "usage.completion_tokens",
-        );
+        let mut body = crate::utils::parse_json_body(response)
+            .await
+            .map_err(SimpleAgentsError::Provider)?;
 
         if let Some(schema) = healing_schema {
             if let serde_json::Value::Object(map) = &mut body {
                 map.insert(Self::HEALING_SCHEMA_KEY.to_string(), schema);
             }
         }
-
-        // Record success metrics
-        timer.complete_success(prompt_tokens, completion_tokens);
 
         Ok(ProviderResponse {
             status: status_code,
@@ -708,11 +653,6 @@ impl OpenAIProvider {
         mut req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
         let _ = Self::take_healing_schema(&mut req.body);
-
-        // Apply rate limiting
-        self.rate_limiter
-            .until_ready(Some(self.api_key.expose()))
-            .await;
 
         // Build headers
         let headers = crate::utils::build_headers(req.headers)

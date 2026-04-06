@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 use simple_agent_type::prelude::*;
+use simple_agent_type::provider::{Capabilities, RetryConfig};
 use std::time::Duration;
 
 /// A mock provider for testing/demonstration.

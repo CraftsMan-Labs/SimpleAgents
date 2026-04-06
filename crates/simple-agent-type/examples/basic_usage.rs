@@ -5,6 +5,7 @@
 //! Run with: cargo run --example basic_usage
 
 use simple_agent_type::prelude::*;
+use simple_agent_type::provider::{Capabilities, RetryConfig};
 
 fn main() -> Result<()> {
     println!("=== SimpleAgents Types Demo ===\n");
@@ -222,43 +223,17 @@ fn demo_coercion() {
 fn demo_configuration() {
     println!("⚙️  Configuration:");
 
-    // Retry config
     let retry = RetryConfig::default();
     println!("  Retry config:");
     println!("    Max attempts: {}", retry.max_attempts);
     println!("    Initial backoff: {:?}", retry.initial_backoff);
     println!("    Backoff multiplier: {}", retry.backoff_multiplier);
 
-    let backoff1 = retry.calculate_backoff(0);
-    let backoff2 = retry.calculate_backoff(1);
-    println!("    Attempt 0 backoff: {:?}", backoff1);
-    println!("    Attempt 1 backoff: {:?}", backoff2);
-
-    // Healing config
-    let healing = HealingConfig::default();
-    println!("  Healing config:");
-    println!("    Enabled: {}", healing.enabled);
-    println!("    Strict mode: {}", healing.strict_mode);
-    println!("    Min confidence: {}", healing.min_confidence);
-
-    let strict = HealingConfig::strict();
-    println!("  Strict healing: min_confidence={}", strict.min_confidence);
-
-    let lenient = HealingConfig::lenient();
-    println!(
-        "  Lenient healing: min_confidence={}",
-        lenient.min_confidence
-    );
-
-    // Provider config
-    let provider = ProviderConfig::new("openai", "https://api.openai.com/v1")
-        .with_api_key("sk-test")
-        .with_default_model("gpt-4")
-        .with_timeout(std::time::Duration::from_secs(30));
-
-    println!("  Provider config:");
-    println!("    Name: {}", provider.name);
-    println!("    Timeout: {:?}", provider.timeout);
+    let caps = Capabilities::default();
+    println!("  Default capabilities:");
+    println!("    Streaming: {}", caps.streaming);
+    println!("    Function calling: {}", caps.function_calling);
+    println!("    Max tokens: {}", caps.max_tokens);
 
     println!();
 }

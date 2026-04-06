@@ -1,13 +1,12 @@
 //! Core client API for SimpleAgents.
 //!
 //! This crate provides the unified `SimpleAgentsClient` that integrates
-//! providers, routing, caching, healing, and middleware in one place.
+//! providers and healing in one place.
 //!
 //! # Example
 //! ```no_run
 //! use simple_agents_core::{
-//!     CompletionOptions, CompletionOutcome, RoutingMode, SimpleAgentsClient,
-//!     SimpleAgentsClientBuilder,
+//!     CompletionOptions, CompletionOutcome, SimpleAgentsClient,
 //! };
 //! use simple_agent_type::prelude::*;
 //! # use async_trait::async_trait;
@@ -43,10 +42,7 @@
 //! # }
 //! #
 //! # async fn example() -> Result<()> {
-//! let client = SimpleAgentsClientBuilder::new()
-//!     .with_provider(Arc::new(MockProvider))
-//!     .with_routing_mode(RoutingMode::RoundRobin)
-//!     .build()?;
+//! let client = SimpleAgentsClient::new(Arc::new(MockProvider));
 //!
 //! let request = CompletionRequest::builder()
 //!     .model("gpt-4")
@@ -68,16 +64,9 @@
 
 mod client;
 mod healing;
-mod middleware;
-mod routing;
 
-pub use client::{
-    CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient,
-    SimpleAgentsClientBuilder,
-};
+pub use client::{CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
-pub use middleware::Middleware;
-pub use routing::RoutingMode;
 
 // Re-export commonly used types.
 pub use simple_agent_type::prelude;

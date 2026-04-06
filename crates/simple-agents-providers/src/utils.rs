@@ -1,6 +1,6 @@
 //! Shared utilities for provider implementations.
 
-use crate::SimpleAgentsError;
+use simple_agent_type::error::SimpleAgentsError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use simple_agent_type::ProviderError;
 use std::borrow::Cow;
@@ -125,20 +125,6 @@ pub fn map_transport_error(error: reqwest::Error) -> SimpleAgentsError {
     } else {
         SimpleAgentsError::Network(format!("Network error: {}", error))
     }
-}
-
-/// Map reqwest transport errors and record request timer metrics.
-pub fn map_transport_error_with_timer(
-    error: reqwest::Error,
-    timer: crate::metrics::RequestTimer,
-) -> SimpleAgentsError {
-    if error.is_timeout() {
-        timer.complete_timeout();
-    } else {
-        timer.complete_error("network");
-    }
-
-    map_transport_error(error)
 }
 
 #[cfg(test)]
