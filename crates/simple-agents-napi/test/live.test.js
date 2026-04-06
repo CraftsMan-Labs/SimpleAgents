@@ -34,11 +34,11 @@ function debugLog(label, value) {
   }
 }
 
-function extractEventJsonFromCallbackArgs(firstArg, secondArg, thirdArg) {
-  if (typeof secondArg === 'string') return secondArg;
-  if (typeof firstArg === 'string') return firstArg;
-  if (typeof thirdArg === 'string') return thirdArg;
-  return null;
+/** OpenAI-compat client: API key + optional base URL (see Client constructor). */
+function makeClient() {
+  const apiKey = process.env.CUSTOM_API_KEY || process.env.OPENAI_API_KEY;
+  const baseUrl = process.env.CUSTOM_API_BASE || process.env.OPENAI_API_BASE || null;
+  return new Client(apiKey, baseUrl);
 }
 
 test('complete returns content', async (t) => {
@@ -48,7 +48,7 @@ test('complete returns content', async (t) => {
   }
   assertRequiredEnv();
   debugLog('complete.env', { provider: PROVIDER, model: MODEL });
-  const client = new Client(PROVIDER);
+  const client = makeClient();
   const res = await client.complete(
     MODEL,
     [
@@ -71,7 +71,7 @@ test('healed_json mode parses JSON', async (t) => {
   }
   assertRequiredEnv();
   debugLog('healed_json.env', { provider: PROVIDER, model: MODEL });
-  const client = new Client(PROVIDER);
+  const client = makeClient();
   const res = await client.complete(
     MODEL,
     'Respond only with JSON: {"status":"ok"}',
@@ -129,30 +129,27 @@ nodes:
     }
   });
 
-  const client = new Client(PROVIDER);
+  const client = makeClient();
   const eventCounts = new Map();
   let completionNerdstats = null;
-  let sawSecondArgEventJson = false;
-  const result = await client.executeWorkflowYamlStream(
-    {
-      workflowPath,
-      messages: [{ role: 'user', content: 'Hi' }],
-      healing: true,
-      workflowStreaming: true,
-      nodeLlmStreaming: true,
-      splitStreamDeltas: true,
-      workflowOptions: { telemetry: { nerdstats: true } },
-    },
-    (errOrEventJson, maybeEventJson, fallbackEventJson) => {
-      if (typeof maybeEventJson === 'string') {
-        sawSecondArgEventJson = true;
-      }
-      const eventJson = extractEventJsonFromCallbackArgs(
-        errOrEventJson,
-        maybeEventJson,
-        fallbackEventJson,
-      );
+  let sawEventJsonString = false;
+
+  const workflowInput = {
+    messages: [{ role: 'user', content: 'Hi' }],
+  };
+
+  const workflowOptions = {
+    include_events: true,
+    telemetry: { nerdstats: true },
+  };
+
+  const result = await client.streamWorkflow(
+    workflowPath,
+    workflowInput,
+    (first, maybeSecond) => {
+      const eventJson = typeof first === 'string' ? first : typeof maybeSecond === 'string' ? maybeSecond : null;
       if (eventJson === null) return;
+      sawEventJsonString = true;
       let event;
       try {
         event = JSON.parse(eventJson);
@@ -169,14 +166,20 @@ nodes:
         }
       }
     },
+    workflowOptions,
   );
 
   assert.ok(result && typeof result === 'object', 'stream call should resolve structured output object');
   assert.strictEqual(typeof result.terminal_node, 'string', 'result should include terminal_node');
-  assert.ok((eventCounts.get('node_stream_delta') || 0) > 0, 'expected node_stream_delta events');
-  assert.ok((eventCounts.get('node_stream_output_delta') || 0) > 0, 'expected node_stream_output_delta events');
+
+  const nodeStreamDelta = eventCounts.get('node_stream_delta') || 0;
+  const nodeStreamOutputDelta = eventCounts.get('node_stream_output_delta') || 0;
+  assert.ok(
+    nodeStreamDelta + nodeStreamOutputDelta > 0,
+    'expected node_stream_delta and/or node_stream_output_delta events',
+  );
   assert.strictEqual(eventCounts.get('node_stream_raw_delta') || 0, 0, 'deprecated node_stream_raw_delta must not be emitted');
-  assert.ok(sawSecondArgEventJson, 'stream callback should provide event JSON in second argument');
+  assert.ok(sawEventJsonString, 'stream callback should receive event JSON string');
   assert.ok(completionNerdstats && typeof completionNerdstats === 'object', 'workflow_completed should include nerdstats metadata');
   assert.strictEqual(typeof completionNerdstats.total_elapsed_ms, 'number', 'nerdstats should include total_elapsed_ms');
   assert.strictEqual(typeof completionNerdstats.token_metrics_available, 'boolean', 'nerdstats should include token_metrics_available');

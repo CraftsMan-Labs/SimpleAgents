@@ -9,6 +9,11 @@ npm install
 npm run build
 ```
 
+## Testing
+
+- `npm test` — unit tests + binding contract tests (no network).
+- `npm run test:live` — optional integration tests; **skipped** unless `OPENAI_API_KEY` or `CUSTOM_API_KEY`, plus `CUSTOM_API_MODEL` and `PROVIDER` are set. From the repo root, `make test-node` and `make check-publish` load the root `.env` (if present) before running `test:live`.
+
 ## Usage
 
 ```javascript

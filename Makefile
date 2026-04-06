@@ -232,7 +232,7 @@ test-node: build-node
 	@set -a; \
 	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
 	set +a; \
-	cd $(NAPI_PROJECT_DIR) && npm test
+	cd $(NAPI_PROJECT_DIR) && npm test && npm run test:live
 
 test-wasm: build-wasm
 	cd $(WASM_PACKAGE_DIR) && npm test
@@ -351,6 +351,12 @@ check-publish:
 	@echo ""
 	@echo "==> Running Node binding contract test..."
 	@cd $(NAPI_PROJECT_DIR) && npm run test:contract
+	@echo ""
+	@echo "==> Running Node live tests (optional; skipped when API env not set)..."
+	@set -a; \
+	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
+	set +a; \
+	cd $(NAPI_PROJECT_DIR) && npm run test:live
 	@echo ""
 	@echo "==> Running WASM binding tests..."
 	@cd $(WASM_PACKAGE_DIR) && npm test
