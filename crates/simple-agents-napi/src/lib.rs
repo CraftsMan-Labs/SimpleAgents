@@ -33,9 +33,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 mod workflow_helpers;
+mod workflow_options_napi;
 use workflow_helpers::{
     build_workflow_input_with_messages_envelope, parse_workflow_options,
     parse_workflow_request_options, validate_workflow_request,
+};
+pub use workflow_options_napi::{
+    WorkflowRunOptionsNapi, WorkflowTelemetryConfigNapi, WorkflowTraceConfigNapi,
+    WorkflowTraceContextNapi, WorkflowTraceTenantNapi,
 };
 
 type Runtime = tokio::runtime::Runtime;
@@ -253,8 +258,7 @@ pub struct WorkflowYamlRunRequest {
     pub split_stream_deltas: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
-    #[napi(ts_type = "Record<string, unknown>")]
-    pub workflow_options: Option<JsonValue>,
+    pub workflow_options: Option<WorkflowRunOptionsNapi>,
 }
 
 #[napi(object)]
@@ -1079,14 +1083,14 @@ fn blocking_workflow_to_json(
 
 #[napi(
     js_name = "parseWorkflowYamlExecutionRequest",
-    ts_args_type = "workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: Record<string, unknown>"
+    ts_args_type = "workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: WorkflowRunOptionsNapi"
 )]
 pub fn parse_workflow_yaml_execution_request(
     workflow_path: String,
     messages: Vec<MessageInput>,
     flags: WorkflowYamlRunFlags,
     extra_workflow_input: Option<JsonValue>,
-    workflow_options: Option<JsonValue>,
+    workflow_options: Option<WorkflowRunOptionsNapi>,
 ) -> Result<ParsedWorkflowYamlExecutionRequest> {
     if workflow_path.trim().is_empty() {
         return Err(Error::from_reason(
@@ -1096,7 +1100,8 @@ pub fn parse_workflow_yaml_execution_request(
     let workflow_input =
         build_workflow_input_with_messages_envelope(messages, extra_workflow_input.as_ref())?;
     validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-    let opts = parse_workflow_options(workflow_options.clone())?;
+    let opts_json = workflow_options_napi::workflow_run_options_napi_to_json(workflow_options)?;
+    let opts = parse_workflow_options(opts_json)?;
     let workflow_options_value = serde_json::to_value(&opts).map_err(|error| {
         Error::from_reason(format!("failed to serialize workflow options: {error}"))
     })?;
@@ -1379,7 +1384,10 @@ impl Client {
             request.extra_workflow_input.as_ref(),
         )?;
         validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
-        let options = parse_workflow_options(request.workflow_options.clone())?;
+        let opts_json =
+            workflow_options_napi::workflow_run_options_napi_to_json(request.workflow_options)?;
+        let request_options = parse_workflow_request_options(opts_json)?;
+        let options = request_options.run_options;
         let flags = YamlWorkflowExecutionFlags {
             healing: request.healing,
             workflow_streaming: request.workflow_streaming,
@@ -1411,7 +1419,10 @@ impl Client {
             request.extra_workflow_input.as_ref(),
         )?;
         validate_workflow_request(request.workflow_path.as_str(), &workflow_input)?;
-        let options = parse_workflow_options(request.workflow_options.clone())?;
+        let opts_json =
+            workflow_options_napi::workflow_run_options_napi_to_json(request.workflow_options)?;
+        let request_options = parse_workflow_request_options(opts_json)?;
+        let options = request_options.run_options;
         let workflow_flags = YamlWorkflowExecutionFlags {
             healing: request.healing,
             workflow_streaming: request.workflow_streaming,

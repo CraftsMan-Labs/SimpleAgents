@@ -131,6 +131,7 @@ main().catch((err) => {
 
 ## Notes
 
+- `client.executeWorkflowYaml` / `executeWorkflowYamlStream` accept typed `workflowOptions` (`WorkflowRunOptionsNapi`: `model`, `telemetry`, `trace`, `includeEvents`). For stream events, `require('simple-agents-node/workflow_event').parseWorkflowEvent(eventJson)` parses the JSON string into a typed object.
 - Canonical env contract for examples/tests is: `CUSTOM_API_BASE`, `CUSTOM_API_KEY`, `CUSTOM_API_MODEL`, `PROVIDER`.
 - Canonical env contract for examples/tests is: `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_BASE` (optional), `CUSTOM_API_MODEL`.
 - For OpenAI provider compatibility, map `CUSTOM_API_*` to `OPENAI_API_*` when needed (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`).
