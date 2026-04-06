@@ -9,8 +9,12 @@ export async function loadRustModule() {
         await moduleValue.default({ module_or_path: wasmUrl });
         return moduleValue;
       } catch (error) {
-        console.debug("[simple-agents-wasm] Rust module unavailable, falling back to JS runtime", error);
-        return null;
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `[simple-agents-wasm] Failed to load Rust WASM backend. ` +
+          `Build artifacts are required (run "npm run build" in bindings/wasm/simple-agents-wasm). ` +
+          `Original error: ${reason}`
+        );
       }
     })();
   }

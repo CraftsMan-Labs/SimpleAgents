@@ -1,4 +1,4 @@
-use js_sys::{Array, Function, Object, Promise, Reflect};
+use js_sys::{Function, Object, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::collections::HashMap;
@@ -2090,11 +2090,4 @@ impl WasmClient {
 #[wasm_bindgen(js_name = supportsRustWasm)]
 pub fn supports_rust_wasm() -> bool {
     true
-}
-
-#[wasm_bindgen(js_name = toJsArray)]
-pub fn to_js_array(value: JsValue) -> Array {
-    let arr = Array::new();
-    arr.push(&value);
-    arr
 }

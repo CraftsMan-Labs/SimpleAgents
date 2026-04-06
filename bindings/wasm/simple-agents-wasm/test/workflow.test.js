@@ -387,3 +387,22 @@ test("runWorkflowYamlString normalizes legacy rust workflow result shape", async
   assert.equal(result.terminal_node, "classify");
   assert.equal(result.terminal_output.state, "ready");
 });
+
+test("client methods fail hard when Rust backend initialization fails", async () => {
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: async () => makeJsonResponse("unused")
+  });
+
+  client.ensureBackend = async () => {
+    throw new Error("Rust backend unavailable");
+  };
+
+  await assert.rejects(
+    async () => {
+      await client.complete("gpt-4o-mini", "hello");
+    },
+    /Rust backend unavailable/
+  );
+});
