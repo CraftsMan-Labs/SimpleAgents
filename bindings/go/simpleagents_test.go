@@ -427,6 +427,23 @@ func TestWorkflowEventToTypedEventMapsKnownAndUnknown(t *testing.T) {
 	}
 }
 
+func TestNewTypedWorkflowInputWithExtraJSON(t *testing.T) {
+	in := NewTypedWorkflowInput([]WorkflowInputMessage{{Role: MessageRoleUser, Content: "hi"}})
+	if _, err := in.WithExtraJSON("messages", "bad"); err == nil {
+		t.Fatal("expected reserved key error")
+	}
+	if _, err := in.WithExtraJSON("email_text", "body"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := typedWorkflowInputToMap(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m["email_text"] == nil {
+		t.Fatal("expected email_text in map")
+	}
+}
+
 func TestRunWorkflowYAMLTypedUninitializedClient(t *testing.T) {
 	c := &Client{}
 	_, err := c.RunWorkflowYAMLTyped(context.Background(), "workflow.yaml", map[string]any{"email_text": "x"})

@@ -101,6 +101,12 @@ New typed workflow facade:
 - `WorkflowPath string`
 - `Input *TypedWorkflowInput` (must include `messages`)
 
+### Typed workflow runs (avoid raw input maps)
+
+- `NewTypedWorkflowInput([]WorkflowInputMessage{...})` allocates the `Additional` map.
+- `(*TypedWorkflowInput).WithExtraJSON(key, value)` JSON-marshals one extra workflow field per call (for example `email_text`).
+- `DefaultWorkflowStreamPrinter(splitThinking bool) func(WorkflowEvent)` prints stream tokens to stdout for CLI-style tools; pair `splitThinking == true` with `DefaultWorkflowExecutionFlags().WithSplitStreamDeltas(true)` when using `RunWorkflowYAMLStreamWithTypedInputAndRunOptions`.
+
 ### Custom workers (`custom_worker`)
 
 Go binding now fails fast before FFI execution when the workflow contains `custom_worker`, with an actionable error (use Python/WASM executor path or remove `custom_worker` from this runtime).

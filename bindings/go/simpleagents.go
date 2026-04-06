@@ -167,6 +167,34 @@ type TypedWorkflowInput struct {
 	Additional map[string]json.RawMessage `json:"-"`
 }
 
+// NewTypedWorkflowInput builds a workflow input with required messages and an empty Additional map.
+func NewTypedWorkflowInput(messages []WorkflowInputMessage) *TypedWorkflowInput {
+	return &TypedWorkflowInput{
+		Messages:   messages,
+		Additional: make(map[string]json.RawMessage),
+	}
+}
+
+// WithExtraJSON adds or replaces one extra workflow input field after JSON marshaling.
+// The key "messages" is reserved; use the Messages field instead.
+func (t *TypedWorkflowInput) WithExtraJSON(key string, v any) (*TypedWorkflowInput, error) {
+	if key == "messages" {
+		return nil, fmt.Errorf("workflow extra key %q is reserved; use Messages field", key)
+	}
+	if t == nil {
+		return nil, errors.New("TypedWorkflowInput is nil")
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("marshal extra field %q: %w", key, err)
+	}
+	if t.Additional == nil {
+		t.Additional = make(map[string]json.RawMessage)
+	}
+	t.Additional[key] = raw
+	return t, nil
+}
+
 // CompleteOptions controls completion behavior for CompleteMessages.
 type CompleteOptions struct {
 	MaxTokens   *int32
@@ -392,6 +420,96 @@ func (event WorkflowEvent) ToTypedEvent() WorkflowTypedEvent {
 		IsTerminalNodeToken: event.IsTerminalNodeToken,
 		ElapsedMS:           event.ElapsedMS,
 		Metadata:            event.Metadata,
+	}
+}
+
+type workflowStreamPrintState struct {
+	currentNode       *string
+	lineOpen          bool
+	lastTokenLabel    *string
+}
+
+// DefaultWorkflowStreamPrinter returns an onEvent handler that prints LLM stream tokens to stdout
+// (CLI-style). When splitThinking is true, only node_stream_thinking_delta and
+// node_stream_output_delta are printed; otherwise node_stream_delta is printed.
+// Use with RunWorkflowYAMLStreamWithTypedInputAndRunOptions and
+// DefaultWorkflowExecutionFlags().WithSplitStreamDeltas(true) when splitThinking is true.
+func DefaultWorkflowStreamPrinter(splitThinking bool) func(WorkflowEvent) {
+	state := &workflowStreamPrintState{}
+	return func(event WorkflowEvent) {
+		eventType := event.EventType
+		delta := ""
+		if event.Delta != nil {
+			delta = *event.Delta
+		}
+
+		isStream := eventType == string(WorkflowEventTypeNodeStreamDelta)
+		if splitThinking {
+			isStream = eventType == string(WorkflowEventTypeNodeStreamThinking) ||
+				eventType == string(WorkflowEventTypeNodeStreamOutput)
+		}
+
+		if isStream && delta != "" {
+			displayID := ""
+			if event.NodeID != nil && *event.NodeID != "" {
+				displayID = *event.NodeID
+			} else if event.StepID != nil && *event.StepID != "" {
+				displayID = *event.StepID
+			}
+			if displayID == "" {
+				displayID = "?"
+			}
+
+			if state.currentNode == nil || *state.currentNode != displayID {
+				if state.lineOpen {
+					fmt.Fprintln(os.Stdout)
+				}
+				fmt.Fprintf(os.Stdout, "\nStep: %s\nStreaming: ", displayID)
+				idCopy := displayID
+				state.currentNode = &idCopy
+				state.lineOpen = true
+				state.lastTokenLabel = nil
+			}
+
+			if splitThinking {
+				var parts []string
+				if event.TokenKind != nil {
+					trimmed := strings.TrimSpace(*event.TokenKind)
+					if trimmed != "" {
+						parts = append(parts, trimmed)
+					}
+				}
+				if event.IsTerminalNodeToken != nil && *event.IsTerminalNodeToken {
+					parts = append(parts, "terminal")
+				}
+				tokenLabel := ""
+				if len(parts) > 0 {
+					tokenLabel = "[" + strings.Join(parts, " ") + "] "
+				}
+				prev := ""
+				if state.lastTokenLabel != nil {
+					prev = *state.lastTokenLabel
+				}
+				if tokenLabel != "" && tokenLabel != prev {
+					if state.lineOpen {
+						fmt.Fprintln(os.Stdout)
+					}
+					fmt.Fprintf(os.Stdout, "%s%s: ", tokenLabel, displayID)
+					lbl := tokenLabel
+					state.lastTokenLabel = &lbl
+					state.lineOpen = true
+				}
+				fmt.Fprint(os.Stdout, delta)
+			} else {
+				fmt.Fprint(os.Stdout, delta)
+			}
+			return
+		}
+
+		if eventType == string(WorkflowEventTypeWorkflowStarted) ||
+			eventType == string(WorkflowEventTypeWorkflowCompleted) {
+			return
+		}
 	}
 }
 
