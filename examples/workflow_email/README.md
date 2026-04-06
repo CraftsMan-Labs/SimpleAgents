@@ -82,35 +82,35 @@ Legacy fallback vars still work:
 
 ## Python (package API)
 
-Use the package directly (recommended):
+Use the package directly (recommended). **Canonical** API: one messages-first request and `Client.run` / `run_async` / `stream` (see `docs/BINDINGS_PYTHON.md` and `docs/WORKFLOW_API_MIGRATION.md`).
 
 ```python
 from simple_agents_py import Client
 
 client = Client("openai", api_base="...", api_key="...")
-result = client.run_workflow_yaml(
-    "examples/workflow_email/email-intake-classification.yaml",
-    {"email_text": "Termination request, second warning already issued"},
-)
+request = {
+    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    "messages": [
+        {"role": "system", "content": "You are an assistant helping draft professional emails."},
+        {"role": "user", "content": "Please draft a response for damaged order #9921 and offer expedited replacement."},
+    ],
+}
+result = client.run(request)
 print(result["terminal_output"])
 print(result["step_timings"])
 print(result["total_elapsed_ms"])
 ```
 
-Chat-history workflow input example (`messages` list of typed message objects):
+**Legacy** path + workflow input dict (still supported):
 
 ```python
 result = client.run_workflow_yaml(
-    "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    {
-        "email_text": "Conversation-driven workflow input",
-        "messages": [
-            {"role": "system", "content": "You are an assistant helping draft professional emails."},
-            {"role": "user", "content": "Please draft a response for damaged order #9921 and offer expedited replacement."},
-        ],
-    },
+    "examples/workflow_email/email-intake-classification.yaml",
+    {"email_text": "Termination request, second warning already issued"},
 )
 ```
+
+Graphs that use `messages_path: input.messages` need a `messages` list on the workflow input (or in the unified request). Graphs that only template `{{ input.email_text }}` need that scalar on the input (legacy dict or `request["input"]["email_text"]`).
 
 Ready-to-run helper file:
 

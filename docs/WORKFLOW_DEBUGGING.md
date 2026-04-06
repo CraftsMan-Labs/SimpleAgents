@@ -121,7 +121,7 @@ Compare timeline events and retry groups; structural replay validity does not gu
 
 ### Missing timings in output
 
-Use YAML execution entry points that return timing fields (`run_workflow_yaml_file_with_client` or `run_workflow_yaml_with_client`).
+Language bindings return the same timing fields on the workflow result (`total_elapsed_ms`, `step_timings`, etc.) for canonical APIs: Python `Client.run` / `stream`, Go `Client.Run` / `Stream`, Node `executeWorkflowYaml` / `executeWorkflowYamlStream`, and Rust `WorkflowRunner` (or the compatibility `run_workflow_yaml_*` helpers). If timings are absent, confirm you are reading the returned workflow output object, not only stderr logs.
 
 ### Resume from checkpoint fails
 

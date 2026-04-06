@@ -101,26 +101,44 @@ client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 
 ## Workflow YAML Runner (Rust-backed)
 
+Prefer the **messages-first** APIs (see [Workflow API Migration](WORKFLOW_API_MIGRATION.md)):
+
 ```ts
 import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
-const result = client.runWorkflowYaml(
-  "examples/workflow_email/email-intake-classification.yaml",
-  { email_text: "Please process supply chain replacement, order 9921 arrived damaged." },
-)
+const result = client.executeWorkflowYaml({
+  workflowPath: "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+  messages: [
+    {
+      role: "user",
+      content: "Please process supply chain replacement, order 9921 arrived damaged.",
+    },
+  ],
+  healing: false,
+  workflowStreaming: false,
+  nodeLlmStreaming: true,
+})
 
 console.log(result.terminal_output)
 console.log(result.step_timings)
 console.log(result.total_elapsed_ms)
 ```
 
-This method delegates to Rust `simple-agents-workflow` as the source of truth.
+Use `extraWorkflowInput` for additional keys merged into runner input (for example legacy `email_text` when the YAML still references it).
 
-Workflow events parity with Python is also available:
+**Streaming:** `executeWorkflowYamlStream(request, onEvent)` emits live workflow events via `onEvent(err, eventJson)` (JSON strings) and resolves to the final structured output.
+
+### Legacy path helpers
+
+`runWorkflowYaml`, `runWorkflowYamlWithEvents`, and `runWorkflowYamlStream` take `(workflowPath, workflowInput)` and remain for compatibility. Prefer `executeWorkflowYaml` / `executeWorkflowYamlStream` for new code.
+
+This stack delegates to Rust `simple-agents-workflow` as the source of truth.
+
+Workflow events parity with Python:
 
 - `runWorkflowYamlWithEvents(...)` returns output with `events` attached.
-- `runWorkflowYamlStream(...)` emits live workflow events via `onEvent(eventJson)` as JSON strings and returns the final structured output object.
+- Legacy stream: `runWorkflowYamlStream(...)` — same callback shape as `executeWorkflowYamlStream`.
 
 Workflow telemetry options follow Rust runner semantics:
 

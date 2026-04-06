@@ -121,41 +121,78 @@ print(coerced.value)
 
 ## Workflow YAML Runner (Rust-backed)
 
-Python binding now exposes Rust workflow YAML execution directly:
+Workflow execution is **messages-first**: one request mapping (or Pydantic model) is used for sync run, async-backed run, and streaming. The Rust `simple-agents-workflow` crate remains the source of truth. See [Workflow API Migration](WORKFLOW_API_MIGRATION.md) for the cross-language contract.
+
+### Canonical entrypoints
+
+- `client.run(request)` — run to completion
+- `client.run_async(request)` — same outcome via the Rust async runtime (still a blocking Python call from the interpreter’s perspective unless you offload, for example with `asyncio.to_thread`)
+- `client.stream(request, on_event=..., include_events_in_output=...)` — live workflow events; omit `on_event` when you only want recorded events on the result (where applicable)
+
+**Minimal request**
 
 ```python
 from simple_agents_py import Client
 
 client = Client("openai", api_base="https://...", api_key="...")
-result = client.run_workflow_yaml(
-    "examples/workflow_email/email-intake-classification.yaml",
-    {"email_text": "Termination request, second warning already issued"},
-)
+request = {
+    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    "messages": [
+        {"role": "user", "content": "Termination request, second warning already issued"},
+    ],
+}
+result = client.run(request)
 
 print(result["terminal_output"])
 print(result["step_timings"])      # per-node elapsed ms + optional token usage
-print(result["llm_node_metrics"])  # llm node token/tps metrics by node id
-print(result["total_elapsed_ms"])  # end-to-end runtime
+print(result["llm_node_metrics"])   # llm node token/tps metrics by node id
+print(result["total_elapsed_ms"])   # end-to-end runtime
 print(result["total_input_tokens"])
 print(result["total_output_tokens"])
 print(result["total_tokens"])
 print(result["total_reasoning_tokens"])  # null when provider does not expose it
-print(result["tokens_per_second"])      # completion tokens / second
+print(result["tokens_per_second"])       # completion tokens / second
 ```
 
-To collect workflow events without live callbacks, set `include_events=True`:
+Optional top-level keys:
+
+- `input` — extra workflow fields merged into runner input (for YAML `input.*` and `messages_path: input.messages`); use for workflow-specific scalars or legacy fields such as `email_text` when the graph still references them.
+- `execution` — `healing`, `workflow_streaming`, `node_llm_streaming`, `split_stream_deltas`, optional `model`.
+- `workflow_options` — `telemetry`, `trace`, `model` (matches Rust `YamlWorkflowRunOptions`).
+
+**Validation:** request-level `execution.healing` and `execution.node_llm_streaming` cannot both be `true` (structured healing and node LLM streaming are mutually exclusive at this layer). Per-node YAML `heal` / `stream` still apply independently.
+
+`execution.model` overrides `workflow_options.model` when both are provided.
+
+**Async and stream (same request)**
+
+```python
+result_async = client.run_async(request)
+
+def on_event(event: dict[str, object]) -> None:
+    print(event.get("event_type"))
+
+streamed = client.stream(request, on_event=on_event)
+```
+
+**Events on the result**
+
+Use `client.stream(request, include_events_in_output=True)` or read `result.get("events")` when the runner records them. Legacy: `run_workflow_yaml(..., include_events=True)`.
+
+### Legacy path helpers
+
+`client.run_workflow_yaml(path, workflow_input)` and `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)` take a filesystem path plus a **workflow input** dict (`messages` and any other keys the YAML reads from `input`). Prefer the canonical `run` / `run_async` / `stream` request form for new code.
 
 ```python
 result = client.run_workflow_yaml(
-    "examples/workflow_email/email-intake-classification.yaml",
-    {"email_text": "Termination request, second warning already issued"},
-    include_events=True,
+    "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    {
+        "messages": [{"role": "user", "content": "Termination request, second warning already issued"}],
+    },
 )
-
-print(result["events"][0]["event_type"])
 ```
 
-This method delegates to Rust `simple-agents-workflow` as the source of truth.
+Workflows that still template `{{ input.email_text }}` without `messages_path: input.messages` need `input.email_text` (or `email_text` on the legacy workflow input dict) in addition to any `messages` you pass.
 
 ### `custom_worker` handlers (Python)
 
@@ -170,7 +207,7 @@ def my_handler(*, context: dict, payload: dict):
 
 - **`payload`**: the resolved `config.payload` object from YAML after template interpolation. Put per-node parameters here (for example `topic`, `company_name`).
 - **`context`**: execution context with:
-  - `input`: the workflow input you passed to `run_workflow_yaml` (for example `email_text`, `messages`).
+  - `input`: merged workflow input from your request (`messages` and any `input` fields).
   - `nodes`: map of completed node outputs (same structure templates use under `nodes.*`).
   - `globals`: workflow globals map.
   - `trace` (when tracing is active): nested object with `context` (trace ids, `traceparent`, etc.) and `tenant` (workspace/user/conversation ids when set via run options).
@@ -196,79 +233,51 @@ def get_seller_name(*, context, payload):
     return {"company_name": name, "stakeholder_name": "..."}
 ```
 
-**Troubleshooting.** `TypeError: ... unexpected keyword argument 'context'` means the handler still uses an old signature (positional `topic`, or `email_text=`). Use `*, context, payload` and read `email_text` from `context["input"]` if your workflow passes it there.
-
-For chat-history workflows, use `run_workflow_yaml(...)` with structured workflow input:
-
-```python
-result = client.run_workflow_yaml(
-    "examples/workflow_email/email-intake-classification.yaml",
-    {
-        "email_text": "Termination request, second warning already issued",
-        "messages": [
-            {"role": "system", "content": "You are an HR classifier."},
-            {"role": "user", "content": "Termination request, second warning already issued"},
-        ],
-    },
-)
-```
-
-Unified typed facade (messages-first request object):
-
-```python
-request = {
-    "workflow_path": "examples/workflow_email/email-intake-classification.yaml",
-    "messages": [{"role": "user", "content": "Please process invoice #123"}],
-    "execution": {
-        "healing": False,
-        "workflow_streaming": False,
-        "node_llm_streaming": True,
-    },
-}
-
-result = client.run(request)
-result2 = client.run_async(request)
-streamed = client.stream(request, on_event=lambda event: print(event.get("event_type")))
-```
-
-`execution.model` overrides `workflow_options.model` when both are provided.
+**Troubleshooting.** `TypeError: ... unexpected keyword argument 'context'` means the handler still uses an old signature (positional `topic`, or legacy kwargs). Use `*, context, payload` and read shared fields from `context["input"]`.
 
 ### Workflow stream DX (`simple_agents_py.workflow_stream`)
 
 - **Low-level (full control):** `Client.stream(request, on_event=...)`.
 - **Structured hooks (recommended):** `stream_workflow(client, request, hooks=...)` or `stream_workflow(client, request, on_event=...)` — *not both*.
 - **Terminal printing without callbacks:** `stream_workflow(..., stream_display="merged")` prints merged `node_stream_delta` tokens; `stream_display="split"` prints thinking vs output deltas and turns on `split_stream_deltas` when execution defaults are merged. Incompatible with `hooks` / `on_event`.
-- **Path override helper:** `run_workflow_yaml_stream_typed(client, request, workflow_path=Path(...))` coerces the path string sent to Rust.
+- **Path override helper:** `run_workflow_yaml_stream_typed(client, request, workflow_path=Path(...))` coerces the path string sent to Rust (still uses the unified request body).
 - **Typed requests (Pydantic):** `pip install simple-agents-py[pydantic]`, then import from `simple_agents_py.workflow_request`:
   - `WorkflowExecutionRequest` with `workflow_path` as `str`, `pathlib.Path`, or any `os.PathLike[str]`
   - `WorkflowMessage` with `WorkflowRole` (`system`, `user`, `assistant`, `tool`) or a string role
-  - `WorkflowInput` for per-workflow fields (`WorkflowInput(email_text="...")` instead of a dict)
+  - `WorkflowInput` for per-workflow fields beyond messages (for example `WorkflowInput(email_text="...")` when the YAML still references `input.email_text`)
   - `WorkflowRunOptions` with nested `WorkflowTelemetryConfig` and `WorkflowTraceConfig` (keys must match Rust `YamlWorkflowRunOptions`; arbitrary extra keys are rejected by the runner)
 
-Pass the model to `stream_workflow` / `run_workflow_request` / `run_workflow_request_async`. Plain `dict` requests still work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
+Helpers: `run_workflow_request`, `run_workflow_request_async`, and `stream_workflow` accept the same request objects. Plain `dict` requests work; coercion uses `simple_agents_py.workflow_payload.workflow_execution_request_to_mapping`.
 
 Return value is the same **`WorkflowRunOutput`** mapping as `run` / `run_async` / `stream` (`workflow_id`, `entry_node`, `trace`, `outputs`, `terminal_node`, `terminal_output`, `step_timings`, `llm_node_metrics`, `llm_node_models`, `total_elapsed_ms`, `ttft_ms`, token aggregates, `trace_id`, `metadata`, and `events` when recorded). Shapes match `WorkflowRunOutput` in the bundled `simple_agents_py.pyi`.
 
 **Split thinking vs. merged stream deltas.** Set `execution["split_stream_deltas"] = True` on the request when you want separate thinking vs output stream events, or use `stream_display="split"` on `stream_workflow`.
 
-### Live Workflow Events + LLM Deltas
+### Live workflow events + LLM deltas
 
-`Client.run_workflow_yaml_stream(...)` emits live workflow events to a Python callback while running:
+Prefer `client.stream` with the same request dict. Set `execution.workflow_streaming` to `true` when you want token deltas delivered to `on_event` (lifecycle events still fire either way).
 
 ```python
+request = {
+    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    "messages": [{"role": "user", "content": "Termination request, second warning already issued"}],
+    "workflow_options": {"telemetry": {"nerdstats": True}},
+    "execution": {
+        "workflow_streaming": True,
+        "node_llm_streaming": True,
+    },
+}
+
 def on_event(event: dict[str, object]) -> None:
     if event.get("event_type") == "node_stream_delta":
         print(event.get("delta", ""), end="", flush=True)
     else:
         print(event)
 
-result = client.run_workflow_yaml_stream(
-    "examples/workflow_email/email-intake-classification.yaml",
-    {"email_text": "Termination request, second warning already issued"},
-    on_event=on_event,
-    workflow_options={"telemetry": {"nerdstats": True}},
-)
+result = client.stream(request, on_event=on_event)
 ```
+
+Legacy equivalent: `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)`.
 
 Notes:
 

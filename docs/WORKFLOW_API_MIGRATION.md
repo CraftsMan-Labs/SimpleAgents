@@ -41,7 +41,7 @@ Some language surfaces keep legacy names for compatibility (`runWorkflowYaml*`),
 ## Streaming semantics
 
 - `workflow_streaming=true` is only valid for stream entrypoints.
-- `healing=true` and `node_llm_streaming=true` is rejected by execution validation.
+- At the **request `execution` layer**, `healing=true` and `node_llm_streaming=true` cannot both be true; validation rejects that combination (structured healing and node-level LLM streaming are mutually exclusive there). Per-node YAML `heal` / `stream` still apply independently.
 
 ## Migration checklist
 

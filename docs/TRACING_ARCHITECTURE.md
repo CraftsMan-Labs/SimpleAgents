@@ -100,12 +100,13 @@ Important: traces are append-only. You do not mutate old emitted spans; each run
 
 ### Python example (streaming)
 
+Use the unified request shape with `client.stream` (same tracing options as `run` / `run_async`):
+
 ```python
-result = client.run_workflow_yaml_stream(
-    "examples/workflow_email/email-chat-draft-or-clarify.yaml",
-    workflow_input,
-    on_event=on_event,
-    workflow_options={
+request = {
+    "workflow_path": "examples/workflow_email/email-chat-draft-or-clarify.yaml",
+    "messages": workflow_messages,  # list of {role, content} dicts
+    "workflow_options": {
         "telemetry": {"enabled": True, "nerdstats": True},
         "trace": {
             "context": {
@@ -118,8 +119,15 @@ result = client.run_workflow_yaml_stream(
             },
         },
     },
-)
+    "execution": {
+        "workflow_streaming": True,
+        "node_llm_streaming": True,
+    },
+}
+result = client.stream(request, on_event=on_event)
 ```
+
+Legacy: `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)` with the same `workflow_options` nested object.
 
 ### YAML custom worker payload forwarding example
 

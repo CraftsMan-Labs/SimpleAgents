@@ -53,7 +53,7 @@ Unified workflow request shape for browser runtime:
 - `messages: MessageInput[]` (required)
 - optional `context`, `media`, `input`, `execution`, `workflow_options`
 
-`workflow_options.telemetry` and `workflow_options.trace` use explicit TypeScript interfaces in `index.d.ts` (`WorkflowTelemetryConfig`, `WorkflowTraceConfig`, etc., snake_case field names to match the Rust runner). `input` may be typed as `WorkflowInputFields` for common keys such as `email_text` while still allowing extra workflow-specific properties.
+`workflow_options.telemetry` and `workflow_options.trace` use explicit TypeScript interfaces in `index.d.ts` (`WorkflowTelemetryConfig`, `WorkflowTraceConfig`, etc., snake_case field names to match the Rust runner). `input` may include optional workflow-specific fields (some older examples used a scalar like `email_text`); prefer `messages` as the primary chat payload and keep extra keys only when templates reference `input.*`.
 
 Note: completion APIs already use `stream(...)`, so workflow streaming is exposed as `streamWorkflow(...)` to avoid method-name collision on the shared `Client` surface.
 

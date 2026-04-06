@@ -171,8 +171,8 @@ References:
 | Deterministic run model | not workflow-graph aware | step-based deterministic workflow runtime |
 | Trace/replay | provider metrics/logging only | typed trace schema + recorder + replay validator |
 | Scope boundaries | request-level | runtime scoped state with capability checks |
-| YAML workflow execution | not available | `run_workflow_yaml_file_with_client` / `run_workflow_yaml_with_client` |
-| Workflow live events | not available | `run_workflow_yaml_with_client_and_custom_worker_and_events` + `YamlWorkflowEventSink` |
+| YAML workflow execution | not available | `WorkflowRunner` (preferred) and compatibility `run_workflow_yaml_*` helpers |
+| Workflow live events | not available | Stream entrypoints + `YamlWorkflowEventSink` (binding-specific `stream` / `Stream` / `executeWorkflowYamlStream`) |
 | YAML workflow verifier | not available | `verify_yaml_workflow` diagnostics before execution |
 | YAML prompt memory | not available | `set_globals` + `update_globals` + `&#123;&#123; globals.* &#125;&#125;` interpolation |
 | Visualization | not available | `workflow_to_mermaid` |

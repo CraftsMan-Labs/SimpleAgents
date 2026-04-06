@@ -256,9 +256,8 @@ use serde_json::json;
 use simple_agents_workflow::run_workflow_yaml_file_with_client;
 
 let output = run_workflow_yaml_file_with_client(
-    std::path::Path::new("examples/workflow_email/email-intake-classification.yaml"),
+    std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
     &json!({
-        "email_text": "Termination request, second warning already issued",
         "messages": [
             {"role": "user", "content": "Termination request, second warning already issued"}
         ]

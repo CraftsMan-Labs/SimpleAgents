@@ -188,14 +188,13 @@ Use globals for run-level state, not for long-term secret storage.
 
 ## Chat-History Workflows
 
-Pass chat arrays in `input.messages`:
+Pass chat arrays in `input.messages` (required for `messages_path: input.messages`). Optional extra keys on the same input object (for example legacy `email_text`) are fine if your prompts still reference `input.*`:
 
 ```json
 {
-  "email_text": "optional scalar input",
   "messages": [
-    {"role":"system","content":"..."},
-    {"role":"user","content":"..."}
+    {"role": "system", "content": "..."},
+    {"role": "user", "content": "..."}
   ]
 }
 ```
@@ -212,7 +211,11 @@ use simple_agents_workflow::run_workflow_yaml_file_with_client;
 
 let output = run_workflow_yaml_file_with_client(
     std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
-    &json!({ "email_text": "Need replacement", "messages": [] }),
+    &json!({
+        "messages": [
+            {"role": "user", "content": "Need replacement for order 9921"}
+        ]
+    }),
     &client,
 ).await?;
 ```
@@ -227,7 +230,11 @@ let output = WorkflowRunner::from_file(
     std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
 )
 .with_client(&client)
-.with_input(&json!({ "email_text": "Need replacement", "messages": [] }))
+.with_input(&json!({
+    "messages": [
+        {"role": "user", "content": "Need replacement for order 9921"}
+    ]
+}))
 .run()
 .await?;
 ```
