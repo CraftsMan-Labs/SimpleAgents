@@ -41,11 +41,6 @@ export interface WorkflowRunOptionsNapi {
   trace?: WorkflowTraceConfigNapi
   includeEvents?: boolean
 }
-export interface ClientProviderConfig {
-  provider: string
-  apiKey?: string
-  apiBase?: string
-}
 export interface WorkflowYamlRunFlags {
   healing: boolean
   workflowStreaming: boolean
@@ -65,7 +60,6 @@ export interface WorkflowYamlRunRequest {
   healing: boolean
   workflowStreaming: boolean
   nodeLlmStreaming: boolean
-  /** When true, emit split thinking/output stream events (`node_stream_thinking_delta` / `node_stream_output_delta`). */
   splitStreamDeltas?: boolean
   extraWorkflowInput?: Record<string, unknown>
   workflowOptions?: WorkflowRunOptionsNapi
@@ -155,15 +149,17 @@ export interface StreamEvent {
 }
 export declare function parseWorkflowYamlExecutionRequest(workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: WorkflowRunOptionsNapi): ParsedWorkflowYamlExecutionRequest
 export class Client {
-  constructor(provider: string)
-  static withProviderConfig(config: ClientProviderConfig): Client
+  /**
+   * Create a client from an API key.
+   *
+   * Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
+   * the endpoint.
+   */
+  constructor(apiKey: string, baseUrl?: string | undefined | null)
+  /** Create a client using environment variables for the API key. */
+  static fromEnv(): Client
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
-  stream(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
-  streamEvents(model: string, promptOrMessages: string | MessageInput[], onEvent: (event: StreamEvent) => void, options?: CompleteOptions): Promise<CompletionResult>
-  runWorkflowYaml(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): { workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }
-  runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): { workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }
-  runWorkflowYamlStream(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>
-  runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): { workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }
-  executeWorkflowYaml(request: WorkflowYamlRunRequest): { workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }
-  executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent: (err: unknown, eventJson: string) => void): Promise<{ workflow_id: string; entry_node: string; trace: Array<string>; outputs: Record<string, unknown>; terminal_node: string; terminal_output?: unknown; step_timings: Array<unknown>; llm_node_metrics: Record<string, unknown>; llm_node_models: Record<string, string>; total_elapsed_ms: number; ttft_ms?: number; total_input_tokens: number; total_output_tokens: number; total_tokens: number; total_reasoning_tokens?: number; tokens_per_second: number; trace_id?: string; metadata?: unknown; events?: Array<unknown> }>
+  streamComplete(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
+  runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Record<string, unknown>
+  streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Promise<Record<string, unknown>>
 }

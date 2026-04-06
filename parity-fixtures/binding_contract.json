@@ -46,9 +46,8 @@
       "export interface CompletionResult",
       "export interface StreamEvent",
       "eventType: string",
-      "streamEvents(",
-      "runWorkflowYamlWithEvents(",
-      "runWorkflowYamlStream(",
+      "runWorkflow(",
+      "streamWorkflow(",
       "onEvent: (err: unknown, eventJson: string) => void"
     ],
     "required_runtime_exports": [

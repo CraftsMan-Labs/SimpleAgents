@@ -59,12 +59,12 @@ test('declaration and runtime exports follow shared contract fixture', () => {
   assert.deepStrictEqual(sharedCases.streaming.event_types, ['delta', 'error', 'done']);
 });
 
-test('runWorkflowYaml declaration supports workflowOptions', () => {
+test('runWorkflow declaration supports workflowOptions', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
   assert.ok(
-    declaration.includes('runWorkflowYamlWithOptions(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): { workflow_id: string;'),
-    'runWorkflowYamlWithOptions should accept optional workflowOptions in TypeScript declaration',
+    declaration.includes('runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Record<string, unknown>'),
+    'runWorkflow should accept optional workflowOptions in TypeScript declaration',
   );
 });
 
