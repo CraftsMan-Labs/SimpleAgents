@@ -185,7 +185,7 @@ mod tests {
     use simple_agent_type::request::CompletionRequest;
     use simple_agent_type::tool::{ToolCall, ToolCallFunction, ToolType};
     use simple_agent_type::{Result as SaResult, SimpleAgentsError};
-    use simple_agents_core::SimpleAgentsClientBuilder;
+    use simple_agents_core::SimpleAgentsClient;
     use std::collections::BTreeMap;
     use std::fs;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -312,7 +312,7 @@ mod tests {
                     .iter()
                     .rev()
                     .find(|m| m.role == Role::User)
-                    .map(|m| m.content.clone())
+                    .map(|m| m.content_text().to_string())
                     .unwrap_or_default();
                 let payload = json!({
                     "subject": "ok",
@@ -405,6 +405,9 @@ mod tests {
             let request: CompletionRequest =
                 serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
 
+            let mut usage = Usage::new(20, 10);
+            usage.reasoning_tokens = Some(5);
+
             let response = CompletionResponse {
                 id: "resp_reasoning".to_string(),
                 model: request.model,
@@ -414,7 +417,7 @@ mod tests {
                     finish_reason: FinishReason::Stop,
                     logprobs: None,
                 }],
-                usage: Usage::new(20, 10).with_reasoning_tokens(5),
+                usage,
                 created: None,
                 provider: Some(self.name().to_string()),
                 healing_metadata: None,
@@ -451,6 +454,8 @@ mod tests {
             let has_tool_result = request.messages.iter().any(|m| m.role == Role::Tool);
 
             let response = if has_tools && !has_tool_result {
+                let mut usage = Usage::new(15, 7);
+                usage.reasoning_tokens = Some(3);
                 CompletionResponse {
                     id: "resp_tool_reasoning_1".to_string(),
                     model: request.model.clone(),
@@ -467,12 +472,14 @@ mod tests {
                         finish_reason: FinishReason::ToolCalls,
                         logprobs: None,
                     }],
-                    usage: Usage::new(15, 7).with_reasoning_tokens(3),
+                    usage,
                     created: None,
                     provider: Some(self.name().to_string()),
                     healing_metadata: None,
                 }
             } else {
+                let mut usage = Usage::new(20, 10);
+                usage.reasoning_tokens = Some(4);
                 CompletionResponse {
                     id: "resp_tool_reasoning_2".to_string(),
                     model: request.model.clone(),
@@ -482,7 +489,7 @@ mod tests {
                         finish_reason: FinishReason::Stop,
                         logprobs: None,
                     }],
-                    usage: Usage::new(20, 10).with_reasoning_tokens(4),
+                    usage,
                     created: None,
                     provider: Some(self.name().to_string()),
                     healing_metadata: None,
@@ -802,7 +809,7 @@ nodes:
         .await
         .expect_err("custom_worker without executor should fail");
         let rendered = err.to_string();
-        assert!(rendered.contains("no custom worker executor configured"));
+        assert!(rendered.contains("no custom worker executor is configured"));
     }
 
     #[tokio::test]
@@ -860,12 +867,12 @@ nodes:
         assert!(!bindings.is_empty());
         let first_binding = &bindings[0];
         assert_eq!(
-            first_binding.get("key").and_then(Value::as_str),
+            first_binding.get("source_path").and_then(Value::as_str),
             Some("input.email_text")
         );
         assert_eq!(
             first_binding
-                .get("resolved_value")
+                .get("resolved")
                 .and_then(Value::as_str),
             Some("hello")
         );
@@ -971,11 +978,12 @@ nodes:
             .find(|event| event.event_type == "workflow_completed")
             .expect("workflow_completed event should be emitted");
 
-        let metadata = completed_event
+        let has_nerdstats = completed_event
             .metadata
             .as_ref()
-            .expect("workflow_completed metadata should be present");
-        assert!(metadata.get("nerdstats").is_none());
+            .and_then(|m| m.get("nerdstats"))
+            .is_some();
+        assert!(!has_nerdstats);
     }
 
     struct StreamAwareMockExecutor;
@@ -1201,10 +1209,7 @@ edges: []
             payload: json!({"customer_name":"Acme Corp","order_status":"shipped"}),
         };
 
-        let client = SimpleAgentsClientBuilder::new()
-            .add_provider("openai", ToolLoopProvider)
-            .build()
-            .expect("client should build");
+        let client = SimpleAgentsClient::new(Arc::new(ToolLoopProvider));
 
         let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
             &workflow,
@@ -1245,10 +1250,7 @@ nodes:
 
         let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
 
-        let client = SimpleAgentsClientBuilder::new()
-            .add_provider("openai", ReasoningUsageProvider)
-            .build()
-            .expect("client should build");
+        let client = SimpleAgentsClient::new(Arc::new(ReasoningUsageProvider));
 
         let sink = RecordingSink {
             events: Mutex::new(Vec::new()),
@@ -1305,10 +1307,7 @@ edges: []
             payload: json!({"info":"ok"}),
         };
 
-        let client = SimpleAgentsClientBuilder::new()
-            .add_provider("openai", ToolLoopReasoningProvider)
-            .build()
-            .expect("client should build");
+        let client = SimpleAgentsClient::new(Arc::new(ToolLoopReasoningProvider));
 
         let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
             &workflow,
@@ -1367,10 +1366,7 @@ edges: []
             payload: json!({"wrong_key": "wrong_value"}),
         };
 
-        let client = SimpleAgentsClientBuilder::new()
-            .add_provider("openai", ToolLoopProvider)
-            .build()
-            .expect("client should build");
+        let client = SimpleAgentsClient::new(Arc::new(ToolLoopProvider));
 
         let err = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
             &workflow,
@@ -1422,10 +1418,7 @@ edges: []
             execute_calls: AtomicUsize::new(0),
         });
 
-        let client = SimpleAgentsClientBuilder::new()
-            .add_provider("openai", UnknownToolProvider)
-            .build()
-            .expect("client should build");
+        let client = SimpleAgentsClient::new(Arc::new(UnknownToolProvider));
 
         let err = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
             &workflow,
@@ -1496,7 +1489,7 @@ nodes:
         .await
         .expect_err("custom_worker without executor should fail");
 
-        assert!(err.to_string().contains("no custom worker executor configured"));
+        assert!(err.to_string().contains("no custom worker executor is configured"));
     }
 
     #[tokio::test]
