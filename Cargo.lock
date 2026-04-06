@@ -2453,6 +2453,7 @@ dependencies = [
  "serde_json",
  "simple-agent-type",
  "simple-agents-core",
+ "simple-agents-healing",
  "simple-agents-providers",
  "simple-agents-workflow",
  "tokio",

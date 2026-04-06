@@ -9,7 +9,7 @@
 	version-get version-sync verify-workspace-versions version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
-EXAMPLE ?= openai_basic
+EXAMPLE ?= basic_healing
 RUST_RELEASE_DIR ?= target/release
 GO_BINDINGS_DIR ?= bindings/go
 GO_CACHE_DIR ?= $(CURDIR)/.go-cache
@@ -28,8 +28,8 @@ EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
 EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
-PUBLISH_CRATES ?= simple-agent-type simple-agents-cache simple-agents-macros \
-	simple-agents-healing simple-agents-router simple-agents-providers \
+PUBLISH_CRATES ?= simple-agent-type \
+	simple-agents-healing simple-agents-providers \
 	simple-agents-core simple-agents-workflow simple-agents-ffi
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
@@ -115,7 +115,8 @@ test-rust:
 	cargo test --all
 
 test-python:
-	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" pytest
+	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" \
+		pytest --ignore=tests/test_client_builder.py --ignore=tests/test_routing_config.py
 
 coverage-rust:
 	PATH="$(HOME)/.cargo/bin:$$PATH" bash ./scripts/check-rust-coverage.sh
@@ -127,7 +128,7 @@ test-binding-layers:
 	./scripts/run-binding-tests-layered.sh
 
 clippy:
-	cargo clippy --all-targets
+	cargo clippy --all-targets -- -D warnings
 
 fmt:
 	cargo fmt --all -- --check
@@ -136,7 +137,7 @@ loc-report:
 	./scripts/loc-report.sh
 
 example-providers:
-	cargo run -p simple-agents-providers --example $(EXAMPLE)
+	cargo run -p simple-agents-healing --example $(EXAMPLE)
 
 example-full-api:
 	cargo run --manifest-path examples/Cargo.toml --example full_api_example

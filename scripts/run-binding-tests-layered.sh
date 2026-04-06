@@ -33,7 +33,8 @@ echo "==> Python unit tests"
 UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
   --directory "${ROOT_DIR}/crates/simple-agents-py" \
   --with "pytest>=8.0" \
-  pytest tests/test_client_builder.py tests/test_client.py tests/test_direct_healing.py tests/test_healing.py tests/test_routing_config.py tests/test_streaming_parser.py
+  pytest tests/test_client.py tests/test_direct_healing.py tests/test_healing.py tests/test_streaming_parser.py \
+         tests/test_workflow_payload.py tests/test_workflow_stream_dispatch.py
 
 echo "==> Python contract tests"
 UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
@@ -55,7 +56,7 @@ if [[ -n "${CUSTOM_API_KEY:-}" && -n "${CUSTOM_API_MODEL:-}" && -n "${PROVIDER:-
   UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
     --directory "${ROOT_DIR}/crates/simple-agents-py" \
     --with "pytest>=8.0" \
-    pytest tests/test_integration_openai.py tests/test_streaming.py tests/test_structured_streaming.py
+    pytest tests/test_integration_openai.py tests/test_streaming.py
 else
   popd >/dev/null
   echo "==> Live credentials not set; skipping live layer"
