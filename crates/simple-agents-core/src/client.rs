@@ -1,14 +1,113 @@
 //! SimpleAgents client implementation.
 
 use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
+use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::{
     CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
+use simple_agent_type::telemetry::{ApiFormat, TelemetryConfig, TraceContext};
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
 use std::sync::Arc;
 use tracing::debug;
+
+// ---------------------------------------------------------------------------
+// Configuration types
+// ---------------------------------------------------------------------------
+
+/// Retry behaviour for failed LLM requests.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetryConfig {
+    /// Maximum number of attempts (including the initial one).
+    pub max_attempts: u8,
+    /// Base back-off between retries in milliseconds.
+    pub backoff_ms: u64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: 3,
+            backoff_ms: 1000,
+        }
+    }
+}
+
+/// Top-level configuration for a [`SimpleAgentsClient`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientConfig {
+    /// Provider identifier (e.g. `"openai"`, `"anthropic"`).
+    pub provider: String,
+    /// API key used for authentication with the provider.
+    pub api_key: String,
+    /// Optional custom base URL for the provider API.
+    pub base_url: Option<String>,
+    /// Wire format for the provider API.
+    pub api_format: ApiFormat,
+    /// Extra HTTP headers sent with every request.
+    pub extra_headers: Option<Vec<(String, String)>>,
+    /// Optional telemetry / OTEL export configuration.
+    pub telemetry: Option<TelemetryConfig>,
+    /// Default retry policy applied to all requests.
+    pub default_retry: RetryConfig,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            provider: "openai".into(),
+            api_key: String::new(),
+            base_url: None,
+            api_format: ApiFormat::default(),
+            extra_headers: None,
+            telemetry: None,
+            default_retry: RetryConfig::default(),
+        }
+    }
+}
+
+/// Flags that control execution behaviour for a single run.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionFlags {
+    /// Whether the workflow-level orchestrator streams between nodes.
+    pub workflow_streaming: bool,
+    /// Whether individual LLM calls within a node use streaming.
+    pub node_llm_streaming: bool,
+}
+
+impl Default for ExecutionFlags {
+    fn default() -> Self {
+        Self {
+            workflow_streaming: false,
+            node_llm_streaming: true,
+        }
+    }
+}
+
+/// Per-run options passed to the executor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunOptions {
+    /// Print timing / token-usage statistics after the run.
+    pub nerdstats: bool,
+    /// Whether to emit telemetry spans for this run.
+    pub telemetry_enabled: bool,
+    /// Distributed trace context to propagate.
+    pub trace_context: Option<TraceContext>,
+    /// Execution behaviour flags.
+    pub execution_flags: ExecutionFlags,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            nerdstats: true,
+            telemetry_enabled: true,
+            trace_context: None,
+            execution_flags: ExecutionFlags::default(),
+        }
+    }
+}
 
 /// Mode for completion post-processing.
 #[derive(Clone)]
@@ -51,21 +150,41 @@ pub enum CompletionOutcome {
 /// Unified SimpleAgents client.
 pub struct SimpleAgentsClient {
     provider: Arc<dyn Provider>,
+    config: ClientConfig,
     healing: HealingSettings,
 }
 
 impl SimpleAgentsClient {
-    /// Create a new client wrapping a single provider with default healing settings.
+    /// Create a new client wrapping a single provider with default config and healing.
     pub fn new(provider: Arc<dyn Provider>) -> Self {
         Self {
             provider,
+            config: ClientConfig::default(),
+            healing: HealingSettings::default(),
+        }
+    }
+
+    /// Create a new client from a [`ClientConfig`], using the supplied provider.
+    pub fn from_config(provider: Arc<dyn Provider>, config: ClientConfig) -> Self {
+        Self {
+            provider,
+            config,
             healing: HealingSettings::default(),
         }
     }
 
     /// Create a new client with custom healing settings.
     pub fn with_healing(provider: Arc<dyn Provider>, healing: HealingSettings) -> Self {
-        Self { provider, healing }
+        Self {
+            provider,
+            config: ClientConfig::default(),
+            healing,
+        }
+    }
+
+    /// Return a reference to the client's configuration.
+    pub fn config(&self) -> &ClientConfig {
+        &self.config
     }
 
     /// Return the name of the underlying provider.

@@ -11,6 +11,7 @@ documentation.workspace = true
 description = "Core SimpleAgents client API integrating providers and healing"
 
 [dependencies]
+serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
 futures-core = "0.3"

@@ -65,7 +65,10 @@
 mod client;
 mod healing;
 
-pub use client::{CompletionMode, CompletionOptions, CompletionOutcome, SimpleAgentsClient};
+pub use client::{
+    ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, ExecutionFlags,
+    RetryConfig, RunOptions, SimpleAgentsClient,
+};
 pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 
 // Re-export commonly used types.

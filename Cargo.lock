@@ -2373,6 +2373,7 @@ dependencies = [
  "async-trait",
  "futures-core",
  "futures-util",
+ "serde",
  "serde_json",
  "simple-agent-type",
  "simple-agents-healing",
