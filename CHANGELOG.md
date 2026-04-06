@@ -15,6 +15,19 @@ The format follows Keep a Changelog, and versions are tracked in repository tags
 ### Fixed
 - _No entries yet._
 
+## [0.3.4] - 2026-04-06
+
+### Added
+- Multimodal `ContentPart` support for audio and video, plus MIME-related helpers in `simple-agent-type`.
+- Multimodal message content surfaced through Python, NAPI, WASM, and Go bindings.
+- Criterion benchmark harness for the workflow runtime (`runtime_benchmarks`), with a concurrency guard for bench runs.
+
+### Changed
+- _No entries yet._
+
+### Fixed
+- _No entries yet._
+
 ## [0.2.33] - 2026-04-03
 
 ### Added
