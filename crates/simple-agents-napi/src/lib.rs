@@ -1111,4 +1111,136 @@ impl Client {
 
         Ok(AsyncTask::new(task))
     }
+
+    /// Run a YAML workflow (new unified API).
+    ///
+    /// ```ts
+    /// const result = await client.run("workflow.yaml", messages);
+    /// const result = await client.run("workflow.yaml", messages, { tools: myTools });
+    /// ```
+    #[napi(
+        js_name = "run",
+        ts_args_type = "workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }",
+        ts_return_type = "Record<string, unknown>"
+    )]
+    pub fn run(
+        &self,
+        workflow_path: String,
+        messages: Vec<MessageInput>,
+        opts: Option<JsonValue>,
+    ) -> Result<JsonValue> {
+        let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
+        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
+        let request_options =
+            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+        blocking_workflow_to_json(
+            &self.runtime,
+            &self.client,
+            workflow_path.as_str(),
+            &workflow_input,
+            &request_options.run_options,
+            YamlWorkflowExecutionFlags::default(),
+            None,
+        )
+    }
+
+    /// Stream a YAML workflow (new unified API).
+    ///
+    /// ```ts
+    /// const result = await client.stream("workflow.yaml", messages, onEvent);
+    /// ```
+    #[napi(
+        js_name = "stream",
+        ts_args_type = "workflowPath: string, messages: MessageInput[], onEvent?: (err: unknown, eventJson: string) => void, opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }",
+        ts_return_type = "Promise<Record<string, unknown>>"
+    )]
+    pub fn stream(
+        &self,
+        workflow_path: String,
+        messages: Vec<MessageInput>,
+        on_event: Option<JsFunction>,
+        opts: Option<JsonValue>,
+    ) -> Result<Either<JsonValue, AsyncTask<WorkflowStreamTask>>> {
+        let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
+        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
+        let request_options =
+            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
+
+        match on_event {
+            Some(cb) => {
+                let tsfn: ThreadsafeFunction<String> =
+                    cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
+                        let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
+                        Ok(vec![event_json])
+                    })?;
+
+                let task = WorkflowStreamTask {
+                    runtime: self.runtime.clone(),
+                    client: self.client.clone(),
+                    workflow_path,
+                    workflow_input,
+                    workflow_options: request_options.run_options,
+                    workflow_flags: YamlWorkflowExecutionFlags {
+                        workflow_streaming: true,
+                        ..YamlWorkflowExecutionFlags::default()
+                    },
+                    include_events: false,
+                    on_event: tsfn,
+                };
+                Ok(Either::B(AsyncTask::new(task)))
+            }
+            None => {
+                let output = blocking_workflow_to_json(
+                    &self.runtime,
+                    &self.client,
+                    workflow_path.as_str(),
+                    &workflow_input,
+                    &request_options.run_options,
+                    YamlWorkflowExecutionFlags::default(),
+                    None,
+                )?;
+                Ok(Either::A(output))
+            }
+        }
+    }
+
+    /// Resume a workflow from a checkpoint (new unified API).
+    ///
+    /// ```ts
+    /// const result = await client.resume(checkpoint);
+    /// ```
+    #[napi(
+        js_name = "resume",
+        ts_args_type = "checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown> }",
+        ts_return_type = "Record<string, unknown>"
+    )]
+    pub fn resume(&self, checkpoint: JsonValue, opts: Option<JsonValue>) -> Result<JsonValue> {
+        let workflow_path = checkpoint
+            .get("workflow_path")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| Error::from_reason("checkpoint must have workflow_path".to_string()))?
+            .to_string();
+
+        let messages_val = checkpoint
+            .get("original_messages")
+            .cloned()
+            .unwrap_or(serde_json::json!([]));
+
+        let workflow_input = serde_json::json!({ "messages": messages_val });
+        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
+        let request_options =
+            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+
+        blocking_workflow_to_json(
+            &self.runtime,
+            &self.client,
+            &workflow_path,
+            &workflow_input,
+            &request_options.run_options,
+            YamlWorkflowExecutionFlags::default(),
+            None,
+        )
+    }
 }
