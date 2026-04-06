@@ -26,29 +26,30 @@
       "sa_complete(",
       "sa_stream(",
       "sa_run_workflow(",
+      "sa_stream_workflow(",
+      "sa_resume(",
       "sa_last_error_message(void)",
       "typedef int32_t (*SAStreamCallback)(const char *event_json, void *user_data);"
     ]
   },
   "go": {
     "required_api_symbols": [
-      "type CompletionResult struct",
-      "func (c *Client) CompleteMessages(",
-      "func (c *Client) StreamMessages(",
-      "func (c *Client) RunWorkflowYAMLWithEvents(",
-      "func (c *Client) RunWorkflowYAMLStream(",
-      "type StreamEvent struct"
+      "type Client struct",
+      "func NewClient(",
+      "func (c *Client) Complete(",
+      "func (c *Client) StreamComplete(",
+      "func (c *Client) Run(",
+      "func (c *Client) Stream(",
+      "func (c *Client) Resume("
     ]
   },
   "node": {
     "required_type_symbols": [
-      "export interface ToolCallResult",
-      "export interface CompletionResult",
-      "export interface StreamEvent",
-      "eventType: string",
-      "runWorkflow(",
-      "streamWorkflow(",
-      "onEvent: (err: unknown, eventJson: string) => void"
+      "struct CompletionResult",
+      "struct StreamEvent",
+      "run(",
+      "stream(",
+      "resume("
     ],
     "required_runtime_exports": [
       "Client"
@@ -59,11 +60,17 @@
       "class ResponseWithMetadata",
       "class StreamChunk",
       "class PyStructuredEvent",
+      "class Message",
+      "class Role",
+      "class ContentPart",
       "stream: Literal[True]"
     ],
     "required_api_symbols": [
       "class Client:",
-      "def complete("
+      "def complete(",
+      "def run(",
+      "def stream(",
+      "def resume("
     ]
   }
 }
