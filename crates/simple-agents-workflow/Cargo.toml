@@ -28,4 +28,11 @@ tonic.workspace = true
 jsonschema = "0.18"
 
 [dev-dependencies]
+async-trait.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+futures.workspace = true
 proptest = "1.6"
+
+[[bench]]
+name = "runtime_benchmarks"
+harness = false

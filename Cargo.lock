@@ -2464,6 +2464,7 @@ name = "simple-agents-workflow"
 version = "0.3.3"
 dependencies = [
  "async-trait",
+ "criterion",
  "futures",
  "jsonschema",
  "opentelemetry",
