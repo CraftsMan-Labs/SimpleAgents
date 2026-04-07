@@ -1,0 +1,24 @@
+# Minimal single-node workflow -- the simplest possible config.
+# Based on examples/python-test-simpleAgents/friendly.yaml
+
+id: minimal-chat
+version: 1.0.0
+entry_node: reply
+
+nodes:
+  - id: reply
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        temperature: 0.7
+        stream: true
+        messages_path: input.messages
+        append_prompt_as_user: true
+    config:
+      output_schema:
+        type: string
+      prompt: |
+        You are a helpful assistant. Reply to the user's latest message.
+        Be concise and friendly. Do not use JSON or markdown unless asked.
+
+edges: []

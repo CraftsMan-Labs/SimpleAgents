@@ -1,11 +1,11 @@
 ---
 name: simpleagents-builder
-description: This skill should be used when the user asks to create, improve, or validate YAML agent workflows, especially requests like "build an agent YAML", "design workflow YAML", "add routing in YAML", or "make interview/email workflow nodes and edges". Also use when the user describes a problem and wants a SimpleAgents solution built for them.
+description: This skill should be used when the user asks to create, improve, or validate YAML agent workflows, especially requests like "build an agent YAML", "design workflow YAML", "add routing in YAML", or "make interview/email workflow nodes and edges". Also use when the user describes a problem and wants a SimpleAgents solution built for them. The core vision is that every agentic SaaS is a config -- turn their problem into a YAML workflow.
 ---
 
 # SimpleAgentsBuilder
 
-Design and build complete SimpleAgents YAML workflows with runner code. When a user describes their problem, gather requirements through targeted follow-up questions, then generate the YAML workflow, handler file, and runner script.
+**Every agentic SaaS is a config.** Turn any AI product idea into a YAML workflow + runner code. When a user describes their problem, gather requirements through targeted follow-up questions, then generate the YAML workflow, handler file, and runner script that makes their agentic SaaS real.
 
 ## When to Use This Skill
 
@@ -726,14 +726,25 @@ print(json.dumps(result, indent=2))
 
 ## References
 
-For reusable patterns and QA checklist, read:
-- `references/patterns.md`
-- `references/checklist.md`
+Read these files for reusable patterns and a pre-flight checklist:
 
-Working examples in the repo:
+- `skills/simpleagents-builder/references/patterns.md` -- Detect->Route->Act, LLM best practices, custom workers, templating, multi-level routing, image input, execution flags
+- `skills/simpleagents-builder/references/checklist.md` -- QA checklist to validate YAML before outputting
+
+Runnable skill examples (self-contained YAML + handler + runner):
+
+- `skills/simpleagents-builder/examples/minimal-chat.yaml` -- simplest single-node workflow
+- `skills/simpleagents-builder/examples/email-classification.yaml` -- hierarchical classification with custom worker enrichment
+- `skills/simpleagents-builder/examples/handlers.py` -- Python custom worker handler
+- `skills/simpleagents-builder/examples/run.py` -- Python normal run
+- `skills/simpleagents-builder/examples/run_streaming.py` -- Python streaming run
+- `skills/simpleagents-builder/examples/run.ts` -- TypeScript run with custom worker dispatch
+
+Full working examples in the repo (source of truth):
+
 - `examples/python-test-simpleAgents/test.yaml` -- full email classification with finance enrichment
 - `examples/python-test-simpleAgents/friendly.yaml` -- minimal single-node chat bot
-- `examples/python-test-simpleAgents/handlers.py` -- custom worker handler
+- `examples/python-test-simpleAgents/handlers.py` -- Python custom worker handler
 - `examples/python-test-simpleAgents/test-py-simple-agents.py` -- normal Python run
 - `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` -- streaming Python run
 - `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` -- streaming with Langfuse
