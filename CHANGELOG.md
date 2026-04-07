@@ -15,6 +15,41 @@ The format follows Keep a Changelog, and versions are tracked in repository tags
 ### Fixed
 - _No entries yet._
 
+## [0.3.7] - 2026-04-07
+
+### Removed
+
+- Go/FFI bindings (breaking change).
+
+### Changed
+
+- WASM bindings require the Rust WASM backend; the JavaScript fallback was removed.
+
+## [0.3.6] - 2026-04-07
+
+### Added
+
+- Default workflow stream handlers and typed workflow event types in bindings.
+- Template interpolation for custom worker JSON payloads in the workflow runtime.
+
+### Changed
+
+- Pinned WASM-related dependency updates.
+
+## [0.3.5] - 2026-04-06
+
+### Added
+
+- PEP 561 type stubs shipped inside the `simple-agents-py` package.
+
+### Changed
+
+- Synced the WASM Rust lockfile for the `simple-agents-wasm` crate.
+
+### Fixed
+
+- Tag release workflow matches Keep a Changelog section headings when building release notes.
+
 ## [0.3.4] - 2026-04-06
 
 ### Added
