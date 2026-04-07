@@ -45,12 +45,12 @@ pub use workflow_options_napi::{
 
 type Runtime = tokio::runtime::Runtime;
 
-fn client_opts_from_js_object(
-    opts: Option<&JsObject>,
-) -> Result<(
+type ClientOptsFromJs = (
     Option<JsonValue>,
     Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
-)> {
+);
+
+fn client_opts_from_js_object(opts: Option<&JsObject>) -> Result<ClientOptsFromJs> {
     let Some(opts) = opts else {
         return Ok((None, None));
     };
@@ -875,29 +875,29 @@ impl Task for RunWorkflowTask {
                 workflow_streaming: true,
                 ..YamlWorkflowExecutionFlags::default()
             };
-            let mut output_value = blocking_workflow_to_json(
-                &self.runtime,
-                &self.client,
-                self.workflow_path.as_str(),
-                &self.workflow_input,
-                &self.workflow_options,
-                stream_flags,
-                Some(&event_sink),
-                Some(self.custom_worker.as_ref()),
-            )?;
+            let mut output_value = blocking_workflow_to_json(BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: self.workflow_path.as_str(),
+                workflow_input: &self.workflow_input,
+                options: &self.workflow_options,
+                flags: stream_flags,
+                event_sink: Some(&event_sink),
+                custom_worker: Some(self.custom_worker.as_ref()),
+            })?;
             event_sink.attach_to_output(&mut output_value)?;
             Ok(output_value)
         } else {
-            blocking_workflow_to_json(
-                &self.runtime,
-                &self.client,
-                self.workflow_path.as_str(),
-                &self.workflow_input,
-                &self.workflow_options,
-                YamlWorkflowExecutionFlags::default(),
-                None,
-                Some(self.custom_worker.as_ref()),
-            )
+            blocking_workflow_to_json(BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: self.workflow_path.as_str(),
+                workflow_input: &self.workflow_input,
+                options: &self.workflow_options,
+                flags: YamlWorkflowExecutionFlags::default(),
+                event_sink: None,
+                custom_worker: Some(self.custom_worker.as_ref()),
+            })
         }
     }
 
@@ -1047,29 +1047,32 @@ impl Task for WorkflowStreamTask {
     }
 }
 
-fn blocking_workflow_to_json(
-    runtime: &Runtime,
-    client: &Arc<SimpleAgentsClient>,
-    workflow_path: &str,
-    workflow_input: &JsonValue,
-    options: &YamlWorkflowRunOptions,
+struct BlockingWorkflowParams<'a> {
+    runtime: &'a Runtime,
+    client: &'a Arc<SimpleAgentsClient>,
+    workflow_path: &'a str,
+    workflow_input: &'a JsonValue,
+    options: &'a YamlWorkflowRunOptions,
     flags: YamlWorkflowExecutionFlags,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-) -> Result<JsonValue> {
+    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+}
+
+fn blocking_workflow_to_json(p: BlockingWorkflowParams<'_>) -> Result<JsonValue> {
     let request = YamlWorkflowExecutionRequest {
-        source: YamlWorkflowSource::File(Path::new(workflow_path)),
-        workflow_input,
-        executor: YamlWorkflowExecutorBinding::Client(client.as_ref()),
-        custom_worker,
-        options,
-        flags,
+        source: YamlWorkflowSource::File(Path::new(p.workflow_path)),
+        workflow_input: p.workflow_input,
+        executor: YamlWorkflowExecutorBinding::Client(p.client.as_ref()),
+        custom_worker: p.custom_worker,
+        options: p.options,
+        flags: p.flags,
     };
 
-    let output = if let Some(sink) = event_sink {
-        runtime.block_on(workflow_execution::stream(request, sink))
+    let output = if let Some(sink) = p.event_sink {
+        p.runtime
+            .block_on(workflow_execution::stream(request, sink))
     } else {
-        runtime.block_on(workflow_execution::run(request))
+        p.runtime.block_on(workflow_execution::run(request))
     }
     .map_err(|error| Error::from_reason(error.to_string()))?;
 
@@ -1247,29 +1250,29 @@ impl Client {
                 workflow_streaming: true,
                 ..YamlWorkflowExecutionFlags::default()
             };
-            let mut output_value = blocking_workflow_to_json(
-                &self.runtime,
-                &self.client,
-                workflow_path.as_str(),
-                &workflow_input,
-                &request_options.run_options,
-                stream_flags,
-                Some(&event_sink),
-                cw,
-            )?;
+            let mut output_value = blocking_workflow_to_json(BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: workflow_path.as_str(),
+                workflow_input: &workflow_input,
+                options: &request_options.run_options,
+                flags: stream_flags,
+                event_sink: Some(&event_sink),
+                custom_worker: cw,
+            })?;
             event_sink.attach_to_output(&mut output_value)?;
             Ok(Either::A(output_value))
         } else {
-            Ok(Either::A(blocking_workflow_to_json(
-                &self.runtime,
-                &self.client,
-                workflow_path.as_str(),
-                &workflow_input,
-                &request_options.run_options,
-                YamlWorkflowExecutionFlags::default(),
-                None,
-                cw,
-            )?))
+            Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: workflow_path.as_str(),
+                workflow_input: &workflow_input,
+                options: &request_options.run_options,
+                flags: YamlWorkflowExecutionFlags::default(),
+                event_sink: None,
+                custom_worker: cw,
+            })?))
         }
     }
 
@@ -1350,16 +1353,16 @@ impl Client {
                 record_events: false,
             })));
         }
-        Ok(Either::A(blocking_workflow_to_json(
-            &self.runtime,
-            &self.client,
-            workflow_path.as_str(),
-            &workflow_input,
-            &request_options.run_options,
-            YamlWorkflowExecutionFlags::default(),
-            None,
-            None,
-        )?))
+        Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
+            runtime: &self.runtime,
+            client: &self.client,
+            workflow_path: workflow_path.as_str(),
+            workflow_input: &workflow_input,
+            options: &request_options.run_options,
+            flags: YamlWorkflowExecutionFlags::default(),
+            event_sink: None,
+            custom_worker: None,
+        })?))
     }
 
     /// Stream a YAML workflow (new unified API).
@@ -1409,16 +1412,16 @@ impl Client {
                 Ok(Either::B(AsyncTask::new(task)))
             }
             None => {
-                let output = blocking_workflow_to_json(
-                    &self.runtime,
-                    &self.client,
-                    workflow_path.as_str(),
-                    &workflow_input,
-                    &request_options.run_options,
-                    YamlWorkflowExecutionFlags::default(),
-                    None,
-                    custom_worker.as_deref(),
-                )?;
+                let output = blocking_workflow_to_json(BlockingWorkflowParams {
+                    runtime: &self.runtime,
+                    client: &self.client,
+                    workflow_path: workflow_path.as_str(),
+                    workflow_input: &workflow_input,
+                    options: &request_options.run_options,
+                    flags: YamlWorkflowExecutionFlags::default(),
+                    event_sink: None,
+                    custom_worker: custom_worker.as_deref(),
+                })?;
                 Ok(Either::A(output))
             }
         }
@@ -1466,15 +1469,15 @@ impl Client {
             })));
         }
 
-        Ok(Either::A(blocking_workflow_to_json(
-            &self.runtime,
-            &self.client,
-            &workflow_path,
-            &workflow_input,
-            &request_options.run_options,
-            YamlWorkflowExecutionFlags::default(),
-            None,
-            None,
-        )?))
+        Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
+            runtime: &self.runtime,
+            client: &self.client,
+            workflow_path: workflow_path.as_str(),
+            workflow_input: &workflow_input,
+            options: &request_options.run_options,
+            flags: YamlWorkflowExecutionFlags::default(),
+            event_sink: None,
+            custom_worker: None,
+        })?))
     }
 }
