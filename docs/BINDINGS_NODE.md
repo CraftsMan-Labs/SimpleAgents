@@ -156,9 +156,33 @@ Tracing exporter env configuration is shared across runtimes:
 
 ### Custom workers (`custom_worker`)
 
-Node binding now performs startup validation for this runtime: if a workflow contains any `custom_worker` node and no executor is registered, execution is rejected before node execution starts with an actionable error that includes the node id and handler name.
+If a workflow contains any `custom_worker` node, you must register a **JavaScript dispatch callback** on the same call that runs the workflow. Otherwise execution is rejected at startup with the node id and handler name.
 
-This keeps YAML handler naming authoritative while preventing late-runtime failures. Use Python or WASM for local custom worker execution until a Node callback executor is exposed.
+Pass **`customWorker`** inside the unified `opts` object for `Client.run`, `Client.stream`, and `Client.resume`, or **`customWorkerDispatch`** as the last argument to `runWorkflow` / `streamWorkflow`:
+
+```ts
+function dispatch(req: {
+  handler: string;
+  handlerFile?: string;
+  payload: unknown;
+  context: unknown;
+}): unknown {
+  if (req.handler === "get_seller_name") {
+    const company = String((req.payload as { company_name?: string }).company_name ?? "");
+    return { stakeholder_name: lookupStakeholder(company) };
+  }
+  throw new Error(`unknown custom worker handler: ${req.handler}`);
+}
+
+await client.stream(workflowPath, messages, defaultOnEvent, {
+  workflowOptions: { /* … */ },
+  customWorker: dispatch,
+});
+```
+
+The handler must return a **JSON-serializable value synchronously** (the same practical contract as Python `handlers.py`). Promises are not awaited by the binding in this version.
+
+YAML may set `handler_file` for documentation; the dispatch callback receives `handlerFile` but file loading is your responsibility (for example `import()` your module and branch on `req.handler`).
 
 ## Testing Notes
 
