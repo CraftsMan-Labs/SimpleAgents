@@ -41,19 +41,19 @@ function dispatchEcho(req) {
   throw new Error(`unknown handler ${req.handler}`);
 }
 
-/** `run` / `resume` / `runWorkflow` return a value or a Promise when `customWorker` is used. */
+/** `resume` / `runWorkflow` return a value or a Promise when `customWorker` is used. */
 async function awaitRunLike(p) {
   return typeof p?.then === 'function' ? p : Promise.resolve(p);
 }
 
-test('run rejects custom_worker workflow when customWorker is omitted', (t) => {
+test('runWorkflow rejects custom_worker workflow when customWorkerDispatch is omitted', (t) => {
   const workflowPath = writeCustomOnlyWorkflow(t);
   const client = new Client(DUMMY_API_KEY);
   const messages = [{ role: 'user', content: 'hi' }];
 
   assert.throws(
     () => {
-      client.run(workflowPath, messages, {});
+      client.runWorkflow(workflowPath, { messages });
     },
     (err) =>
       err != null &&
@@ -62,15 +62,13 @@ test('run rejects custom_worker workflow when customWorker is omitted', (t) => {
   );
 });
 
-test('run executes custom_worker when customWorker dispatch is provided', async (t) => {
+test('runWorkflow executes custom_worker when customWorkerDispatch is provided', async (t) => {
   const workflowPath = writeCustomOnlyWorkflow(t);
   const client = new Client(DUMMY_API_KEY);
   const messages = [{ role: 'user', content: 'hi' }];
 
   const result = await awaitRunLike(
-    client.run(workflowPath, messages, {
-      customWorker: dispatchEcho,
-    }),
+    client.runWorkflow(workflowPath, { messages }, undefined, undefined, dispatchEcho),
   );
 
   assert.ok(result && typeof result === 'object');
@@ -81,14 +79,14 @@ test('run executes custom_worker when customWorker dispatch is provided', async 
   assert.strictEqual(workerOut.output.stakeholder_name, 'echo:acme');
 });
 
-test('stream without onEvent rejects when customWorker is omitted', (t) => {
+test('streamWorkflow without onEvent rejects when customWorkerDispatch is omitted', (t) => {
   const workflowPath = writeCustomOnlyWorkflow(t);
   const client = new Client(DUMMY_API_KEY);
   const messages = [{ role: 'user', content: 'hi' }];
 
   assert.throws(
     () => {
-      client.stream(workflowPath, messages, undefined, {});
+      client.streamWorkflow(workflowPath, { messages }, () => undefined);
     },
     (err) =>
       err != null &&
@@ -96,17 +94,22 @@ test('stream without onEvent rejects when customWorker is omitted', (t) => {
   );
 });
 
-test('stream with onEvent and customWorker resolves', async (t) => {
+test('streamWorkflow with onEvent and customWorkerDispatch resolves', async (t) => {
   const workflowPath = writeCustomOnlyWorkflow(t);
   const client = new Client(DUMMY_API_KEY);
   const messages = [{ role: 'user', content: 'hi' }];
   const events = [];
 
-  const result = await client.stream(workflowPath, messages, (_err, eventJson) => {
-    events.push(eventJson);
-  }, {
-    customWorker: dispatchEcho,
-  });
+  const result = await client.streamWorkflow(
+    workflowPath,
+    { messages },
+    (_err, eventJson) => {
+      events.push(eventJson);
+    },
+    undefined,
+    undefined,
+    dispatchEcho,
+  );
 
   assert.ok(result && typeof result === 'object');
   assert.strictEqual(result.terminal_node, 'worker');
@@ -115,7 +118,7 @@ test('stream with onEvent and customWorker resolves', async (t) => {
   assert.ok(events.length >= 1, 'expected at least one workflow event');
 });
 
-test('customWorker dispatch throw surfaces as workflow error', async (t) => {
+test('customWorkerDispatch throw surfaces as workflow error', async (t) => {
   const workflowPath = writeCustomOnlyWorkflow(t);
   const client = new Client(DUMMY_API_KEY);
   const messages = [{ role: 'user', content: 'hi' }];
@@ -123,11 +126,15 @@ test('customWorker dispatch throw surfaces as workflow error', async (t) => {
   await assert.rejects(
     async () => {
       await awaitRunLike(
-        client.run(workflowPath, messages, {
-          customWorker: () => {
+        client.runWorkflow(
+          workflowPath,
+          { messages },
+          undefined,
+          undefined,
+          () => {
             throw new Error('boom');
           },
-        }),
+        ),
       );
     },
     (err) => err != null && String(err.message || err).includes('boom'),

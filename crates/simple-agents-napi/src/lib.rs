@@ -38,8 +38,9 @@ mod workflow_custom_worker;
 mod workflow_helpers;
 mod workflow_options_napi;
 use workflow_helpers::{
-    build_workflow_input_with_messages_envelope, parse_workflow_options,
-    parse_workflow_request_options, validate_workflow_request,
+    apply_workflow_execution_flags_patch, build_workflow_input_with_messages_envelope,
+    normalize_workflow_input_messages, parse_workflow_execution_flags_patch,
+    parse_workflow_options, parse_workflow_request_options, validate_workflow_request,
 };
 pub use workflow_options_napi::{
     WorkflowRunOptionsNapi, WorkflowTelemetryConfigNapi, WorkflowTraceConfigNapi,
@@ -1284,7 +1285,7 @@ impl Client {
 
     #[napi(
         js_name = "runWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
     pub fn run_workflow(
@@ -1292,8 +1293,11 @@ impl Client {
         workflow_path: String,
         workflow_input: JsonValue,
         workflow_options: Option<JsonValue>,
+        workflow_execution: Option<JsonValue>,
         custom_worker_dispatch: Option<JsFunction>,
     ) -> Result<Either<JsonValue, AsyncTask<RunWorkflowTask>>> {
+        let execution_patch = parse_workflow_execution_flags_patch(workflow_execution)?;
+        let workflow_input = normalize_workflow_input_messages(&workflow_input)?;
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
         let custom_worker = match custom_worker_dispatch {
@@ -1314,10 +1318,13 @@ impl Client {
         let cw = None;
         if request_options.include_events {
             let event_sink = RecordingWorkflowEventSink::new();
-            let stream_flags = YamlWorkflowExecutionFlags {
-                workflow_streaming: true,
-                ..YamlWorkflowExecutionFlags::default()
-            };
+            let stream_flags = apply_workflow_execution_flags_patch(
+                YamlWorkflowExecutionFlags {
+                    workflow_streaming: true,
+                    ..YamlWorkflowExecutionFlags::default()
+                },
+                &execution_patch,
+            );
             let mut output_value = blocking_workflow_to_json(BlockingWorkflowParams {
                 runtime: &self.runtime,
                 client: &self.client,
@@ -1338,7 +1345,10 @@ impl Client {
                     workflow_path: workflow_path.as_str(),
                     workflow_input: &workflow_input,
                     options: &request_options.run_options,
-                    flags: YamlWorkflowExecutionFlags::default(),
+                    flags: apply_workflow_execution_flags_patch(
+                        YamlWorkflowExecutionFlags::default(),
+                        &execution_patch,
+                    ),
                     event_sink: None,
                     custom_worker: cw,
                 },
@@ -1348,7 +1358,7 @@ impl Client {
 
     #[napi(
         js_name = "streamWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream_workflow(
@@ -1357,8 +1367,11 @@ impl Client {
         workflow_input: JsonValue,
         on_event: JsFunction,
         workflow_options: Option<JsonValue>,
+        workflow_execution: Option<JsonValue>,
         custom_worker_dispatch: Option<JsFunction>,
     ) -> Result<AsyncTask<WorkflowStreamTask>> {
+        let execution_patch = parse_workflow_execution_flags_patch(workflow_execution)?;
+        let workflow_input = normalize_workflow_input_messages(&workflow_input)?;
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
 
@@ -1379,10 +1392,13 @@ impl Client {
             workflow_path,
             workflow_input,
             workflow_options: request_options.run_options,
-            workflow_flags: YamlWorkflowExecutionFlags {
-                workflow_streaming: true,
-                ..YamlWorkflowExecutionFlags::default()
-            },
+            workflow_flags: apply_workflow_execution_flags_patch(
+                YamlWorkflowExecutionFlags {
+                    workflow_streaming: true,
+                    ..YamlWorkflowExecutionFlags::default()
+                },
+                &execution_patch,
+            ),
             include_events: request_options.include_events,
             on_event: tsfn,
             custom_worker,
@@ -1391,115 +1407,7 @@ impl Client {
         Ok(AsyncTask::new(task))
     }
 
-    /// Run a YAML workflow (new unified API).
-    ///
-    /// ```ts
-    /// const result = await client.run("workflow.yaml", messages);
-    /// const result = await client.run("workflow.yaml", messages, { tools: myTools });
-    /// ```
-    #[napi(
-        js_name = "run",
-        ts_args_type = "workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
-        ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
-    )]
-    pub fn run(
-        &self,
-        workflow_path: String,
-        messages: Vec<MessageInput>,
-        opts: Option<JsObject>,
-    ) -> Result<Either<JsonValue, AsyncTask<RunWorkflowTask>>> {
-        let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
-        let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
-        let request_options = parse_workflow_request_options(workflow_options)?;
-        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        if let Some(cw) = custom_worker {
-            return Ok(Either::B(AsyncTask::new(RunWorkflowTask {
-                runtime: self.runtime.clone(),
-                client: self.client.clone(),
-                workflow_path,
-                workflow_input,
-                workflow_options: request_options.run_options,
-                custom_worker: cw,
-                record_events: false,
-            })));
-        }
-        Ok(Either::A(blocking_workflow_to_json(
-            BlockingWorkflowParams {
-                runtime: &self.runtime,
-                client: &self.client,
-                workflow_path: workflow_path.as_str(),
-                workflow_input: &workflow_input,
-                options: &request_options.run_options,
-                flags: YamlWorkflowExecutionFlags::default(),
-                event_sink: None,
-                custom_worker: None,
-            },
-        )?))
-    }
-
-    /// Stream a YAML workflow (new unified API).
-    ///
-    /// ```ts
-    /// const result = await client.stream("workflow.yaml", messages, onEvent);
-    /// ```
-    #[napi(
-        js_name = "stream",
-        ts_args_type = "workflowPath: string, messages: MessageInput[], onEvent?: (err: unknown, eventJson: string) => void, opts?: { tools?: unknown; workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
-        ts_return_type = "Promise<Record<string, unknown>>"
-    )]
-    pub fn stream(
-        &self,
-        workflow_path: String,
-        messages: Vec<MessageInput>,
-        on_event: Option<JsFunction>,
-        opts: Option<JsObject>,
-    ) -> Result<Either<JsonValue, AsyncTask<WorkflowStreamTask>>> {
-        let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
-        let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
-        let request_options = parse_workflow_request_options(workflow_options)?;
-        validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-
-        match on_event {
-            Some(cb) => {
-                let tsfn: ThreadsafeFunction<String> =
-                    cb.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
-                        let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
-                        Ok(vec![event_json])
-                    })?;
-
-                let task = WorkflowStreamTask {
-                    runtime: self.runtime.clone(),
-                    client: self.client.clone(),
-                    workflow_path,
-                    workflow_input,
-                    workflow_options: request_options.run_options,
-                    workflow_flags: YamlWorkflowExecutionFlags {
-                        workflow_streaming: true,
-                        ..YamlWorkflowExecutionFlags::default()
-                    },
-                    include_events: false,
-                    on_event: tsfn,
-                    custom_worker,
-                };
-                Ok(Either::B(AsyncTask::new(task)))
-            }
-            None => {
-                let output = blocking_workflow_to_json(BlockingWorkflowParams {
-                    runtime: &self.runtime,
-                    client: &self.client,
-                    workflow_path: workflow_path.as_str(),
-                    workflow_input: &workflow_input,
-                    options: &request_options.run_options,
-                    flags: YamlWorkflowExecutionFlags::default(),
-                    event_sink: None,
-                    custom_worker: custom_worker.as_deref(),
-                })?;
-                Ok(Either::A(output))
-            }
-        }
-    }
-
-    /// Resume a workflow from a checkpoint (new unified API).
+    /// Resume a workflow from a checkpoint.
     ///
     /// ```ts
     /// const result = await client.resume(checkpoint);

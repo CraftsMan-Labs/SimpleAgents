@@ -19,6 +19,10 @@ import { customWorkerDispatch } from "./handlers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workflowPath = join(__dirname, "test.yaml");
+const DEBUG_ENDPOINT = "http://127.0.0.1:7242/ingest/21d1cf96-9491-4f21-a7aa-0a8ff58de124";
+const DEBUG_RUN_ID = "napi-stream-debug-1";
+let debugEventCount = 0;
+const DEBUG_EVENT_LIMIT = 120;
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -26,13 +30,72 @@ function requireEnv(name: string): string {
   return v;
 }
 
-/** Mirrors the Python demo: log each parsed event on stdout (full object). */
+/** Prints live token deltas; snapshots/lifecycle are still debug-instrumented. */
 function onWorkflowEvent(err: unknown, eventJson: string): void {
   if (err) {
     console.error(err);
+    // #region agent log
+    fetch(DEBUG_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: DEBUG_RUN_ID,
+        hypothesisId: "H2",
+        location: "test-simple-agents-streaming.ts:onWorkflowEvent(err)",
+        message: "Event callback error",
+        data: { error: String(err) },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
     return;
   }
-  console.log(parseWorkflowEvent(eventJson));
+  const event = parseWorkflowEvent(eventJson) as unknown as Record<string, unknown>;
+  const eventType = typeof event.event_type === "string" ? event.event_type : "unknown";
+  const nodeId = typeof event.node_id === "string" ? event.node_id : null;
+  const stepId = typeof event.step_id === "string" ? event.step_id : null;
+  const delta = typeof event.delta === "string" ? event.delta : null;
+  const metadata =
+    event.metadata && typeof event.metadata === "object"
+      ? (event.metadata as Record<string, unknown>)
+      : null;
+  const isComplete =
+    metadata && typeof metadata.is_complete === "boolean" ? metadata.is_complete : null;
+  if (debugEventCount < DEBUG_EVENT_LIMIT) {
+    debugEventCount += 1;
+    // #region agent log
+    fetch(DEBUG_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        runId: DEBUG_RUN_ID,
+        hypothesisId: "H1,H3,H4",
+        location: "test-simple-agents-streaming.ts:onWorkflowEvent",
+        message: "Received stream event",
+        data: {
+          eventCount: debugEventCount,
+          eventType,
+          nodeId,
+          stepId,
+          deltaLen: delta ? delta.length : 0,
+          deltaPreview: delta ? delta.slice(0, 40) : null,
+          isComplete,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+    // #endregion
+  }
+  if (eventType === "node_stream_delta" && typeof delta === "string") {
+    process.stdout.write(delta);
+    return;
+  }
+  if (eventType === "node_stream_snapshot") {
+    if (isComplete === true) {
+      process.stdout.write("\n");
+    }
+    return;
+  }
 }
 
 async function main(): Promise<void> {
@@ -44,12 +107,53 @@ async function main(): Promise<void> {
   rl.close();
 
   const client = new Client(apiKey, baseUrl);
-  const result = await client.stream(
+  const executionFlags = {
+    nodeLlmStreaming: true,
+    splitStreamDeltas: false,
+  };
+  // #region agent log
+  fetch(DEBUG_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      runId: DEBUG_RUN_ID,
+      hypothesisId: "H1",
+      location: "test-simple-agents-streaming.ts:main(beforeStreamWorkflow)",
+      message: "Invoking streamWorkflow with execution flags",
+      data: {
+        workflowPath,
+        hasBaseUrl: Boolean(baseUrl),
+        executionFlags,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
+  const result = await client.streamWorkflow(
     workflowPath,
-    [{ role: "user", content: userInput }],
+    { messages: [{ role: "user", content: userInput }] },
     onWorkflowEvent,
-    { customWorker: customWorkerDispatch },
+    undefined,
+    executionFlags,
+    customWorkerDispatch,
   );
+  // #region agent log
+  fetch(DEBUG_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      runId: DEBUG_RUN_ID,
+      hypothesisId: "H2,H4",
+      location: "test-simple-agents-streaming.ts:main(afterStreamWorkflow)",
+      message: "streamWorkflow completed",
+      data: {
+        debugEventCount,
+        resultType: typeof result,
+      },
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+  // #endregion
 
   console.log("\n");
   console.log(JSON.stringify(result, null, 2));

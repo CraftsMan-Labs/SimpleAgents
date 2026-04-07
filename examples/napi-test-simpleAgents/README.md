@@ -55,8 +55,18 @@ bun run stream
 bun run test-simple-agents-streaming.ts
 ```
 
+**Invoice image** (multimodal text + image):
+
+```bash
+bun run invoice-image
+# or
+bun run test-simple-agents-invoice-image.ts
+```
+
 Each script prompts for input and runs `test.yaml` in this directory.
 
 ## Custom workers
 
-Python discovers `handlers.py` next to the workflow automatically. In Node you must pass `customWorker: customWorkerDispatch` from `./handlers.ts` on `Client.run` / `Client.stream` (see the `test-*.ts` files).
+Python discovers `handlers.py` next to the workflow automatically. In Node you pass
+`customWorkerDispatch` from `./handlers.ts` as the final argument to
+`Client.runWorkflow` / `Client.streamWorkflow` (see the `test-*.ts` files).

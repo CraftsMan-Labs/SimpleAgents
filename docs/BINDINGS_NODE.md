@@ -158,7 +158,7 @@ Tracing exporter env configuration is shared across runtimes:
 
 If a workflow contains any `custom_worker` node, you must register a **JavaScript dispatch callback** on the same call that runs the workflow. Otherwise execution is rejected at startup with the node id and handler name.
 
-Pass **`customWorker`** inside the unified `opts` object for `Client.run`, `Client.stream`, and `Client.resume`, or **`customWorkerDispatch`** as the last argument to `runWorkflow` / `streamWorkflow`:
+Pass **`customWorkerDispatch`** as the last argument to `runWorkflow` / `streamWorkflow` / `resume`:
 
 ```ts
 function dispatch(req: {
@@ -174,13 +174,16 @@ function dispatch(req: {
   throw new Error(`unknown custom worker handler: ${req.handler}`);
 }
 
-await client.stream(workflowPath, messages, defaultOnEvent, {
-  workflowOptions: { /* … */ },
-  customWorker: dispatch,
-});
+await client.streamWorkflow(
+  workflowPath,
+  { messages },
+  defaultOnEvent,
+  { telemetry: { nerdstats: true } },
+  dispatch,
+);
 ```
 
-When you pass **`customWorker`** or **`customWorkerDispatch`**, **`Client.run`**, **`Client.resume`**, and **`Client.runWorkflow`** return a **Promise** (the Rust side runs on a worker thread so the Node event loop can execute your JavaScript dispatch). Without a custom worker, those methods stay synchronous.
+When you pass **`customWorkerDispatch`**, **`Client.runWorkflow`**, **`Client.streamWorkflow`**, and **`Client.resume`** run on a worker thread and return a Promise.
 
 The handler must return a **JSON-serializable value synchronously** (the same practical contract as Python `handlers.py`). Promises are not awaited by the binding in this version.
 

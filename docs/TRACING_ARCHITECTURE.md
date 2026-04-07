@@ -124,10 +124,8 @@ request = {
         "node_llm_streaming": True,
     },
 }
-result = client.stream(request, on_event=on_event)
+result = client.stream_workflow(request, on_event=on_event)
 ```
-
-Legacy: `client.run_workflow_yaml_stream(path, workflow_input, on_event=..., workflow_options=...)` with the same `workflow_options` nested object.
 
 ### YAML custom worker payload forwarding example
 

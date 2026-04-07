@@ -317,26 +317,7 @@ class Client:
         top_p: float | None = None,
     ) -> Iterator[StreamChunk]: ...
 
-    # --- Unified workflow API (new) ---
-
-    def run(
-        self,
-        workflow_path: str,
-        messages: list[Message] | list[Mapping[str, object]],
-        *,
-        tools: Any | None = None,
-        options: Mapping[str, Any] | None = None,
-    ) -> WorkflowRunOutput: ...
-
-    def stream(
-        self,
-        workflow_path: str,
-        messages: list[Message] | list[Mapping[str, object]],
-        *,
-        on_event: Callable[[WorkflowEvent], object] | None = None,
-        tools: Any | None = None,
-        options: Mapping[str, Any] | None = None,
-    ) -> WorkflowRunOutput: ...
+    # --- Workflow APIs ---
 
     def resume(
         self,
@@ -344,8 +325,6 @@ class Client:
         *,
         options: Mapping[str, Any] | None = None,
     ) -> WorkflowRunOutput: ...
-
-    # --- Legacy workflow API (kept for backwards compat) ---
 
     def run_workflow(
         self,
@@ -357,15 +336,6 @@ class Client:
         request: WorkflowExecutionRequest | Mapping[str, JSONValue],
         on_event: Callable[[WorkflowEvent], object] | None = None,
         include_events_in_output: bool = False,
-    ) -> WorkflowRunOutput: ...
-
-    def run_workflow_yaml_stream(
-        self,
-        workflow_path: str,
-        input: WorkflowInput | Mapping[str, JSONValue],
-        *,
-        on_event: Callable[[WorkflowEvent], object] | None = None,
-        workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None,
     ) -> WorkflowRunOutput: ...
 
 # ---------------------------------------------------------------------------

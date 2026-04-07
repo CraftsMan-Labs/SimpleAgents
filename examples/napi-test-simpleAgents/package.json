@@ -4,9 +4,13 @@
   "type": "module",
   "scripts": {
     "run": "bun run test-simple-agents.ts",
-    "stream": "bun run test-simple-agents-streaming.ts"
+    "stream": "bun run test-simple-agents-streaming.ts",
+    "invoice-image": "bun run test-simple-agents-invoice-image.ts"
   },
   "dependencies": {
     "simple-agents-node": "file:../../crates/simple-agents-napi"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.6.0"
   }
 }

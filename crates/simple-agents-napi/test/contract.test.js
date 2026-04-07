@@ -73,15 +73,13 @@ test('runWorkflow and streamWorkflow declarations include optional customWorkerD
   );
 });
 
-test('unified run, stream, resume declarations include optional customWorker', () => {
+test('resume declaration includes optional customWorker', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
-  for (const method of ['run(', 'stream(', 'resume(']) {
-    assert.ok(declaration.includes(method), `declaration should include ${method}`);
-  }
+  assert.ok(declaration.includes('resume('), 'declaration should include resume(');
   assert.ok(
     declaration.includes('customWorker?:'),
-    'unified APIs should accept optional customWorker on opts',
+    'resume should accept optional customWorker on opts',
   );
 });
 

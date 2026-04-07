@@ -68,9 +68,7 @@ Current state:
 ### Python (`simple-agents-py`)
 
 - Workflow entrypoints (canonical):
-  - `Client.run(...)` / `run_async(...)` / `stream(...)` with a messages-first request mapping
-- Legacy compatibility:
-  - `run_workflow_yaml(...)` / `run_workflow_yaml_stream(...)` (path + workflow input dict)
+  - `Client.run_workflow(...)` / `stream_workflow(...)` with a request mapping
 - Time metrics exposed in return payload:
   - `total_elapsed_ms`
   - `step_timings[]` with per-node `elapsed_ms`

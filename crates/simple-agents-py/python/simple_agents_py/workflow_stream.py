@@ -1,4 +1,4 @@
-"""Structured workflow stream hooks for :meth:`simple_agents_py.Client.stream`.
+"""Structured workflow stream hooks for :meth:`simple_agents_py.Client.stream_workflow`.
 
 Events are the same dicts the Rust runner emits; shape matches
 :class:`~simple_agents_py.models.WorkflowEvent`.
@@ -34,7 +34,6 @@ from __future__ import annotations
 
 import json
 import sys
-from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
 
 from .workflow_payload import workflow_execution_request_to_mapping
@@ -259,16 +258,6 @@ def workflow_event_callback(hooks: Any) -> Callable[[WorkflowStreamEvent], Any]:
     return on_event
 
 
-def run_workflow_request(client: Any, request: Any) -> Any:
-    """``client.run(workflow_execution_request_to_mapping(request))``."""
-    return client.run(workflow_execution_request_to_mapping(request))
-
-
-def run_workflow_request_async(client: Any, request: Any) -> Any:
-    """``client.run_async(workflow_execution_request_to_mapping(request))``."""
-    return client.run_async(workflow_execution_request_to_mapping(request))
-
-
 def stream_workflow(
     client: Any,
     request: Any,
@@ -334,28 +323,4 @@ def stream_workflow(
     else:
         cb = None
     return client.stream_workflow(payload, on_event=cb)
-
-
-def run_workflow_yaml_stream_typed(
-    client: Any,
-    request: Any,
-    *,
-    workflow_path: Path | str | None = None,
-    hooks: Any | None = None,
-    on_event: Callable[[WorkflowStreamEvent], Any] | None = None,
-    stream_display: StreamDisplayMode | None = None,
-    merge_execution_defaults: bool = True,
-) -> Any:
-    """Like :func:`stream_workflow` but optionally overrides ``workflow_path`` (e.g. pass a :class:`pathlib.Path`)."""
-    payload = workflow_execution_request_to_mapping(request)
-    if workflow_path is not None:
-        payload["workflow_path"] = str(workflow_path)
-    return stream_workflow(
-        client,
-        payload,
-        hooks,
-        on_event=on_event,
-        stream_display=stream_display,
-        merge_execution_defaults=merge_execution_defaults,
-    )
 

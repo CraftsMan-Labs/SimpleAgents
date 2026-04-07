@@ -27,19 +27,9 @@ function withWrappedCustomWorker(opts) {
 
 const clientProto = native.Client && native.Client.prototype;
 if (clientProto) {
-  const nativeRun = clientProto.run;
-  const nativeStream = clientProto.stream;
   const nativeResume = clientProto.resume;
   const nativeRunWorkflow = clientProto.runWorkflow;
   const nativeStreamWorkflow = clientProto.streamWorkflow;
-
-  clientProto.run = function run(workflowPath, messages, opts) {
-    return nativeRun.call(this, workflowPath, messages, withWrappedCustomWorker(opts));
-  };
-
-  clientProto.stream = function stream(workflowPath, messages, onEvent, opts) {
-    return nativeStream.call(this, workflowPath, messages, onEvent, withWrappedCustomWorker(opts));
-  };
 
   clientProto.resume = function resume(checkpoint, opts) {
     return nativeResume.call(this, checkpoint, withWrappedCustomWorker(opts));
@@ -49,6 +39,7 @@ if (clientProto) {
     workflowPath,
     workflowInput,
     workflowOptions,
+    workflowExecution,
     customWorkerDispatch,
   ) {
     return nativeRunWorkflow.call(
@@ -56,6 +47,7 @@ if (clientProto) {
       workflowPath,
       workflowInput,
       workflowOptions,
+      workflowExecution,
       wrapCustomWorkerDispatch(customWorkerDispatch),
     );
   };
@@ -65,6 +57,7 @@ if (clientProto) {
     workflowInput,
     onEvent,
     workflowOptions,
+    workflowExecution,
     customWorkerDispatch,
   ) {
     return nativeStreamWorkflow.call(
@@ -73,6 +66,7 @@ if (clientProto) {
       workflowInput,
       onEvent,
       workflowOptions,
+      workflowExecution,
       wrapCustomWorkerDispatch(customWorkerDispatch),
     );
   };

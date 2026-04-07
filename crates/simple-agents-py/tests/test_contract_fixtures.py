@@ -51,17 +51,17 @@ def test_shared_fixture_cases_are_present_and_stable() -> None:
     assert "tool_calls" in shared_cases["streaming"]["finish_reasons"]
 
 
-def test_python_stub_workflow_methods_accept_workflow_options() -> None:
+def test_python_stub_workflow_methods_are_consolidated() -> None:
     root = Path(__file__).resolve().parents[1]
     stub = (root / "python" / "simple_agents_py" / "simple_agents_py.pyi").read_text(
         encoding="utf-8"
     )
 
-    assert (
-        "workflow_options: WorkflowRunOptions | Mapping[str, JSONValue] | None = None"
-        in stub
-    )
-    assert "def run_workflow_yaml_stream(" in stub
+    assert "def run_workflow(" in stub
+    assert "def stream_workflow(" in stub
+    assert "def run_workflow_yaml_stream(" not in stub
+    assert "def run(" not in stub
+    assert "def stream(" not in stub
 
 
 def _outgoing_edges_for_node(node: dict) -> list[str]:

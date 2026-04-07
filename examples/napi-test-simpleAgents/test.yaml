@@ -3,7 +3,7 @@
 # Finance invoice emails are enriched with seller company extraction and stakeholder lookup.
 
 id: email-hierarchical-classification-with-finance-enrichment
-version: 1.0.0
+version: 1.0.7
 
 metadata:
   name: "Email Hierarchical Classification With Finance Enrichment"
@@ -26,11 +26,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -76,11 +76,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -125,11 +125,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -172,11 +172,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -219,11 +219,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -266,11 +266,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -296,7 +296,7 @@ nodes:
           "top_level_category": "finance",
           "subtype": "reimbursement" | "tax" | "invoice" | "filing" | "insurance",
           "label": "finance/<subtype>",
-          "reason": "short explanation"
+          "reason": "500 word explanation"
         }
 
         Rules:
@@ -313,11 +313,11 @@ nodes:
     node_type:
       llm_call:
         model: azure/gpt-4.1-mini
-        temperature: 0.0
+        temperature: 0.7
         messages_path: input.messages
         append_prompt_as_user: true
         stream: true
-        stream_json_as_text: true
+        stream_json_as_text: false
         heal: true
     config:
       output_schema:
@@ -358,7 +358,7 @@ nodes:
           "label": "finance/invoice",
           "company_name": "extracted company name",
           "stakeholder_name": "stakeholder returned by lookup",
-          "reason": "short explanation"
+          "reason": "500 word explanation"
         }
 
         Rules:
@@ -367,7 +367,7 @@ nodes:
         - Set label to "finance/invoice".
         - Set company_name to the previously extracted company name.
         - Set stakeholder_name to the stakeholder string returned by the custom worker.
-        - Keep the reason concise and aligned with invoice classification.
+        - Keep the reason aligned with invoice classification.
 
         Finance subtype reason: {{ nodes.detect_finance_subtype.output.reason }}
         Extracted company name: {{ nodes.extract_invoice_company_name.output.company_name }}
