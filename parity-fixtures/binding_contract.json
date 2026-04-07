@@ -49,7 +49,9 @@
       "export interface StreamEvent",
       "run(",
       "stream(",
-      "resume("
+      "resume(",
+      "customWorker?:",
+      "customWorkerDispatch?:"
     ],
     "required_runtime_exports": [
       "Client"

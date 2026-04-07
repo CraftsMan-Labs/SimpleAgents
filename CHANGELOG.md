@@ -13,7 +13,8 @@ The format follows Keep a Changelog, and versions are tracked in repository tags
 - _No entries yet._
 
 ### Fixed
-- _No entries yet._
+
+- Node NAPI: `Client.run`, `Client.resume`, and `Client.runWorkflow` with a custom worker callback now return a Promise so the main thread is not blocked during `custom_worker` execution (avoids deadlock with the JS dispatch).
 
 ## [0.3.7] - 2026-04-07
 

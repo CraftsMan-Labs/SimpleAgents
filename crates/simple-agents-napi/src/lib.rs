@@ -850,6 +850,62 @@ pub struct WorkflowStreamTask {
     custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
 }
 
+/// Runs `blocking_workflow_to_json` off the JavaScript main thread so
+/// [`ThreadsafeFunction`] callbacks for [`YamlWorkflowCustomWorkerExecutor`]
+/// can execute (main thread must not be stuck in `Runtime::block_on`).
+pub struct RunWorkflowTask {
+    runtime: Arc<Runtime>,
+    client: Arc<SimpleAgentsClient>,
+    workflow_path: String,
+    workflow_input: JsonValue,
+    workflow_options: YamlWorkflowRunOptions,
+    custom_worker: Arc<dyn YamlWorkflowCustomWorkerExecutor>,
+    /// When true, matches legacy `runWorkflow` with `include_events: true` (record + attach).
+    record_events: bool,
+}
+
+impl Task for RunWorkflowTask {
+    type Output = JsonValue;
+    type JsValue = napi::JsUnknown;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        if self.record_events {
+            let event_sink = RecordingWorkflowEventSink::new();
+            let stream_flags = YamlWorkflowExecutionFlags {
+                workflow_streaming: true,
+                ..YamlWorkflowExecutionFlags::default()
+            };
+            let mut output_value = blocking_workflow_to_json(
+                &self.runtime,
+                &self.client,
+                self.workflow_path.as_str(),
+                &self.workflow_input,
+                &self.workflow_options,
+                stream_flags,
+                Some(&event_sink),
+                Some(self.custom_worker.as_ref()),
+            )?;
+            event_sink.attach_to_output(&mut output_value)?;
+            Ok(output_value)
+        } else {
+            blocking_workflow_to_json(
+                &self.runtime,
+                &self.client,
+                self.workflow_path.as_str(),
+                &self.workflow_input,
+                &self.workflow_options,
+                YamlWorkflowExecutionFlags::default(),
+                None,
+                Some(self.custom_worker.as_ref()),
+            )
+        }
+    }
+
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        env.to_js_value(&output)
+    }
+}
+
 struct RecordingWorkflowEventSink {
     events: Mutex<Vec<YamlWorkflowEvent>>,
 }
@@ -1158,7 +1214,7 @@ impl Client {
     #[napi(
         js_name = "runWorkflow",
         ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
-        ts_return_type = "Record<string, unknown>"
+        ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
     pub fn run_workflow(
         &self,
@@ -1166,14 +1222,25 @@ impl Client {
         workflow_input: JsonValue,
         workflow_options: Option<JsonValue>,
         custom_worker_dispatch: Option<JsFunction>,
-    ) -> Result<JsonValue> {
+    ) -> Result<Either<JsonValue, AsyncTask<RunWorkflowTask>>> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
         let custom_worker = match custom_worker_dispatch {
             Some(ref f) => Some(workflow_custom_worker::build_executor(f)?),
             None => None,
         };
-        let cw = custom_worker.as_deref();
+        if let Some(cw) = custom_worker {
+            return Ok(Either::B(AsyncTask::new(RunWorkflowTask {
+                runtime: self.runtime.clone(),
+                client: self.client.clone(),
+                workflow_path,
+                workflow_input,
+                workflow_options: request_options.run_options,
+                custom_worker: cw,
+                record_events: request_options.include_events,
+            })));
+        }
+        let cw = None;
         if request_options.include_events {
             let event_sink = RecordingWorkflowEventSink::new();
             let stream_flags = YamlWorkflowExecutionFlags {
@@ -1191,9 +1258,9 @@ impl Client {
                 cw,
             )?;
             event_sink.attach_to_output(&mut output_value)?;
-            Ok(output_value)
+            Ok(Either::A(output_value))
         } else {
-            blocking_workflow_to_json(
+            Ok(Either::A(blocking_workflow_to_json(
                 &self.runtime,
                 &self.client,
                 workflow_path.as_str(),
@@ -1202,7 +1269,7 @@ impl Client {
                 YamlWorkflowExecutionFlags::default(),
                 None,
                 cw,
-            )
+            )?))
         }
     }
 
@@ -1260,19 +1327,30 @@ impl Client {
     #[napi(
         js_name = "run",
         ts_args_type = "workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
-        ts_return_type = "Record<string, unknown>"
+        ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
     pub fn run(
         &self,
         workflow_path: String,
         messages: Vec<MessageInput>,
         opts: Option<JsObject>,
-    ) -> Result<JsonValue> {
+    ) -> Result<Either<JsonValue, AsyncTask<RunWorkflowTask>>> {
         let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
         let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
         let request_options = parse_workflow_request_options(workflow_options)?;
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
-        blocking_workflow_to_json(
+        if let Some(cw) = custom_worker {
+            return Ok(Either::B(AsyncTask::new(RunWorkflowTask {
+                runtime: self.runtime.clone(),
+                client: self.client.clone(),
+                workflow_path,
+                workflow_input,
+                workflow_options: request_options.run_options,
+                custom_worker: cw,
+                record_events: false,
+            })));
+        }
+        Ok(Either::A(blocking_workflow_to_json(
             &self.runtime,
             &self.client,
             workflow_path.as_str(),
@@ -1280,8 +1358,8 @@ impl Client {
             &request_options.run_options,
             YamlWorkflowExecutionFlags::default(),
             None,
-            custom_worker.as_deref(),
-        )
+            None,
+        )?))
     }
 
     /// Stream a YAML workflow (new unified API).
@@ -1354,9 +1432,13 @@ impl Client {
     #[napi(
         js_name = "resume",
         ts_args_type = "checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
-        ts_return_type = "Record<string, unknown>"
+        ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
-    pub fn resume(&self, checkpoint: JsonValue, opts: Option<JsObject>) -> Result<JsonValue> {
+    pub fn resume(
+        &self,
+        checkpoint: JsonValue,
+        opts: Option<JsObject>,
+    ) -> Result<Either<JsonValue, AsyncTask<RunWorkflowTask>>> {
         let workflow_path = checkpoint
             .get("workflow_path")
             .and_then(|v| v.as_str())
@@ -1372,7 +1454,19 @@ impl Client {
         let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
         let request_options = parse_workflow_request_options(workflow_options)?;
 
-        blocking_workflow_to_json(
+        if let Some(cw) = custom_worker {
+            return Ok(Either::B(AsyncTask::new(RunWorkflowTask {
+                runtime: self.runtime.clone(),
+                client: self.client.clone(),
+                workflow_path,
+                workflow_input,
+                workflow_options: request_options.run_options,
+                custom_worker: cw,
+                record_events: false,
+            })));
+        }
+
+        Ok(Either::A(blocking_workflow_to_json(
             &self.runtime,
             &self.client,
             &workflow_path,
@@ -1380,7 +1474,7 @@ impl Client {
             &request_options.run_options,
             YamlWorkflowExecutionFlags::default(),
             None,
-            custom_worker.as_deref(),
-        )
+            None,
+        )?))
     }
 }

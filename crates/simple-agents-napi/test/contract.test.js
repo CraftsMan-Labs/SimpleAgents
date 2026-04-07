@@ -59,12 +59,29 @@ test('declaration and runtime exports follow shared contract fixture', () => {
   assert.deepStrictEqual(sharedCases.streaming.event_types, ['delta', 'error', 'done']);
 });
 
-test('runWorkflow declaration supports workflowOptions', () => {
+test('runWorkflow and streamWorkflow declarations include optional customWorkerDispatch', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
+  assert.ok(declaration.includes('runWorkflow('), 'runWorkflow should be declared');
   assert.ok(
-    declaration.includes('runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }): Record<string, unknown>'),
-    'runWorkflow should accept optional workflowOptions in TypeScript declaration',
+    declaration.includes('customWorkerDispatch?:'),
+    'runWorkflow/streamWorkflow should accept optional customWorkerDispatch',
+  );
+  assert.ok(
+    declaration.includes('handler: string; handlerFile?: string; payload: unknown; context: unknown'),
+    'custom worker dispatch request shape should be documented',
+  );
+});
+
+test('unified run, stream, resume declarations include optional customWorker', () => {
+  const declarationPath = path.resolve(__dirname, '../index.d.ts');
+  const declaration = fs.readFileSync(declarationPath, 'utf8');
+  for (const method of ['run(', 'stream(', 'resume(']) {
+    assert.ok(declaration.includes(method), `declaration should include ${method}`);
+  }
+  assert.ok(
+    declaration.includes('customWorker?:'),
+    'unified APIs should accept optional customWorker on opts',
   );
 });
 

@@ -17,15 +17,18 @@ struct CustomWorkerJob {
 }
 
 struct NodeCustomWorkerExecutor {
+    /// Internal callback shape is `(err, req)` due to `CalleeHandled`.
+    /// The public Node API wraps user handlers back to `(req) => unknown`.
     tsfn: ThreadsafeFunction<CustomWorkerJob, ErrorStrategy::CalleeHandled>,
 }
 
 /// Build an executor that dispatches each `custom_worker` invocation to a JS
 /// callback on the Node main thread and awaits its return value.
 ///
-/// The JS `dispatch` function receives a single argument
-/// `{ handler, handlerFile?, payload, context }` and must return a
-/// JSON-serializable value (synchronous return or a Promise are both accepted).
+/// Internal callback shape is `(err, req)` where `req` is
+/// `{ handler, handlerFile?, payload, context }` and success passes `err = null`.
+/// The Node wrapper adapts user handlers to the public `(req) => unknown` API.
+/// The handler result must be JSON-serializable (sync return or Promise).
 pub(crate) fn build_executor(
     dispatch: &JsFunction,
 ) -> napi::Result<Arc<dyn YamlWorkflowCustomWorkerExecutor>> {
