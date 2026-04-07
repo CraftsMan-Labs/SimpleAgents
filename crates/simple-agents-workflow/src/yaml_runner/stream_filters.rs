@@ -1,10 +1,11 @@
 use serde_json::Value;
-use simple_agents_healing::JsonishParser;
+use simple_agents_healing::{CoercionEngine, JsonishParser, Schema};
 
 #[derive(Debug)]
 pub(crate) struct StreamedPayloadResolution {
     pub(crate) payload: Value,
     pub(crate) heal_confidence: Option<f32>,
+    pub(crate) coerced_confidence: Option<f32>,
 }
 
 #[derive(Debug, Default)]
@@ -209,12 +210,14 @@ pub(crate) fn resolve_structured_json_candidate(raw: &str) -> Option<&str> {
 pub(crate) fn parse_streamed_structured_payload(
     raw: &str,
     heal: bool,
+    schema: Option<&Value>,
 ) -> Result<StreamedPayloadResolution, String> {
     if !heal {
         if let Ok(payload) = serde_json::from_str::<Value>(raw) {
             return Ok(StreamedPayloadResolution {
                 payload,
                 heal_confidence: None,
+                coerced_confidence: None,
             });
         }
 
@@ -230,6 +233,7 @@ pub(crate) fn parse_streamed_structured_payload(
         return Ok(StreamedPayloadResolution {
             payload,
             heal_confidence: None,
+            coerced_confidence: None,
         });
     }
 
@@ -239,10 +243,87 @@ pub(crate) fn parse_streamed_structured_payload(
         .parse(candidate)
         .map_err(|error| format!("failed to heal streamed structured completion JSON: {error}"))?;
 
+    let mut payload = healed.value;
+    let mut coerced_confidence = None;
+    if let Some(schema_value) = schema {
+        let schema = convert_json_schema_to_healing_schema(schema_value)?;
+        let engine = CoercionEngine::new();
+        let coerced = engine.coerce(&payload, &schema).map_err(|error| {
+            format!("failed to coerce streamed structured completion JSON: {error}")
+        })?;
+        payload = coerced.value;
+        coerced_confidence = Some(coerced.confidence);
+    }
+
     Ok(StreamedPayloadResolution {
-        payload: healed.value,
+        payload,
         heal_confidence: Some(healed.confidence),
+        coerced_confidence,
     })
+}
+
+pub(crate) fn convert_json_schema_to_healing_schema(schema: &Value) -> Result<Schema, String> {
+    let type_value = schema.get("type");
+    match type_value {
+        Some(Value::String(type_str)) => convert_typed_schema(schema, type_str),
+        Some(Value::Array(types)) => {
+            let mut variants = Vec::with_capacity(types.len());
+            for t in types {
+                let Some(type_str) = t.as_str() else {
+                    return Err("invalid JSON Schema union type entry".to_string());
+                };
+                let mut single = schema.clone();
+                single["type"] = Value::String(type_str.to_string());
+                variants.push(convert_json_schema_to_healing_schema(&single)?);
+            }
+            Ok(Schema::Union(variants))
+        }
+        None => Ok(Schema::Any),
+        _ => Err("invalid JSON Schema `type` field".to_string()),
+    }
+}
+
+fn convert_typed_schema(schema: &Value, type_str: &str) -> Result<Schema, String> {
+    match type_str {
+        "string" => Ok(Schema::String),
+        "integer" => Ok(Schema::Int),
+        "number" => Ok(Schema::Float),
+        "boolean" => Ok(Schema::Bool),
+        "null" => Ok(Schema::Null),
+        "array" => {
+            let items = schema
+                .get("items")
+                .ok_or_else(|| "array schema requires `items`".to_string())?;
+            Ok(Schema::array(convert_json_schema_to_healing_schema(items)?))
+        }
+        "object" => {
+            let props = schema
+                .get("properties")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let required = schema
+                .get("required")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let required_names: Vec<String> = required
+                .into_iter()
+                .filter_map(|v| v.as_str().map(ToString::to_string))
+                .collect();
+            let mut fields = Vec::with_capacity(props.len());
+            for (name, field_schema) in props {
+                let is_required = required_names.iter().any(|required| required == &name);
+                fields.push((
+                    name,
+                    convert_json_schema_to_healing_schema(&field_schema)?,
+                    is_required,
+                ));
+            }
+            Ok(Schema::object(fields))
+        }
+        _ => Ok(Schema::Any),
+    }
 }
 
 #[cfg(test)]
@@ -252,7 +333,7 @@ mod tests {
     #[test]
     fn streamed_payload_parser_extracts_last_json_object() {
         let raw = "Some thinking text here...\n\n{\"subject\":\"hello\",\"body\":\"world\"}";
-        let result = parse_streamed_structured_payload(raw, false).expect("should parse");
+        let result = parse_streamed_structured_payload(raw, false, None).expect("should parse");
         assert_eq!(
             result.payload.get("subject").unwrap().as_str(),
             Some("hello")
@@ -263,23 +344,56 @@ mod tests {
     #[test]
     fn streamed_payload_parser_handles_unbalanced_reasoning_before_json() {
         let raw = "{ thoughts that don't close... ```json\n{\"key\":\"value\"}\n```";
-        let result = parse_streamed_structured_payload(raw, false).expect("should parse");
+        let result = parse_streamed_structured_payload(raw, false, None).expect("should parse");
         assert_eq!(result.payload.get("key").unwrap().as_str(), Some("value"));
     }
 
     #[test]
     fn streamed_payload_parser_handles_markdown_with_heal() {
         let raw = "Let me think... ```json\n{\"result\": \"ok\"}\n```";
-        let result = parse_streamed_structured_payload(raw, true).expect("should parse");
+        let result = parse_streamed_structured_payload(raw, true, None).expect("should parse");
         assert_eq!(result.payload.get("result").unwrap().as_str(), Some("ok"));
         assert!(result.heal_confidence.is_some());
+        assert!(result.coerced_confidence.is_none());
+    }
+
+    #[test]
+    fn streamed_payload_parser_heal_with_schema_coerces_and_sets_coerced_confidence() {
+        let raw = r#"{"age":"30","label":"ok"}"#;
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "age": { "type": "integer" },
+                "label": { "type": "string" }
+            },
+            "required": ["age", "label"]
+        });
+        let result =
+            parse_streamed_structured_payload(raw, true, Some(&schema)).expect("should coerce");
+        assert_eq!(result.payload.get("age").and_then(Value::as_i64), Some(30));
+        assert_eq!(
+            result.payload.get("label").and_then(Value::as_str),
+            Some("ok")
+        );
+        assert!(result.heal_confidence.is_some());
+        assert!(result.coerced_confidence.is_some());
+    }
+
+    #[test]
+    fn convert_json_schema_to_healing_schema_rejects_invalid_union_entry() {
+        let schema = serde_json::json!({
+            "type": ["string", 42]
+        });
+        let err = convert_json_schema_to_healing_schema(&schema)
+            .expect_err("invalid union entry should fail");
+        assert!(err.contains("invalid JSON Schema union type entry"));
     }
 
     #[test]
     fn streamed_payload_parser_errors_when_no_json_candidate_exists() {
         let raw = "plain text with no json at all";
-        let err =
-            parse_streamed_structured_payload(raw, false).expect_err("should fail without JSON");
+        let err = parse_streamed_structured_payload(raw, false, None)
+            .expect_err("should fail without JSON");
         assert!(err.contains("no JSON object candidate found"));
     }
 

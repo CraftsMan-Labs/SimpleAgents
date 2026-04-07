@@ -103,6 +103,7 @@ pub(super) async fn execute_llm_node(
 
     let yaml_heal = llm.heal.unwrap_or(false);
     let yaml_stream = llm.stream.unwrap_or(false);
+    let yaml_send_schema = llm.send_schema.unwrap_or(false);
     let heal = yaml_heal || execution_flags.healing;
     let stream = yaml_stream && execution_flags.node_llm_streaming;
 
@@ -122,6 +123,7 @@ pub(super) async fn execute_llm_node(
         schema,
         stream,
         heal,
+        send_schema: yaml_send_schema,
         tools: normalize_llm_tools(llm).map_err(|message| YamlWorkflowRunError::Llm {
             node_id: node.id.clone(),
             message,
@@ -158,6 +160,7 @@ pub(super) async fn execute_llm_node(
             streamable: None,
             message: None,
             delta: None,
+            snapshot: None,
             token_kind: None,
             is_terminal_node_token: None,
             elapsed_ms: Some(started.elapsed().as_millis()),

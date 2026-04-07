@@ -232,12 +232,6 @@ pub fn validate_yaml_workflow_execution(
         });
     }
 
-    if flags.healing && flags.node_llm_streaming {
-        return Err(YamlWorkflowRunError::InvalidInput {
-            message: "healing and node_llm_streaming cannot both be true: streaming structured completion is incompatible with the healing path".to_string(),
-        });
-    }
-
     Ok(())
 }
 

@@ -815,6 +815,7 @@ mod tests {
             schema: serde_json::json!({"type":"object"}),
             stream: false,
             heal: false,
+            send_schema: false,
             tools: Vec::new(),
             tool_choice: None,
             max_tool_roundtrips: 1,

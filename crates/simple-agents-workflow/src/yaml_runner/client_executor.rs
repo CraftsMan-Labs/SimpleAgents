@@ -20,7 +20,8 @@ use super::contracts::{
     YamlWorkflowLlmExecutor, YamlWorkflowTokenKind,
 };
 use super::stream_filters::{
-    parse_streamed_structured_payload, StreamJsonAsTextFormatter, StructuredJsonDeltaFilter,
+    convert_json_schema_to_healing_schema, parse_streamed_structured_payload,
+    StreamJsonAsTextFormatter, StructuredJsonDeltaFilter,
 };
 use super::subworkflow::execute_subworkflow_tool_call;
 use super::telemetry::{
@@ -90,7 +91,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     builder = builder.top_p(top_p);
                 }
 
-                if request.heal && expects_object {
+                if request.send_schema && expects_object {
                     builder = builder.json_schema("workflow_step", request.schema.clone());
                 }
 
@@ -208,6 +209,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             None
                         };
                         let mut tool_calls_by_index: HashMap<u32, ToolCall> = HashMap::new();
+                        let mut streamed_structured_segment = String::new();
 
                         while let Some(chunk_result) = stream.next().await {
                             if event_sink_is_cancelled(event_sink) {
@@ -238,6 +240,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                                 streamable: Some(true),
                                                 message: None,
                                                 delta: Some(reasoning_delta.clone()),
+                                                snapshot: None,
                                                 token_kind: Some(YamlWorkflowTokenKind::Thinking),
                                                 is_terminal_node_token: Some(
                                                     request.is_terminal_node,
@@ -282,6 +285,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                                     streamable: Some(true),
                                                     message: None,
                                                     delta: Some(raw_thinking_delta.clone()),
+                                                    snapshot: None,
                                                     token_kind: Some(
                                                         YamlWorkflowTokenKind::Thinking,
                                                     ),
@@ -304,6 +308,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                                     streamable: Some(true),
                                                     message: None,
                                                     delta: Some(raw_output_delta.clone()),
+                                                    snapshot: None,
                                                     token_kind: Some(YamlWorkflowTokenKind::Output),
                                                     is_terminal_node_token: Some(
                                                         request.is_terminal_node,
@@ -316,6 +321,39 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     }
 
                                     if let Some(filtered_delta) = rendered_output_delta {
+                                        if expects_object {
+                                            streamed_structured_segment
+                                                .push_str(filtered_delta.as_str());
+                                            if request.heal {
+                                                if let Ok(snapshot) =
+                                                    simple_agents_healing::JsonishParser::new()
+                                                        .parse(streamed_structured_segment.as_str())
+                                                {
+                                                    if let Some(sink) = event_sink {
+                                                        sink.emit(&YamlWorkflowEvent {
+                                                            event_type: "node_stream_snapshot"
+                                                                .to_string(),
+                                                            node_id: Some(request.node_id.clone()),
+                                                            step_id: Some(request.node_id.clone()),
+                                                            node_kind: Some("llm_call".to_string()),
+                                                            streamable: Some(true),
+                                                            message: None,
+                                                            delta: None,
+                                                            snapshot: Some(snapshot.value),
+                                                            token_kind: None,
+                                                            is_terminal_node_token: Some(
+                                                                request.is_terminal_node,
+                                                            ),
+                                                            elapsed_ms: None,
+                                                            metadata: Some(json!({
+                                                                "confidence": snapshot.confidence,
+                                                                "is_complete": delta_filter.completed(),
+                                                            })),
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
                                         if let Some(sink) = event_sink {
                                             sink.emit(&YamlWorkflowEvent {
                                                 event_type: "node_stream_delta".to_string(),
@@ -325,6 +363,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                                 streamable: Some(true),
                                                 message: None,
                                                 delta: Some(filtered_delta),
+                                                snapshot: None,
                                                 token_kind: Some(YamlWorkflowTokenKind::Output),
                                                 is_terminal_node_token: Some(
                                                     request.is_terminal_node,
@@ -423,11 +462,15 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     .is_some_and(|calls| !calls.is_empty());
                 if finish_reason != FinishReason::ToolCalls && !has_tool_calls {
                     let payload = if expects_object {
-                        parse_streamed_structured_payload(streamed_content.as_str(), request.heal)
-                            .map_err(|error| {
-                                format!("failed to parse structured completion JSON: {error}")
-                            })?
-                            .payload
+                        parse_streamed_structured_payload(
+                            streamed_content.as_str(),
+                            request.heal,
+                            Some(&request.schema),
+                        )
+                        .map_err(|error| {
+                            format!("failed to parse structured completion JSON: {error}")
+                        })?
+                        .payload
                     } else {
                         Value::String(streamed_content.clone())
                     };
@@ -509,6 +552,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     tool_name
                                 )),
                                 delta: None,
+                                snapshot: None,
                                 token_kind: None,
                                 is_terminal_node_token: None,
                                 elapsed_ms: None,
@@ -576,6 +620,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                         streamable: Some(false),
                                         message: Some(message.clone()),
                                         delta: None,
+                                        snapshot: None,
                                         token_kind: None,
                                         is_terminal_node_token: None,
                                         elapsed_ms: Some(elapsed_ms),
@@ -636,6 +681,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     tool_name
                                 )),
                                 delta: None,
+                                snapshot: None,
                                 token_kind: None,
                                 is_terminal_node_token: None,
                                 elapsed_ms: Some(elapsed_ms),
@@ -679,6 +725,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             streamable: Some(false),
                             message: Some(format!("tool roundtrip {} completed", roundtrip + 1)),
                             delta: None,
+                            snapshot: None,
                             token_kind: None,
                             is_terminal_node_token: None,
                             elapsed_ms: None,
@@ -711,7 +758,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             builder = builder.top_p(top_p);
         }
 
-        if request.heal && !request.stream && expects_object {
+        if request.send_schema && expects_object {
             builder = builder.json_schema("workflow_step", request.schema.clone());
         }
 
@@ -724,8 +771,9 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             .map_err(|error| format!("failed to build completion request: {error}"))?;
 
         let completion_options = if request.heal && !request.stream && expects_object {
+            let schema = convert_json_schema_to_healing_schema(&request.schema)?;
             CompletionOptions {
-                mode: CompletionMode::HealedJson,
+                mode: CompletionMode::CoercedSchema(schema),
             }
         } else {
             CompletionOptions::default()
@@ -745,6 +793,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 let stream_started = request_started;
                 let mut ttft_ms: Option<u128> = None;
                 let mut delta_filter = StructuredJsonDeltaFilter::default();
+                let mut structured_segment = String::new();
                 let include_raw_debug = super::split_stream_deltas_enabled(&request);
                 let mut json_text_formatter = if request.stream_json_as_text {
                     Some(StreamJsonAsTextFormatter::default())
@@ -785,6 +834,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                         streamable: Some(true),
                                         message: None,
                                         delta: Some(reasoning_delta.clone()),
+                                        snapshot: None,
                                         token_kind: Some(YamlWorkflowTokenKind::Thinking),
                                         is_terminal_node_token: Some(request.is_terminal_node),
                                         elapsed_ms: None,
@@ -821,6 +871,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                             streamable: Some(true),
                                             message: None,
                                             delta: Some(raw_thinking_delta.clone()),
+                                            snapshot: None,
                                             token_kind: Some(YamlWorkflowTokenKind::Thinking),
                                             is_terminal_node_token: Some(request.is_terminal_node),
                                             elapsed_ms: None,
@@ -836,6 +887,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                             streamable: Some(true),
                                             message: None,
                                             delta: Some(raw_output_delta.clone()),
+                                            snapshot: None,
                                             token_kind: Some(YamlWorkflowTokenKind::Output),
                                             is_terminal_node_token: Some(request.is_terminal_node),
                                             elapsed_ms: None,
@@ -845,6 +897,37 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                 }
                             }
                             if let Some(filtered_delta) = rendered_output_delta {
+                                if expects_object {
+                                    structured_segment.push_str(filtered_delta.as_str());
+                                    if request.heal {
+                                        if let Ok(snapshot) =
+                                            simple_agents_healing::JsonishParser::new()
+                                                .parse(structured_segment.as_str())
+                                        {
+                                            if let Some(sink) = event_sink {
+                                                sink.emit(&YamlWorkflowEvent {
+                                                    event_type: "node_stream_snapshot".to_string(),
+                                                    node_id: Some(request.node_id.clone()),
+                                                    step_id: Some(request.node_id.clone()),
+                                                    node_kind: Some("llm_call".to_string()),
+                                                    streamable: Some(true),
+                                                    message: None,
+                                                    delta: None,
+                                                    snapshot: Some(snapshot.value),
+                                                    token_kind: None,
+                                                    is_terminal_node_token: Some(
+                                                        request.is_terminal_node,
+                                                    ),
+                                                    elapsed_ms: None,
+                                                    metadata: Some(json!({
+                                                        "confidence": snapshot.confidence,
+                                                        "is_complete": delta_filter.completed(),
+                                                    })),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
                                 if let Some(sink) = event_sink {
                                     sink.emit(&YamlWorkflowEvent {
                                         event_type: "node_stream_delta".to_string(),
@@ -854,6 +937,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                         streamable: Some(true),
                                         message: None,
                                         delta: Some(filtered_delta),
+                                        snapshot: None,
                                         token_kind: Some(YamlWorkflowTokenKind::Output),
                                         is_terminal_node_token: Some(request.is_terminal_node),
                                         elapsed_ms: None,
@@ -870,8 +954,11 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 }
 
                 let payload = if expects_object {
-                    let resolved =
-                        parse_streamed_structured_payload(aggregated.as_str(), request.heal)?;
+                    let resolved = parse_streamed_structured_payload(
+                        aggregated.as_str(),
+                        request.heal,
+                        Some(&request.schema),
+                    )?;
                     if let Some(confidence) = resolved.heal_confidence {
                         if let Some(sink) = event_sink {
                             sink.emit(&YamlWorkflowEvent {
@@ -884,10 +971,14 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     "healed streamed structured response confidence={confidence}"
                                 )),
                                 delta: None,
+                                snapshot: None,
                                 token_kind: None,
                                 is_terminal_node_token: None,
                                 elapsed_ms: None,
-                                metadata: None,
+                                metadata: Some(json!({
+                                    "heal_confidence": confidence,
+                                    "coerced_confidence": resolved.coerced_confidence,
+                                })),
                             });
                         }
                     }
@@ -950,6 +1041,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             healed.parsed.confidence
                         )),
                         delta: None,
+                        snapshot: None,
                         token_kind: None,
                         is_terminal_node_token: None,
                         elapsed_ms: None,
@@ -973,6 +1065,28 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     return Err(
                         "coerced schema outcome is unsupported for non-object schema".to_string(),
                     );
+                }
+                if let Some(sink) = event_sink {
+                    sink.emit(&YamlWorkflowEvent {
+                        event_type: "node_healed".to_string(),
+                        node_id: Some(request.node_id.clone()),
+                        step_id: Some(request.node_id.clone()),
+                        node_kind: Some("llm_call".to_string()),
+                        streamable: Some(request.stream),
+                        message: Some(format!(
+                            "coerced structured response confidence={}",
+                            coerced.coerced.confidence
+                        )),
+                        delta: None,
+                        snapshot: None,
+                        token_kind: None,
+                        is_terminal_node_token: None,
+                        elapsed_ms: None,
+                        metadata: Some(json!({
+                            "heal_confidence": coerced.parsed.confidence,
+                            "coerced_confidence": coerced.coerced.confidence,
+                        })),
+                    });
                 }
                 Ok(YamlLlmExecutionResult {
                     payload: coerced.coerced.value,
