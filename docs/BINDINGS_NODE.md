@@ -101,7 +101,7 @@ client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 
 ## Workflow YAML Runner (Rust-backed)
 
-Prefer the **messages-first** APIs (see [Workflow API Migration](WORKFLOW_API_MIGRATION.md)):
+Prefer the **messages-first** APIs:
 
 ```ts
 import { Client } from "simple-agents-node"

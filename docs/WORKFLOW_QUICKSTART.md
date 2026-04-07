@@ -1,6 +1,6 @@
 # SimpleAgents Workflow Quickstart
 
-Zero to running workflow in 5 minutes. Copy-paste every block.
+Every agentic SaaS is a config. Zero to running workflow in 5 minutes. Copy-paste every block.
 
 ## Install
 

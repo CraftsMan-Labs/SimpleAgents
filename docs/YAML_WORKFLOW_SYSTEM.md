@@ -331,7 +331,8 @@ Define `config.output_schema` on every `llm_call` node and keep it strict (`addi
 
 ## Next Steps
 
-- Use [Workflow Debugging UX](/WORKFLOW_DEBUGGING) for replay and retry inspection.
-- Tune runtime characteristics in [Workflow Performance](/WORKFLOW_PERFORMANCE).
-- Apply guardrails from [Workflow Security](/WORKFLOW_SECURITY).
-- For YAML/code conversion, follow [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK).
+- [Workflow Quickstart](/WORKFLOW_QUICKSTART) -- install, run, streaming, images, observability
+- [Examples](/EXAMPLES) -- all runnable example files
+- [Python Binding](/BINDINGS_PYTHON) -- Python API details
+- [Node.js Binding](/BINDINGS_NODE) -- TypeScript API details
+- [Tracing & Observability](/TRACING_ARCHITECTURE) -- Langfuse, Jaeger, OTLP configuration

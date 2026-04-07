@@ -3,7 +3,7 @@ import { defineConfig } from "vitepress";
 export default defineConfig({
   title: "SimpleAgents",
   description:
-    "A modular, extensible agent framework for building intelligent AI systems",
+    "Every agentic SaaS is a config. Define your AI product as a YAML workflow, run in Python or TypeScript.",
   cleanUrls: true,
   lastUpdated: true,
   base: "/",
@@ -11,38 +11,24 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: "Home", link: "/" },
-      { text: "Start Here", link: "/QUICKSTART" },
+      { text: "Quickstart", link: "/WORKFLOW_QUICKSTART" },
+      { text: "Examples", link: "/EXAMPLES" },
       { text: "Docs Map", link: "/DOCS_MAP" },
-      { text: "API", link: "/API" },
     ],
 
     sidebar: [
       {
-        text: "Start Here",
+        text: "Get Started",
         items: [
-          { text: "Quick Start", link: "/QUICKSTART" },
-          { text: "Usage Guide", link: "/USAGE" },
-          { text: "Docs Map", link: "/DOCS_MAP" },
+          { text: "Workflow Quickstart", link: "/WORKFLOW_QUICKSTART" },
+          { text: "Examples", link: "/EXAMPLES" },
           { text: "Troubleshooting", link: "/TROUBLESHOOTING" },
         ],
       },
       {
-        text: "Build and Operate",
-        items: [
-          { text: "Examples", link: "/EXAMPLES" },
-          { text: "Development Guide", link: "/DEVELOPMENT" },
-          { text: "Release Checklist", link: "/RELEASE_CHECKLIST" },
-        ],
-      },
-      {
-        text: "Workflow System",
+        text: "YAML Workflows",
         items: [
           { text: "YAML Workflow System", link: "/YAML_WORKFLOW_SYSTEM" },
-          { text: "Workflow Capability Contract", link: "/WORKFLOW_CAPABILITY_CONTRACT" },
-          { text: "Workflow Debugging UX", link: "/WORKFLOW_DEBUGGING" },
-          { text: "Workflow Performance", link: "/WORKFLOW_PERFORMANCE" },
-          { text: "Workflow Security", link: "/WORKFLOW_SECURITY" },
-          { text: "Workflow DSL Migration Cookbook", link: "/WORKFLOW_DSL_MIGRATION_COOKBOOK" },
         ],
       },
       {
@@ -50,22 +36,26 @@ export default defineConfig({
         items: [
           { text: "Python", link: "/BINDINGS_PYTHON" },
           { text: "Node.js / TypeScript", link: "/BINDINGS_NODE" },
-          { text: "Capability Matrix", link: "/CAPABILITY_MATRIX" },
+          { text: "Browser / WASM", link: "/BINDINGS_WASM" },
         ],
       },
       {
-        text: "Architecture and Internals",
+        text: "Observability",
         items: [
-          { text: "Architecture", link: "/ARCHITECTURE" },
-          { text: "Rust Core Systems", link: "/RUST_CORE_SYSTEMS" },
-          { text: "Tracing Architecture", link: "/TRACING_ARCHITECTURE" },
+          { text: "Tracing & Observability", link: "/TRACING_ARCHITECTURE" },
         ],
       },
       {
-        text: "Reference",
+        text: "Rust",
         items: [
-          { text: "API Surface", link: "/API" },
-          { text: "Documentation Standards", link: "/DOCS_STANDARDS" },
+          { text: "Rust Quick Start", link: "/QUICKSTART" },
+          { text: "Rust Usage Guide", link: "/USAGE" },
+        ],
+      },
+      {
+        text: "Contributing",
+        items: [
+          { text: "Development Guide", link: "/DEVELOPMENT" },
         ],
       },
     ],
@@ -110,7 +100,7 @@ export default defineConfig({
     ["meta", { name: "theme-color", content: "#2563eb" }],
     [
       "meta",
-      { name: "keywords", content: "simpleagents, rust, llm, ai agents, docs" },
+      { name: "keywords", content: "simpleagents, yaml, llm, workflow, python, typescript, rust" },
     ],
   ],
   srcExclude: ["**/node_modules/**"],
