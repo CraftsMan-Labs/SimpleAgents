@@ -1,0 +1,8 @@
+{
+  "name": "napi-test-simpleagents",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "simple-agents-node": "file:../../crates/simple-agents-napi"
+  }
+}

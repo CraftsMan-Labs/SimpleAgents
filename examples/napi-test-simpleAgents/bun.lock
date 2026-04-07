@@ -1,0 +1,19 @@
+{
+  "lockfileVersion": 1,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "napi-test-simpleagents",
+      "dependencies": {
+        "simple-agents-node": "file:../../crates/simple-agents-napi",
+      },
+    },
+  },
+  "packages": {
+    "@napi-rs/cli": ["@napi-rs/cli@2.16.0", "", { "bin": { "napi": "scripts/index.js" } }, "sha512-B0rgFiFmk2Nwngfea0jQHpTPpoi7FeKpDkIC+VIrjXMZS9dAHOYl4N9WmrIzm6vZhfPg1bTrWT0DRNRDblqNoQ=="],
+
+    "simple-agents-node": ["simple-agents-node@file:../../crates/simple-agents-napi", { "devDependencies": { "@napi-rs/cli": "2.16.0", "typescript": "5.4.5" } }],
+
+    "typescript": ["typescript@5.4.5", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-vcI4UpRgg81oIRUFwR0WSIHKt11nJ7SAVlYNIu+QpqeyXP+gpQJy/Z4+F0aGxSE4MqwjyXvW/TzgkLAx2AGHwQ=="],
+  }
+}
