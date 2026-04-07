@@ -96,10 +96,9 @@ async function main() {
 
   // Workflow YAML (sync) — messages-first request (see docs/WORKFLOW_API_MIGRATION.md)
   const workflowOutput = client.executeWorkflowYaml({
-    workflowPath: 'examples/workflow_email/email-unified-chat-intake-classification.yaml',
+    workflowPath: 'workflow.yaml',
     messages: [
-      { role: 'system', content: 'You are an HR classifier.' },
-      { role: 'user', content: 'Termination request, second warning already issued' },
+      { role: 'user', content: 'Classify this email about an invoice from Google.' },
     ],
     healing: false,
     workflowStreaming: false,
@@ -111,10 +110,9 @@ async function main() {
   // Workflow YAML (async + live events)
   const asyncOutput = await client.executeWorkflowYamlStream(
     {
-      workflowPath: 'examples/workflow_email/email-unified-chat-intake-classification.yaml',
+      workflowPath: 'workflow.yaml',
       messages: [
-        { role: 'system', content: 'You are an HR classifier.' },
-        { role: 'user', content: 'Termination request, second warning already issued' },
+        { role: 'user', content: 'Classify this email about an invoice from Google.' },
       ],
       healing: false,
       workflowStreaming: true,

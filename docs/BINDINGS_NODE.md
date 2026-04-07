@@ -108,11 +108,11 @@ import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
 const result = client.executeWorkflowYaml({
-  workflowPath: "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+  workflowPath: "workflow.yaml",
   messages: [
     {
       role: "user",
-      content: "Please process supply chain replacement, order 9921 arrived damaged.",
+      content: "Classify this email about an invoice from Google.",
     },
   ],
   healing: false,

@@ -104,7 +104,7 @@ Use the unified request shape with `client.stream` (same tracing options as `run
 
 ```python
 request = {
-    "workflow_path": "examples/workflow_email/email-chat-draft-or-clarify.yaml",
+    "workflow_path": "workflow.yaml",
     "messages": workflow_messages,  # list of {role, content} dicts
     "workflow_options": {
         "telemetry": {"enabled": True, "nerdstats": True},
