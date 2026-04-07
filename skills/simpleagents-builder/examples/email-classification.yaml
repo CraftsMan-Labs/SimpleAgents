@@ -1,0 +1,151 @@
+# Email classification with hierarchical routing and custom worker enrichment.
+# Simplified from examples/python-test-simpleAgents/test.yaml
+
+id: email-classification
+version: 1.0.0
+entry_node: classify_email
+
+nodes:
+  - id: classify_email
+    name: "Classify Email"
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        temperature: 0.7
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: false
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          category:
+            type: string
+            enum: [hr, finance, education]
+          reason:
+            type: string
+        required: [category, reason]
+        additionalProperties: false
+      prompt: |
+        Classify the email into exactly one category.
+        Return JSON only:
+        {"category": "hr" | "finance" | "education", "reason": "short explanation"}
+
+  - id: route_category
+    name: "Route by Category"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_email.output.category == "finance"'
+            target: detect_finance_subtype
+        default: finalize
+
+  - id: detect_finance_subtype
+    name: "Detect Finance Subtype"
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        temperature: 0.7
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        stream_json_as_text: false
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          subtype:
+            type: string
+            enum: [reimbursement, tax, invoice, filing, insurance]
+          reason:
+            type: string
+        required: [subtype, reason]
+        additionalProperties: false
+      prompt: |
+        This email is already classified as finance.
+        Determine the finance subtype.
+        Return JSON only:
+        {"subtype": "reimbursement" | "tax" | "invoice" | "filing" | "insurance", "reason": "..."}
+
+  - id: route_finance
+    name: "Route Finance Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_finance_subtype.output.subtype == "invoice"'
+            target: extract_company
+        default: finalize
+
+  - id: extract_company
+    name: "Extract Company Name"
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        temperature: 0.7
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          company_name:
+            type: string
+          reason:
+            type: string
+        required: [company_name, reason]
+        additionalProperties: false
+      prompt: |
+        Extract the seller/vendor company name from this invoice email.
+        Return JSON only:
+        {"company_name": "...", "reason": "..."}
+
+  - id: lookup_stakeholder
+    name: "Lookup Stakeholder"
+    node_type:
+      custom_worker:
+        handler: get_seller_name
+    config:
+      payload:
+        company_name: "{{ nodes.extract_company.output.company_name }}"
+
+  - id: finalize
+    name: "Finalize Classification"
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        temperature: 0.7
+        messages_path: input.messages
+        append_prompt_as_user: true
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          summary:
+            type: string
+          category:
+            type: string
+        required: [summary, category]
+        additionalProperties: false
+      prompt: |
+        Summarize the classification.
+        Category: {{ nodes.classify_email.output.category }}
+        Reason: {{ nodes.classify_email.output.reason }}
+        Return JSON only:
+        {"summary": "...", "category": "..."}
+
+edges:
+  - from: classify_email
+    to: route_category
+  - from: detect_finance_subtype
+    to: route_finance
+  - from: extract_company
+    to: lookup_stakeholder
+  - from: lookup_stakeholder
+    to: finalize

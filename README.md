@@ -1,6 +1,8 @@
 # SimpleAgents
 
-SimpleAgents is a Rust-first workspace for building LLM applications with a unified client, provider adapters, routing, caching, healing/coercion, workflow execution, and language bindings.
+**Every agentic SaaS is a config.**
+
+Define your AI product as a YAML workflow. Run it in Python or TypeScript. Ship today.
 
 [![GitHub Stars](https://img.shields.io/github/stars/CraftsMan-Labs/SimpleAgents?style=flat-square)](https://github.com/CraftsMan-Labs/SimpleAgents/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/CraftsMan-Labs/SimpleAgents?style=flat-square)](https://github.com/CraftsMan-Labs/SimpleAgents/network/members)
@@ -12,149 +14,108 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 [![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm)](https://www.npmjs.com/package/simple-agents-node)
 [![npm Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square)](https://www.npmjs.com/package/simple-agents-node)
 
-[![simple-agent-type](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust)](https://crates.io/crates/simple-agent-type)
-[![simple-agent-type downloads](https://img.shields.io/crates/d/simple-agent-type?style=flat-square)](https://crates.io/crates/simple-agent-type)
-[![simple-agents-core](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust)](https://crates.io/crates/simple-agents-core)
-[![simple-agents-core downloads](https://img.shields.io/crates/d/simple-agents-core?style=flat-square)](https://crates.io/crates/simple-agents-core)
-
 ## Links
 
 - Docs: https://docs.simpleagents.craftsmanlabs.net/
 - Playground: https://yamslam.craftsmanlabs.net/playground
-- Public skills: `skills/`
 
-## Package Registry Stats
-
-| Package | Registry | Version | Downloads |
-|---|---|---|---|
-| `simple-agents-py` | [PyPI](https://pypi.org/project/simple-agents-py/) | ![PyPI Version](https://img.shields.io/pypi/v/simple-agents-py?style=flat-square&logo=python) | ![PyPI Downloads](https://static.pepy.tech/badge/simple-agents-py/month) |
-| `simple-agents-node` | [npm](https://www.npmjs.com/package/simple-agents-node) | ![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm) | ![npm Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square) |
-| `simple-agent-type` | [crates.io](https://crates.io/crates/simple-agent-type) | ![crates simple-agent-type](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust) | ![downloads simple-agent-type](https://img.shields.io/crates/d/simple-agent-type?style=flat-square) |
-| `simple-agents-core` | [crates.io](https://crates.io/crates/simple-agents-core) | ![crates simple-agents-core](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust) | ![downloads simple-agents-core](https://img.shields.io/crates/d/simple-agents-core?style=flat-square) |
-| `simple-agents-healing` | [crates.io](https://crates.io/crates/simple-agents-healing) | ![crates simple-agents-healing](https://img.shields.io/crates/v/simple-agents-healing?style=flat-square&logo=rust) | ![downloads simple-agents-healing](https://img.shields.io/crates/d/simple-agents-healing?style=flat-square) |
-
-## Overview
-
-- Rust source-of-truth architecture: core behavior is implemented in Rust crates first.
-- Unified client flow: request building, provider execution, routing, optional caching, and optional healing.
-- Multiple integration surfaces: Rust crates, CLI, Node package, Python package, and WASM package.
-- Workflow support: YAML workflow execution, runtime validation, tracing/timings, replay, and inspection tooling.
-
-## Key Capabilities
-
-- Provider-agnostic core with concrete providers for OpenAI, Anthropic, and OpenRouter.
-- Routing and resilience: round-robin, latency-based, cost-based, fallback, and circuit-breaker helpers.
-- Structured output handling: healed JSON mode and schema-coercion mode.
-- Optional response caching with in-memory TTL/eviction implementation.
-- Streaming support in core and bindings (binding-specific constraints apply).
-- Workflow system with YAML authoring, canonical IR validation, and observability outputs.
-- Cross-language capability contract fixtures and parity checks.
-
-## Workspace Layout
-
-- `crates/simple-agent-type` - canonical request/response types, contracts, and traits.
-- `crates/simple-agents-core` - unified client orchestration.
-- `crates/simple-agents-providers` - provider adapters and utilities.
-- `crates/simple-agents-healing` - JSON-ish parsing and schema coercion.
-- `crates/simple-agents-workflow` - YAML workflow engine, IR, validation, tracing.
-- `crates/simple-agents-napi` - Node.js binding (`Client.run`, `.stream`, `.resume`).
-- `crates/simple-agents-py` - Python binding (`Client.run`, `.stream`, `.resume`, `Message`, `Role`, `ContentPart`).
-- `bindings/wasm` - WASM binding (`Client.runYamlString`).
-- `examples/` - runnable Rust/Python/Node workflow examples.
-- `docs/` - project documentation.
-
-## Quick Start
-
-### 1) Build and test workspace
+## Install
 
 ```bash
-cargo build --all
-cargo test --all
+pip install simple-agents-py     # Python
+npm install simple-agents-node   # TypeScript / Node
 ```
 
-Want the simplest YAML setup path? Start with `docs/WORKFLOW_QUICKSTART.md`.
+## How It Works
 
-### 3) Run a Rust example (requires provider API key)
+1. **Define** your workflow as YAML -- nodes, edges, structured outputs, routing
+2. **Run** it with 10 lines of Python or TypeScript
+3. **Ship** -- streaming, images, Langfuse/Jaeger observability all work out of the box
 
-```bash
-cargo run --manifest-path examples/Cargo.toml --example full_api_example
+Every email classifier, document processor, intake system, interview bot, and support agent is the same pattern: **LLM nodes with structured outputs and deterministic routing**. SimpleAgents makes that pattern a config file.
+
+## Quick Example
+
+**workflow.yaml**
+
+```yaml
+id: classifier
+version: 1.0.0
+entry_node: classify
+
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          category:
+            type: string
+            enum: [billing, support, sales]
+        required: [category]
+        additionalProperties: false
+      prompt: |
+        Classify the user message. Return JSON only.
+
+edges: []
 ```
 
-### 4) Use Makefile targets
+**run.py**
 
-```bash
-make test-rust
-make clippy
-make fmt
+```python
+import json, os
+from pathlib import Path
+from dotenv import load_dotenv
+from simple_agents_py import Client
+from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
+)
+
+load_dotenv()
+client = Client(os.environ["WORKFLOW_PROVIDER"], api_base=os.environ["WORKFLOW_API_BASE"], api_key=os.environ["WORKFLOW_API_KEY"])
+
+req = WorkflowExecutionRequest(
+    workflow_path=str(Path("workflow.yaml").resolve()),
+    messages=[WorkflowMessage(role=WorkflowRole.USER, content="I need a refund for order #1234")],
+)
+result = client.run_workflow(workflow_execution_request_to_mapping(req))
+print(json.dumps(result, indent=2))
 ```
 
-## Example Pointers
+That's it. Your agentic SaaS is a config.
 
-- Rust quick start: `docs/QUICKSTART.md`
-- Rust usage patterns: `docs/USAGE.md`
-- Cross-language snippets: `docs/EXAMPLES.md`
-- Example programs:
-  - `examples/full_api_example.rs`
-  - `examples/python_client.py`
-  - `examples/node_client.js`
-  - `examples/workflow_email/run_with_python_package.py`
-  - `examples/workflow_email/run_with_node_package.js`
+## What You Get
 
-## Testing and Quality
-
-Core checks:
-
-```bash
-make test
-make test-rust
-make test-python
-make clippy
-make fmt
-```
-
-Bindings and parity checks:
-
-```bash
-make build-node
-make test-node
-make test-binding-contracts
-make test-binding-layers
-```
-
-Rust coverage gate:
-
-```bash
-make coverage-rust
-```
-
-## Bindings Status
-
-Current language surfaces in this repository:
-
-- Rust crates (source-of-truth implementation)
-- Node.js/TypeScript (`crates/simple-agents-napi`)
-- Python (`crates/simple-agents-py`)
-- Browser/WASM (`bindings/wasm`)
-
-Cross-language capability baseline and parity details: `docs/CAPABILITY_MATRIX.md`.
+- **YAML workflow engine** -- classify, route, extract, generate as a graph config
+- **Python + TypeScript** -- `pip install` / `npm install`, run with 10 lines
+- **Streaming** -- real-time LLM output streaming
+- **Images** -- multimodal input (text + images) in the same workflow
+- **JSON healing** -- auto-fix truncated/malformed LLM JSON output
+- **Observability** -- Langfuse and Jaeger via OpenTelemetry, one env block
+- **Custom workers** -- plug your own code (DB lookups, APIs) into the workflow graph
+- **Rust core** -- blazing fast engine with Python, TypeScript, and WASM bindings
 
 ## Documentation
 
-- Docs home: `docs/index.md`
-- Docs map: `docs/DOCS_MAP.md`
-- Quick start: `docs/QUICKSTART.md`
-- Workflow quickstart: `docs/WORKFLOW_QUICKSTART.md`
-- Usage: `docs/USAGE.md`
-- Architecture: `docs/ARCHITECTURE.md`
-- Rust core systems: `docs/RUST_CORE_SYSTEMS.md`
-- API surface map: `docs/API.md`
-- Examples guide: `docs/EXAMPLES.md`
-- Workflow YAML system: `docs/YAML_WORKFLOW_SYSTEM.md`
-- Binding guides:
-  - Python: `docs/BINDINGS_PYTHON.md`
-  - Node: `docs/BINDINGS_NODE.md`
+- **Start here**: `docs/WORKFLOW_QUICKSTART.md` -- install, create YAML, run in Python/TypeScript
+- Examples: `docs/EXAMPLES.md`
+- YAML system guide: `docs/YAML_WORKFLOW_SYSTEM.md`
+- Python binding: `docs/BINDINGS_PYTHON.md`
+- Node/TypeScript binding: `docs/BINDINGS_NODE.md`
+- WASM binding: `docs/BINDINGS_WASM.md`
+- Observability (Langfuse/Jaeger): `docs/TRACING_ARCHITECTURE.md`
+- Rust quick start: `docs/QUICKSTART.md`
+- Rust usage: `docs/USAGE.md`
 - Troubleshooting: `docs/TROUBLESHOOTING.md`
-- Development guide: `docs/DEVELOPMENT.md`
+- Development/Contributing: `docs/DEVELOPMENT.md`
+- Docs map: `docs/DOCS_MAP.md`
 
 ## Contributing
 

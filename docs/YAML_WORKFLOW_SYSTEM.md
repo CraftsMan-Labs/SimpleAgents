@@ -168,7 +168,7 @@ Use this when you want a workflow that decides whether to act or ask a follow-up
 3. one branch asks a question
 4. one branch performs the main action
 
-Good example: `examples/workflow_email/email-chat-draft-or-clarify.yaml`
+Good example: `examples/python-test-simpleAgents/test.yaml` (email classification with routing and custom workers)
 
 ## Prompt Context and Run Memory
 
@@ -209,10 +209,10 @@ use serde_json::json;
 use simple_agents_workflow::run_workflow_yaml_file_with_client;
 
 let output = run_workflow_yaml_file_with_client(
-    std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
+    std::path::Path::new("workflow.yaml"),
     &json!({
         "messages": [
-            {"role": "user", "content": "Need replacement for order 9921"}
+            {"role": "user", "content": "Classify this email about an invoice from Google."}
         ]
     }),
     &client,
@@ -226,12 +226,12 @@ use serde_json::json;
 use simple_agents_workflow::WorkflowRunner;
 
 let output = WorkflowRunner::from_file(
-    std::path::Path::new("examples/workflow_email/email-unified-chat-intake-classification.yaml"),
+    std::path::Path::new("workflow.yaml"),
 )
 .with_client(&client)
 .with_input(&json!({
     "messages": [
-        {"role": "user", "content": "Need replacement for order 9921"}
+        {"role": "user", "content": "Classify this email about an invoice from Google."}
     ]
 }))
 .run()
@@ -246,14 +246,23 @@ Compatibility note:
 Python examples:
 
 ```bash
-uv run --directory examples python workflow_email/run_with_chat_history.py
-uv run --directory examples python workflow_email/run_with_unified_system.py
+cd examples/python-test-simpleAgents
+uv run python test-py-simple-agents.py
+uv run python test-py-simple-agents-streaming.py
+```
+
+TypeScript examples:
+
+```bash
+cd examples/napi-test-simpleAgents
+bun run test-simple-agents.ts
+bun run test-simple-agents-streaming.ts
 ```
 
 Graph visualization:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/python-intern-fun-interview-system.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
 ```
 
 ## Telemetry and Diagnostics
@@ -301,7 +310,7 @@ uv sync --directory examples --reinstall-package simple-agents-py
 Render Mermaid output first to confirm parse and wiring:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/email-unified-chat-intake-classification.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
 ```
 
 ### Non-deterministic routing behavior
@@ -322,7 +331,8 @@ Define `config.output_schema` on every `llm_call` node and keep it strict (`addi
 
 ## Next Steps
 
-- Use [Workflow Debugging UX](/WORKFLOW_DEBUGGING) for replay and retry inspection.
-- Tune runtime characteristics in [Workflow Performance](/WORKFLOW_PERFORMANCE).
-- Apply guardrails from [Workflow Security](/WORKFLOW_SECURITY).
-- For YAML/code conversion, follow [Workflow DSL Migration Cookbook](/WORKFLOW_DSL_MIGRATION_COOKBOOK).
+- [Workflow Quickstart](/WORKFLOW_QUICKSTART) -- install, run, streaming, images, observability
+- [Examples](/EXAMPLES) -- all runnable example files
+- [Python Binding](/BINDINGS_PYTHON) -- Python API details
+- [Node.js Binding](/BINDINGS_NODE) -- TypeScript API details
+- [Tracing & Observability](/TRACING_ARCHITECTURE) -- Langfuse, Jaeger, OTLP configuration

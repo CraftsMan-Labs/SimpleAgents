@@ -1,17 +1,16 @@
 # Code Examples
 
-Use this page as a learning path instead of a dump of snippets.
-If you are new, go in this order:
+Use this page as a learning path. If you are new, go in this order:
 
-1. basic completion
-2. simple YAML workflow
-3. branching workflow
-4. tool-calling workflow
-5. multi-turn chat workflow
+1. Basic completion (Rust)
+2. Simple YAML workflow (Python / TypeScript)
+3. Streaming workflow
+4. Image input workflow
+5. Observability (Langfuse / Jaeger)
 
-If you want the fastest workflow setup path, start with [Workflow Quickstart](/WORKFLOW_QUICKSTART).
+For the fastest workflow setup, start with [Workflow Quickstart](/WORKFLOW_QUICKSTART).
 
-## Basic Completion
+## Basic Completion (Rust)
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -42,7 +41,7 @@ async fn main() -> Result<()> {
 }
 ```
 
-## Routing Across Providers
+## Routing Across Providers (Rust)
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -59,7 +58,7 @@ let client = SimpleAgentsClientBuilder::new()
     .build()?;
 ```
 
-## Streaming Responses
+## Streaming (Rust)
 
 ```rust
 use futures_util::StreamExt;
@@ -87,7 +86,7 @@ match client.complete(&request, CompletionOptions::default()).await? {
 }
 ```
 
-## Healed JSON
+## Healed JSON (Rust)
 
 ```rust
 use simple_agent_type::prelude::*;
@@ -118,131 +117,154 @@ match client.complete(&request, options).await? {
 }
 ```
 
-## Schema-Coerced JSON
+## Workflow Examples
 
-```rust
-use simple_agent_type::prelude::*;
-use simple_agents_core::{CompletionMode, CompletionOptions, CompletionOutcome};
-use simple_agents_healing::schema::Schema;
+All workflow examples live under `examples/`. Each has a Python and TypeScript variant.
 
-let schema = Schema::object(vec![
-    ("name".into(), Schema::String, true),
-    ("age".into(), Schema::Int, true),
-]);
+### Example Files
 
-let options = CompletionOptions {
-    mode: CompletionMode::CoercedSchema(schema),
-};
+**Python** (`examples/python-test-simpleAgents/`):
 
-match client.complete(&request, options).await? {
-    CompletionOutcome::CoercedSchema(result) => {
-        println!("{}", result.coerced.value);
-    }
-    _ => {}
-}
-```
+| File | What it demonstrates |
+|---|---|
+| `test-py-simple-agents.py` | Normal (blocking) YAML workflow run |
+| `test-py-simple-agents-streaming.py` | Streaming with `WorkflowExecutionFlags` |
+| `test-py-simple-agents-invoice-image.py` | Image input (multimodal) |
+| `test-py-simple-agents-invoice-image-streaming.py` | Image input + streaming |
+| `test-py-simple-agents-streaming-langfuse.py` | Streaming + Langfuse OTLP |
+| `test-py-simple-agents-invoice-image-jaegar.py` | Image input + Jaeger OTLP |
+| `fastapi_workflow_stream.py` | FastAPI SSE streaming endpoint |
+| `handlers.py` | Custom worker handler (`get_seller_name`) |
 
-## Cache Integration
+**TypeScript** (`examples/napi-test-simpleAgents/`):
 
-```rust
-use simple_agents_cache::InMemoryCache;
-use simple_agents_core::SimpleAgentsClientBuilder;
-use std::sync::Arc;
-use std::time::Duration;
+| File | What it demonstrates |
+|---|---|
+| `test-simple-agents.ts` | Normal (blocking) YAML workflow run |
+| `test-simple-agents-streaming.ts` | Streaming with execution flags |
+| `test-simple-agents-invoice-image.ts` | Image input (multimodal) |
+| `test-simple-agents-streaming-langfuse.ts` | Streaming + Langfuse OTLP |
+| `test-simple-agents-invoice-image-jaegar.ts` | Image input + Jaeger OTLP |
+| `handlers.ts` | Custom worker dispatch (`getSellerName`) |
 
-let cache = Arc::new(InMemoryCache::new(20 * 1024 * 1024, 2000));
+**YAML workflows** (`examples/python-test-simpleAgents/` and `examples/napi-test-simpleAgents/`):
 
-let client = SimpleAgentsClientBuilder::new()
-    .with_provider(provider)
-    .with_cache(cache)
-    .with_cache_ttl(Duration::from_secs(600))
-    .build()?;
-```
+| File | What it demonstrates |
+|---|---|
+| `test.yaml` | Email hierarchical classification with finance enrichment and custom worker |
+| `friendly.yaml` | Minimal single-node chat bot |
 
-## Workflow Learning Path
+### Running the Examples
 
-These examples are ordered from easiest to more advanced.
-
-### 1. Start Simple: Single-Node Workflow
-
-Use this first:
-
-- YAML: `examples/workflow_email/hr-warning-email-subgraph.yaml`
-- Why start here: one `llm_call`, one schema, no routing, easy to read
-
-Validate the graph shape first:
+**Python** (from `examples/`):
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/workflow_email/hr-warning-email-subgraph.yaml
+cd examples
+uv sync
+cd python-test-simpleAgents
+
+# Normal run
+uv run python test-py-simple-agents.py
+
+# Streaming
+uv run python test-py-simple-agents-streaming.py
+
+# With image
+uv run python test-py-simple-agents-invoice-image.py
+
+# Streaming + Langfuse
+uv run python test-py-simple-agents-streaming-langfuse.py
+
+# Image + Jaeger
+uv run python test-py-simple-agents-invoice-image-jaegar.py
+
+# FastAPI server
+uv run uvicorn fastapi_workflow_stream:app --reload
 ```
 
-Run it with the Python example runner:
+**TypeScript / Bun** (from `examples/napi-test-simpleAgents/`):
 
 ```bash
-uv run --directory examples python workflow_email/run_with_python_package.py \
-  --workflow examples/workflow_email/hr-warning-email-subgraph.yaml \
-  --email "Please draft a warning email for repeated tardiness."
+cd examples/napi-test-simpleAgents
+bun install
+
+# Normal run
+bun run test-simple-agents.ts
+
+# Streaming
+bun run test-simple-agents-streaming.ts
+
+# With image
+bun run test-simple-agents-invoice-image.ts
+
+# Streaming + Langfuse
+bun run test-simple-agents-streaming-langfuse.ts
+
+# Image + Jaeger
+bun run test-simple-agents-invoice-image-jaegar.ts
 ```
 
-### 2. Add Branching: Classifier -> Switch -> Action
+Or use the package.json scripts:
 
-Use this next:
+```bash
+bun run run          # normal
+bun run stream       # streaming
+bun run stream:langfuse   # streaming + langfuse
+bun run invoice-image     # image input
+bun run invoice-image:jaeger  # image + jaeger
+```
 
-- YAML: `examples/workflow_email/email-chat-draft-or-clarify.yaml`
-- Pattern: detect state -> route with `switch` -> ask a question or draft an email
-- Why it matters: this is the most reusable workflow pattern in the repo
+### Workflow Learning Path
+
+**1. Start simple: single-node workflow**
+
+Read `examples/python-test-simpleAgents/friendly.yaml` -- one `llm_call` node, no routing, plain text output.
 
 Run it:
 
 ```bash
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
+# In the streaming example, change the workflow_file line to point to friendly.yaml
 ```
 
-### 3. Add Tool Calling
+**2. Add classification + routing + custom workers**
 
-Use this after you understand branching:
+Read `examples/python-test-simpleAgents/test.yaml` -- multi-node email classification with:
+- `llm_call` nodes for classification and extraction
+- `switch` nodes for deterministic routing
+- `custom_worker` node for stakeholder lookup
+- `heal: true` and `stream: true` on all LLM nodes
+- Template interpolation (`{{ nodes.X.output.Y }}`)
 
-- YAML: `examples/workflow_email/email-chat-draft-with-tool-calling.yaml`
-- Pattern: one `llm_call` node with a declared tool
-- Why it matters: shows how to keep structured tool input/output inside YAML
+**3. Add streaming**
 
-Run it:
+Compare `test-py-simple-agents.py` (blocking) with `test-py-simple-agents-streaming.py`:
+- Add `WorkflowExecutionFlags(node_llm_streaming=True)`
+- Use `client.stream_workflow()` with an `on_event` callback
 
-```bash
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
-```
+**4. Add image input**
 
-Example prompt:
+Compare `test-py-simple-agents.py` with `test-py-simple-agents-invoice-image.py`:
+- Change `content` from a string to a list with `text` + `image_url` parts
+- Base64-encode the image file
 
-```text
-Draft a warning email for Priya Sharma for repeated late submissions.
-```
+**5. Add observability**
 
-### 4. Move to Multi-Turn Chat Workflows
+Compare the base streaming example with `test-py-simple-agents-streaming-langfuse.py`:
+- Configure OTLP env vars for Langfuse or Jaeger
+- Add `WorkflowRunOptions(telemetry=WorkflowTelemetryConfig(enabled=True))`
 
-Use these when you want a conversation that keeps history across turns:
+### Skill-Builder Example YAMLs
 
-- Python: `examples/workflow_email/run_with_chat_history.py`
-- Node: `examples/workflow_email/node/run_with_chat_history.js`
-- Rust: `examples/workflow_chat_history_rust.rs`
+Under `skills/simpleagents-builder/examples/`:
 
-Python runner:
+| File | Pattern |
+|---|---|
+| `python-intern-fun-interview-system.yaml` | Multi-turn interview loop with state detection, routing, and custom workers |
+| `email-chat-draft-or-clarify.yaml` | Draft or clarify email flow with switch routing |
 
-```bash
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-```
+## Rust Workflow API
 
-Node runner:
-
-```bash
-make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-```
-
-### 5. Use the Rust Workflow API Directly
-
-Simple workflow execution from YAML is available through the Rust workflow crate and language bindings.
-
-Rust core API:
+Direct Rust workflow execution:
 
 ```rust
 use serde_json::json;
@@ -253,14 +275,12 @@ use simple_agents_workflow::yaml_runner::{
 
 let workflow_input = json!({
     "messages": [
-        {"role": "user", "content": "Termination request, second warning already issued"}
+        {"role": "user", "content": "Classify this email about an invoice from Google."}
     ]
 });
 let options = YamlWorkflowRunOptions::default();
 let execution_request = YamlWorkflowExecutionRequest {
-    source: YamlWorkflowSource::File(std::path::Path::new(
-        "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    )),
+    source: YamlWorkflowSource::File(std::path::Path::new("workflow.yaml")),
     workflow_input: &workflow_input,
     executor: YamlWorkflowExecutorBinding::Client(&client),
     custom_worker: None,
@@ -276,50 +296,21 @@ for step in output.step_timings {
 }
 ```
 
-### Cross-Language Example Files
+## Cross-Language Example Files
 
-- Python: `examples/workflow_email/run_with_python_package.py`
-- Python (chat history input): `examples/workflow_email/run_with_chat_history.py`
-- Rust (chat history input): `examples/workflow_chat_history_rust.rs`
-- Python (native YAML tool-calling warning email): `examples/workflow_email/email-chat-draft-with-tool-calling.yaml`
-- Python (graph-to-graph tool call orchestrator): `examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml`
-- Node (chat history input): `examples/workflow_email/node/run_with_chat_history.js`
-- Node: `examples/workflow_email/run_with_node_package.js`
-
-## Chat Workflow Commands
-
-Use these after you understand the learning path above.
-
-### Rust
-
-```bash
-make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-make run-rust-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml RUST_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
-```
-
-### Python
-
-```bash
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-
-# Override all llm_call node models for this run
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml PY_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
-
-# Native YAML tool-calling workflow example
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-with-tool-calling.yaml
-
-# Example prompt in chat: "Draft a warning email for Priya Sharma for repeated late submissions"
-
-# Parent graph delegates to subgraph via run_workflow_graph tool
-make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
-```
-
-### Node or Bun
-
-```bash
-make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-make run-node-chat-history JS_RUNTIME=bun WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-
-# Override all llm_call node models for this run
-make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml NODE_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
-```
+| Language | File | Purpose |
+|---|---|---|
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents.py` | Normal workflow run |
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` | Streaming workflow |
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image.py` | Image input |
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` | Langfuse tracing |
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaegar.py` | Jaeger tracing |
+| Python | `examples/python-test-simpleAgents/fastapi_workflow_stream.py` | FastAPI SSE server |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents.ts` | Normal workflow run |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` | Streaming workflow |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image.ts` | Image input |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming-langfuse.ts` | Langfuse tracing |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image-jaegar.ts` | Jaeger tracing |
+| Rust | `examples/full_api_example.rs` | Full Rust client API |
+| Rust | `examples/python_client.py` | Python client API (completions, streaming, healing, tools) |
+| Rust | `examples/node_client.js` | Node client API (completions, streaming) |

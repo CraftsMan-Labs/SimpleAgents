@@ -160,6 +160,15 @@ export interface StreamEvent {
   error?: StreamErrorEvent
 }
 export declare function parseWorkflowYamlExecutionRequest(workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: WorkflowRunOptionsNapi): ParsedWorkflowYamlExecutionRequest
+/**
+ * Copies OTLP-related variables into the Rust process environment (`std::env`).
+ *
+ * Bun and some Node setups update `process.env` in JavaScript without updating the
+ * OS environment that `std::env::var` reads in native code. Call this after setting
+ * `SIMPLE_AGENTS_TRACING_ENABLED` / `OTEL_EXPORTER_OTLP_*` in JS and **before** the
+ * first workflow run so workflow tracing initializes with OTLP enabled.
+ */
+export declare function syncOtelEnvFromProcess(tracingEnabled: string, otlpProtocol: string, otlpEndpoint: string, otlpHeaders: string, otelServiceName?: string | undefined | null): void
 export class Client {
   /**
    * Create a client from an API key.

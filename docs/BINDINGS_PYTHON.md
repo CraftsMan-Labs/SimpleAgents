@@ -137,9 +137,9 @@ Workflow execution is driven by the Rust `simple-agents-workflow` crate. The Pyt
 
 ```python
 request = {
-    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+    "workflow_path": "workflow.yaml",
     "messages": [
-        {"role": "user", "content": "Termination request, second warning already issued"},
+        {"role": "user", "content": "Classify this email about an invoice from Google."},
     ],
 }
 result = client.run_workflow(request)
@@ -253,8 +253,8 @@ Set `execution.workflow_streaming` to `true` when you want token deltas delivere
 
 ```python
 request = {
-    "workflow_path": "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    "messages": [{"role": "user", "content": "Termination request, second warning already issued"}],
+    "workflow_path": "workflow.yaml",
+    "messages": [{"role": "user", "content": "Classify this email about an invoice from Google."}],
     "workflow_options": {"telemetry": {"nerdstats": True}},
     "execution": {
         "workflow_streaming": True,

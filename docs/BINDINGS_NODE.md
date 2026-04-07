@@ -101,18 +101,18 @@ client.executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent)
 
 ## Workflow YAML Runner (Rust-backed)
 
-Prefer the **messages-first** APIs (see [Workflow API Migration](WORKFLOW_API_MIGRATION.md)):
+Prefer the **messages-first** APIs:
 
 ```ts
 import { Client } from "simple-agents-node"
 
 const client = new Client("openai")
 const result = client.executeWorkflowYaml({
-  workflowPath: "examples/workflow_email/email-unified-chat-intake-classification.yaml",
+  workflowPath: "workflow.yaml",
   messages: [
     {
       role: "user",
-      content: "Please process supply chain replacement, order 9921 arrived damaged.",
+      content: "Classify this email about an invoice from Google.",
     },
   ],
   healing: false,

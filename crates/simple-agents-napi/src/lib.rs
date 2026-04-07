@@ -1469,3 +1469,28 @@ impl Client {
         )?))
     }
 }
+
+/// Copies OTLP-related variables into the Rust process environment (`std::env`).
+///
+/// Bun and some Node setups update `process.env` in JavaScript without updating the
+/// OS environment that `std::env::var` reads in native code. Call this after setting
+/// `SIMPLE_AGENTS_TRACING_ENABLED` / `OTEL_EXPORTER_OTLP_*` in JS and **before** the
+/// first workflow run so workflow tracing initializes with OTLP enabled.
+#[napi(js_name = "syncOtelEnvFromProcess")]
+pub fn sync_otel_env_from_process(
+    tracing_enabled: String,
+    otlp_protocol: String,
+    otlp_endpoint: String,
+    otlp_headers: String,
+    otel_service_name: Option<String>,
+) {
+    std::env::set_var("SIMPLE_AGENTS_TRACING_ENABLED", tracing_enabled);
+    std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", otlp_protocol);
+    std::env::set_var("OTEL_EXPORTER_OTLP_ENDPOINT", otlp_endpoint);
+    std::env::set_var("OTEL_EXPORTER_OTLP_HEADERS", otlp_headers);
+    if let Some(name) = otel_service_name {
+        if !name.is_empty() {
+            std::env::set_var("OTEL_SERVICE_NAME", name);
+        }
+    }
+}
