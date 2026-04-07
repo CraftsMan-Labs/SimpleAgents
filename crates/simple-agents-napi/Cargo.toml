@@ -10,7 +10,8 @@ test = false
 doctest = false
 
 [dependencies]
-napi = { version = "2.16", features = ["napi4", "serde-json"] }
+async-trait = { workspace = true }
+napi = { version = "2.16", features = ["napi4", "serde-json", "tokio_rt"] }
 napi-derive = "2.16"
 tokio = { workspace = true }
 serde = { workspace = true }

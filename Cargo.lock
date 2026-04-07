@@ -1338,6 +1338,7 @@ dependencies = [
  "once_cell",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2392,6 +2393,7 @@ dependencies = [
 name = "simple-agents-napi"
 version = "0.3.7"
 dependencies = [
+ "async-trait",
  "futures-util",
  "napi",
  "napi-build",

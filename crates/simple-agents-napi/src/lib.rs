@@ -5,6 +5,7 @@ use napi::bindgen_prelude::*;
 use napi::threadsafe_function::{
     ThreadSafeCallContext, ThreadsafeFunction, ThreadsafeFunctionCallMode,
 };
+use napi::JsObject;
 use napi_derive::napi;
 use serde::Serialize;
 use serde_json::Value as JsonValue;
@@ -22,14 +23,15 @@ use simple_agents_core::{
 use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema};
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{
-    workflow_execution, YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
-    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
-    YamlWorkflowSource,
+    workflow_execution, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent,
+    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+mod workflow_custom_worker;
 mod workflow_helpers;
 mod workflow_options_napi;
 use workflow_helpers::{
@@ -42,6 +44,23 @@ pub use workflow_options_napi::{
 };
 
 type Runtime = tokio::runtime::Runtime;
+
+fn client_opts_from_js_object(
+    opts: Option<&JsObject>,
+) -> Result<(
+    Option<JsonValue>,
+    Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
+)> {
+    let Some(opts) = opts else {
+        return Ok((None, None));
+    };
+    let workflow_options: Option<JsonValue> = opts.get("workflowOptions")?;
+    let custom_worker = match opts.get("customWorker")? {
+        Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
+        None => None,
+    };
+    Ok((workflow_options, custom_worker))
+}
 
 fn build_provider_arc(
     api_key: Option<&str>,
@@ -828,6 +847,7 @@ pub struct WorkflowStreamTask {
     workflow_flags: YamlWorkflowExecutionFlags,
     include_events: bool,
     on_event: ThreadsafeFunction<String>,
+    custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
 }
 
 struct RecordingWorkflowEventSink {
@@ -932,7 +952,7 @@ impl Task for WorkflowStreamTask {
                 source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
                 workflow_input: &self.workflow_input,
                 executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
-                custom_worker: None,
+                custom_worker: self.custom_worker.as_deref(),
                 options: &self.workflow_options,
                 flags: self.workflow_flags,
             };
@@ -953,7 +973,7 @@ impl Task for WorkflowStreamTask {
                 source: YamlWorkflowSource::File(Path::new(self.workflow_path.as_str())),
                 workflow_input: &self.workflow_input,
                 executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
-                custom_worker: None,
+                custom_worker: self.custom_worker.as_deref(),
                 options: &self.workflow_options,
                 flags: self.workflow_flags,
             };
@@ -979,12 +999,13 @@ fn blocking_workflow_to_json(
     options: &YamlWorkflowRunOptions,
     flags: YamlWorkflowExecutionFlags,
     event_sink: Option<&dyn YamlWorkflowEventSink>,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<JsonValue> {
     let request = YamlWorkflowExecutionRequest {
         source: YamlWorkflowSource::File(Path::new(workflow_path)),
         workflow_input,
         executor: YamlWorkflowExecutorBinding::Client(client.as_ref()),
-        custom_worker: None,
+        custom_worker,
         options,
         flags,
     };
@@ -1136,7 +1157,7 @@ impl Client {
 
     #[napi(
         js_name = "runWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Record<string, unknown>"
     )]
     pub fn run_workflow(
@@ -1144,9 +1165,15 @@ impl Client {
         workflow_path: String,
         workflow_input: JsonValue,
         workflow_options: Option<JsonValue>,
+        custom_worker_dispatch: Option<JsFunction>,
     ) -> Result<JsonValue> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
+        let custom_worker = match custom_worker_dispatch {
+            Some(ref f) => Some(workflow_custom_worker::build_executor(f)?),
+            None => None,
+        };
+        let cw = custom_worker.as_deref();
         if request_options.include_events {
             let event_sink = RecordingWorkflowEventSink::new();
             let stream_flags = YamlWorkflowExecutionFlags {
@@ -1161,6 +1188,7 @@ impl Client {
                 &request_options.run_options,
                 stream_flags,
                 Some(&event_sink),
+                cw,
             )?;
             event_sink.attach_to_output(&mut output_value)?;
             Ok(output_value)
@@ -1173,13 +1201,14 @@ impl Client {
                 &request_options.run_options,
                 YamlWorkflowExecutionFlags::default(),
                 None,
+                cw,
             )
         }
     }
 
     #[napi(
         js_name = "streamWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream_workflow(
@@ -1188,6 +1217,7 @@ impl Client {
         workflow_input: JsonValue,
         on_event: JsFunction,
         workflow_options: Option<JsonValue>,
+        custom_worker_dispatch: Option<JsFunction>,
     ) -> Result<AsyncTask<WorkflowStreamTask>> {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
@@ -1197,6 +1227,11 @@ impl Client {
                 let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
                 Ok(vec![event_json])
             })?;
+
+        let custom_worker = match custom_worker_dispatch {
+            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
+            None => None,
+        };
 
         let task = WorkflowStreamTask {
             runtime: self.runtime.clone(),
@@ -1210,6 +1245,7 @@ impl Client {
             },
             include_events: request_options.include_events,
             on_event: tsfn,
+            custom_worker,
         };
 
         Ok(AsyncTask::new(task))
@@ -1223,19 +1259,18 @@ impl Client {
     /// ```
     #[napi(
         js_name = "run",
-        ts_args_type = "workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, messages: MessageInput[], opts?: { tools?: unknown; workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
         ts_return_type = "Record<string, unknown>"
     )]
     pub fn run(
         &self,
         workflow_path: String,
         messages: Vec<MessageInput>,
-        opts: Option<JsonValue>,
+        opts: Option<JsObject>,
     ) -> Result<JsonValue> {
         let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
-        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
-        let request_options =
-            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+        let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
+        let request_options = parse_workflow_request_options(workflow_options)?;
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         blocking_workflow_to_json(
             &self.runtime,
@@ -1245,6 +1280,7 @@ impl Client {
             &request_options.run_options,
             YamlWorkflowExecutionFlags::default(),
             None,
+            custom_worker.as_deref(),
         )
     }
 
@@ -1255,7 +1291,7 @@ impl Client {
     /// ```
     #[napi(
         js_name = "stream",
-        ts_args_type = "workflowPath: string, messages: MessageInput[], onEvent?: (err: unknown, eventJson: string) => void, opts?: { tools?: unknown; workflowOptions?: Record<string, unknown> }",
+        ts_args_type = "workflowPath: string, messages: MessageInput[], onEvent?: (err: unknown, eventJson: string) => void, opts?: { tools?: unknown; workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream(
@@ -1263,12 +1299,11 @@ impl Client {
         workflow_path: String,
         messages: Vec<MessageInput>,
         on_event: Option<JsFunction>,
-        opts: Option<JsonValue>,
+        opts: Option<JsObject>,
     ) -> Result<Either<JsonValue, AsyncTask<WorkflowStreamTask>>> {
         let workflow_input = build_workflow_input_with_messages_envelope(messages, None)?;
-        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
-        let request_options =
-            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+        let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
+        let request_options = parse_workflow_request_options(workflow_options)?;
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
 
         match on_event {
@@ -1291,6 +1326,7 @@ impl Client {
                     },
                     include_events: false,
                     on_event: tsfn,
+                    custom_worker,
                 };
                 Ok(Either::B(AsyncTask::new(task)))
             }
@@ -1303,6 +1339,7 @@ impl Client {
                     &request_options.run_options,
                     YamlWorkflowExecutionFlags::default(),
                     None,
+                    custom_worker.as_deref(),
                 )?;
                 Ok(Either::A(output))
             }
@@ -1316,10 +1353,10 @@ impl Client {
     /// ```
     #[napi(
         js_name = "resume",
-        ts_args_type = "checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown> }",
+        ts_args_type = "checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }",
         ts_return_type = "Record<string, unknown>"
     )]
-    pub fn resume(&self, checkpoint: JsonValue, opts: Option<JsonValue>) -> Result<JsonValue> {
+    pub fn resume(&self, checkpoint: JsonValue, opts: Option<JsObject>) -> Result<JsonValue> {
         let workflow_path = checkpoint
             .get("workflow_path")
             .and_then(|v| v.as_str())
@@ -1332,9 +1369,8 @@ impl Client {
             .unwrap_or(serde_json::json!([]));
 
         let workflow_input = serde_json::json!({ "messages": messages_val });
-        let workflow_options = opts.and_then(|v| v.get("workflowOptions").cloned());
-        let request_options =
-            parse_workflow_request_options(workflow_options.map(|v| serde_json::json!(v)))?;
+        let (workflow_options, custom_worker) = client_opts_from_js_object(opts.as_ref())?;
+        let request_options = parse_workflow_request_options(workflow_options)?;
 
         blocking_workflow_to_json(
             &self.runtime,
@@ -1344,6 +1380,7 @@ impl Client {
             &request_options.run_options,
             YamlWorkflowExecutionFlags::default(),
             None,
+            custom_worker.as_deref(),
         )
     }
 }
