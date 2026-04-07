@@ -122,6 +122,26 @@ def test_default_on_event_silences_unknown_events() -> None:
     assert buf.getvalue() == ""
 
 
+def test_default_on_event_logs_snapshot_to_stderr() -> None:
+    out = io.StringIO()
+    err = io.StringIO()
+    event = {
+        "event_type": "node_stream_snapshot",
+        "node_id": "n1",
+        "snapshot": {"a": 1},
+        "metadata": {"confidence": 0.9, "is_complete": False},
+    }
+    with unittest.mock.patch("sys.stdout", out), unittest.mock.patch("sys.stderr", err):
+        default_on_event(event)
+    assert out.getvalue() == ""
+    logged = err.getvalue()
+    assert "[snapshot]" in logged
+    assert "n1" in logged
+    assert "0.9" in logged
+    assert "False" in logged
+    assert '"a": 1' in logged or '"a":1' in logged.replace(" ", "")
+
+
 def test_default_on_event_importable_from_top_level() -> None:
     """default_on_event must be re-exported from the top-level package."""
     import simple_agents_py  # noqa: PLC0415

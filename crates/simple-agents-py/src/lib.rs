@@ -332,9 +332,7 @@ pub struct PyStructuredStreamIterator {
     stream: Option<Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>>,
     runtime: Arc<Mutex<Runtime>>,
     buffer: String,
-    /// Parsed (value, confidence, was_healed) — populated after stream exhausted.
-    result: Option<(serde_json::Value, f64, bool)>,
-    yielded: bool,
+    schema: Option<Schema>,
 }
 
 #[pymethods]
@@ -344,70 +342,81 @@ impl PyStructuredStreamIterator {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        if slf.yielded {
-            return Ok(None);
-        }
+        let runtime = Arc::clone(&slf.runtime);
+        let stream = slf
+            .stream
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Stream exhausted"))?;
 
-        if slf.stream.is_some() {
-            let runtime = Arc::clone(&slf.runtime);
-            let runtime_lock = runtime
+        let next = py.allow_threads(|| {
+            let runtime = runtime
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-            loop {
-                let stream = slf.stream.as_mut().unwrap();
-                let next =
-                    py.allow_threads(|| Ok::<_, PyErr>(runtime_lock.block_on(stream.next())))?;
-                match next {
-                    Some(Ok(chunk)) => {
-                        if let Some(c) = chunk.choices.first() {
-                            if let Some(content) = &c.delta.content {
-                                slf.buffer.push_str(content);
-                            }
-                        }
-                    }
-                    Some(Err(e)) => return Err(PyRuntimeError::new_err(e.to_string())),
-                    None => break,
-                }
-            }
-            drop(runtime_lock);
-            slf.stream = None;
+            Ok::<_, PyErr>(runtime.block_on(stream.next()))
+        })?;
 
-            let result = if slf.buffer.trim().is_empty() {
-                (serde_json::Value::Null, 0.0_f64, false)
-            } else {
-                match JsonishParser::new().parse(&slf.buffer) {
-                    Ok(r) => {
-                        let healed = !r.flags.is_empty();
-                        (r.value, r.confidence as f64, healed)
-                    }
-                    Err(_) => (serde_json::Value::String(slf.buffer.clone()), 0.0, false),
-                }
-            };
-            slf.result = Some(result);
+        let Some(next_item) = next else {
+            slf.stream = None;
+            return Ok(None);
+        };
+
+        let chunk = next_item.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let is_complete = chunk
+            .choices
+            .first()
+            .and_then(|choice| choice.finish_reason)
+            .is_some();
+        if let Some(content) = chunk
+            .choices
+            .first()
+            .and_then(|choice| choice.delta.content.as_ref())
+        {
+            slf.buffer.push_str(content);
         }
 
-        slf.yielded = true;
-        let (json_val, confidence, was_healed) =
-            slf.result
-                .take()
-                .unwrap_or((serde_json::Value::Null, 0.0, false));
+        let (json_val, confidence, was_healed) = if slf.buffer.trim().is_empty() {
+            (serde_json::Value::Null, 0.0_f64, false)
+        } else {
+            match JsonishParser::new().parse(&slf.buffer) {
+                Ok(r) => (r.value, r.confidence as f64, !r.flags.is_empty()),
+                Err(_) => (serde_json::Value::String(slf.buffer.clone()), 0.0, false),
+            }
+        };
+        let coerced_value = if let Some(schema) = slf.schema.as_ref() {
+            CoercionEngine::new()
+                .coerce(&json_val, schema)
+                .ok()
+                .map(|coerced| coerced.value)
+        } else {
+            None
+        };
         let py_value = serde_json_to_py(py, &json_val)?;
+        let py_coerced_value = match coerced_value.as_ref() {
+            Some(value) => serde_json_to_py(py, value)?,
+            None => py.None(),
+        };
         let event = PyStructuredEvent {
-            is_partial: false,
-            is_complete: true,
+            is_partial: !is_complete,
+            is_complete,
             value: py_value.clone_ref(py),
             partial_value: py_value,
             confidence,
             was_healed,
+            coerced_value: py_coerced_value,
+            coerced_confidence: if coerced_value.is_some() {
+                Some(confidence)
+            } else {
+                None
+            },
+            coercion_flags: Vec::new(),
         };
         Ok(Some(Py::new(py, event)?.into_py(py)))
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "PyStructuredStreamIterator(active={}, yielded={})",
+            "PyStructuredStreamIterator(active={})",
             self.stream.is_some(),
-            self.yielded
         )
     }
 }
@@ -554,7 +563,7 @@ impl Client {
     }
 
     /// Send a completion request.
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None, send_schema=None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -571,12 +580,8 @@ impl Client {
         stream: Option<bool>,
         schema: Option<&Bound<'_, PyAny>>,
         schema_name: Option<&str>,
+        send_schema: Option<bool>,
     ) -> PyResult<PyObject> {
-        if heal.unwrap_or(false) && stream.unwrap_or(false) {
-            return Err(PyRuntimeError::new_err(
-                "heal is not supported with stream=True",
-            ));
-        }
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
                 return Err(PyRuntimeError::new_err("prompt cannot be empty"));
@@ -587,11 +592,14 @@ impl Client {
         };
 
         if stream.unwrap_or(false) {
+            let mut resolved_schema: Option<Schema> = None;
+            let mut json_schema_pair: Option<(String, serde_json::Value)> = None;
             if let Some(schema_ref) = schema {
-                if schema_ref.downcast::<PyDict>().is_err() {
-                    return Err(PyRuntimeError::new_err(
-                        "schema must be a dict/mapping object",
-                    ));
+                let (json_schema_value, healing_schema) = parse_python_schema(schema_ref)?;
+                resolved_schema = Some(healing_schema);
+                if send_schema.unwrap_or(false) {
+                    let name = schema_name.unwrap_or("structured_output").to_string();
+                    json_schema_pair = Some((name, json_schema_value));
                 }
             }
             let request = build_request_with_messages(
@@ -604,7 +612,7 @@ impl Client {
                 None,
                 None,
                 Some(true),
-                None,
+                json_schema_pair,
             )
             .map_err(py_err)?;
             let outcome = {
@@ -623,8 +631,7 @@ impl Client {
                     stream: Some(Box::pin(underlying_stream)),
                     runtime: Arc::clone(&self.runtime),
                     buffer: String::new(),
-                    result: None,
-                    yielded: false,
+                    schema: resolved_schema,
                 };
                 return Ok(Bound::new(py, iter)?.into_any().into_py(py));
             }
@@ -646,7 +653,14 @@ impl Client {
 
         if let Some(schema_ref) = schema {
             let (json_schema_value, healing_schema) = parse_python_schema(schema_ref)?;
-            let json_schema_pair = schema_name.map(|name| (name.to_string(), json_schema_value));
+            let json_schema_pair = if send_schema.unwrap_or(false) {
+                Some((
+                    schema_name.unwrap_or("structured_output").to_string(),
+                    json_schema_value,
+                ))
+            } else {
+                None
+            };
             let response_format_for_req = if json_schema_pair.is_some() {
                 None
             } else {
@@ -1332,6 +1346,12 @@ pub struct PyStructuredEvent {
     pub confidence: f64,
     #[pyo3(get)]
     pub was_healed: bool,
+    #[pyo3(get)]
+    pub coerced_value: PyObject,
+    #[pyo3(get)]
+    pub coerced_confidence: Option<f64>,
+    #[pyo3(get)]
+    pub coercion_flags: Vec<String>,
 }
 
 #[pymethods]

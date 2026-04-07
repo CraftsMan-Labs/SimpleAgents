@@ -56,7 +56,7 @@ def test_stream_workflow_merges_partial_execution() -> None:
         captured["payload"] = args[0]
         return {}
 
-    client.stream.side_effect = capture_stream
+    client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
         {
@@ -140,7 +140,7 @@ def test_stream_workflow_split_sets_split_stream_deltas() -> None:
         captured["payload"] = args[0]
         return {}
 
-    client.stream.side_effect = capture_stream
+    client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
         {"workflow_path": "w.yaml", "messages": [{"role": "user", "content": "hi"}]},
