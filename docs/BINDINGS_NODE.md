@@ -180,6 +180,8 @@ await client.stream(workflowPath, messages, defaultOnEvent, {
 });
 ```
 
+When you pass **`customWorker`** or **`customWorkerDispatch`**, **`Client.run`**, **`Client.resume`**, and **`Client.runWorkflow`** return a **Promise** (the Rust side runs on a worker thread so the Node event loop can execute your JavaScript dispatch). Without a custom worker, those methods stay synchronous.
+
 The handler must return a **JSON-serializable value synchronously** (the same practical contract as Python `handlers.py`). Promises are not awaited by the binding in this version.
 
 YAML may set `handler_file` for documentation; the dispatch callback receives `handlerFile` but file loading is your responsibility (for example `import()` your module and branch on `req.handler`).
