@@ -1,7 +1,7 @@
 use serde_json::Value;
-use simple_agent_type::message::{Message, Role};
+use simple_agent_type::message::{parse_messages_value, Message};
 
-use super::{WorkflowMessage, YamlTemplateBinding, YamlWorkflowRunError};
+use super::{YamlTemplateBinding, YamlWorkflowRunError};
 
 pub(super) fn evaluate_switch_condition(
     condition: &str,
@@ -30,37 +30,13 @@ pub(super) fn parse_messages_from_context(
     let normalized_path = path.trim().trim_start_matches("$.");
     let value = resolve_path(context, normalized_path)
         .ok_or_else(|| format!("messages_path not found: {path}"))?;
-    let list: Vec<WorkflowMessage> = serde_json::from_value(value.clone()).map_err(|err| {
-        format!("messages_path must resolve to a list of messages: {path}; {err}")
-    })?;
-    if list.is_empty() {
+    if value.as_array().is_some_and(|messages| messages.is_empty()) {
         return Err(format!(
             "messages_path must not resolve to an empty list: {path}"
         ));
     }
-
-    let mut messages = Vec::with_capacity(list.len());
-    for (index, item) in list.into_iter().enumerate() {
-        let mut message = match item.role {
-            Role::System => Message::system(item.content),
-            Role::User => Message::user(item.content),
-            Role::Assistant => Message::assistant(item.content),
-            Role::Tool => {
-                let tool_call_id = item
-                    .tool_call_id
-                    .ok_or_else(|| format!("tool message at index {index} missing tool_call_id"))?;
-                Message::tool(item.content, tool_call_id)
-            }
-        };
-
-        if let Some(name) = item.name {
-            message = message.with_name(name);
-        }
-
-        messages.push(message);
-    }
-
-    Ok(messages)
+    parse_messages_value(value)
+        .map_err(|err| format!("messages_path must resolve to a list of messages: {path}; {err}"))
 }
 
 pub(super) fn resolve_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {

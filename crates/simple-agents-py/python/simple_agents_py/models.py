@@ -55,9 +55,12 @@ JSONValue: TypeAlias = (
 # ---------------------------------------------------------------------------
 
 
+WorkflowMessageContent: TypeAlias = str | list[dict[str, JSONValue]]
+
+
 class WorkflowMessage(TypedDict, total=False):
     role: WorkflowMessageRole
-    content: str
+    content: WorkflowMessageContent
     name: str
     tool_call_id: str
 

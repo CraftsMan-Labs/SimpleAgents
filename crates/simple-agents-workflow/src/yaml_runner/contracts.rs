@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use simple_agent_type::message::Role;
+use simple_agent_type::message::{MessageContent, Role};
 use simple_agent_type::tool::{ToolChoice, ToolType};
 use thiserror::Error;
 
@@ -48,7 +48,7 @@ pub type WorkflowMessageRole = Role;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowMessage {
     pub role: WorkflowMessageRole,
-    pub content: String,
+    pub content: MessageContent,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default, alias = "toolCallId")]
