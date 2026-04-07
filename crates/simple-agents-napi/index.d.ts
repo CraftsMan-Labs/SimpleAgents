@@ -72,6 +72,7 @@ export interface CompleteOptions {
   /** "standard" | "healed_json" | "schema" */
   mode?: string
   schema?: unknown
+  sendSchema?: boolean
 }
 export interface ContentPartInput {
   type: 'text' | 'image' | 'audio' | 'video'
@@ -133,6 +134,11 @@ export interface StreamChunk {
   model: string
   content?: string
   finishReason?: string
+  snapshot?: unknown
+  snapshotConfidence?: number
+  coercedSnapshot?: unknown
+  coercedConfidence?: number
+  isComplete?: boolean
   error?: string
   raw?: string
 }

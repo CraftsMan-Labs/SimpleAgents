@@ -20,12 +20,15 @@ use simple_agents_core::{
     CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
     SimpleAgentsClient,
 };
-use simple_agents_healing::schema::{Field as SchemaField, ObjectSchema, Schema};
+use simple_agents_healing::{
+    schema::{Field as SchemaField, ObjectSchema, Schema},
+    CoercionEngine, JsonishParser,
+};
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{
-    workflow_execution, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent,
-    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
-    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
+    workflow_execution, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
+    YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding,
+    YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -242,6 +245,7 @@ pub struct CompleteOptions {
     pub mode: Option<String>,
     #[napi(ts_type = "unknown")]
     pub schema: Option<JsonValue>,
+    pub send_schema: Option<bool>,
 }
 
 #[napi(object)]
@@ -329,6 +333,13 @@ pub struct StreamChunk {
     pub model: String,
     pub content: Option<String>,
     pub finish_reason: Option<String>,
+    #[napi(ts_type = "unknown")]
+    pub snapshot: Option<JsonValue>,
+    pub snapshot_confidence: Option<f64>,
+    #[napi(ts_type = "unknown")]
+    pub coerced_snapshot: Option<JsonValue>,
+    pub coerced_confidence: Option<f64>,
+    pub is_complete: Option<bool>,
     pub error: Option<String>,
     pub raw: Option<String>,
 }
@@ -670,6 +681,11 @@ fn chunk_to_stream_chunk(chunk: CompletionChunk, error: Option<String>) -> Strea
         model: chunk.model.clone(),
         content,
         finish_reason,
+        snapshot: None,
+        snapshot_confidence: None,
+        coerced_snapshot: None,
+        coerced_confidence: None,
+        is_complete: Some(false),
         error,
         raw,
     }
@@ -763,6 +779,11 @@ impl Task for StreamTask {
         let mut model = self.request.model.clone();
         match outcome {
             CompletionOutcome::Stream(mut stream) => {
+                let mode = self.completion_options.mode.clone();
+                let mut last_healed: Option<simple_agents_healing::ParserResult> = None;
+                let mut last_coerced: Option<
+                    simple_agent_type::coercion::CoercionResult<JsonValue>,
+                > = None;
                 while let Some(item) = self.runtime.block_on(stream.next()) {
                     match item {
                         Ok(chunk) => {
@@ -777,7 +798,28 @@ impl Task for StreamTask {
                             {
                                 aggregated.push_str(content);
                             }
-                            let payload = chunk_to_stream_chunk(chunk, None);
+                            let mut payload = chunk_to_stream_chunk(chunk.clone(), None);
+                            if matches!(
+                                mode,
+                                CompletionMode::HealedJson | CompletionMode::CoercedSchema(_)
+                            ) {
+                                if let Ok(parsed) = JsonishParser::new().parse(aggregated.as_str())
+                                {
+                                    payload.snapshot = Some(parsed.value.clone());
+                                    payload.snapshot_confidence = Some(parsed.confidence as f64);
+                                    last_healed = Some(parsed.clone());
+                                    if let CompletionMode::CoercedSchema(schema) = &mode {
+                                        if let Ok(coerced) =
+                                            CoercionEngine::new().coerce(&parsed.value, schema)
+                                        {
+                                            payload.coerced_snapshot = Some(coerced.value.clone());
+                                            payload.coerced_confidence =
+                                                Some(coerced.confidence as f64);
+                                            last_coerced = Some(coerced);
+                                        }
+                                    }
+                                }
+                            }
                             self.on_chunk
                                 .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
                         }
@@ -787,6 +829,11 @@ impl Task for StreamTask {
                                 model: "".to_string(),
                                 content: None,
                                 finish_reason: None,
+                                snapshot: None,
+                                snapshot_confidence: None,
+                                coerced_snapshot: None,
+                                coerced_confidence: None,
+                                is_complete: Some(true),
                                 error: Some(e.to_string()),
                                 raw: None,
                             };
@@ -796,41 +843,67 @@ impl Task for StreamTask {
                         }
                     }
                 }
+                // Emit a final completion marker with best-known snapshots.
+                let final_payload = StreamChunk {
+                    id: if response_id.is_empty() {
+                        "final".to_string()
+                    } else {
+                        response_id.clone()
+                    },
+                    model: model.clone(),
+                    content: None,
+                    finish_reason: Some("stop".to_string()),
+                    snapshot: last_healed.as_ref().map(|parsed| parsed.value.clone()),
+                    snapshot_confidence: last_healed
+                        .as_ref()
+                        .map(|parsed| parsed.confidence as f64),
+                    coerced_snapshot: last_coerced.as_ref().map(|coerced| coerced.value.clone()),
+                    coerced_confidence: last_coerced
+                        .as_ref()
+                        .map(|coerced| coerced.confidence as f64),
+                    is_complete: Some(true),
+                    error: None,
+                    raw: None,
+                };
+                self.on_chunk
+                    .call(Ok(final_payload), ThreadsafeFunctionCallMode::NonBlocking);
+
+                let healed_data = last_healed
+                    .map(|parsed| healing_data(parsed.value, parsed.flags, parsed.confidence));
+                let coerced_data = last_coerced
+                    .map(|coerced| healing_data(coerced.value, coerced.flags, coerced.confidence));
+
+                let latency_ms = started.elapsed().as_millis() as u64;
+                let usage = CompletionUsage {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0,
+                };
+
+                Ok(CompletionResult {
+                    id: response_id,
+                    model,
+                    role: "assistant".to_string(),
+                    content: Some(aggregated),
+                    tool_calls: None,
+                    finish_reason: None,
+                    usage,
+                    usage_available: false,
+                    latency_ms: latency_ms as u32,
+                    raw: None,
+                    healed: healed_data,
+                    coerced: coerced_data,
+                })
             }
-            CompletionOutcome::Response(response) => {
-                return Ok(CompletionResult::from_response(
-                    response,
-                    started.elapsed().as_millis() as u64,
-                ))
-            }
-            CompletionOutcome::HealedJson(_) | CompletionOutcome::CoercedSchema(_) => {
-                return Err(Error::from_reason(
-                    "healed/schema modes are not supported with streaming".to_string(),
-                ))
-            }
+            CompletionOutcome::Response(response) => Ok(CompletionResult::from_response(
+                response,
+                started.elapsed().as_millis() as u64,
+            )),
+            CompletionOutcome::HealedJson(_) | CompletionOutcome::CoercedSchema(_) => Err(
+                Error::from_reason("unexpected non-streaming outcome".to_string()),
+            ),
         }
-
-        let latency_ms = started.elapsed().as_millis() as u64;
-        let usage = CompletionUsage {
-            prompt_tokens: 0,
-            completion_tokens: 0,
-            total_tokens: 0,
-        };
-
-        Ok(CompletionResult {
-            id: response_id,
-            model,
-            role: "assistant".to_string(),
-            content: Some(aggregated),
-            tool_calls: None,
-            finish_reason: None,
-            usage,
-            usage_available: false,
-            latency_ms: latency_ms as u32,
-            raw: None,
-            healed: None,
-            coerced: None,
-        })
+        // all match arms return
     }
 
     fn resolve(&mut self, _env: Env, output: Self::Output) -> Result<Self::JsValue> {
@@ -1191,11 +1264,6 @@ impl Client {
         let mut opts = options.unwrap_or_default();
         opts.stream = Some(true);
         let completion_options = completion_options(&opts).map_err(napi_err)?;
-        if !matches!(completion_options.mode, CompletionMode::Standard) {
-            return Err(Error::from_reason(
-                "healed_json and schema modes are not supported with streaming yet".to_string(),
-            ));
-        }
         let request = build_request(&model, messages, &opts).map_err(napi_err)?;
 
         let tsfn: ThreadsafeFunction<StreamChunk> =
@@ -1263,16 +1331,18 @@ impl Client {
             event_sink.attach_to_output(&mut output_value)?;
             Ok(Either::A(output_value))
         } else {
-            Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
-                runtime: &self.runtime,
-                client: &self.client,
-                workflow_path: workflow_path.as_str(),
-                workflow_input: &workflow_input,
-                options: &request_options.run_options,
-                flags: YamlWorkflowExecutionFlags::default(),
-                event_sink: None,
-                custom_worker: cw,
-            })?))
+            Ok(Either::A(blocking_workflow_to_json(
+                BlockingWorkflowParams {
+                    runtime: &self.runtime,
+                    client: &self.client,
+                    workflow_path: workflow_path.as_str(),
+                    workflow_input: &workflow_input,
+                    options: &request_options.run_options,
+                    flags: YamlWorkflowExecutionFlags::default(),
+                    event_sink: None,
+                    custom_worker: cw,
+                },
+            )?))
         }
     }
 
@@ -1353,16 +1423,18 @@ impl Client {
                 record_events: false,
             })));
         }
-        Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
-            runtime: &self.runtime,
-            client: &self.client,
-            workflow_path: workflow_path.as_str(),
-            workflow_input: &workflow_input,
-            options: &request_options.run_options,
-            flags: YamlWorkflowExecutionFlags::default(),
-            event_sink: None,
-            custom_worker: None,
-        })?))
+        Ok(Either::A(blocking_workflow_to_json(
+            BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: workflow_path.as_str(),
+                workflow_input: &workflow_input,
+                options: &request_options.run_options,
+                flags: YamlWorkflowExecutionFlags::default(),
+                event_sink: None,
+                custom_worker: None,
+            },
+        )?))
     }
 
     /// Stream a YAML workflow (new unified API).
@@ -1469,15 +1541,17 @@ impl Client {
             })));
         }
 
-        Ok(Either::A(blocking_workflow_to_json(BlockingWorkflowParams {
-            runtime: &self.runtime,
-            client: &self.client,
-            workflow_path: workflow_path.as_str(),
-            workflow_input: &workflow_input,
-            options: &request_options.run_options,
-            flags: YamlWorkflowExecutionFlags::default(),
-            event_sink: None,
-            custom_worker: None,
-        })?))
+        Ok(Either::A(blocking_workflow_to_json(
+            BlockingWorkflowParams {
+                runtime: &self.runtime,
+                client: &self.client,
+                workflow_path: workflow_path.as_str(),
+                workflow_input: &workflow_input,
+                options: &request_options.run_options,
+                flags: YamlWorkflowExecutionFlags::default(),
+                event_sink: None,
+                custom_worker: None,
+            },
+        )?))
     }
 }
