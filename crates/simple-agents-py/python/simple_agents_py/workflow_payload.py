@@ -7,7 +7,7 @@ from typing import Any
 
 
 def workflow_execution_request_to_mapping(request: Any) -> dict[str, Any]:
-    """Normalize *request* for :meth:`~simple_agents_py.Client.run` / ``stream`` / ``run_async``.
+    """Normalize *request* for :meth:`~simple_agents_py.Client.run_workflow` / ``stream_workflow``.
 
     Accepts:
 

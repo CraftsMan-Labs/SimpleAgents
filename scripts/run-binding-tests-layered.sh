@@ -21,14 +21,14 @@ npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" run test:contract
 echo "==> Python unit tests"
 UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
   --directory "${ROOT_DIR}/crates/simple-agents-py" \
-  --with "pytest>=8.0" \
+  --extra dev \
   pytest tests/test_client.py tests/test_direct_healing.py tests/test_healing.py tests/test_streaming_parser.py \
          tests/test_workflow_payload.py tests/test_workflow_stream_dispatch.py
 
 echo "==> Python contract tests"
 UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
   --directory "${ROOT_DIR}/crates/simple-agents-py" \
-  --with "pytest>=8.0" \
+  --extra dev \
   pytest tests/test_contract_fixtures.py tests/test_error_mapping_consistency.py
 
 if [[ -n "${CUSTOM_API_KEY:-}" && -n "${CUSTOM_API_MODEL:-}" && -n "${PROVIDER:-}" ]]; then
@@ -38,7 +38,7 @@ if [[ -n "${CUSTOM_API_KEY:-}" && -n "${CUSTOM_API_MODEL:-}" && -n "${PROVIDER:-
 
   UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
     --directory "${ROOT_DIR}/crates/simple-agents-py" \
-    --with "pytest>=8.0" \
+    --extra dev \
     pytest tests/test_integration_openai.py tests/test_streaming.py
 else
   echo "==> Live credentials not set; skipping live layer"

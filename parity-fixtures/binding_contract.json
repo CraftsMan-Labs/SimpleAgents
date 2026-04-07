@@ -47,9 +47,11 @@
     "required_type_symbols": [
       "export interface CompletionResult",
       "export interface StreamEvent",
-      "run(",
-      "stream(",
-      "resume("
+      "runWorkflow(",
+      "streamWorkflow(",
+      "resume(",
+      "customWorker?:",
+      "customWorkerDispatch?:"
     ],
     "required_runtime_exports": [
       "Client"
@@ -68,8 +70,8 @@
     "required_api_symbols": [
       "class Client:",
       "def complete(",
-      "def run(",
-      "def stream(",
+      "def run_workflow(",
+      "def stream_workflow(",
       "def resume("
     ]
   }

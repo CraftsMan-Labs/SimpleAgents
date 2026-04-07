@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use simple_agent_type::message::Role;
+use simple_agent_type::message::{MessageContent, Role};
 use simple_agent_type::tool::{ToolChoice, ToolType};
 use thiserror::Error;
 
@@ -32,6 +32,8 @@ pub struct YamlWorkflowEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delta: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub token_kind: Option<YamlWorkflowTokenKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_terminal_node_token: Option<bool>,
@@ -46,7 +48,7 @@ pub type WorkflowMessageRole = Role;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WorkflowMessage {
     pub role: WorkflowMessageRole,
-    pub content: String,
+    pub content: MessageContent,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default, alias = "toolCallId")]
@@ -136,7 +138,10 @@ pub trait YamlWorkflowEventSink: Send + Sync {
 pub fn is_workflow_stream_delta_event(event_type: &str) -> bool {
     matches!(
         event_type,
-        "node_stream_delta" | "node_stream_thinking_delta" | "node_stream_output_delta"
+        "node_stream_delta"
+            | "node_stream_thinking_delta"
+            | "node_stream_output_delta"
+            | "node_stream_snapshot"
     )
 }
 
@@ -209,6 +214,7 @@ pub struct YamlLlmExecutionRequest {
     pub schema: Value,
     pub stream: bool,
     pub heal: bool,
+    pub send_schema: bool,
     pub tools: Vec<YamlResolvedTool>,
     pub tool_choice: Option<ToolChoice>,
     pub max_tool_roundtrips: u8,
@@ -355,6 +361,7 @@ pub struct YamlLlmCall {
     pub stream: Option<bool>,
     pub stream_json_as_text: Option<bool>,
     pub heal: Option<bool>,
+    pub send_schema: Option<bool>,
     pub messages_path: Option<String>,
     pub append_prompt_as_user: Option<bool>,
     #[serde(default)]

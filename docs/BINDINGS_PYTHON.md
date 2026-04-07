@@ -126,13 +126,12 @@ print(final.value, final.was_healed)
 
 ## Workflow YAML Runner (Rust-backed)
 
-Workflow execution is driven by the Rust `simple-agents-workflow` crate. The Python `Client` exposes three methods for running YAML workflows.
+Workflow execution is driven by the Rust `simple-agents-workflow` crate. The Python `Client` exposes two methods for running YAML workflows.
 
 ### Client methods
 
 - `client.run_workflow(request)` — run to completion, returns output dict
 - `client.stream_workflow(request, on_event=None, include_events_in_output=False)` — run with live events
-- `client.run_workflow_yaml_stream(workflow_path, input, *, on_event=None, workflow_options=None)` — convenience wrapper that takes the YAML path and input dict separately
 
 **`request` shape for `run_workflow` / `stream_workflow`**
 
@@ -168,17 +167,6 @@ def on_event(event: dict) -> None:
 streamed = client.stream_workflow(request, on_event=on_event)
 ```
 
-**`run_workflow_yaml_stream` convenience method**
-
-```python
-result = client.run_workflow_yaml_stream(
-    "examples/workflow_email/email-unified-chat-intake-classification.yaml",
-    {"messages": [{"role": "user", "content": "Termination request"}]},
-    on_event=on_event,
-    workflow_options={"telemetry": {"nerdstats": True}},
-)
-```
-
 ### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
 
 Higher-level helpers that add structured hooks, display modes, and Pydantic request coercion:
@@ -186,9 +174,6 @@ Higher-level helpers that add structured hooks, display modes, and Pydantic requ
 ```python
 from simple_agents_py.workflow_stream import (
     stream_workflow,
-    run_workflow_request,
-    run_workflow_request_async,
-    run_workflow_yaml_stream_typed,
 )
 ```
 
@@ -197,7 +182,6 @@ These accept the same `request` dict **or** a `WorkflowExecutionRequest` Pydanti
 - `stream_workflow(client, request, hooks=None, *, on_event=None, stream_display=None)` — structured event hooks, terminal printing, and execution flag merging.
 - `stream_display="merged"` prints merged `node_stream_delta` tokens to stdout.
 - `stream_display="split"` prints thinking vs output deltas and forces `split_stream_deltas`.
-- `run_workflow_yaml_stream_typed(client, request, *, workflow_path=Path(...))` — override the path as a `pathlib.Path`.
 
 ### Pydantic request models (`simple_agents_py.workflow_request`)
 

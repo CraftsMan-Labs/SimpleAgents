@@ -1,6 +1,6 @@
 [project]
 name = "examples"
-version = "0.3.7"
+version = "0.3.8"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,4 +14,9 @@ dependencies = [
 ]
 
 [tool.uv.sources]
-simple-agents-py = { path = "../crates/simple-agents-py" }
+simple-agents-py = { path = "../crates/simple-agents-py", editable = true }
+
+[tool.uv.workspace]
+members = [
+    "python-test-simpleAgents",
+]

@@ -5,7 +5,7 @@ Install the optional extra::
     pip install simple-agents-py[pydantic]
 
 Then pass :class:`WorkflowExecutionRequest` to :func:`simple_agents_py.workflow_stream.stream_workflow`
-or :func:`simple_agents_py.workflow_stream.run_workflow_request` without hand-written dicts.
+or directly to ``Client.run_workflow`` / ``Client.stream_workflow`` without hand-written dicts.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 
 def _coerce_workflow_path(value: Any) -> str:
@@ -44,12 +44,27 @@ class WorkflowRole(str, Enum):
 
 
 class WorkflowMessage(BaseModel):
-    """One chat message in ``WorkflowExecutionRequest.messages``."""
+    """One chat message in ``WorkflowExecutionRequest.messages``.
+
+    For multimodal content (images, audio, video), pass ``content`` as a list
+    of dict parts matching the wire schema, for example::
+
+        WorkflowMessage(role="user", content=[
+            {"type": "text", "text": "Describe this image."},
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}},
+        ])
+    """
 
     model_config = ConfigDict(extra="allow")
 
     role: WorkflowRole | str
-    content: str
+    content: str | list[dict[str, Any]]
+
+    @model_validator(mode="after")
+    def _content_not_empty_list(self) -> "WorkflowMessage":
+        if isinstance(self.content, list) and len(self.content) == 0:
+            raise ValueError("content list must not be empty")
+        return self
 
 
 class WorkflowExecutionFlags(BaseModel):

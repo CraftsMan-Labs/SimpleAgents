@@ -4,11 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "simple-agents-py"
-version = "0.3.7"
+version = "0.3.8"
 description = "Python bindings for SimpleAgents"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT OR Apache-2.0" }
+dependencies = ["pydantic>=2.0"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Rust",
@@ -18,8 +19,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pydantic>=2.0"]
-pydantic = ["pydantic>=2.0"]
+dev = ["pytest>=8.0"]
+pydantic = []
 
 [tool.maturin]
 bindings = "pyo3"

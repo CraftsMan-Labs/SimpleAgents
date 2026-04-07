@@ -85,30 +85,6 @@ fn healed_json_response_to_py(
     })
 }
 
-/// Parse a Python list that can contain either PyMessage objects or plain dicts.
-fn parse_mixed_messages(messages: &Bound<'_, PyAny>) -> PyResult<Vec<Message>> {
-    // First try the entire list via the dict-based parser (handles [{"role": ..., "content": ...}])
-    if let Ok(msgs) = parse_messages(messages) {
-        return Ok(msgs);
-    }
-    // Otherwise, iterate and try each item as a typed PyMessage
-    use pyo3::types::PyList;
-    let list = messages.downcast::<PyList>().map_err(|_| {
-        PyRuntimeError::new_err("messages must be a list of Message objects or dicts")
-    })?;
-    let mut result = Vec::new();
-    for item in list.iter() {
-        if let Ok(py_msg) = item.extract::<PyRef<'_, PyMessage>>() {
-            result.push(py_msg.inner.clone());
-        } else {
-            return Err(PyRuntimeError::new_err(
-                "each message must be a Message object or a dict with 'role' and 'content'",
-            ));
-        }
-    }
-    Ok(result)
-}
-
 type Runtime = tokio::runtime::Runtime;
 
 // ---------------------------------------------------------------------------
@@ -332,9 +308,7 @@ pub struct PyStructuredStreamIterator {
     stream: Option<Pin<Box<dyn Stream<Item = Result<CompletionChunk>> + Send>>>,
     runtime: Arc<Mutex<Runtime>>,
     buffer: String,
-    /// Parsed (value, confidence, was_healed) — populated after stream exhausted.
-    result: Option<(serde_json::Value, f64, bool)>,
-    yielded: bool,
+    schema: Option<Schema>,
 }
 
 #[pymethods]
@@ -344,70 +318,81 @@ impl PyStructuredStreamIterator {
     }
 
     fn __next__(mut slf: PyRefMut<'_, Self>, py: Python<'_>) -> PyResult<Option<PyObject>> {
-        if slf.yielded {
-            return Ok(None);
-        }
+        let runtime = Arc::clone(&slf.runtime);
+        let stream = slf
+            .stream
+            .as_mut()
+            .ok_or_else(|| PyRuntimeError::new_err("Stream exhausted"))?;
 
-        if slf.stream.is_some() {
-            let runtime = Arc::clone(&slf.runtime);
-            let runtime_lock = runtime
+        let next = py.allow_threads(|| {
+            let runtime = runtime
                 .lock()
                 .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-            loop {
-                let stream = slf.stream.as_mut().unwrap();
-                let next =
-                    py.allow_threads(|| Ok::<_, PyErr>(runtime_lock.block_on(stream.next())))?;
-                match next {
-                    Some(Ok(chunk)) => {
-                        if let Some(c) = chunk.choices.first() {
-                            if let Some(content) = &c.delta.content {
-                                slf.buffer.push_str(content);
-                            }
-                        }
-                    }
-                    Some(Err(e)) => return Err(PyRuntimeError::new_err(e.to_string())),
-                    None => break,
-                }
-            }
-            drop(runtime_lock);
-            slf.stream = None;
+            Ok::<_, PyErr>(runtime.block_on(stream.next()))
+        })?;
 
-            let result = if slf.buffer.trim().is_empty() {
-                (serde_json::Value::Null, 0.0_f64, false)
-            } else {
-                match JsonishParser::new().parse(&slf.buffer) {
-                    Ok(r) => {
-                        let healed = !r.flags.is_empty();
-                        (r.value, r.confidence as f64, healed)
-                    }
-                    Err(_) => (serde_json::Value::String(slf.buffer.clone()), 0.0, false),
-                }
-            };
-            slf.result = Some(result);
+        let Some(next_item) = next else {
+            slf.stream = None;
+            return Ok(None);
+        };
+
+        let chunk = next_item.map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let is_complete = chunk
+            .choices
+            .first()
+            .and_then(|choice| choice.finish_reason)
+            .is_some();
+        if let Some(content) = chunk
+            .choices
+            .first()
+            .and_then(|choice| choice.delta.content.as_ref())
+        {
+            slf.buffer.push_str(content);
         }
 
-        slf.yielded = true;
-        let (json_val, confidence, was_healed) =
-            slf.result
-                .take()
-                .unwrap_or((serde_json::Value::Null, 0.0, false));
+        let (json_val, confidence, was_healed) = if slf.buffer.trim().is_empty() {
+            (serde_json::Value::Null, 0.0_f64, false)
+        } else {
+            match JsonishParser::new().parse(&slf.buffer) {
+                Ok(r) => (r.value, r.confidence as f64, !r.flags.is_empty()),
+                Err(_) => (serde_json::Value::String(slf.buffer.clone()), 0.0, false),
+            }
+        };
+        let coerced_value = if let Some(schema) = slf.schema.as_ref() {
+            CoercionEngine::new()
+                .coerce(&json_val, schema)
+                .ok()
+                .map(|coerced| coerced.value)
+        } else {
+            None
+        };
         let py_value = serde_json_to_py(py, &json_val)?;
+        let py_coerced_value = match coerced_value.as_ref() {
+            Some(value) => serde_json_to_py(py, value)?,
+            None => py.None(),
+        };
         let event = PyStructuredEvent {
-            is_partial: false,
-            is_complete: true,
+            is_partial: !is_complete,
+            is_complete,
             value: py_value.clone_ref(py),
             partial_value: py_value,
             confidence,
             was_healed,
+            coerced_value: py_coerced_value,
+            coerced_confidence: if coerced_value.is_some() {
+                Some(confidence)
+            } else {
+                None
+            },
+            coercion_flags: Vec::new(),
         };
         Ok(Some(Py::new(py, event)?.into_py(py)))
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "PyStructuredStreamIterator(active={}, yielded={})",
+            "PyStructuredStreamIterator(active={})",
             self.stream.is_some(),
-            self.yielded
         )
     }
 }
@@ -554,7 +539,7 @@ impl Client {
     }
 
     /// Send a completion request.
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None, send_schema=None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -571,12 +556,8 @@ impl Client {
         stream: Option<bool>,
         schema: Option<&Bound<'_, PyAny>>,
         schema_name: Option<&str>,
+        send_schema: Option<bool>,
     ) -> PyResult<PyObject> {
-        if heal.unwrap_or(false) && stream.unwrap_or(false) {
-            return Err(PyRuntimeError::new_err(
-                "heal is not supported with stream=True",
-            ));
-        }
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
                 return Err(PyRuntimeError::new_err("prompt cannot be empty"));
@@ -587,11 +568,14 @@ impl Client {
         };
 
         if stream.unwrap_or(false) {
+            let mut resolved_schema: Option<Schema> = None;
+            let mut json_schema_pair: Option<(String, serde_json::Value)> = None;
             if let Some(schema_ref) = schema {
-                if schema_ref.downcast::<PyDict>().is_err() {
-                    return Err(PyRuntimeError::new_err(
-                        "schema must be a dict/mapping object",
-                    ));
+                let (json_schema_value, healing_schema) = parse_python_schema(schema_ref)?;
+                resolved_schema = Some(healing_schema);
+                if send_schema.unwrap_or(false) {
+                    let name = schema_name.unwrap_or("structured_output").to_string();
+                    json_schema_pair = Some((name, json_schema_value));
                 }
             }
             let request = build_request_with_messages(
@@ -604,7 +588,7 @@ impl Client {
                 None,
                 None,
                 Some(true),
-                None,
+                json_schema_pair,
             )
             .map_err(py_err)?;
             let outcome = {
@@ -623,8 +607,7 @@ impl Client {
                     stream: Some(Box::pin(underlying_stream)),
                     runtime: Arc::clone(&self.runtime),
                     buffer: String::new(),
-                    result: None,
-                    yielded: false,
+                    schema: resolved_schema,
                 };
                 return Ok(Bound::new(py, iter)?.into_any().into_py(py));
             }
@@ -646,7 +629,14 @@ impl Client {
 
         if let Some(schema_ref) = schema {
             let (json_schema_value, healing_schema) = parse_python_schema(schema_ref)?;
-            let json_schema_pair = schema_name.map(|name| (name.to_string(), json_schema_value));
+            let json_schema_pair = if send_schema.unwrap_or(false) {
+                Some((
+                    schema_name.unwrap_or("structured_output").to_string(),
+                    json_schema_value,
+                ))
+            } else {
+                None
+            };
             let response_format_for_req = if json_schema_pair.is_some() {
                 None
             } else {
@@ -934,151 +924,7 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    /// Run a YAML workflow (new unified API).
-    ///
-    /// ```python
-    /// result = client.run("workflow.yaml", [
-    ///     Message.user("Hello"),
-    /// ])
-    /// # or with dict messages for convenience:
-    /// result = client.run("workflow.yaml", [{"role": "user", "content": "Hello"}])
-    /// ```
-    #[pyo3(signature = (workflow_path, messages, *, tools=None, options=None))]
-    fn run(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        messages: &Bound<'_, PyAny>,
-        tools: Option<&Bound<'_, PyAny>>,
-        options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        let _ = (tools, options);
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-
-        // Accept both typed PyMessage objects and plain dicts
-        let parsed_messages: Vec<Message> = parse_mixed_messages(messages)?;
-        let workflow_input = serde_json::json!({
-            "messages": parsed_messages.iter()
-                .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
-                .collect::<Vec<_>>()
-        });
-
-        let default_options = YamlWorkflowRunOptions::default();
-        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-
-        let execution_request = YamlWorkflowExecutionRequest {
-            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-            workflow_input: &workflow_input,
-            executor: YamlWorkflowExecutorBinding::Client(&self.client),
-            custom_worker: Some(&custom_executor),
-            options: &default_options,
-            flags,
-        };
-
-        let output = py
-            .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        let value = serde_json::to_value(output)
-            .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
-        Ok(py_value.into_py(py))
-    }
-
-    /// Stream a YAML workflow (new unified API).
-    ///
-    /// ```python
-    /// result = client.stream("workflow.yaml", messages, on_event=lambda e: print(e))
-    /// ```
-    #[pyo3(signature = (workflow_path, messages, *, on_event=None, tools=None, options=None))]
-    fn stream(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        messages: &Bound<'_, PyAny>,
-        on_event: Option<Py<PyAny>>,
-        tools: Option<&Bound<'_, PyAny>>,
-        options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        let _ = (tools, options);
-        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-
-        let parsed_messages: Vec<Message> = parse_mixed_messages(messages)?;
-        let workflow_input = serde_json::json!({
-            "messages": parsed_messages.iter()
-                .map(|m| serde_json::to_value(m).unwrap_or(serde_json::Value::Null))
-                .collect::<Vec<_>>()
-        });
-
-        let default_options = YamlWorkflowRunOptions::default();
-        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags {
-            workflow_streaming: on_event.is_some(),
-            ..Default::default()
-        };
-
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-
-        let value = if let Some(callback) = on_event {
-            let event_sink = PythonWorkflowEventSink {
-                callback: Some(callback),
-            };
-            let execution_request = YamlWorkflowExecutionRequest {
-                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-                workflow_input: &workflow_input,
-                executor: YamlWorkflowExecutorBinding::Client(&self.client),
-                custom_worker: Some(&custom_executor),
-                options: &default_options,
-                flags,
-            };
-            let output = py
-                .allow_threads(|| {
-                    runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
-                })
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            serde_json::to_value(output)
-                .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?
-        } else {
-            let recording_sink = RecordingWorkflowEventSink::new();
-            let execution_request = YamlWorkflowExecutionRequest {
-                source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-                workflow_input: &workflow_input,
-                executor: YamlWorkflowExecutorBinding::Client(&self.client),
-                custom_worker: Some(&custom_executor),
-                options: &default_options,
-                flags,
-            };
-            let output = py
-                .allow_threads(|| {
-                    runtime.block_on(workflow_execution::stream(
-                        execution_request,
-                        &recording_sink,
-                    ))
-                })
-                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            let mut v = serde_json::to_value(output)
-                .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
-            attach_workflow_events(&mut v, &recording_sink)?;
-            v
-        };
-
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
-        Ok(py_value.into_py(py))
-    }
-
-    /// Resume a workflow from a checkpoint dict (new unified API).
+    /// Resume a workflow from a checkpoint dict.
     #[pyo3(signature = (checkpoint, *, options=None))]
     fn resume(
         &self,
@@ -1130,39 +976,6 @@ impl Client {
         let py_value = pythonize::pythonize(py, &value)
             .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
         Ok(py_value.into_py(py))
-    }
-
-    /// Stream a YAML workflow using separate positional path + input arguments.
-    ///
-    /// Signature mirrors the Python test expectation:
-    ///   `client.run_workflow_yaml_stream(path, input_dict, *, on_event=..., workflow_options=...)`
-    #[pyo3(signature = (workflow_path, input, *, on_event=None, workflow_options=None))]
-    fn run_workflow_yaml_stream(
-        &self,
-        py: Python<'_>,
-        workflow_path: &str,
-        input: &Bound<'_, PyAny>,
-        on_event: Option<Py<PyAny>>,
-        workflow_options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        let mut request_map: serde_json::Map<String, serde_json::Value> =
-            pythonize::depythonize::<serde_json::Value>(input)
-                .ok()
-                .and_then(|v| v.as_object().cloned())
-                .unwrap_or_default();
-        request_map.insert(
-            "workflow_path".to_string(),
-            serde_json::Value::String(workflow_path.to_string()),
-        );
-        if let Some(wo) = workflow_options {
-            let wo_json: serde_json::Value =
-                pythonize::depythonize(wo).map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-            request_map.insert("workflow_options".to_string(), wo_json);
-        }
-        let request_value = serde_json::Value::Object(request_map);
-        let py_request = pythonize::pythonize(py, &request_value)
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        self.stream_workflow(py, &py_request, on_event, false)
     }
 }
 
@@ -1332,6 +1145,12 @@ pub struct PyStructuredEvent {
     pub confidence: f64,
     #[pyo3(get)]
     pub was_healed: bool,
+    #[pyo3(get)]
+    pub coerced_value: PyObject,
+    #[pyo3(get)]
+    pub coerced_confidence: Option<f64>,
+    #[pyo3(get)]
+    pub coercion_flags: Vec<String>,
 }
 
 #[pymethods]

@@ -11,7 +11,7 @@ npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" test
 echo "==> Running Python binding contract tests"
 UV_CACHE_DIR="${ROOT_DIR}/.uv-cache" uv run \
   --directory "${ROOT_DIR}/crates/simple-agents-py" \
-  --with "pytest>=8.0" \
+  --extra dev \
   pytest tests/test_contract_fixtures.py tests/test_error_mapping_consistency.py
 
 echo "==> Binding contract runner complete"

@@ -26,7 +26,8 @@ def test_empty_prompt_error_is_runtime_error() -> None:
     assert "prompt cannot be empty" in str(excinfo.value)
 
 
-def test_stream_and_heal_conflict_error_is_runtime_error() -> None:
+def test_stream_and_heal_no_longer_raises_conflict() -> None:
+    """stream=True with heal=True was previously rejected; the streaming path is used now."""
     import simple_agents_py
 
     client = simple_agents_py.Client(
@@ -41,4 +42,4 @@ def test_stream_and_heal_conflict_error_is_runtime_error() -> None:
             stream=True,
             heal=True,
         )
-    assert "heal is not supported with stream=True" in str(excinfo.value)
+    assert "heal is not supported with stream=True" not in str(excinfo.value)

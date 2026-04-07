@@ -139,11 +139,13 @@ nodes:
     def on_event(event: dict[str, object]) -> None:
         events.append(event)
 
-    result = client.run_workflow_yaml_stream(
-        str(workflow_path),
-        {"messages": [{"role": "user", "content": "Hi"}]},
+    result = client.stream_workflow(
+        {
+            "workflow_path": str(workflow_path),
+            "messages": [{"role": "user", "content": "Hi"}],
+            "workflow_options": {"telemetry": {"nerdstats": True}},
+        },
         on_event=on_event,
-        workflow_options={"telemetry": {"nerdstats": True}},
     )
 
     assert isinstance(result, dict)

@@ -17,7 +17,7 @@ use super::types::{
 use async_trait::async_trait;
 use simple_agent_type::message::{Message, Role};
 use simple_agent_type::provider::{Provider, ProviderRequest, ProviderResponse};
-use simple_agent_type::request::CompletionRequest;
+use simple_agent_type::request::{CompletionRequest, ResponseFormat};
 use simple_agent_type::response::{CompletionChoice, CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolCall, ToolCallFunction, ToolType};
 use simple_agent_type::{Result as SaResult, SimpleAgentsError};
@@ -152,6 +152,9 @@ struct UnknownToolProvider;
 struct ReasoningUsageProvider;
 
 struct ToolLoopReasoningProvider;
+struct SchemaCaptureProvider {
+    seen_requests: Arc<Mutex<Vec<CompletionRequest>>>,
+}
 
 #[async_trait]
 impl Provider for ToolLoopProvider {
@@ -401,6 +404,47 @@ impl Provider for ToolLoopReasoningProvider {
             }
         };
 
+        let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
+        Ok(ProviderResponse::new(200, body))
+    }
+
+    fn transform_response(&self, resp: ProviderResponse) -> SaResult<CompletionResponse> {
+        serde_json::from_value(resp.body).map_err(SimpleAgentsError::from)
+    }
+}
+
+#[async_trait]
+impl Provider for SchemaCaptureProvider {
+    fn name(&self) -> &str {
+        "openai"
+    }
+
+    fn transform_request(&self, req: &CompletionRequest) -> SaResult<ProviderRequest> {
+        self.seen_requests
+            .lock()
+            .expect("seen requests lock should not be poisoned")
+            .push(req.clone());
+        let body = serde_json::to_value(req).map_err(SimpleAgentsError::from)?;
+        Ok(ProviderRequest::new("mock://schema-capture").with_body(body))
+    }
+
+    async fn execute(&self, req: ProviderRequest) -> SaResult<ProviderResponse> {
+        let request: CompletionRequest =
+            serde_json::from_value(req.body).map_err(SimpleAgentsError::from)?;
+        let response = CompletionResponse {
+            id: "resp_schema_capture".to_string(),
+            model: request.model,
+            choices: vec![CompletionChoice {
+                index: 0,
+                message: Message::assistant(r#"{"age":"30","label":"ok"}"#),
+                finish_reason: FinishReason::Stop,
+                logprobs: None,
+            }],
+            usage: Usage::new(8, 4),
+            created: None,
+            provider: Some(self.name().to_string()),
+            healing_metadata: None,
+        };
         let body = serde_json::to_value(response).map_err(SimpleAgentsError::from)?;
         Ok(ProviderResponse::new(200, body))
     }
@@ -2365,6 +2409,118 @@ nodes:
     assert!(message.contains("unexpected"));
 }
 
+fn single_llm_workflow_yaml(stream: bool, heal: bool, send_schema: bool) -> String {
+    format!(
+        r#"
+id: schema-send-matrix
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        stream: {stream}
+        heal: {heal}
+        send_schema: {send_schema}
+    config:
+      prompt: "Extract age"
+      output_schema:
+        type: object
+        properties:
+          age: {{ type: integer }}
+          label: {{ type: string }}
+        required: [age, label]
+"#
+    )
+}
+
+async fn run_schema_capture_workflow(
+    stream: bool,
+    heal: bool,
+    send_schema: bool,
+) -> (
+    YamlWorkflowRunOutput,
+    Vec<CompletionRequest>,
+    Vec<YamlWorkflowEvent>,
+) {
+    let yaml = single_llm_workflow_yaml(stream, heal, send_schema);
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml.as_str()).expect("yaml should parse");
+    let seen_requests = Arc::new(Mutex::new(Vec::<CompletionRequest>::new()));
+    let provider = SchemaCaptureProvider {
+        seen_requests: Arc::clone(&seen_requests),
+    };
+    let client = SimpleAgentsClient::new(Arc::new(provider));
+    let sink = RecordingSink {
+        events: Mutex::new(Vec::new()),
+    };
+    let output = run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({"email_text":"hello"}),
+        &client,
+        None,
+        Some(&sink),
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect("workflow should execute");
+    let requests = seen_requests.lock().expect("seen requests lock").clone();
+    let events = sink.events.lock().expect("events lock").clone();
+    (output, requests, events)
+}
+
+#[tokio::test]
+async fn send_schema_true_with_stream_true_sets_json_schema_response_format() {
+    let (_output, requests, _events) = run_schema_capture_workflow(true, true, true).await;
+    let req = requests.first().expect("captured at least one request");
+    match req.response_format.as_ref() {
+        Some(ResponseFormat::JsonSchema { .. }) => {}
+        other => panic!("expected JsonSchema response_format, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_schema_true_with_stream_false_sets_json_schema_response_format() {
+    let (_output, requests, _events) = run_schema_capture_workflow(false, true, true).await;
+    let req = requests.first().expect("captured at least one request");
+    match req.response_format.as_ref() {
+        Some(ResponseFormat::JsonSchema { .. }) => {}
+        other => panic!("expected JsonSchema response_format, got: {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn send_schema_false_omits_response_format() {
+    let (_output, requests, _events) = run_schema_capture_workflow(false, true, false).await;
+    let req = requests.first().expect("captured at least one request");
+    assert!(
+        req.response_format.is_none(),
+        "response_format should be none when send_schema=false, got: {:?}",
+        req.response_format
+    );
+}
+
+#[tokio::test]
+async fn stream_heal_emits_node_stream_snapshot_events_with_metadata() {
+    let (_output, _requests, events) = run_schema_capture_workflow(true, true, false).await;
+    let snapshots: Vec<&YamlWorkflowEvent> = events
+        .iter()
+        .filter(|event| event.event_type == "node_stream_snapshot")
+        .collect();
+    assert!(
+        !snapshots.is_empty(),
+        "expected at least one node_stream_snapshot event"
+    );
+    let first = snapshots.first().expect("snapshot event");
+    assert!(
+        first.snapshot.is_some(),
+        "snapshot payload should be present"
+    );
+    let metadata = first.metadata.as_ref().expect("snapshot metadata");
+    assert!(metadata.get("confidence").is_some());
+    assert!(metadata.get("is_complete").is_some());
+}
+
 #[cfg(test)]
 mod yaml_workflow_execution_contract_tests {
     use std::sync::Mutex;
@@ -2427,24 +2583,21 @@ nodes:
     }
 
     #[test]
-    fn validate_rejects_healing_with_node_llm_streaming() {
+    fn validate_accepts_healing_with_node_llm_streaming() {
         let wf = minimal_workflow();
         let flags = YamlWorkflowExecutionFlags {
             healing: true,
             node_llm_streaming: true,
             ..YamlWorkflowExecutionFlags::default()
         };
-        let err = validate_yaml_workflow_execution(&wf, flags, YamlWorkflowExecutionSurface::Run)
-            .expect_err("global heal+stream flags conflict");
-        assert!(
-            err.to_string().contains("healing and node_llm_streaming"),
-            "{err}"
-        );
+        validate_yaml_workflow_execution(&wf, flags, YamlWorkflowExecutionSurface::Run)
+            .expect("global heal+stream should now be allowed");
     }
 
     #[test]
     fn stream_delta_event_predicate_matches_workflow_stream_types() {
         assert!(is_workflow_stream_delta_event("node_stream_delta"));
+        assert!(is_workflow_stream_delta_event("node_stream_snapshot"));
         assert!(is_workflow_stream_delta_event("node_stream_thinking_delta"));
         assert!(is_workflow_stream_delta_event("node_stream_output_delta"));
         assert!(!is_workflow_stream_delta_event("workflow_started"));
@@ -2472,6 +2625,7 @@ nodes:
             streamable: None,
             message: None,
             delta: Some("x".to_string()),
+            snapshot: None,
             token_kind: None,
             is_terminal_node_token: None,
             elapsed_ms: None,
@@ -2488,6 +2642,7 @@ nodes:
             streamable: None,
             message: None,
             delta: None,
+            snapshot: None,
             token_kind: None,
             is_terminal_node_token: None,
             elapsed_ms: None,

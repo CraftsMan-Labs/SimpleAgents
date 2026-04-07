@@ -90,5 +90,5 @@ Golden fixture and parity tests:
 
 - Fixture: `parity-fixtures/workflow_dsl_ir_golden.json`
 - Rust: `cargo test -p simple-agents-workflow --test workflow_dsl_ir_fixtures`
-- Python: `uv run --directory crates/simple-agents-py --with "pytest>=8.0" pytest tests/test_contract_fixtures.py`
+- Python: `uv run --directory crates/simple-agents-py --extra dev pytest tests/test_contract_fixtures.py`
 - Node: `npm --prefix crates/simple-agents-napi run test:contract`

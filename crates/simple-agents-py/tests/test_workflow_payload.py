@@ -37,7 +37,12 @@ def test_invalid_request_type_raises() -> None:
 def test_stream_workflow_rejects_hooks_and_on_event() -> None:
     client = unittest.mock.Mock()
     with pytest.raises(ValueError, match="only one"):
-        stream_workflow(client, {"workflow_path": "w", "messages": [{"role": "u", "content": "c"}]}, object(), on_event=lambda e: None)
+        stream_workflow(
+            client,
+            {"workflow_path": "w", "messages": [{"role": "u", "content": "c"}]},
+            object(),
+            on_event=lambda e: None,
+        )
 
 
 def test_merge_workflow_execution_fills_missing_bools() -> None:
@@ -56,7 +61,7 @@ def test_stream_workflow_merges_partial_execution() -> None:
         captured["payload"] = args[0]
         return {}
 
-    client.stream.side_effect = capture_stream
+    client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
         {
@@ -120,6 +125,26 @@ def test_pydantic_workflow_execution_request_roundtrip() -> None:
     assert wo["model"] == "gpt-4o-mini"
     assert wo["telemetry"] == {"nerdstats": True}
 
+    multimodal_req = WorkflowExecutionRequest(
+        workflow_path="w.yaml",
+        messages=[
+            WorkflowMessage(
+                role="user",
+                content=[
+                    {"type": "text", "text": "Describe this"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/png;base64,AAAA"},
+                    },
+                ],
+            )
+        ],
+    )
+    mm = workflow_execution_request_to_mapping(multimodal_req)
+    assert isinstance(mm["messages"][0]["content"], list)
+    assert mm["messages"][0]["content"][0]["type"] == "text"
+    assert mm["messages"][0]["content"][1]["type"] == "image_url"
+
 
 def test_stream_workflow_stream_display_incompatible_with_hooks() -> None:
     client = unittest.mock.Mock()
@@ -140,7 +165,7 @@ def test_stream_workflow_split_sets_split_stream_deltas() -> None:
         captured["payload"] = args[0]
         return {}
 
-    client.stream.side_effect = capture_stream
+    client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
         {"workflow_path": "w.yaml", "messages": [{"role": "user", "content": "hi"}]},

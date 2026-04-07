@@ -29,7 +29,7 @@ Common issues and fast checks for core and binding workflows.
 - Use `uv` and include pytest dependency:
 
 ```bash
-UV_CACHE_DIR=$(pwd)/.uv-cache uv run --directory crates/simple-agents-py --with "pytest>=8.0" pytest
+UV_CACHE_DIR=$(pwd)/.uv-cache uv run --directory crates/simple-agents-py --extra dev pytest
 ```
 
 - If lockfile churn appears during local runs, avoid committing unrelated lockfile updates.

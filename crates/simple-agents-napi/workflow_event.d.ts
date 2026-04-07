@@ -11,6 +11,7 @@ export type WorkflowRunnerEventType =
   | 'node_completed'
   | 'resolved_llm_input'
   | 'node_stream_delta'
+  | 'node_stream_snapshot'
   | 'node_stream_thinking_delta'
   | 'node_stream_output_delta'
   | 'node_tool_call_requested'
@@ -28,6 +29,7 @@ export interface WorkflowRunnerEvent {
   streamable?: boolean
   message?: string
   delta?: string
+  snapshot?: unknown
   token_kind?: string
   is_terminal_node_token?: boolean
   elapsed_ms?: number

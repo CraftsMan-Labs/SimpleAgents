@@ -65,15 +65,17 @@ Healing APIs:
 ### `simple-agents-napi`
 Node.js `Client` with TypeScript types:
 - `client.complete(messages, opts?)`.
-- `client.stream(workflowPath, messages, opts?)`, `client.run(workflowPath, messages, opts?)`, `client.resume(checkpoint, messages, opts?)`.
+- `client.runWorkflow(workflowPath, workflowInput, workflowOptions?, customWorkerDispatch?)`.
+- `client.streamWorkflow(workflowPath, workflowInput, onEvent, workflowOptions?, customWorkerDispatch?)`.
+- `client.resume(checkpoint, opts?)`.
 - `MessageInput`, `RunOptions` types.
 
 ### `simple-agents-py`
 Python `Client` via PyO3:
 - `client.complete(messages, *, model=None, ...)`.
-- `client.run(workflow_path, messages, *, tools=None, options=None)`.
-- `client.stream(workflow_path, messages, *, on_event=None, tools=None, options=None)`.
-- `client.resume(checkpoint, messages, *, on_event=None)`.
+- `client.run_workflow(request)`.
+- `client.stream_workflow(request, on_event=None, include_events_in_output=False)`.
+- `client.resume(checkpoint, *, options=None)`.
 - `Message`, `Role`, `ContentPart` typed helpers.
 
 ### WASM (`simple-agents-wasm`)

@@ -9,7 +9,7 @@ test('runtime exports include Client', () => {
 });
 
 test('Client prototype includes workflow parity methods', () => {
-  const methods = ['runWorkflow', 'streamWorkflow'];
+  const methods = ['runWorkflow', 'streamWorkflow', 'run', 'stream', 'resume'];
   for (const method of methods) {
     assert.strictEqual(typeof binding.Client.prototype[method], 'function');
   }
