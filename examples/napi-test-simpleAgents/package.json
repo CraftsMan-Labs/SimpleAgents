@@ -2,6 +2,10 @@
   "name": "napi-test-simpleagents",
   "private": true,
   "type": "module",
+  "scripts": {
+    "run": "bun run test-simple-agents.ts",
+    "stream": "bun run test-simple-agents-streaming.ts"
+  },
   "dependencies": {
     "simple-agents-node": "file:../../crates/simple-agents-napi"
   }

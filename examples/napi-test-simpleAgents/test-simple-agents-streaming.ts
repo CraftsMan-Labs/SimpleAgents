@@ -1,8 +1,12 @@
 /**
  * Stream a YAML workflow with live events.
- * LLM nodes in the YAML should use stream: true if you want token deltas.
  *
- * From this directory: `bun install` (uses the repo's local `simple-agents-node` via package.json).
+ * Parity with `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py`.
+ * LLM nodes in the YAML should use `stream: true` if you want token deltas.
+ *
+ * From repo root `examples/`: `bun install` in this directory.
+ *
+ * Env: `WORKFLOW_API_KEY` (required), `WORKFLOW_API_BASE` (optional).
  */
 
 import * as readline from "node:readline/promises";
@@ -10,7 +14,8 @@ import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Client } from "simple-agents-node";
-import { defaultOnEvent } from "simple-agents-node/workflow_event";
+import { parseWorkflowEvent } from "simple-agents-node/workflow_event";
+import { customWorkerDispatch } from "./handlers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const workflowPath = join(__dirname, "test.yaml");
@@ -19,6 +24,15 @@ function requireEnv(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Set ${name}`);
   return v;
+}
+
+/** Mirrors the Python demo: log each parsed event on stdout (full object). */
+function onWorkflowEvent(err: unknown, eventJson: string): void {
+  if (err) {
+    console.error(err);
+    return;
+  }
+  console.log(parseWorkflowEvent(eventJson));
 }
 
 async function main(): Promise<void> {
@@ -33,7 +47,8 @@ async function main(): Promise<void> {
   const result = await client.stream(
     workflowPath,
     [{ role: "user", content: userInput }],
-    defaultOnEvent,
+    onWorkflowEvent,
+    { customWorker: customWorkerDispatch },
   );
 
   console.log("\n");
