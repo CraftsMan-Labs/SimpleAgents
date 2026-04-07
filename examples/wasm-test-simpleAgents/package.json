@@ -1,0 +1,13 @@
+{
+  "name": "wasm-test-simpleagents",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "run": "bun run test-simple-agents.ts",
+    "stream": "bun run test-simple-agents-streaming.ts",
+    "invoice-image": "bun run test-simple-agents-invoice-image.ts"
+  },
+  "dependencies": {
+    "simple-agents-wasm": "file:../../bindings/wasm/simple-agents-wasm"
+  }
+}

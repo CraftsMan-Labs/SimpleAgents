@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -87,6 +88,7 @@ struct WorkflowDoc {
 
 #[derive(Deserialize, Clone)]
 struct GraphWorkflowDoc {
+    id: Option<String>,
     model: Option<String>,
     entry_node: String,
     nodes: Vec<GraphWorkflowNode>,
@@ -126,6 +128,7 @@ struct GraphLlmCall {
     temperature: Option<f64>,
     messages_path: Option<String>,
     append_prompt_as_user: Option<bool>,
+    stream: Option<bool>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -272,6 +275,8 @@ struct WorkflowRunOptions {
     trace: Option<JsonValue>,
     #[serde(skip)]
     functions_js: Option<JsValue>,
+    #[serde(skip)]
+    on_event_js: Option<Function>,
     /// Injected by JS as `__fetchImpl` so HTTP calls use the same fetch as tests (no global race).
     #[serde(skip)]
     fetch_js: Option<JsValue>,
@@ -317,6 +322,16 @@ fn json_value_to_js_plain(value: &JsonValue) -> Result<JsValue, JsValue> {
     let s =
         serde_json::to_string(value).map_err(|_| js_error("failed to serialize value for JS"))?;
     js_sys::JSON::parse(&s).map_err(|_| js_error("failed to parse JSON for JS"))
+}
+
+fn emit_workflow_event(on_event: &Option<Function>, event: JsonValue) -> Result<(), JsValue> {
+    if let Some(callback) = on_event {
+        let event_js = json_value_to_js_plain(&event)?;
+        callback
+            .call1(&JsValue::NULL, &event_js)
+            .map_err(|_| js_error("failed to call workflow stream callback"))?;
+    }
+    Ok(())
 }
 
 fn now_millis() -> f64 {
@@ -1439,6 +1454,7 @@ impl WasmClient {
             telemetry: None,
             trace: None,
             functions_js: None,
+            on_event_js: None,
             fetch_js: None,
         };
         if let Some(options_js) = workflow_options {
@@ -1450,6 +1466,14 @@ impl WasmClient {
                     None
                 } else {
                     Some(v)
+                }
+            });
+            let on_event_value = Reflect::get(&options_js, &JsValue::from_str("onEvent")).ok();
+            options.on_event_js = on_event_value.and_then(|v| {
+                if v.is_undefined() || v.is_null() {
+                    None
+                } else {
+                    v.dyn_into::<Function>().ok()
                 }
             });
             let fetch_js = Reflect::get(&options_js, &JsValue::from_str("__fetchImpl")).ok();
@@ -1498,6 +1522,14 @@ impl WasmClient {
             let mut total_tokens: u64 = 0;
             let total_reasoning_tokens: u64 = 0;
             let mut llm_nodes_without_usage: Vec<String> = Vec::new();
+
+            emit_workflow_event(
+                &options.on_event_js,
+                json!({
+                    "event_type": "workflow_started",
+                    "workflow_id": graph_doc.id.clone().unwrap_or_else(|| "wasm_workflow".to_string())
+                }),
+            )?;
 
             while !pointer.is_empty() {
                 iterations += 1;
@@ -1582,13 +1614,65 @@ impl WasmClient {
                     };
 
                     let opts = json!({ "temperature": llm.temperature });
-                    let completion_js = self
-                        .complete(
-                            model,
-                            prompt_js,
-                            Some(json_value_to_js_plain(&opts)?),
-                        )
-                        .await?;
+                    let completion_js = if llm.stream.unwrap_or(false) && options.on_event_js.is_some() {
+                        let node_id = node.id.clone();
+                        let step_id = node.id.clone();
+                        let workflow_on_event = options
+                            .on_event_js
+                            .clone()
+                            .ok_or_else(|| js_error("missing workflow stream callback"))?;
+                        let mapped_stream_cb = Closure::wrap(Box::new(move |stream_event_js: JsValue| {
+                            let stream_event: JsonValue =
+                                serde_wasm_bindgen::from_value(stream_event_js).unwrap_or(JsonValue::Null);
+                            let stream_event_type = stream_event
+                                .get("eventType")
+                                .and_then(JsonValue::as_str)
+                                .unwrap_or_default();
+
+                            if stream_event_type == "delta" {
+                                if let Some(delta) = stream_event
+                                    .get("delta")
+                                    .and_then(|v| v.get("content"))
+                                    .and_then(JsonValue::as_str)
+                                {
+                                    let workflow_event = json!({
+                                        "event_type": "node_stream_delta",
+                                        "node_id": node_id.clone(),
+                                        "step_id": step_id.clone(),
+                                        "delta": delta
+                                    });
+                                    if let Ok(event_js) = json_value_to_js_plain(&workflow_event) {
+                                        let _ = workflow_on_event.call1(&JsValue::NULL, &event_js);
+                                    }
+                                }
+                            } else if stream_event_type == "done" {
+                                let workflow_event = json!({
+                                    "event_type": "node_stream_snapshot",
+                                    "node_id": node_id.clone(),
+                                    "step_id": step_id.clone(),
+                                    "metadata": { "is_complete": true }
+                                });
+                                if let Ok(event_js) = json_value_to_js_plain(&workflow_event) {
+                                    let _ = workflow_on_event.call1(&JsValue::NULL, &event_js);
+                                }
+                            }
+                        }) as Box<dyn FnMut(JsValue)>);
+                        let stream_callback_fn: Function =
+                            mapped_stream_cb.as_ref().unchecked_ref::<Function>().clone();
+                        let result = self
+                            .stream_events(
+                                model,
+                                prompt_js,
+                                stream_callback_fn,
+                                Some(json_value_to_js_plain(&opts)?),
+                            )
+                            .await;
+                        drop(mapped_stream_cb);
+                        result?
+                    } else {
+                        self.complete(model, prompt_js, Some(json_value_to_js_plain(&opts)?))
+                            .await?
+                    };
                     let completion: JsonValue = serde_wasm_bindgen::from_value(completion_js)
                         .map_err(|_| js_error("failed to parse completion result"))?;
 
@@ -1796,6 +1880,17 @@ impl WasmClient {
                 }));
                 trace.push(node.id.clone());
             }
+
+            emit_workflow_event(
+                &options.on_event_js,
+                json!({
+                    "event_type": "workflow_completed",
+                    "workflow_id": raw_doc
+                        .get("id")
+                        .and_then(JsonValue::as_str)
+                        .unwrap_or("wasm_workflow")
+                }),
+            )?;
 
             let total_elapsed_ms = (now_millis() - workflow_started).max(0.0) as u64;
             let terminal_node = trace.last().cloned().unwrap_or_default();
