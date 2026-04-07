@@ -87,6 +87,7 @@ function normalizeWorkflowResult(result) {
     email_text: typeof context?.input?.email_text === "string" ? context.input.email_text : "",
     trace,
     outputs: nodeOutputs,
+    context,
     terminal_node: typeof result.terminal_node === "string" ? result.terminal_node : terminalNode,
     terminal_output: result.output,
     events: Array.isArray(result.events) ? result.events : [],
@@ -185,13 +186,21 @@ export class Client {
   async streamEvents(model, promptOrMessages, onEvent, options = {}) {
     const rust = await this.ensureBackend();
     return this.withFetchOverride(async () =>
-      rust.streamEvents(model, promptOrMessages, onEvent, options));
+      rust.streamEvents(model, promptOrMessages, onEvent, options)
+    );
   }
 
   async runWorkflowYamlString(yamlText, workflowInput, workflowOptions) {
     const rust = await this.ensureBackend();
     return this.withFetchOverride(async () => {
-      const result = await rust.runWorkflowYamlString(yamlText, workflowInput, workflowOptions);
+      let mergedOptions = workflowOptions;
+      if (typeof this.config.fetchImpl === "function") {
+        mergedOptions =
+          workflowOptions && typeof workflowOptions === "object"
+            ? { ...workflowOptions, __fetchImpl: this.config.fetchImpl }
+            : { __fetchImpl: this.config.fetchImpl };
+      }
+      const result = await rust.runWorkflowYamlString(yamlText, workflowInput, mergedOptions);
       return assertWorkflowResultShape(normalizeWorkflowResult(result));
     });
   }

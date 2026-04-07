@@ -1,6 +1,7 @@
-use js_sys::{Function, Object, Promise, Reflect};
+use js_sys::{Array, Function, Object, Promise, Reflect};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map as JsonMap, Value as JsonValue};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -271,6 +272,27 @@ struct WorkflowRunOptions {
     trace: Option<JsonValue>,
     #[serde(skip)]
     functions_js: Option<JsValue>,
+    /// Injected by JS as `__fetchImpl` so HTTP calls use the same fetch as tests (no global race).
+    #[serde(skip)]
+    fetch_js: Option<JsValue>,
+}
+
+struct FetchOverrideGuard<'a> {
+    cell: &'a RefCell<Option<JsValue>>,
+    previous: Option<JsValue>,
+}
+
+impl<'a> FetchOverrideGuard<'a> {
+    fn new(cell: &'a RefCell<Option<JsValue>>, value: Option<JsValue>) -> Self {
+        let previous = cell.replace(value);
+        Self { cell, previous }
+    }
+}
+
+impl Drop for FetchOverrideGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.replace(self.previous.take());
+    }
 }
 
 fn js_error(message: impl Into<String>) -> JsValue {
@@ -287,6 +309,14 @@ fn config_error(message: impl Into<String>) -> JsValue {
         message.into()
     ))
     .into()
+}
+
+/// Plain objects for JS `Function.call` / stream callbacks. `serde_wasm_bindgen::to_value`
+/// can yield empty externref objects in Node for callback arguments; `JSON.parse` matches browser behavior.
+fn json_value_to_js_plain(value: &JsonValue) -> Result<JsValue, JsValue> {
+    let s =
+        serde_json::to_string(value).map_err(|_| js_error("failed to serialize value for JS"))?;
+    js_sys::JSON::parse(&s).map_err(|_| js_error("failed to parse JSON for JS"))
 }
 
 fn now_millis() -> f64 {
@@ -463,13 +493,23 @@ fn call_method2_sync(
 }
 
 async fn js_fetch(
+    fetch_override: Option<JsValue>,
     url: &str,
     body: &JsonValue,
     headers: &HashMap<String, String>,
 ) -> Result<JsValue, JsValue> {
     let global = js_sys::global();
-    let fetch_value = Reflect::get(&global, &JsValue::from_str("fetch"))
-        .map_err(|_| js_error("global fetch is unavailable"))?;
+    let fetch_value = if let Some(f) = fetch_override {
+        if f.is_function() {
+            f
+        } else {
+            Reflect::get(&global, &JsValue::from_str("fetch"))
+                .map_err(|_| js_error("global fetch is unavailable"))?
+        }
+    } else {
+        Reflect::get(&global, &JsValue::from_str("fetch"))
+            .map_err(|_| js_error("global fetch is unavailable"))?
+    };
     let fetch_fn = fetch_value
         .dyn_into::<Function>()
         .map_err(|_| js_error("global fetch is not callable"))?;
@@ -985,6 +1025,7 @@ pub struct WasmClient {
     base_url: String,
     api_key: String,
     headers: HashMap<String, String>,
+    fetch_override: RefCell<Option<JsValue>>,
 }
 
 #[wasm_bindgen]
@@ -1013,6 +1054,7 @@ impl WasmClient {
             base_url: normalize_base_url(&base),
             api_key: parsed.api_key,
             headers: parsed.headers.unwrap_or_default(),
+            fetch_override: RefCell::new(None),
         })
     }
 
@@ -1066,7 +1108,9 @@ impl WasmClient {
                 .or_insert_with(|| "https://simpleagents.dev".to_string());
         }
 
+        let fetch_override = self.fetch_override.borrow().clone();
         let response = js_fetch(
+            fetch_override,
             &format!("{}/chat/completions", self.base_url),
             &body,
             &headers,
@@ -1235,7 +1279,9 @@ impl WasmClient {
                 .or_insert_with(|| "https://simpleagents.dev".to_string());
         }
 
+        let fetch_override = self.fetch_override.borrow().clone();
         let response = js_fetch(
+            fetch_override,
             &format!("{}/chat/completions", self.base_url),
             &body,
             &headers,
@@ -1260,8 +1306,7 @@ impl WasmClient {
                 "eventType": "error",
                 "error": { "message": message }
             });
-            let event_js = serde_wasm_bindgen::to_value(&err_event)
-                .map_err(|_| js_error("failed to serialize stream error event"))?;
+            let event_js = json_value_to_js_plain(&err_event)?;
             on_event
                 .call1(&JsValue::NULL, &event_js)
                 .map_err(|_| js_error("failed to call stream callback"))?;
@@ -1337,8 +1382,7 @@ impl WasmClient {
                     "raw": data,
                 }
             });
-            let event_js = serde_wasm_bindgen::to_value(&delta_event)
-                .map_err(|_| js_error("failed to serialize stream delta event"))?;
+            let event_js = json_value_to_js_plain(&delta_event)?;
             on_event
                 .call1(&JsValue::NULL, &event_js)
                 .map_err(|_| js_error("failed to call stream callback"))?;
@@ -1348,8 +1392,7 @@ impl WasmClient {
         .await?;
 
         let done_event = json!({ "eventType": "done" });
-        let done_js = serde_wasm_bindgen::to_value(&done_event)
-            .map_err(|_| js_error("failed to serialize stream done event"))?;
+        let done_js = json_value_to_js_plain(&done_event)?;
         on_event
             .call1(&JsValue::NULL, &done_js)
             .map_err(|_| js_error("failed to call stream callback"))?;
@@ -1396,13 +1439,24 @@ impl WasmClient {
             telemetry: None,
             trace: None,
             functions_js: None,
+            fetch_js: None,
         };
         if let Some(options_js) = workflow_options {
             options = serde_wasm_bindgen::from_value(options_js.clone())
                 .map_err(|_| config_error("invalid workflowOptions object"))?;
             let functions_value = Reflect::get(&options_js, &JsValue::from_str("functions")).ok();
-            options.functions_js = functions_value;
+            options.functions_js = functions_value.and_then(|v| {
+                if v.is_undefined() || v.is_null() {
+                    None
+                } else {
+                    Some(v)
+                }
+            });
+            let fetch_js = Reflect::get(&options_js, &JsValue::from_str("__fetchImpl")).ok();
+            options.fetch_js = fetch_js;
         }
+
+        let _fetch_guard = FetchOverrideGuard::new(&self.fetch_override, options.fetch_js.clone());
 
         if raw_doc.get("entry_node").is_some() && raw_doc.get("nodes").is_some() {
             let graph_doc: GraphWorkflowDoc = serde_json::from_value(raw_doc.clone())
@@ -1519,8 +1573,10 @@ impl WasmClient {
                                 tool_calls: None,
                             });
                         }
-                        serde_wasm_bindgen::to_value(&history)
-                            .map_err(|_| js_error("failed to serialize graph llm messages"))?
+                        json_value_to_js_plain(
+                            &serde_json::to_value(&history)
+                                .map_err(|_| js_error("failed to serialize graph llm messages"))?,
+                        )?
                     } else {
                         JsValue::from_str(&prompt)
                     };
@@ -1530,11 +1586,7 @@ impl WasmClient {
                         .complete(
                             model,
                             prompt_js,
-                            Some(
-                                serde_wasm_bindgen::to_value(&opts).map_err(|_| {
-                                    js_error("failed to serialize completion options")
-                                })?,
-                            ),
+                            Some(json_value_to_js_plain(&opts)?),
                         )
                         .await?;
                     let completion: JsonValue = serde_wasm_bindgen::from_value(completion_js)
@@ -1630,17 +1682,23 @@ impl WasmClient {
                         .unwrap_or_else(|| handler.clone());
                     let functions_js = options.functions_js.clone().ok_or_else(|| {
                         config_error(format!(
-                            "custom_worker node '{}' requires workflowOptions.functions",
-                            node.id
+                            "custom_worker node '{}' requires workflowOptions.functions['{}']",
+                            node.id, lookup_key
                         ))
                     })?;
                     let function_value = Reflect::get(&functions_js, &JsValue::from_str(&lookup_key))
                         .map_err(|_| {
                             config_error(format!(
-                                "failed to resolve custom worker handler key '{}' from workflowOptions.functions",
-                                lookup_key
+                                "custom_worker node '{}' requires workflowOptions.functions['{}']",
+                                node.id, lookup_key
                             ))
                         })?;
+                    if function_value.is_undefined() || function_value.is_null() {
+                        return Err(config_error(format!(
+                            "custom_worker node '{}' requires workflowOptions.functions['{}']",
+                            node.id, lookup_key
+                        )));
+                    }
                     let function = function_value.dyn_into::<Function>().map_err(|_| {
                         config_error(format!(
                             "custom_worker node '{}' requires workflowOptions.functions['{}']",
@@ -1660,10 +1718,8 @@ impl WasmClient {
                             .unwrap_or(JsonValue::Null),
                         "nodeId": node.id.clone()
                     });
-                    let args_js = serde_wasm_bindgen::to_value(&worker_args)
-                        .map_err(|_| js_error("failed to serialize custom_worker args"))?;
-                    let context_js = serde_wasm_bindgen::to_value(&graph_context)
-                        .map_err(|_| js_error("failed to serialize graph context"))?;
+                    let args_js = json_value_to_js_plain(&worker_args)?;
+                    let context_js = json_value_to_js_plain(&graph_context)?;
                     let worker_call_output = function
                         .call2(&JsValue::NULL, &args_js, &context_js)
                         .map_err(|_| {
@@ -1814,8 +1870,9 @@ impl WasmClient {
                 trace_id: None,
                 metadata: Some(json!({"nerdstats": nerdstats})),
             };
-            return serde_wasm_bindgen::to_value(&result)
-                .map_err(|_| js_error("failed to serialize workflow result"));
+            let jv = serde_json::to_value(&result)
+                .map_err(|_| js_error("failed to serialize workflow result"))?;
+            return json_value_to_js_plain(&jv);
         }
 
         let doc: WorkflowDoc = serde_json::from_value(raw_doc)
@@ -1885,11 +1942,7 @@ impl WasmClient {
                         .complete(
                             model,
                             JsValue::from_str(&prompt),
-                            Some(
-                                serde_wasm_bindgen::to_value(&opts).map_err(|_| {
-                                    js_error("failed to serialize completion options")
-                                })?,
-                            ),
+                            Some(json_value_to_js_plain(&opts)?),
                         )
                         .await?;
                     let completion: JsonValue = serde_wasm_bindgen::from_value(completion_js)
@@ -1956,11 +2009,8 @@ impl WasmClient {
                             .unwrap_or_else(|| JsonValue::Object(JsonMap::new())),
                         &context,
                     );
-                    let args_js = serde_wasm_bindgen::to_value(&args_value)
-                        .map_err(|_| js_error("failed to serialize call_function args"))?;
-                    let context_js =
-                        serde_wasm_bindgen::to_value(&JsonValue::Object(context.clone()))
-                            .map_err(|_| js_error("failed to serialize workflow context"))?;
+                    let args_js = json_value_to_js_plain(&args_value)?;
+                    let context_js = json_value_to_js_plain(&JsonValue::Object(context.clone()))?;
                     let call_output = function
                         .call2(&JsValue::NULL, &args_js, &context_js)
                         .map_err(|_| {
@@ -2017,18 +2067,32 @@ impl WasmClient {
             pointer += 1;
         }
 
+        let trace: Vec<String> = events
+            .iter()
+            .filter(|e| e.status == "completed")
+            .map(|e| e.step_id.clone())
+            .collect();
+        let terminal_node = trace.last().cloned();
+
+        let context_value = JsonValue::Object(context);
+        let outputs_value = context_value
+            .as_object()
+            .cloned()
+            .map(JsonValue::Object)
+            .unwrap_or_else(|| JsonValue::Object(JsonMap::new()));
+
         let result = WorkflowRunResult {
             status: "ok".to_string(),
-            context: JsonValue::Object(context),
-            output,
+            context: context_value.clone(),
+            output: output.clone(),
             events,
-            workflow_id: None,
+            workflow_id: Some("wasm_workflow".to_string()),
             entry_node: None,
             email_text: None,
-            trace: None,
-            outputs: None,
-            terminal_node: None,
-            terminal_output: None,
+            trace: Some(trace),
+            outputs: Some(outputs_value),
+            terminal_node,
+            terminal_output: output,
             step_timings: None,
             total_elapsed_ms: None,
             ttft_ms: None,
@@ -2040,8 +2104,9 @@ impl WasmClient {
             trace_id: None,
             metadata: None,
         };
-        serde_wasm_bindgen::to_value(&result)
-            .map_err(|_| js_error("failed to serialize workflow result"))
+        let jv = serde_json::to_value(&result)
+            .map_err(|_| js_error("failed to serialize workflow result"))?;
+        json_value_to_js_plain(&jv)
     }
 
     #[wasm_bindgen(js_name = runWorkflowYaml)]
@@ -2080,8 +2145,7 @@ impl WasmClient {
             serde_json::json!([])
         };
 
-        let input_js = serde_wasm_bindgen::to_value(&serde_json::json!({ "messages": messages_value }))
-            .map_err(|_| js_error("failed to serialize messages input"))?;
+        let input_js = json_value_to_js_plain(&serde_json::json!({ "messages": messages_value }))?;
 
         self.run_workflow_yaml_string(yaml_text, input_js, options).await
     }

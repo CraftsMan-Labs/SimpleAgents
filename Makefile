@@ -298,7 +298,7 @@ check-publish:
 	cd $(NAPI_PROJECT_DIR) && npm run test:live
 	@echo ""
 	@echo "==> Running WASM binding tests..."
-	@cd $(WASM_PACKAGE_DIR) && npm test
+	@$(MAKE) test-wasm
 	@echo ""
 	@echo "==> Running clippy..."
 	@$(MAKE) clippy
