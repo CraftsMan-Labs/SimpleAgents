@@ -105,7 +105,7 @@ test-rust:
 	cargo test --all
 
 test-python:
-	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --with "pytest>=8.0" \
+	cd $(PYTHON_PROJECT_DIR) && UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --env-file $(CURDIR)/.env --reinstall --extra dev \
 		pytest --ignore=tests/test_client_builder.py --ignore=tests/test_routing_config.py
 
 coverage-rust:
