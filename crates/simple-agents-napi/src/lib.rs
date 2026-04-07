@@ -26,9 +26,10 @@ use simple_agents_healing::{
 };
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use simple_agents_workflow::yaml_runner::{
-    workflow_execution, YamlWorkflowCustomWorkerExecutor, YamlWorkflowEvent, YamlWorkflowEventSink,
-    YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding,
-    YamlWorkflowRunOptions, YamlWorkflowSource,
+    validate_custom_worker_executor_for_file, workflow_execution, YamlWorkflowCustomWorkerExecutor,
+    YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
+    YamlWorkflowSource,
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -1375,16 +1376,21 @@ impl Client {
         validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
         let request_options = parse_workflow_request_options(workflow_options)?;
 
+        let custom_worker = match custom_worker_dispatch {
+            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
+            None => None,
+        };
+
+        if custom_worker.is_none() {
+            validate_custom_worker_executor_for_file(Path::new(workflow_path.as_str()), None)
+                .map_err(|error| Error::from_reason(error.to_string()))?;
+        }
+
         let tsfn: ThreadsafeFunction<String> =
             on_event.create_threadsafe_function(0, |ctx: ThreadSafeCallContext<String>| {
                 let event_json = ctx.env.create_string_from_std(ctx.value)?.into_unknown();
                 Ok(vec![event_json])
             })?;
-
-        let custom_worker = match custom_worker_dispatch {
-            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
-            None => None,
-        };
 
         let task = WorkflowStreamTask {
             runtime: self.runtime.clone(),
