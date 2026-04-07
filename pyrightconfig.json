@@ -1,5 +1,10 @@
 {
   "include": ["examples"],
+  "exclude": [
+    "examples/python-test-simpleAgents",
+    "**/.venv",
+    "**/node_modules"
+  ],
   "extraPaths": ["crates/simple-agents-py", "crates/simple-agents-py/python"],
   "typeCheckingMode": "basic",
   "reportMissingModuleSource": false

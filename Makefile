@@ -206,7 +206,7 @@ test-wasm: build-wasm
 
 python-typecheck:
 	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p pyrightconfig.json
-	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" pyright -p examples/pyrightconfig.json
+	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --with "pyright==$(PYRIGHT_VERSION)" --with "python-dotenv==1.0.1" --with "pyyaml==6.0.2" --with "fastapi>=0.115" --with "pydantic>=2.12.5" pyright -p examples/pyrightconfig.json
 
 rust-check-all:
 	cargo check --workspace --all-targets --all-features
