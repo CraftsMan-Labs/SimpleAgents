@@ -90,6 +90,7 @@ make fmt
 
 ## Example Pointers
 
+- Workflow quickstart: `docs/WORKFLOW_QUICKSTART.md`
 - Rust quick start: `docs/QUICKSTART.md`
 - Rust usage patterns: `docs/USAGE.md`
 - Cross-language snippets: `docs/EXAMPLES.md`
@@ -97,8 +98,10 @@ make fmt
   - `examples/full_api_example.rs`
   - `examples/python_client.py`
   - `examples/node_client.js`
-  - `examples/workflow_email/run_with_python_package.py`
-  - `examples/workflow_email/run_with_node_package.js`
+  - `examples/python-test-simpleAgents/test-py-simple-agents.py` (Python workflow)
+  - `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` (Python streaming)
+  - `examples/napi-test-simpleAgents/test-simple-agents.ts` (TypeScript workflow)
+  - `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` (TypeScript streaming)
 
 ## Testing and Quality
 
