@@ -8,6 +8,7 @@
     "invoice-image": "bun run test-simple-agents-invoice-image.ts"
   },
   "dependencies": {
+    "dotenv": "^16.4.5",
     "simple-agents-node": "file:../../crates/simple-agents-napi"
   },
   "devDependencies": {

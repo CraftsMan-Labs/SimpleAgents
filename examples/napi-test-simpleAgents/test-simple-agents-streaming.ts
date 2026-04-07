@@ -7,22 +7,30 @@
  * From repo root `examples/`: `bun install` in this directory.
  *
  * Env: `WORKFLOW_API_KEY` (required), `WORKFLOW_API_BASE` (optional).
+ *
+ * **Langfuse:** set `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL`
+ * (e.g. `http://localhost:3000`). This script maps them to SimpleAgents OTLP settings
+ * (`SIMPLE_AGENTS_TRACING_ENABLED`, `OTEL_EXPORTER_OTLP_*`) per `docs/OTEL_CONFIGURATION.md`,
+ * then calls `syncOtelEnvFromProcess` so the native layer sees the same values (Bun/Node
+ * `process.env` updates are not always visible to Rust `std::env`).
+ *
+ * This script loads `.env` with the `dotenv` package (same relaxed parsing as Python’s
+ * ``python-dotenv``). Bun’s automatic loader often **does not** set variables written as
+ * ``KEY = "value"`` (spaces around ``=``), which would skip Langfuse OTLP setup.
  */
 
+import { config as loadEnv } from "dotenv";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { Client } from "simple-agents-node";
+import { Client, syncOtelEnvFromProcess } from "simple-agents-node";
 import { parseWorkflowEvent } from "simple-agents-node/workflow_event";
 import { customWorkerDispatch } from "./handlers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+loadEnv({ path: join(__dirname, ".env") });
 const workflowPath = join(__dirname, "test.yaml");
-const DEBUG_ENDPOINT = "http://127.0.0.1:7242/ingest/21d1cf96-9491-4f21-a7aa-0a8ff58de124";
-const DEBUG_RUN_ID = "napi-stream-debug-1";
-let debugEventCount = 0;
-const DEBUG_EVENT_LIMIT = 120;
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -30,30 +38,47 @@ function requireEnv(name: string): string {
   return v;
 }
 
-/** Prints live token deltas; snapshots/lifecycle are still debug-instrumented. */
+/** Strip optional quotes from `.env` values (some loaders include them literally). */
+function stripQuotes(value: string): string {
+  const t = value.trim();
+  if (
+    (t.startsWith('"') && t.endsWith('"') && t.length >= 2) ||
+    (t.startsWith("'") && t.endsWith("'") && t.length >= 2)
+  ) {
+    return t.slice(1, -1);
+  }
+  return t;
+}
+
+/** Map `LANGFUSE_*` into SimpleAgents OpenTelemetry exporter env (OTLP HTTP → Langfuse). */
+function configureLangfuseOtelFromEnv(): boolean {
+  const publicKey = process.env.LANGFUSE_PUBLIC_KEY
+    ? stripQuotes(process.env.LANGFUSE_PUBLIC_KEY)
+    : undefined;
+  const secretKey = process.env.LANGFUSE_SECRET_KEY
+    ? stripQuotes(process.env.LANGFUSE_SECRET_KEY)
+    : undefined;
+  const baseUrl = stripQuotes(process.env.LANGFUSE_BASE_URL ?? "");
+  if (!publicKey || !secretKey || !baseUrl) {
+    return false;
+  }
+  const token = Buffer.from(`${publicKey}:${secretKey}`).toString("base64");
+  const endpoint = `${baseUrl.replace(/\/$/, "")}/api/public/otel`;
+  process.env.SIMPLE_AGENTS_TRACING_ENABLED = "true";
+  process.env.OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf";
+  process.env.OTEL_EXPORTER_OTLP_ENDPOINT = endpoint;
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = `Authorization=Basic ${token},x-langfuse-ingestion-version=4`;
+  return true;
+}
+
+/** Prints live token deltas; newline after complete stream snapshots. */
 function onWorkflowEvent(err: unknown, eventJson: string): void {
   if (err) {
     console.error(err);
-    // #region agent log
-    fetch(DEBUG_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId: DEBUG_RUN_ID,
-        hypothesisId: "H2",
-        location: "test-simple-agents-streaming.ts:onWorkflowEvent(err)",
-        message: "Event callback error",
-        data: { error: String(err) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     return;
   }
   const event = parseWorkflowEvent(eventJson) as unknown as Record<string, unknown>;
   const eventType = typeof event.event_type === "string" ? event.event_type : "unknown";
-  const nodeId = typeof event.node_id === "string" ? event.node_id : null;
-  const stepId = typeof event.step_id === "string" ? event.step_id : null;
   const delta = typeof event.delta === "string" ? event.delta : null;
   const metadata =
     event.metadata && typeof event.metadata === "object"
@@ -61,31 +86,6 @@ function onWorkflowEvent(err: unknown, eventJson: string): void {
       : null;
   const isComplete =
     metadata && typeof metadata.is_complete === "boolean" ? metadata.is_complete : null;
-  if (debugEventCount < DEBUG_EVENT_LIMIT) {
-    debugEventCount += 1;
-    // #region agent log
-    fetch(DEBUG_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        runId: DEBUG_RUN_ID,
-        hypothesisId: "H1,H3,H4",
-        location: "test-simple-agents-streaming.ts:onWorkflowEvent",
-        message: "Received stream event",
-        data: {
-          eventCount: debugEventCount,
-          eventType,
-          nodeId,
-          stepId,
-          deltaLen: delta ? delta.length : 0,
-          deltaPreview: delta ? delta.slice(0, 40) : null,
-          isComplete,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-  }
   if (eventType === "node_stream_delta" && typeof delta === "string") {
     process.stdout.write(delta);
     return;
@@ -99,6 +99,16 @@ function onWorkflowEvent(err: unknown, eventJson: string): void {
 }
 
 async function main(): Promise<void> {
+  if (configureLangfuseOtelFromEnv()) {
+    syncOtelEnvFromProcess(
+      process.env.SIMPLE_AGENTS_TRACING_ENABLED!,
+      process.env.OTEL_EXPORTER_OTLP_PROTOCOL!,
+      process.env.OTEL_EXPORTER_OTLP_ENDPOINT!,
+      process.env.OTEL_EXPORTER_OTLP_HEADERS!,
+      process.env.OTEL_SERVICE_NAME || undefined,
+    );
+  }
+
   const apiKey = requireEnv("WORKFLOW_API_KEY");
   const baseUrl = process.env.WORKFLOW_API_BASE || undefined;
 
@@ -111,49 +121,20 @@ async function main(): Promise<void> {
     nodeLlmStreaming: true,
     splitStreamDeltas: false,
   };
-  // #region agent log
-  fetch(DEBUG_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      runId: DEBUG_RUN_ID,
-      hypothesisId: "H1",
-      location: "test-simple-agents-streaming.ts:main(beforeStreamWorkflow)",
-      message: "Invoking streamWorkflow with execution flags",
-      data: {
-        workflowPath,
-        hasBaseUrl: Boolean(baseUrl),
-        executionFlags,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
+  const workflowOptions = {
+    telemetry: {
+      enabled: true,
+      nerdstats: true,
+    },
+  };
   const result = await client.streamWorkflow(
     workflowPath,
     { messages: [{ role: "user", content: userInput }] },
     onWorkflowEvent,
-    undefined,
+    workflowOptions,
     executionFlags,
     customWorkerDispatch,
   );
-  // #region agent log
-  fetch(DEBUG_ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      runId: DEBUG_RUN_ID,
-      hypothesisId: "H2,H4",
-      location: "test-simple-agents-streaming.ts:main(afterStreamWorkflow)",
-      message: "streamWorkflow completed",
-      data: {
-        debugEventCount,
-        resultType: typeof result,
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
 
   console.log("\n");
   console.log(JSON.stringify(result, null, 2));
