@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::path::Path;
 use std::time::Instant;
 
 use crate::observability::tracing::{
@@ -72,6 +73,19 @@ pub use types::{
 // external callers should use `WorkflowRunOutput` from `output.rs` instead.
 pub(crate) use types::YamlWorkflowRunOutput;
 pub use validation::verify_yaml_workflow;
+
+/// When `custom_worker` is `None`, ensures the workflow file does not declare `custom_worker`
+/// nodes that require a runtime executor (same rules as workflow execution).
+pub fn validate_custom_worker_executor_for_file(
+    workflow_path: &Path,
+    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
+) -> Result<(), YamlWorkflowRunError> {
+    if custom_worker.is_some() {
+        return Ok(());
+    }
+    let (_canonical, workflow) = load_workflow_yaml_file(workflow_path)?;
+    execute::validate_custom_worker_handler_files(&workflow, None)
+}
 
 #[cfg(test)]
 mod tests;

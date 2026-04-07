@@ -161,7 +161,7 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     }
 }
 
-fn validate_custom_worker_handler_files(
+pub(crate) fn validate_custom_worker_handler_files(
     workflow: &YamlWorkflow,
     custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
 ) -> Result<(), YamlWorkflowRunError> {
