@@ -195,4 +195,4 @@ Confirm the client is built with `with_providers(...)` and an explicit `with_rou
 - Explore role-specific paths in [Documentation Map](/DOCS_MAP).
 - Learn crate boundaries in [Rust Core Systems](/RUST_CORE_SYSTEMS).
 - Review interfaces in [API Surface](/API).
-- Continue with language-specific integration: [Python](/BINDINGS_PYTHON), [Node.js / TypeScript](/BINDINGS_NODE), [Go](/BINDINGS_GO).
+- Continue with language-specific integration: [Python](/BINDINGS_PYTHON), [Node.js / TypeScript](/BINDINGS_NODE), [WASM](/BINDINGS_WASM).

@@ -272,9 +272,8 @@ Publishing order for SimpleAgents:
 3. `simple-agents-providers` (depends on types, healing)
 4. `simple-agents-core` (depends on types, providers, healing)
 5. `simple-agents-workflow` (depends on core, types)
-6. `simple-agents-ffi` (depends on workflow, core)
-7. `simple-agents-napi` (depends on workflow, core)
-8. `simple-agents-py` (depends on workflow, core)
+6. `simple-agents-napi` (depends on workflow, core)
+7. `simple-agents-py` (depends on workflow, core)
 
 The Makefile respects this order automatically.
 

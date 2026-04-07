@@ -33,20 +33,3 @@ export interface WorkflowRunnerEvent {
   elapsed_ms?: number
   metadata?: Record<string, unknown>
 }
-
-/**
- * Parse `eventJson` from the `executeWorkflowYamlStream` callback (same shape as Rust serde JSON).
- */
-export function parseWorkflowEvent(eventJson: string): WorkflowRunnerEvent
-
-/**
- * Ready-made `onEvent` callback for {@link Client.streamWorkflow} that prints
- * streamed tokens to stdout and silences lifecycle events.
- *
- * Usage:
- * ```ts
- * import { defaultOnEvent } from 'simple-agents-node/workflow_event';
- * await client.streamWorkflow(path, input, defaultOnEvent);
- * ```
- */
-export function defaultOnEvent(err: unknown, eventJson: string): void

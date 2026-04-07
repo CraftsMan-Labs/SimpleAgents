@@ -155,7 +155,6 @@ Use `custom_worker` when code must run deterministically outside the model.
 |--------|---------------------|--------|
 | **Python** (`simple-agents-py`) | Yes — default `handlers.py` next to the YAML | Handlers are called with keyword-only `context` and `payload`; see [BINDINGS_PYTHON.md](BINDINGS_PYTHON.md). |
 | **Node** (`simple-agents-napi`) | No in-process executor yet | Runtime performs fail-fast validation when `custom_worker` nodes are present (includes node id + handler) instead of late node-time failure. See [BINDINGS_NODE.md](BINDINGS_NODE.md). |
-| **Go** (FFI) | Same capability boundary as Node | Binding validates and rejects `custom_worker` workflows for this runtime with actionable remediation text. See [BINDINGS_GO.md](BINDINGS_GO.md). |
 | **WASM / browser** (`runWorkflowYamlString`) | Yes — register functions in `workflowOptions.functions` | JS signature is `(args, graphContext)`; see [BINDINGS_WASM.md](BINDINGS_WASM.md). |
 
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.

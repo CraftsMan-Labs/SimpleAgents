@@ -28,15 +28,15 @@ Some language surfaces keep legacy names for compatibility (`runWorkflowYaml*`),
 
 - Python: explicit provider parameters already supported by `Client(...)`.
 - Node: use `Client.withProviderConfig({ provider, apiKey, apiBase? })` for explicit credentials.
-- Go: use `NewClientWithProvider(ProviderConfig{Provider, APIKey, APIBase?})`.
 - Legacy env-based constructors remain available for compatibility.
 
 ## Custom worker behavior
 
 - YAML remains source of truth for `custom_worker.handler`.
 - Python executes local file handlers (`context` + `payload` kwargs ABI).
-- Node and Go now fail fast with actionable validation errors when `custom_worker` nodes are present without runtime executor support.
+- Node now fails fast with actionable validation errors when `custom_worker` nodes are present without runtime executor support.
 - WASM uses `workflowOptions.functions`.
+- WASM package runtime is Rust-WASM only (no JavaScript fallback execution path).
 
 ## Streaming semantics
 

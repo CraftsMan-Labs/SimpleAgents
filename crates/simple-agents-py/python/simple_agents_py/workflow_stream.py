@@ -89,13 +89,39 @@ def split_stream_execution(*, enabled: bool = True) -> dict[str, Any]:
 EVENT_TYPE_TO_METHOD: dict[str, str] = {
     "workflow_started": "on_workflow_started",
     "node_started": "on_node_started",
-    "node_llm_input_resolved": "on_node_llm_input_resolved",
+    # Canonical wire name emitted by the Rust runner (node_execution.rs).
+    "resolved_llm_input": "on_node_llm_input_resolved",
     "node_completed": "on_node_completed",
     "node_stream_delta": "on_stream_delta",
     "node_stream_thinking_delta": "on_stream_thinking_delta",
     "node_stream_output_delta": "on_stream_output_delta",
     "workflow_completed": "on_workflow_completed",
 }
+
+
+def default_on_event(event: WorkflowStreamEvent) -> None:
+    """Print streamed tokens to stdout; silence lifecycle noise.
+
+    A ready-made ``on_event`` callback suitable for quick scripts and demos.
+    Pass it directly wherever a callback is accepted::
+
+        from simple_agents_py.workflow_stream import default_on_event
+        client.stream(payload, on_event=default_on_event)
+
+    Prints ``node_stream_delta``, ``node_stream_thinking_delta``, and
+    ``node_stream_output_delta`` tokens inline (no newline between tokens).
+    Silently ignores ``workflow_started`` and ``workflow_completed``; all
+    other event types are also silently ignored by this handler.
+    """
+    event_type = event.get("event_type")
+    delta = event.get("delta")
+    if event_type in (
+        "node_stream_delta",
+        "node_stream_thinking_delta",
+        "node_stream_output_delta",
+    ) and isinstance(delta, str):
+        print(delta, end="", flush=True)
+        return
 
 
 class WorkflowStreamHooks(Protocol):

@@ -9,7 +9,6 @@ This document provides a concise map of the API surface. For exhaustive API docs
 - `simple-agents-providers`: provider implementations and utilities.
 - `simple-agents-healing`: JSON parsing and schema coercion.
 - `simple-agents-workflow`: YAML workflow engine.
-- `simple-agents-ffi`: C ABI surface.
 - `simple-agents-napi`: Node.js bindings.
 - `simple-agents-py`: Python bindings.
 
@@ -62,12 +61,6 @@ Healing APIs:
 - `StreamingParser`.
 
 ## Bindings
-
-### `simple-agents-ffi`
-C ABI surface for Go and other native consumers:
-- `sa_client_new`, `sa_client_free`, `sa_last_error_message`, `sa_string_free`.
-- `sa_complete`, `sa_stream`.
-- `sa_run_workflow`, `sa_stream_workflow`, `sa_resume`.
 
 ### `simple-agents-napi`
 Node.js `Client` with TypeScript types:

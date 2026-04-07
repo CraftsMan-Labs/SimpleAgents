@@ -29,7 +29,7 @@ features:
   - title: JSON healing and schema coercion
     details: Parse JSON-ish output and coerce to schemas with confidence metadata
   - title: Multi-language surfaces
-    details: CLI, C FFI, Node, and Python bindings built on the same core
+    details: CLI, Node, Python, and WASM bindings built on the same core
 ---
 
 ## Start Here

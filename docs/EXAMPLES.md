@@ -225,7 +225,6 @@ Use these when you want a conversation that keeps history across turns:
 - Python: `examples/workflow_email/run_with_chat_history.py`
 - Node: `examples/workflow_email/node/run_with_chat_history.js`
 - Rust: `examples/workflow_chat_history_rust.rs`
-- Go: `bindings/go/examples/workflow_chat_history/main.go`
 
 Python runner:
 
@@ -237,12 +236,6 @@ Node runner:
 
 ```bash
 make run-node-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-```
-
-Go runner:
-
-```bash
-make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
 ```
 
 ### 5. Use the Rust Workflow API Directly
@@ -292,21 +285,10 @@ for step in output.step_timings {
 - Python (graph-to-graph tool call orchestrator): `examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml`
 - Node (chat history input): `examples/workflow_email/node/run_with_chat_history.js`
 - Node: `examples/workflow_email/run_with_node_package.js`
-- Go: `bindings/go/examples/workflow_yaml/main.go`
-- Go (chat history input): `bindings/go/examples/workflow_chat_history/main.go`
 
 ## Chat Workflow Commands
 
 Use these after you understand the learning path above.
-
-### Go
-
-```bash
-make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml
-
-# Override all llm_call node models for this run
-make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-draft-or-clarify.yaml GO_CHAT_FLAGS='--max-turns 1 --model gemini-3-flash'
-```
 
 ### Rust
 
@@ -330,7 +312,6 @@ make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-dr
 
 # Parent graph delegates to subgraph via run_workflow_graph tool
 make run-python-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
-make run-go-chat-history WORKFLOW_YAML=examples/workflow_email/email-chat-orchestrator-with-subgraph-tool.yaml
 ```
 
 ### Node or Bun

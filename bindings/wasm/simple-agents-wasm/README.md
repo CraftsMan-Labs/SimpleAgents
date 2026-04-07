@@ -4,9 +4,10 @@ Browser-compatible SimpleAgents client for OpenAI-compatible providers.
 
 ## Status
 
-This package now loads a Rust-compiled WASM core (`rust/src/lib.rs`) for
-runtime execution when wasm artifacts are available. A JS fallback remains for
-non-wasm environments and local Node tests.
+This package is Rust-WASM only. Runtime execution is provided by the
+Rust-compiled core in `rust/src/lib.rs` and requires generated wasm artifacts.
+If artifacts are missing or initialization fails, the package throws an
+explicit backend-load error.
 
 ## Install
 
@@ -51,4 +52,4 @@ console.log(result.content);
   - step workflows (`steps` DSL)
   - graph workflows (`entry_node` + `nodes` + `edges`) with `llm_call`, `switch`, and `custom_worker`.
 - Graph `custom_worker` nodes call `workflowOptions.functions[handler]` and throw a runtime error when the handler is missing.
-- Use `hasRustBackend()` to check whether Rust wasm backend was loaded.
+- Use `hasRustBackend()` to check whether the Rust wasm backend is available.

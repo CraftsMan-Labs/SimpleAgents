@@ -147,6 +147,30 @@ export interface WorkflowTraceConfig {
   tenant?: WorkflowTraceTenant;
 }
 
+/**
+ * First argument to `workflow_options.functions` handlers for `custom_worker` nodes
+ * (Rust wasm graph runner). Matches the JSON object built in Rust.
+ */
+export interface CustomWorkerArgs {
+  handler?: string;
+  handler_file?: string | null;
+  handler_lookup_key?: string;
+  nodeId?: string;
+  payload?: unknown;
+}
+
+/**
+ * Second argument to `custom_worker` handlers: live graph context (`input`, `nodes`, and
+ * optional `globals` / `trace` when the runner provides them).
+ */
+export interface WorkflowGraphContext {
+  input?: Record<string, unknown>;
+  nodes?: Record<string, unknown>;
+  globals?: Record<string, unknown>;
+  trace?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface WorkflowRunOptions {
   model?: string;
   telemetry?: WorkflowTelemetryConfig;
@@ -155,8 +179,8 @@ export interface WorkflowRunOptions {
   functions?: Record<
     string,
     (
-      args: Record<string, unknown>,
-      context: Record<string, unknown>
+      args: CustomWorkerArgs,
+      context: WorkflowGraphContext
     ) => unknown | Promise<unknown>
   >;
 }

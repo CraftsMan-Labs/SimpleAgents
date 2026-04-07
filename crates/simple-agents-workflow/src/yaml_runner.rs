@@ -30,7 +30,7 @@ mod validation;
 pub use api::workflow_execution;
 use client_executor::BorrowedClientExecutor;
 use context::{
-    collect_template_bindings, evaluate_switch_condition, interpolate_template,
+    collect_template_bindings, evaluate_switch_condition, interpolate_json, interpolate_template,
     parse_messages_from_context, resolve_path,
 };
 use contracts::{event_sink_is_cancelled, workflow_event_sink_cancelled_message};

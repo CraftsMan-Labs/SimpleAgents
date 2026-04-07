@@ -246,7 +246,6 @@ pkg/
 
 # Local workflow trace artifacts
 examples/workflow_email/traces/
-bindings/go/examples/workflow_email/traces/
 examples/examples/
 
 # Local planning files

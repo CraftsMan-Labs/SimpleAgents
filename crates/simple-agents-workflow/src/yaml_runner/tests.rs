@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 // Bring in all `pub` items from yaml_runner (contracts, events, output, types, etc.)
 use super::*;
 // Items that are pub(crate) or pub(super) — must be imported explicitly.
-use super::context::interpolate_template;
+use super::context::{interpolate_json, interpolate_template};
 use super::dispatch_yaml_workflow_execution;
 use super::execute;
 use super::loader::load_workflow_yaml_file;
@@ -139,6 +139,10 @@ struct CapturingWorker {
 
 struct HandlerFileCapturingWorker {
     handler_file: Mutex<Option<String>>,
+}
+
+struct PayloadCapturingWorker {
+    payload: Mutex<Option<Value>>,
 }
 
 struct ToolLoopProvider;
@@ -504,6 +508,24 @@ impl YamlWorkflowCustomWorkerExecutor for HandlerFileCapturingWorker {
 }
 
 #[async_trait]
+impl YamlWorkflowCustomWorkerExecutor for PayloadCapturingWorker {
+    async fn execute(
+        &self,
+        _handler: &str,
+        _handler_file: Option<&str>,
+        payload: &Value,
+        _context: &Value,
+    ) -> Result<Value, String> {
+        let mut guard = self
+            .payload
+            .lock()
+            .map_err(|_| "payload lock should not be poisoned".to_string())?;
+        *guard = Some(payload.clone());
+        Ok(json!({"ok": true}))
+    }
+}
+
+#[async_trait]
 impl YamlWorkflowLlmExecutor for MockExecutor {
     async fn complete_structured(
         &self,
@@ -543,6 +565,19 @@ impl YamlWorkflowLlmExecutor for MockExecutor {
                 usage: Some(YamlLlmTokenUsage {
                     prompt_tokens: 11,
                     completion_tokens: 4,
+                    total_tokens: 15,
+                    reasoning_tokens: None,
+                }),
+                ttft_ms: None,
+                tool_calls: Vec::new(),
+            });
+        }
+        if prompt.contains("Extract the company name") {
+            return Ok(YamlLlmExecutionResult {
+                payload: json!({"company_name":"Google","reason":"mock"}),
+                usage: Some(YamlLlmTokenUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
                     total_tokens: 15,
                     reasoning_tokens: None,
                 }),
@@ -2199,6 +2234,108 @@ fn interpolate_template_supports_dollar_prefixed_paths() {
 
     let result = interpolate_template("{{ $.input.email_text }}", &context);
     assert_eq!(result, "hello");
+}
+
+#[test]
+fn interpolate_json_resolves_nested_templates() {
+    let context = json!({
+        "nodes": {
+            "extract": {
+                "output": {
+                    "company_name": "Google"
+                }
+            }
+        },
+        "input": { "email_text": "x" },
+        "globals": {}
+    });
+
+    let value = json!({
+        "company_name": "{{ nodes.extract.output.company_name }}",
+        "topic": "lookup_stakeholder",
+        "nested": {
+            "label": "{{ nodes.extract.output.company_name }}"
+        }
+    });
+
+    let resolved = interpolate_json(&value, &context);
+    assert_eq!(
+        resolved,
+        json!({
+            "company_name": "Google",
+            "topic": "lookup_stakeholder",
+            "nested": {
+                "label": "Google"
+            }
+        })
+    );
+}
+
+#[tokio::test]
+async fn custom_worker_payload_templates_are_interpolated() {
+    let yaml = r#"
+id: interpolate-payload
+entry_node: extract
+nodes:
+  - id: extract
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: |
+        Extract the company name from the email: {{ input.email_text }}
+      output_schema:
+        type: object
+        properties:
+          company_name:
+            type: string
+          reason:
+            type: string
+        required: [company_name, reason]
+  - id: worker
+    node_type:
+      custom_worker:
+        handler: lookup
+    config:
+      payload:
+        company_name: "{{ nodes.extract.output.company_name }}"
+        topic: lookup_stakeholder
+edges:
+  - from: extract
+    to: worker
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let worker = PayloadCapturingWorker {
+        payload: Mutex::new(None),
+    };
+
+    run_workflow_yaml_with_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({"email_text": "invoice from Google"}),
+        &MockExecutor,
+        Some(&worker),
+        None,
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect("workflow should execute");
+
+    let captured = worker
+        .payload
+        .lock()
+        .expect("payload lock should not be poisoned")
+        .clone()
+        .expect("payload should be captured");
+
+    assert_eq!(
+        captured,
+        json!({
+            "company_name": "Google",
+            "topic": "lookup_stakeholder"
+        })
+    );
 }
 
 #[tokio::test]

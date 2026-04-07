@@ -20,6 +20,26 @@ from enum import Enum
 WorkflowMessageRole = Literal["system", "user", "assistant", "tool"]
 WorkflowPayloadMode = Literal["full_payload", "redacted_payload"]
 WorkflowToolTraceMode = Literal["full", "redacted", "off"]
+
+# Known event_type strings emitted by the Rust YAML workflow runner (wire format).
+# Source of truth: crates/simple-agents-workflow/src/yaml_runner/ (execute.rs,
+# client_executor.rs, node_execution.rs). The runner may add new types; use
+# ``WorkflowRunnerEventType | str`` where an open-ended union is needed.
+WorkflowRunnerEventType = Literal[
+    "workflow_started",
+    "workflow_completed",
+    "node_started",
+    "node_completed",
+    "resolved_llm_input",
+    "node_stream_delta",
+    "node_stream_thinking_delta",
+    "node_stream_output_delta",
+    "node_tool_call_requested",
+    "node_tool_call_failed",
+    "node_tool_call_completed",
+    "node_tool_roundtrip_completed",
+    "node_healed",
+]
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 
 # ---------------------------------------------------------------------------
@@ -148,7 +168,7 @@ class WorkflowLlmNodeMetrics(TypedDict, total=False):
     tokens_per_second: float
 
 class WorkflowEvent(TypedDict, total=False):
-    event_type: str
+    event_type: WorkflowRunnerEventType | str
     node_id: str
     step_id: str
     node_kind: str

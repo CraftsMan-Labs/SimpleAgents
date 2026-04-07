@@ -31,14 +31,13 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 | `simple-agents-node` | [npm](https://www.npmjs.com/package/simple-agents-node) | ![npm Version](https://img.shields.io/npm/v/simple-agents-node?style=flat-square&logo=npm) | ![npm Downloads](https://img.shields.io/npm/dm/simple-agents-node?style=flat-square) |
 | `simple-agent-type` | [crates.io](https://crates.io/crates/simple-agent-type) | ![crates simple-agent-type](https://img.shields.io/crates/v/simple-agent-type?style=flat-square&logo=rust) | ![downloads simple-agent-type](https://img.shields.io/crates/d/simple-agent-type?style=flat-square) |
 | `simple-agents-core` | [crates.io](https://crates.io/crates/simple-agents-core) | ![crates simple-agents-core](https://img.shields.io/crates/v/simple-agents-core?style=flat-square&logo=rust) | ![downloads simple-agents-core](https://img.shields.io/crates/d/simple-agents-core?style=flat-square) |
-| `simple-agents-ffi` | [crates.io](https://crates.io/crates/simple-agents-ffi) | ![crates simple-agents-ffi](https://img.shields.io/crates/v/simple-agents-ffi?style=flat-square&logo=rust) | ![downloads simple-agents-ffi](https://img.shields.io/crates/d/simple-agents-ffi?style=flat-square) |
 | `simple-agents-healing` | [crates.io](https://crates.io/crates/simple-agents-healing) | ![crates simple-agents-healing](https://img.shields.io/crates/v/simple-agents-healing?style=flat-square&logo=rust) | ![downloads simple-agents-healing](https://img.shields.io/crates/d/simple-agents-healing?style=flat-square) |
 
 ## Overview
 
 - Rust source-of-truth architecture: core behavior is implemented in Rust crates first.
 - Unified client flow: request building, provider execution, routing, optional caching, and optional healing.
-- Multiple integration surfaces: Rust crates, CLI, C FFI, Node package, Python package, and Go binding.
+- Multiple integration surfaces: Rust crates, CLI, Node package, Python package, and WASM package.
 - Workflow support: YAML workflow execution, runtime validation, tracing/timings, replay, and inspection tooling.
 
 ## Key Capabilities
@@ -58,10 +57,8 @@ SimpleAgents is a Rust-first workspace for building LLM applications with a unif
 - `crates/simple-agents-providers` - provider adapters and utilities.
 - `crates/simple-agents-healing` - JSON-ish parsing and schema coercion.
 - `crates/simple-agents-workflow` - YAML workflow engine, IR, validation, tracing.
-- `crates/simple-agents-ffi` - C ABI surface (`sa_run_workflow`, `sa_stream_workflow`, `sa_resume`).
 - `crates/simple-agents-napi` - Node.js binding (`Client.run`, `.stream`, `.resume`).
 - `crates/simple-agents-py` - Python binding (`Client.run`, `.stream`, `.resume`, `Message`, `Role`, `ContentPart`).
-- `bindings/go` - Go binding over C FFI (`Run`, `Stream`, `Resume`).
 - `bindings/wasm` - WASM binding (`Client.runYamlString`).
 - `examples/` - runnable Rust/Python/Node workflow examples.
 - `docs/` - project documentation.
@@ -102,8 +99,6 @@ make fmt
   - `examples/node_client.js`
   - `examples/workflow_email/run_with_python_package.py`
   - `examples/workflow_email/run_with_node_package.js`
-  - `bindings/go/examples/client/main.go`
-  - `bindings/go/examples/workflow_yaml/main.go`
 
 ## Testing and Quality
 
@@ -122,8 +117,6 @@ Bindings and parity checks:
 ```bash
 make build-node
 make test-node
-make release-go
-make test-go-bindings
 make test-binding-contracts
 make test-binding-layers
 ```
@@ -139,10 +132,9 @@ make coverage-rust
 Current language surfaces in this repository:
 
 - Rust crates (source-of-truth implementation)
-- C FFI (`crates/simple-agents-ffi`)
-- Go (`bindings/go`)
 - Node.js/TypeScript (`crates/simple-agents-napi`)
 - Python (`crates/simple-agents-py`)
+- Browser/WASM (`bindings/wasm`)
 
 Cross-language capability baseline and parity details: `docs/CAPABILITY_MATRIX.md`.
 
@@ -161,7 +153,6 @@ Cross-language capability baseline and parity details: `docs/CAPABILITY_MATRIX.m
 - Binding guides:
   - Python: `docs/BINDINGS_PYTHON.md`
   - Node: `docs/BINDINGS_NODE.md`
-  - Go: `docs/BINDINGS_GO.md`
 - Troubleshooting: `docs/TROUBLESHOOTING.md`
 - Development guide: `docs/DEVELOPMENT.md`
 

@@ -3,12 +3,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-echo "==> Running FFI contract tests"
-cargo test -p simple-agents-ffi --test ffi_contract
-
-echo "==> Running Go binding contract tests"
-make -C "${ROOT_DIR}" test-go-bindings
-
 echo "==> Running Node binding contract tests"
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" ci
 npm --prefix "${ROOT_DIR}/crates/simple-agents-napi" run build:debug
