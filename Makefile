@@ -1,4 +1,4 @@
-.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report example-providers example-full-api example-node examples run-python-chat-history run-node-chat-history run-wasm-chat-history run-rust-chat-history ensure-wasm-bindgen \
+.PHONY: help test test-rust test-python coverage-rust test-binding-contracts test-binding-layers clippy fmt loc-report ensure-wasm-bindgen \
 	release-python release-node release-all \
 	build-node test-node build-wasm test-wasm publish-node publish-wasm \
 	publish-node-doppler \
@@ -9,8 +9,6 @@
 	version-get version-sync verify-workspace-versions version-patch version-minor version-major version-set \
 	tag-release version-next-patch version-next-minor version-next-major sync-napi-version sync-wasm-version sync-binding-lockfiles sync-readme-version
 
-EXAMPLE ?= basic_healing
-RUST_RELEASE_DIR ?= target/release
 PY_CRATE_MANIFEST ?= crates/simple-agents-py/Cargo.toml
 PYTHON_PROJECT_DIR ?= crates/simple-agents-py
 NAPI_CRATE ?= simple-agents-napi
@@ -24,19 +22,12 @@ WASM_RUST_MANIFEST ?= $(WASM_PACKAGE_DIR)/rust/Cargo.toml
 PYTHON_UV_LOCK ?= crates/simple-agents-py/uv.lock
 EXAMPLES_UV_LOCK ?= examples/uv.lock
 ENV_FILE ?= $(CURDIR)/.env
-EXAMPLES_ENV_FILE ?= $(CURDIR)/examples/.env
 DOPPLER_RUN ?= doppler run --command
 PUBLISH_CRATES ?= simple-agent-type \
 	simple-agents-healing simple-agents-providers \
 	simple-agents-core simple-agents-workflow
 WORKSPACE_CARGO ?= Cargo.toml
 VERSION ?= 0.1.0
-WORKFLOW_YAML ?= examples/workflow_email/email-chat-draft-or-clarify.yaml
-PY_CHAT_FLAGS ?= --stream --show-thinking --trace-dir workflow_email/traces
-NODE_CHAT_FLAGS ?= --stream --show-thinking
-WASM_CHAT_FLAGS ?= --max-turns 3
-RUST_CHAT_FLAGS ?= --max-turns 8
-JS_RUNTIME ?= node
 WASM_BINDGEN_CLI_VERSION ?= 0.2.117
 CARGO_HOME ?= $(HOME)/.cargo
 PYRIGHT_VERSION ?= 1.1.405
@@ -49,16 +40,6 @@ help:
 	@echo "  make coverage-rust         - Enforce Rust coverage threshold (auto tool, default: 100%)"
 	@echo "  make loc-report            - Print LOC report and README snippet"
 	@echo "  make check-publish         - Run all pre-publish checks"
-	@echo ""
-	@echo "Examples:"
-	@echo "  make example-providers     - Run a providers example (EXAMPLE=$(EXAMPLE))"
-	@echo "  make example-full-api      - Run examples/full_api_example.rs"
-	@echo "  make example-node          - Run Node example (loads $(ENV_FILE))"
-	@echo "  make run-python-chat-history - Run Python chat-history workflow example (WORKFLOW_YAML=... PY_CHAT_FLAGS='...')"
-	@echo "  make run-node-chat-history - Run Node/Bun chat-history workflow example (WORKFLOW_YAML=... NODE_CHAT_FLAGS='...' JS_RUNTIME=node|bun)"
-	@echo "  make run-wasm-chat-history - Run WASM chat-history workflow quick check (WORKFLOW_YAML=... WASM_CHAT_FLAGS='...')"
-	@echo "  make run-rust-chat-history - Run Rust chat-history workflow example (WORKFLOW_YAML=... RUST_CHAT_FLAGS='...')"
-	@echo "  make examples              - Run provider example + full_api_example + Node example"
 	@echo ""
 	@echo "Building:"
 	@echo "  make release-python        - Build Python wheels via uv"
@@ -125,48 +106,6 @@ fmt:
 
 loc-report:
 	./scripts/loc-report.sh
-
-example-providers:
-	cargo run -p simple-agents-healing --example $(EXAMPLE)
-
-example-full-api:
-	cargo run --manifest-path examples/Cargo.toml --example full_api_example
-
-example-node: build-node
-	@set -a; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	node examples/node_client.js
-
-examples: example-providers example-full-api example-node
-
-run-python-chat-history:
-	@set -a; \
-	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	UV_CACHE_DIR=$(CURDIR)/.uv-cache uv run --reinstall --refresh-package simple-agents-py --directory examples python workflow_email/run_with_chat_history.py --workflow $(WORKFLOW_YAML) $(PY_CHAT_FLAGS)
-
-run-node-chat-history: build-node
-	@set -a; \
-	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	$(JS_RUNTIME) examples/workflow_email/node/run_with_chat_history.js --workflow $(WORKFLOW_YAML) $(NODE_CHAT_FLAGS)
-
-run-wasm-chat-history: build-wasm
-	@set -a; \
-	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	node examples/workflow_email/node/run_with_wasm_chat_history.mjs --workflow $(WORKFLOW_YAML) $(WASM_CHAT_FLAGS)
-
-run-rust-chat-history:
-	@set -a; \
-	if [ -f "$(EXAMPLES_ENV_FILE)" ]; then . "$(EXAMPLES_ENV_FILE)"; fi; \
-	if [ -f "$(ENV_FILE)" ]; then . "$(ENV_FILE)"; fi; \
-	set +a; \
-	cargo run --manifest-path examples/Cargo.toml --example workflow_chat_history_rust -- --workflow $(WORKFLOW_YAML) $(RUST_CHAT_FLAGS)
 
 release-python:
 	cd $(PYTHON_PROJECT_DIR) && uv build
