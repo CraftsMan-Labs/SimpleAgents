@@ -1,7 +1,7 @@
 """Structured workflow stream hooks for :meth:`simple_agents_py.Client.stream`.
 
 Events are the same dicts the Rust runner emits; shape matches
-:class:`simple_agents_py.WorkflowEvent` in the package stub (``simple_agents_py/simple_agents_py.pyi``).
+:class:`~simple_agents_py.models.WorkflowEvent`.
 
 **Execution flags (explicit keys).** Under the top-level ``execution`` mapping (or
 :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`), these keys are
@@ -32,6 +32,7 @@ Rust applies (nothing is “invisible default”). :func:`stream_workflow` merge
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping, Protocol
@@ -47,6 +48,30 @@ STREAM_EVENT_TYPES_SPLIT_DELTAS: frozenset[str] = frozenset(
     ("node_stream_thinking_delta", "node_stream_output_delta")
 )
 STREAM_EVENT_TYPES_MERGED_DELTA: frozenset[str] = frozenset(("node_stream_delta",))
+
+
+def _node_stream_snapshot_log_line(event: WorkflowStreamEvent) -> str:
+    """Build one stderr log line for a ``node_stream_snapshot`` event."""
+
+    node = event.get("node_id") or event.get("step_id") or "?"
+    parts: list[str] = [f"[snapshot] node={node!s}"]
+    meta = event.get("metadata")
+    if isinstance(meta, dict):
+        if "confidence" in meta:
+            parts.append(f"confidence={meta['confidence']!r}")
+        if "is_complete" in meta:
+            parts.append(f"is_complete={meta['is_complete']!r}")
+    snap = event.get("snapshot")
+    if snap is not None:
+        try:
+            preview = json.dumps(snap, ensure_ascii=False)
+        except (TypeError, ValueError):
+            preview = ""
+        if len(preview) > 120:
+            preview = preview[:117] + "..."
+        if preview:
+            parts.append(f"json={preview}")
+    return " ".join(parts)
 
 
 def default_workflow_execution_bools() -> dict[str, bool]:
@@ -93,6 +118,7 @@ EVENT_TYPE_TO_METHOD: dict[str, str] = {
     "resolved_llm_input": "on_node_llm_input_resolved",
     "node_completed": "on_node_completed",
     "node_stream_delta": "on_stream_delta",
+    "node_stream_snapshot": "on_stream_snapshot",
     "node_stream_thinking_delta": "on_stream_thinking_delta",
     "node_stream_output_delta": "on_stream_output_delta",
     "workflow_completed": "on_workflow_completed",
@@ -100,20 +126,25 @@ EVENT_TYPE_TO_METHOD: dict[str, str] = {
 
 
 def default_on_event(event: WorkflowStreamEvent) -> None:
-    """Print streamed tokens to stdout; silence lifecycle noise.
+    """Print streamed tokens to stdout; log structured snapshots to stderr.
 
     A ready-made ``on_event`` callback suitable for quick scripts and demos.
     Pass it directly wherever a callback is accepted::
 
         from simple_agents_py.workflow_stream import default_on_event
-        client.stream(payload, on_event=default_on_event)
+        client.stream_workflow(payload, on_event=default_on_event)
 
     Prints ``node_stream_delta``, ``node_stream_thinking_delta``, and
-    ``node_stream_output_delta`` tokens inline (no newline between tokens).
-    Silently ignores ``workflow_started`` and ``workflow_completed``; all
-    other event types are also silently ignored by this handler.
+    ``node_stream_output_delta`` tokens inline on **stdout** (no newline between
+    tokens). Emits a single line per ``node_stream_snapshot`` event on **stderr**
+    (healing / structured JSON snapshot progress: node id, optional metadata, JSON
+    preview). Silently ignores ``workflow_started`` and ``workflow_completed``;
+    all other event types are also silently ignored by this handler.
     """
     event_type = event.get("event_type")
+    if event_type == "node_stream_snapshot":
+        print(_node_stream_snapshot_log_line(event), file=sys.stderr, flush=True)
+        return
     delta = event.get("delta")
     if event_type in (
         "node_stream_delta",
@@ -253,8 +284,8 @@ def stream_workflow(
     :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`.
 
     Pass **only one** of *hooks*, *on_event*, or a non-off *stream_display*. If all are
-    omitted (or *stream_display* is ``\"off\"``), uses ``Client.stream`` without a live
-    callback (events recorded on the result when applicable).
+    omitted (or *stream_display* is ``\"off\"``), uses ``Client.stream_workflow`` without a
+    live callback (events recorded on the result when applicable).
 
     *stream_display* ``\"merged\"`` prints merged ``node_stream_delta`` tokens;
     ``\"split\"`` prints thinking vs output deltas and forces ``split_stream_deltas`` when
@@ -302,7 +333,7 @@ def stream_workflow(
         cb = make_terminal_stream_printer("split")
     else:
         cb = None
-    return client.stream(payload, on_event=cb)
+    return client.stream_workflow(payload, on_event=cb)
 
 
 def run_workflow_yaml_stream_typed(

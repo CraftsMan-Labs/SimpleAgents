@@ -7,40 +7,19 @@ from typing import (
     Literal,
     Mapping,
     Sequence,
-    TypedDict,
     overload,
     Never,
 )
 from enum import Enum
 
-# ---------------------------------------------------------------------------
-# Primitive aliases
-# ---------------------------------------------------------------------------
-
-WorkflowMessageRole = Literal["system", "user", "assistant", "tool"]
-WorkflowPayloadMode = Literal["full_payload", "redacted_payload"]
-WorkflowToolTraceMode = Literal["full", "redacted", "off"]
-
-# Known event_type strings emitted by the Rust YAML workflow runner (wire format).
-# Source of truth: crates/simple-agents-workflow/src/yaml_runner/ (execute.rs,
-# client_executor.rs, node_execution.rs). The runner may add new types; use
-# ``WorkflowRunnerEventType | str`` where an open-ended union is needed.
-WorkflowRunnerEventType = Literal[
-    "workflow_started",
-    "workflow_completed",
-    "node_started",
-    "node_completed",
-    "resolved_llm_input",
-    "node_stream_delta",
-    "node_stream_thinking_delta",
-    "node_stream_output_delta",
-    "node_tool_call_requested",
-    "node_tool_call_failed",
-    "node_tool_call_completed",
-    "node_tool_roundtrip_completed",
-    "node_healed",
-]
-JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
+from .models import (
+    JSONValue,
+    WorkflowEvent,
+    WorkflowExecutionRequest,
+    WorkflowInput,
+    WorkflowRunOptions,
+    WorkflowRunOutput,
+)
 
 # ---------------------------------------------------------------------------
 # Typed message API  (new unified surface)
@@ -78,128 +57,6 @@ class Message:
     def user_parts(parts: list[ContentPart]) -> Message: ...
     @property
     def role(self) -> Role: ...
-
-# ---------------------------------------------------------------------------
-# Workflow types (dict-based, legacy and options)
-# ---------------------------------------------------------------------------
-
-class WorkflowMessage(TypedDict, total=False):
-    role: WorkflowMessageRole
-    content: str
-    name: str
-    tool_call_id: str
-
-class WorkflowInput(TypedDict, total=False):
-    messages: list[WorkflowMessage]
-
-class WorkflowTelemetryOptions(TypedDict, total=False):
-    enabled: bool
-    nerdstats: bool
-    sample_rate: float
-    payload_mode: WorkflowPayloadMode
-    retention_days: int
-    multi_tenant: bool
-    tool_trace_mode: WorkflowToolTraceMode
-
-class WorkflowTraceContextOptions(TypedDict, total=False):
-    trace_id: str
-    span_id: str
-    parent_span_id: str
-    traceparent: str
-    tracestate: str
-    baggage: Mapping[str, str]
-
-class WorkflowTraceTenantOptions(TypedDict, total=False):
-    workspace_id: str
-    user_id: str
-    conversation_id: str
-    request_id: str
-    run_id: str
-
-class WorkflowTraceOptions(TypedDict, total=False):
-    context: WorkflowTraceContextOptions
-    tenant: WorkflowTraceTenantOptions
-
-class WorkflowRunOptions(TypedDict, total=False):
-    telemetry: WorkflowTelemetryOptions
-    trace: WorkflowTraceOptions
-    model: str
-
-class WorkflowExecutionFlags(TypedDict, total=False):
-    model: str
-    healing: bool
-    workflow_streaming: bool
-    node_llm_streaming: bool
-    split_stream_deltas: bool
-
-class WorkflowExecutionRequest(TypedDict, total=False):
-    workflow_path: str
-    messages: list[WorkflowMessage]
-    context: Mapping[str, JSONValue]
-    media: Mapping[str, JSONValue]
-    input: Mapping[str, JSONValue]
-    execution: WorkflowExecutionFlags
-    workflow_options: WorkflowRunOptions
-
-WorkflowNodeKind = Literal["llm_call", "switch", "custom_worker", "unknown"]
-
-class WorkflowNodeOutputRecord(TypedDict):
-    node_id: str
-    node_kind: WorkflowNodeKind
-    value: JSONValue
-
-class WorkflowStepTiming(TypedDict, total=False):
-    node_id: str
-    node_kind: str
-    model_name: str
-    elapsed_ms: int
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    reasoning_tokens: int
-    tokens_per_second: float
-
-class WorkflowLlmNodeMetrics(TypedDict, total=False):
-    elapsed_ms: int
-    prompt_tokens: int
-    completion_tokens: int
-    total_tokens: int
-    reasoning_tokens: int
-    tokens_per_second: float
-
-class WorkflowEvent(TypedDict, total=False):
-    event_type: WorkflowRunnerEventType | str
-    node_id: str
-    step_id: str
-    node_kind: str
-    streamable: bool
-    message: str
-    delta: str
-    token_kind: str
-    is_terminal_node_token: bool
-    elapsed_ms: int
-    metadata: JSONValue
-
-class WorkflowRunOutput(TypedDict, total=False):
-    workflow_id: str
-    entry_node: str
-    trace: list[str]
-    outputs: dict[str, JSONValue]
-    terminal_node: str
-    terminal_output: JSONValue
-    step_timings: list[WorkflowStepTiming]
-    llm_node_metrics: dict[str, WorkflowLlmNodeMetrics]
-    llm_node_models: dict[str, str]
-    total_elapsed_ms: int
-    ttft_ms: int
-    total_input_tokens: int
-    total_output_tokens: int
-    total_tokens: int
-    total_reasoning_tokens: int
-    tokens_per_second: float
-    trace_id: str
-    metadata: JSONValue
-    events: list[WorkflowEvent]
 
 # ---------------------------------------------------------------------------
 # Healing / parsing types
@@ -254,6 +111,9 @@ class PyStructuredEvent:
     partial_value: Any
     confidence: float
     was_healed: bool
+    coerced_value: Any
+    coerced_confidence: float | None
+    coercion_flags: list[str]
 
 # ---------------------------------------------------------------------------
 # Streaming types
@@ -444,6 +304,7 @@ class Client:
         schema_name: str | None = None,
         stream: bool = False,
         heal: bool = False,
+        send_schema: bool | None = None,
     ) -> ResponseWithMetadata | HealedJsonResult | str | Iterator[StreamChunk] | Iterator[PyStructuredEvent]: ...
 
     def stream_complete(
