@@ -4,6 +4,7 @@ Minimal Bun + TypeScript examples for `simple-agents-node`, aligned with:
 
 - `examples/python-test-simpleAgents/test-py-simple-agents.py` — blocking workflow run
 - `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` — streamed events + final result
+- `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` — same, with Langfuse OTLP (optional)
 - `examples/python-test-simpleAgents/handlers.py` — Python loads this next to the YAML; Node uses `handlers.ts` with explicit `customWorker` (below)
 
 ## Quick start
@@ -55,12 +56,28 @@ bun run stream
 bun run test-simple-agents-streaming.ts
 ```
 
+**Streaming + Langfuse** (like `test-py-simple-agents-streaming-langfuse.py`):
+
+```bash
+bun run stream:langfuse
+# or
+bun run test-simple-agents-streaming-langfuse.ts
+```
+
 **Invoice image** (multimodal text + image):
 
 ```bash
 bun run invoice-image
 # or
 bun run test-simple-agents-invoice-image.ts
+```
+
+**Invoice image + Jaeger OTLP** (like `test-py-simple-agents-invoice-image-jaegar.py`):
+
+```bash
+bun run invoice-image:jaeger
+# or
+bun run test-simple-agents-invoice-image-jaegar.ts
 ```
 
 Each script prompts for input and runs `test.yaml` in this directory.

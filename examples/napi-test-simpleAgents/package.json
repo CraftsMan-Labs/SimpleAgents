@@ -5,7 +5,9 @@
   "scripts": {
     "run": "bun run test-simple-agents.ts",
     "stream": "bun run test-simple-agents-streaming.ts",
-    "invoice-image": "bun run test-simple-agents-invoice-image.ts"
+    "stream:langfuse": "bun run test-simple-agents-streaming-langfuse.ts",
+    "invoice-image": "bun run test-simple-agents-invoice-image.ts",
+    "invoice-image:jaeger": "bun run test-simple-agents-invoice-image-jaegar.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
