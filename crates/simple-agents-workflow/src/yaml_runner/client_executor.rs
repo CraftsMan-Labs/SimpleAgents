@@ -260,6 +260,43 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     } else {
                                         (Some(delta.clone()), None)
                                     };
+                                    if expects_object {
+                                        if let Some(ref raw_chunk) = output_delta {
+                                            streamed_structured_segment
+                                                .push_str(raw_chunk.as_str());
+                                            streamed_structured_segment_outer
+                                                .push_str(raw_chunk.as_str());
+                                            if request.heal {
+                                                if let Ok(snapshot) =
+                                                    simple_agents_healing::JsonishParser::new()
+                                                        .parse(streamed_structured_segment.as_str())
+                                                {
+                                                    if let Some(sink) = event_sink {
+                                                        sink.emit(&YamlWorkflowEvent {
+                                                            event_type: "node_stream_snapshot"
+                                                                .to_string(),
+                                                            node_id: Some(request.node_id.clone()),
+                                                            step_id: Some(request.node_id.clone()),
+                                                            node_kind: Some("llm_call".to_string()),
+                                                            streamable: Some(true),
+                                                            message: None,
+                                                            delta: None,
+                                                            snapshot: Some(snapshot.value),
+                                                            token_kind: None,
+                                                            is_terminal_node_token: Some(
+                                                                request.is_terminal_node,
+                                                            ),
+                                                            elapsed_ms: None,
+                                                            metadata: Some(json!({
+                                                                "confidence": snapshot.confidence,
+                                                                "is_complete": delta_filter.completed(),
+                                                            })),
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     let rendered_output_delta =
                                         if let Some(output_chunk) = output_delta {
                                             if let Some(formatter) = json_text_formatter.as_mut() {
@@ -322,41 +359,6 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                     }
 
                                     if let Some(filtered_delta) = rendered_output_delta {
-                                        if expects_object {
-                                            streamed_structured_segment
-                                                .push_str(filtered_delta.as_str());
-                                            streamed_structured_segment_outer
-                                                .push_str(filtered_delta.as_str());
-                                            if request.heal {
-                                                if let Ok(snapshot) =
-                                                    simple_agents_healing::JsonishParser::new()
-                                                        .parse(streamed_structured_segment.as_str())
-                                                {
-                                                    if let Some(sink) = event_sink {
-                                                        sink.emit(&YamlWorkflowEvent {
-                                                            event_type: "node_stream_snapshot"
-                                                                .to_string(),
-                                                            node_id: Some(request.node_id.clone()),
-                                                            step_id: Some(request.node_id.clone()),
-                                                            node_kind: Some("llm_call".to_string()),
-                                                            streamable: Some(true),
-                                                            message: None,
-                                                            delta: None,
-                                                            snapshot: Some(snapshot.value),
-                                                            token_kind: None,
-                                                            is_terminal_node_token: Some(
-                                                                request.is_terminal_node,
-                                                            ),
-                                                            elapsed_ms: None,
-                                                            metadata: Some(json!({
-                                                                "confidence": snapshot.confidence,
-                                                                "is_complete": delta_filter.completed(),
-                                                            })),
-                                                        });
-                                                    }
-                                                }
-                                            }
-                                        }
                                         if let Some(sink) = event_sink {
                                             sink.emit(&YamlWorkflowEvent {
                                                 event_type: "node_stream_delta".to_string(),
@@ -466,7 +468,11 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 if finish_reason != FinishReason::ToolCalls && !has_tool_calls {
                     let payload = if expects_object {
                         parse_streamed_structured_payload(
-                            if streamed_structured_segment_outer.is_empty() { streamed_content.as_str() } else { streamed_structured_segment_outer.as_str() },
+                            if streamed_structured_segment_outer.is_empty() {
+                                streamed_content.as_str()
+                            } else {
+                                streamed_structured_segment_outer.as_str()
+                            },
                             request.heal,
                             Some(&request.schema),
                         )
@@ -853,6 +859,41 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                             } else {
                                 (Some(delta.clone()), None)
                             };
+                            // Final structured parse must see raw JSON. When `stream_json_as_text` is
+                            // on, streamed deltas are human-readable (`key: value` lines), not JSON.
+                            if expects_object {
+                                if let Some(ref raw_chunk) = output_delta {
+                                    structured_segment.push_str(raw_chunk.as_str());
+                                    if request.heal {
+                                        if let Ok(snapshot) =
+                                            simple_agents_healing::JsonishParser::new()
+                                                .parse(structured_segment.as_str())
+                                        {
+                                            if let Some(sink) = event_sink {
+                                                sink.emit(&YamlWorkflowEvent {
+                                                    event_type: "node_stream_snapshot".to_string(),
+                                                    node_id: Some(request.node_id.clone()),
+                                                    step_id: Some(request.node_id.clone()),
+                                                    node_kind: Some("llm_call".to_string()),
+                                                    streamable: Some(true),
+                                                    message: None,
+                                                    delta: None,
+                                                    snapshot: Some(snapshot.value),
+                                                    token_kind: None,
+                                                    is_terminal_node_token: Some(
+                                                        request.is_terminal_node,
+                                                    ),
+                                                    elapsed_ms: None,
+                                                    metadata: Some(json!({
+                                                        "confidence": snapshot.confidence,
+                                                        "is_complete": delta_filter.completed(),
+                                                    })),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             let rendered_output_delta = if let Some(output_chunk) = output_delta {
                                 if let Some(formatter) = json_text_formatter.as_mut() {
                                     formatter.push(output_chunk.as_str());
@@ -900,37 +941,6 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                 }
                             }
                             if let Some(filtered_delta) = rendered_output_delta {
-                                if expects_object {
-                                    structured_segment.push_str(filtered_delta.as_str());
-                                    if request.heal {
-                                        if let Ok(snapshot) =
-                                            simple_agents_healing::JsonishParser::new()
-                                                .parse(structured_segment.as_str())
-                                        {
-                                            if let Some(sink) = event_sink {
-                                                sink.emit(&YamlWorkflowEvent {
-                                                    event_type: "node_stream_snapshot".to_string(),
-                                                    node_id: Some(request.node_id.clone()),
-                                                    step_id: Some(request.node_id.clone()),
-                                                    node_kind: Some("llm_call".to_string()),
-                                                    streamable: Some(true),
-                                                    message: None,
-                                                    delta: None,
-                                                    snapshot: Some(snapshot.value),
-                                                    token_kind: None,
-                                                    is_terminal_node_token: Some(
-                                                        request.is_terminal_node,
-                                                    ),
-                                                    elapsed_ms: None,
-                                                    metadata: Some(json!({
-                                                        "confidence": snapshot.confidence,
-                                                        "is_complete": delta_filter.completed(),
-                                                    })),
-                                                });
-                                            }
-                                        }
-                                    }
-                                }
                                 if let Some(sink) = event_sink {
                                     sink.emit(&YamlWorkflowEvent {
                                         event_type: "node_stream_delta".to_string(),
@@ -958,7 +968,11 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
 
                 let payload = if expects_object {
                     let resolved = parse_streamed_structured_payload(
-                        if structured_segment.is_empty() { aggregated.as_str() } else { structured_segment.as_str() },
+                        if structured_segment.is_empty() {
+                            aggregated.as_str()
+                        } else {
+                            structured_segment.as_str()
+                        },
                         request.heal,
                         Some(&request.schema),
                     )?;
