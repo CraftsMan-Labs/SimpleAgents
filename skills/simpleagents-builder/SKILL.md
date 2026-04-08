@@ -157,6 +157,36 @@ config:
     name: "{{ nodes.extract_name.output.name }}"
 ```
 
+### Globals (Run-Level Memory)
+
+- There is no top-level YAML `globals:` block.
+- Globals are created/updated from node `config` and are scoped to a single workflow run.
+- Read globals in templates with `{{ globals.<key> }}`.
+- In `set_globals` and `update_globals.from`, use direct paths (for example `nodes.classify.output.category`), not `{{ ... }}`.
+
+```yaml
+- id: classify
+  node_type:
+    llm_call:
+      model: gpt-4.1-mini
+  config:
+    output_schema:
+      type: object
+      properties:
+        category: { type: string }
+      required: [category]
+      additionalProperties: false
+    set_globals:
+      email_category: nodes.classify.output.category
+
+- id: finalize
+  node_type:
+    llm_call:
+      model: gpt-4.1-mini
+  config:
+    prompt: "Category is {{ globals.email_category }}"
+```
+
 ## Step 3: Generate the Runner Script
 
 ### Python -- Normal Run
@@ -728,19 +758,19 @@ print(json.dumps(result, indent=2))
 
 Read these files for reusable patterns and a pre-flight checklist:
 
-- `skills/simpleagents-builder/references/patterns.md` -- Detect->Route->Act, LLM best practices, custom workers, templating, multi-level routing, image input, execution flags
-- `skills/simpleagents-builder/references/checklist.md` -- QA checklist to validate YAML before outputting
+- `references/patterns.md` -- Detect->Route->Act, LLM best practices, custom workers, templating, multi-level routing, image input, execution flags
+- `references/checklist.md` -- QA checklist to validate YAML before outputting
 
 Runnable skill examples (self-contained YAML + handler + runner):
 
-- `skills/simpleagents-builder/examples/minimal-chat.yaml` -- simplest single-node workflow
-- `skills/simpleagents-builder/examples/email-classification.yaml` -- hierarchical classification with custom worker enrichment
-- `skills/simpleagents-builder/examples/handlers.py` -- Python custom worker handler
-- `skills/simpleagents-builder/examples/run.py` -- Python normal run
-- `skills/simpleagents-builder/examples/run_streaming.py` -- Python streaming run
-- `skills/simpleagents-builder/examples/run.ts` -- TypeScript run with custom worker dispatch
+- `examples/minimal-chat.yaml` -- simplest single-node workflow
+- `examples/email-classification.yaml` -- hierarchical classification with custom worker enrichment
+- `examples/handlers.py` -- Python custom worker handler
+- `examples/run.py` -- Python normal run
+- `examples/run_streaming.py` -- Python streaming run
+- `examples/run.ts` -- TypeScript run with custom worker dispatch
 
-Full working examples in the repo (source of truth):
+Bundled full examples in this skill:
 
 - `examples/python-test-simpleAgents/test.yaml` -- full email classification with finance enrichment
 - `examples/python-test-simpleAgents/friendly.yaml` -- minimal single-node chat bot
@@ -751,9 +781,8 @@ Full working examples in the repo (source of truth):
 - `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image.py` -- image input (normal)
 - `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-streaming.py` -- image input (streaming)
 - `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaegar.py` -- image input with Jaeger
-- `examples/napi-test-simpleAgents/test-simple-agents.ts` -- normal TypeScript run
-- `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` -- streaming TypeScript run
-- `examples/napi-test-simpleAgents/test-simple-agents-streaming-langfuse.ts` -- streaming with Langfuse
-- `examples/napi-test-simpleAgents/test-simple-agents-invoice-image.ts` -- image input (TypeScript)
-- `examples/napi-test-simpleAgents/test-simple-agents-invoice-image-jaegar.ts` -- image input with Jaeger
+- `examples/python-test-simpleAgents/fastapi_workflow_stream.py` -- FastAPI streaming endpoint example
+- `examples/python-test-simpleAgents/README.md` -- setup and run instructions for Python examples
+- `examples/napi-test-simpleAgents/test.yaml` -- NAPI workflow YAML
 - `examples/napi-test-simpleAgents/handlers.ts` -- TypeScript custom worker dispatch
+- `examples/napi-test-simpleAgents/package.json` -- NAPI scripts and dependencies

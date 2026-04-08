@@ -1,0 +1,33 @@
+# Simple friendly chat — one LLM node, history from input.messages
+# Run: client.run(path, messages) or run_workflow with messages.
+
+id: friendly-chat-bot
+version: 1.0.0
+
+metadata:
+  name: "Friendly Chat Bot"
+  description: "Warm, concise assistant using chat messages"
+  tags: ["example", "chat"]
+
+entry_node: chat_reply
+
+nodes:
+  - id: chat_reply
+    name: "Friendly reply"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        temperature: 0.7
+        stream: true
+        messages_path: input.messages
+        append_prompt_as_user: true
+    config:
+      prompt: |
+        You are a warm, friendly assistant. Be concise, helpful, and positive.
+
+        Use the conversation in the messages above. Reply to the user's latest message in plain text.
+        Do not use JSON or markdown unless the user asks for it.
+        If they only said hello, greet them briefly and offer help.
+
+      output_schema:
+        type: string
