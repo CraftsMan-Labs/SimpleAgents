@@ -115,6 +115,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
 
                 let mut streamed_tool_calls: Option<Vec<ToolCall>> = None;
                 let mut streamed_content = String::new();
+                let mut streamed_structured_segment_outer = String::new();
                 let mut finish_reason = FinishReason::Stop;
 
                 match outcome {
@@ -324,6 +325,8 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                                         if expects_object {
                                             streamed_structured_segment
                                                 .push_str(filtered_delta.as_str());
+                                            streamed_structured_segment_outer
+                                                .push_str(filtered_delta.as_str());
                                             if request.heal {
                                                 if let Ok(snapshot) =
                                                     simple_agents_healing::JsonishParser::new()
@@ -463,7 +466,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 if finish_reason != FinishReason::ToolCalls && !has_tool_calls {
                     let payload = if expects_object {
                         parse_streamed_structured_payload(
-                            streamed_content.as_str(),
+                            if streamed_structured_segment_outer.is_empty() { streamed_content.as_str() } else { streamed_structured_segment_outer.as_str() },
                             request.heal,
                             Some(&request.schema),
                         )
@@ -955,7 +958,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
 
                 let payload = if expects_object {
                     let resolved = parse_streamed_structured_payload(
-                        aggregated.as_str(),
+                        if structured_segment.is_empty() { aggregated.as_str() } else { structured_segment.as_str() },
                         request.heal,
                         Some(&request.schema),
                     )?;
