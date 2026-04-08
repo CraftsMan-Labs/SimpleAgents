@@ -100,5 +100,5 @@ For examples and reusable templates, read:
 - `references/checklist.md`
 
 Working examples:
-- `examples/email-chat-draft-or-clarify.yaml`
-- `examples/python-intern-fun-interview-system.yaml`
+- `examples/minimal-chat.yaml`
+- `examples/email-classification.yaml`

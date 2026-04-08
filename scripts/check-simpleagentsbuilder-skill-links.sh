@@ -26,11 +26,12 @@ check_link() {
   fi
 }
 
-check_link ".agents/skills/simpleagentsbuilder/examples/python-intern-fun-interview-system.yaml" "../../../../skills/simpleagents-builder/examples/python-intern-fun-interview-system.yaml"
+check_link ".agents/skills/simpleagentsbuilder/examples/minimal-chat.yaml" "../../../../skills/simpleagents-builder/examples/minimal-chat.yaml"
+check_link ".agents/skills/simpleagentsbuilder/examples/email-classification.yaml" "../../../../skills/simpleagents-builder/examples/email-classification.yaml"
 check_link ".agents/skills/simpleagentsbuilder/references/patterns.md" "../../../../skills/simpleagents-builder/references/patterns.md"
 check_link ".agents/skills/simpleagentsbuilder/references/checklist.md" "../../../../skills/simpleagents-builder/references/checklist.md"
-check_link ".opencode/skills/SimpleAgentsBuilder/examples/python-intern-fun-interview-system.yaml" "../../../../skills/simpleagents-builder/examples/python-intern-fun-interview-system.yaml"
-check_link ".opencode/skills/SimpleAgentsBuilder/examples/email-chat-draft-or-clarify.yaml" "../../../../skills/simpleagents-builder/examples/email-chat-draft-or-clarify.yaml"
+check_link ".opencode/skills/SimpleAgentsBuilder/examples/minimal-chat.yaml" "../../../../skills/simpleagents-builder/examples/minimal-chat.yaml"
+check_link ".opencode/skills/SimpleAgentsBuilder/examples/email-classification.yaml" "../../../../skills/simpleagents-builder/examples/email-classification.yaml"
 check_link ".opencode/skills/SimpleAgentsBuilder/references/patterns.md" "../../../../skills/simpleagents-builder/references/patterns.md"
 check_link ".opencode/skills/SimpleAgentsBuilder/references/checklist.md" "../../../../skills/simpleagents-builder/references/checklist.md"
 

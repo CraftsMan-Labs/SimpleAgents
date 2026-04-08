@@ -233,7 +233,7 @@ Read `examples/python-test-simpleAgents/test.yaml` -- multi-node email classific
 - `switch` nodes for deterministic routing
 - `custom_worker` node for stakeholder lookup
 - `heal: true` and `stream: true` on all LLM nodes
-- Template interpolation (`{{ nodes.X.output.Y }}`)
+- Template interpolation (<code v-pre>{{ nodes.X.output.Y }}</code>)
 
 **3. Add streaming**
 
@@ -259,8 +259,8 @@ Under `skills/simpleagents-builder/examples/`:
 
 | File | Pattern |
 |---|---|
-| `python-intern-fun-interview-system.yaml` | Multi-turn interview loop with state detection, routing, and custom workers |
-| `email-chat-draft-or-clarify.yaml` | Draft or clarify email flow with switch routing |
+| `minimal-chat.yaml` | Minimal single-node chat workflow |
+| `email-classification.yaml` | Deterministic email classification with custom worker enrichment |
 
 ## Rust Workflow API
 
