@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'docs/**'
+      - '.github/workflows/deploy-docs.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,6 +39,9 @@ jobs:
       - name: Build VitePress
         run: npm run docs:build
         working-directory: ./docs
+
+      - name: Copy CNAME file
+        run: cp docs/CNAME docs/.vitepress/dist/CNAME
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
