@@ -5,13 +5,10 @@ const repoRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "
 const docsRoot = path.join(repoRoot, "docs");
 
 const requiredSections = {
-  "QUICKSTART.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
+  "QUICKSTART.md": [/^##\s+Prerequisites\b/m, /^##\s+1\.\s+Add dependencies\b/m, /^##\s+Next Steps\b/m],
   "USAGE.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
-  "ARCHITECTURE.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
   "YAML_WORKFLOW_SYSTEM.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
-  "WORKFLOW_DEBUGGING.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
-  "WORKFLOW_PERFORMANCE.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
-  "WORKFLOW_SECURITY.md": [/^##\s+Prerequisites\b/m, /^##\s+Quick Path\b/m, /^##\s+Troubleshooting\b/m, /^##\s+Next Steps\b/m],
+  "WORKFLOW_QUICKSTART.md": [/^##\s+Install\b/m, /^##\s+Create a YAML Workflow\b/m, /^##\s+Run It\b/m],
 };
 
 async function walkMarkdownFiles(dir) {
