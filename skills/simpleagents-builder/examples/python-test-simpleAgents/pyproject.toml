@@ -1,0 +1,13 @@
+[project]
+name = "python-test-simpleagents"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "simple-agents-py[pydantic]",
+    "python-dotenv>=1.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "openai>=2.30.0",
+]

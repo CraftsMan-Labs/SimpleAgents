@@ -2333,7 +2333,7 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "simple-agent-type"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2346,7 +2346,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2361,7 +2361,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-examples"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "criterion",
  "proptest",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2410,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2433,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
  "async-trait",
  "criterion",
@@ -2672,9 +2672,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.51.0"
+version = "1.51.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bd1c4c0fc4a7ab90fc15ef6daaa3ec3b893f004f915f2392557ed23237820cd"
+checksum = "f66bf9585cda4b724d3e78ab34b73fb2bbaba9011b9bfdf69dc836382ea13b8c"
 dependencies = [
  "bytes",
  "libc",

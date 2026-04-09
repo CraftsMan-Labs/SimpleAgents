@@ -277,7 +277,7 @@ wheels = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.3.9"
+version = "0.3.10"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },

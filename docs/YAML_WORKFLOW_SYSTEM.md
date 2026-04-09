@@ -178,10 +178,44 @@ Templates can resolve from:
 - `nodes.<node_id>.output.*`
 - `globals.*`
 
-Memory updates are available via:
+Globals are per-run memory managed by the runtime:
+
+- There is no top-level YAML `globals:` block in workflow files.
+- Globals start as an empty object for each run.
+- Read values in templates with `{{ globals.<key> }}`.
+
+Write/update globals in any node `config` using:
 
 - `config.set_globals`
 - `config.update_globals` with `set|append|increment|merge`
+
+Path values in `set_globals` / `update_globals.from` use direct paths (for example `nodes.classify.output.category`), not `{{ ... }}`.
+
+Example:
+
+```yaml
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: "Classify: {{ input.email_text }}"
+      output_schema:
+        type: object
+        properties:
+          category: { type: string }
+        required: [category]
+      set_globals:
+        email_category: nodes.classify.output.category
+
+  - id: explain
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: "Category is {{ globals.email_category }}"
+```
 
 Use globals for run-level state, not for long-term secret storage.
 
