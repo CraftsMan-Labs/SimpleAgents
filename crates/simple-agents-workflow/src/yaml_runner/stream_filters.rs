@@ -358,8 +358,8 @@ mod tests {
             },
             "required": ["status", "message", "details"]
         });
-        let result =
-            parse_streamed_structured_payload(raw, true, Some(&schema)).expect("should coerce outer object");
+        let result = parse_streamed_structured_payload(raw, true, Some(&schema))
+            .expect("should coerce outer object");
         assert_eq!(
             result.payload.get("status").and_then(Value::as_str),
             Some("success")
