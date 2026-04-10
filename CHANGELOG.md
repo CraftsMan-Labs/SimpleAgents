@@ -7,13 +7,22 @@ The format follows Keep a Changelog, and versions are tracked in repository tags
 ## [Unreleased]
 
 ### Added
+
 - _No entries yet._
 
 ### Changed
+
 - _No entries yet._
 
 ### Fixed
 
+- _No entries yet._
+
+## [0.3.11] - 2026-04-10
+
+### Fixed
+
+- Workflow YAML streaming with `heal`: when resolving JSON from the streamed buffer, pick the first balanced parsable object instead of the last, so nested `output_schema` objects are not mistaken for the root document (fixes coercion errors such as missing top-level fields).
 - Node NAPI: `Client.run`, `Client.resume`, and `Client.runWorkflow` with a custom worker callback now return a Promise so the main thread is not blocked during `custom_worker` execution (avoids deadlock with the JS dispatch).
 
 ## [0.3.7] - 2026-04-07
