@@ -185,14 +185,12 @@ pub(crate) fn extract_balanced_object_from(raw: &str, start_index: usize) -> Opt
     None
 }
 
-pub(crate) fn extract_last_parsable_object(raw: &str) -> Option<&str> {
-    let starts: Vec<usize> = raw
-        .char_indices()
-        .filter_map(|(index, ch)| if ch == '{' { Some(index) } else { None })
-        .collect();
-
-    for start in starts.into_iter().rev() {
-        let Some(candidate) = extract_balanced_object_from(raw, start) else {
+pub(crate) fn extract_first_parsable_object(raw: &str) -> Option<&str> {
+    for (index, ch) in raw.char_indices() {
+        if ch != '{' {
+            continue;
+        }
+        let Some(candidate) = extract_balanced_object_from(raw, index) else {
             continue;
         };
         if serde_json::from_str::<Value>(candidate).is_ok() {
@@ -204,7 +202,7 @@ pub(crate) fn extract_last_parsable_object(raw: &str) -> Option<&str> {
 }
 
 pub(crate) fn resolve_structured_json_candidate(raw: &str) -> Option<&str> {
-    extract_last_fenced_json_block(raw).or_else(|| extract_last_parsable_object(raw))
+    extract_last_fenced_json_block(raw).or_else(|| extract_first_parsable_object(raw))
 }
 
 pub(crate) fn parse_streamed_structured_payload(
@@ -331,7 +329,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn streamed_payload_parser_extracts_last_json_object() {
+    fn streamed_payload_parser_extracts_first_json_object() {
         let raw = "Some thinking text here...\n\n{\"subject\":\"hello\",\"body\":\"world\"}";
         let result = parse_streamed_structured_payload(raw, false, None).expect("should parse");
         assert_eq!(
@@ -339,6 +337,38 @@ mod tests {
             Some("hello")
         );
         assert!(result.heal_confidence.is_none());
+    }
+
+    #[test]
+    fn streamed_payload_parser_prefers_outermost_object_over_nested() {
+        let raw = r#"{"status":"success","message":"done","details":{"id":"123","name":"test"}}"#;
+        let schema = serde_json::json!({
+            "type": "object",
+            "properties": {
+                "status": { "type": "string" },
+                "message": { "type": "string" },
+                "details": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" }
+                    },
+                    "required": ["id", "name"]
+                }
+            },
+            "required": ["status", "message", "details"]
+        });
+        let result =
+            parse_streamed_structured_payload(raw, true, Some(&schema)).expect("should coerce outer object");
+        assert_eq!(
+            result.payload.get("status").and_then(Value::as_str),
+            Some("success")
+        );
+        assert_eq!(
+            result.payload.get("message").and_then(Value::as_str),
+            Some("done")
+        );
+        assert!(result.payload.get("details").unwrap().is_object());
     }
 
     #[test]
