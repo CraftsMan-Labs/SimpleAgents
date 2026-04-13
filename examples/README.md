@@ -247,9 +247,9 @@ let provider = if use_local {
 
 ### Learn More
 
-- [OpenAI Provider API](../docs/API.md#openai-provider)
-- [Streaming Documentation](../docs/USAGE.md#streaming)
-- [Custom Server Setup](../docs/ARCHITECTURE.md#provider-system)
+- [Rust Quick Start](../docs/QUICKSTART.md)
+- [Rust Usage Guide](../docs/USAGE.md)
+- [Troubleshooting](../docs/TROUBLESHOOTING.md)
 - [vLLM Documentation](https://docs.vllm.ai/)
 - [Ollama Documentation](https://ollama.com/docs)
 
@@ -426,7 +426,7 @@ Field::optional("metadata", Schema::Object(ObjectSchema { ... })),
 
 ### Learn More
 
-- [API Documentation](../docs/API.md)
-- [Usage Guide](../docs/USAGE.md)
-- [Response Healing](../docs/USAGE.md#response-healing)
-- [Schema Types](../docs/API.md#schema-types)
+- [Rust Quick Start](../docs/QUICKSTART.md)
+- [Rust Usage Guide](../docs/USAGE.md)
+- [Examples Overview](../docs/EXAMPLES.md)
+- [Workflow Quickstart](../docs/WORKFLOW_QUICKSTART.md)

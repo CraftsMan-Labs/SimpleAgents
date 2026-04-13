@@ -1,8 +1,9 @@
 # SimpleAgents
 
-**Every agentic SaaS is a config.**
+SimpleAgents is a YAML workflow engine for AI products.
+Define nodes, routing, schemas, and workers in one config. Run it in Python or TypeScript. Ship today.
 
-Define your AI product as a YAML workflow. Run it in Python or TypeScript. Ship today.
+**Every agentic SaaS is a config.**
 
 [![GitHub Stars](https://img.shields.io/github/stars/CraftsMan-Labs/SimpleAgents?style=flat-square)](https://github.com/CraftsMan-Labs/SimpleAgents/stargazers)
 [![GitHub Forks](https://img.shields.io/github/forks/CraftsMan-Labs/SimpleAgents?style=flat-square)](https://github.com/CraftsMan-Labs/SimpleAgents/network/members)
@@ -19,6 +20,14 @@ Define your AI product as a YAML workflow. Run it in Python or TypeScript. Ship 
 - Docs: https://docs.simpleagents.craftsmanlabs.net/
 - Playground: https://yamslam.craftsmanlabs.net/playground
 
+## Start Here
+
+- **New here?** Start with `docs/WORKFLOW_QUICKSTART.md` for your first working workflow.
+- **Using Python?** Go to `docs/BINDINGS_PYTHON.md`.
+- **Using TypeScript / Node?** Go to `docs/BINDINGS_NODE.md`.
+- **Using Rust directly?** Go to `docs/QUICKSTART.md`.
+- **Want runnable examples?** Go to `docs/EXAMPLES.md`.
+
 ## Install
 
 ```bash
@@ -33,6 +42,19 @@ npm install simple-agents-node   # TypeScript / Node
 3. **Ship** -- streaming, images, Langfuse/Jaeger observability all work out of the box
 
 Every email classifier, document processor, intake system, interview bot, and support agent is the same pattern: **LLM nodes with structured outputs and deterministic routing**. SimpleAgents makes that pattern a config file.
+
+## Who It's For
+
+- Teams building classifiers, support flows, document workflows, intake systems, or other structured AI flows
+- Builders who want routing, schemas, streaming, and custom workers without writing framework glue
+
+## Use It When
+
+- You want structured LLM workflows with deterministic routing
+- You want the same workflow config to run in Python or TypeScript
+- You want custom worker steps and tracing without building the plumbing yourself
+
+If you only need one prompt call and no workflow, use the lower-level bindings directly.
 
 ## Quick Example
 

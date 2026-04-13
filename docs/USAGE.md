@@ -15,10 +15,10 @@ Add core crates to `Cargo.toml`:
 
 ```toml
 [dependencies]
-simple-agent-type = "0.2.4"
-simple-agents-core = "0.2.4"
-simple-agents-providers = "0.2.4"
-simple-agents-healing = "0.2.4" # optional (schemas/healing config)
+simple-agent-type = "0.3.11"
+simple-agents-core = "0.3.11"
+simple-agents-providers = "0.3.11"
+simple-agents-healing = "0.3.11" # optional (schemas/healing config)
 tokio = { version = "1.35", features = ["full"] }
 futures-util = "0.3"
 ```

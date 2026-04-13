@@ -37,13 +37,21 @@ Every agentic SaaS -- email classifiers, document processors, intake systems, in
 
 SimpleAgents lets you define that workflow as a YAML config and run it with a single command. No framework to learn. No abstractions to fight. Just a graph of nodes and edges.
 
-## Start Here
+## Choose Your Path
 
-- **Build my first workflow** -> [Workflow Quickstart](/WORKFLOW_QUICKSTART)
-- **See what's possible** -> [Examples](/EXAMPLES)
-- **Python API** -> [Python Binding](/BINDINGS_PYTHON)
-- **TypeScript API** -> [Node.js Binding](/BINDINGS_NODE)
-- **YAML deep dive** -> [YAML Workflow System](/YAML_WORKFLOW_SYSTEM)
-- **Add Langfuse / Jaeger** -> [Tracing & Observability](/TRACING_ARCHITECTURE)
-- **Use Rust directly** -> [Rust Quick Start](/QUICKSTART)
-- **Contribute** -> [Development Guide](/DEVELOPMENT)
+- **I want my first working workflow** -> [Workflow Quickstart](/WORKFLOW_QUICKSTART)
+- **I want runnable examples** -> [Examples](/EXAMPLES)
+- **I want Python API details** -> [Python Binding](/BINDINGS_PYTHON)
+- **I want TypeScript / Node API details** -> [Node.js Binding](/BINDINGS_NODE)
+- **I want to understand YAML routing and workers** -> [YAML Workflow System](/YAML_WORKFLOW_SYSTEM)
+- **I want tracing with Langfuse / Jaeger** -> [Tracing & Observability](/TRACING_ARCHITECTURE)
+- **I want to use Rust directly** -> [Rust Quick Start](/QUICKSTART)
+- **I want to contribute** -> [Development Guide](/DEVELOPMENT)
+
+## Use It When
+
+- You want structured LLM workflows with deterministic routing
+- You want one YAML config that runs in Python or TypeScript
+- You want custom worker steps and tracing without building a framework around it
+
+If you only need one prompt call and no workflow, start with the language bindings first.
