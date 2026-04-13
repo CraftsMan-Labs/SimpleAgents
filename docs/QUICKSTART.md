@@ -13,9 +13,9 @@ First successful SimpleAgents request using the Rust client.
 
 ```toml
 [dependencies]
-simple-agent-type = "0.3.8"
-simple-agents-core = "0.3.8"
-simple-agents-providers = "0.3.8"
+simple-agent-type = "0.3.11"
+simple-agents-core = "0.3.11"
+simple-agents-providers = "0.3.11"
 tokio = { version = "1.35", features = ["full"] }
 ```
 
