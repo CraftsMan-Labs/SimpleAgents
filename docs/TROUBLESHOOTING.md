@@ -23,10 +23,10 @@ Common issues, error patterns, and solutions for SimpleAgents core and binding w
 ### Issue: "API key not found" or authentication errors
 
 **Symptoms:**
-```
+```text
 RuntimeError: API key not found for provider 'openai'
 Error: Missing required environment variable WORKFLOW_API_KEY
-```
+```text
 
 **Solutions:**
 
@@ -62,10 +62,10 @@ Error: Missing required environment variable WORKFLOW_API_KEY
 ### Issue: "Provider not found" errors
 
 **Symptoms:**
-```
+```text
 Error: Unknown provider 'azure'
 RuntimeError: Provider 'custom' is not supported
-```
+```text
 
 **Solutions:**
 
@@ -82,7 +82,7 @@ client = Client(
 ### Issue: Live tests are skipped
 
 **Symptoms:**
-```
+```text
 SKIPPED: Live tests require API credentials
 ```
 
@@ -109,7 +109,7 @@ npm run test:live  # Will skip without env vars by design
 ### Issue: Python bindings fail to install
 
 **Symptoms:**
-```
+```text
 ERROR: Could not build wheels for simple-agents-py
 ImportError: cannot import name 'Client' from 'simple_agents_py'
 ```
@@ -142,7 +142,7 @@ ImportError: cannot import name 'Client' from 'simple_agents_py'
 ### Issue: Stale Python bindings cache
 
 **Symptoms:**
-```
+```text
 TypeError: argument 'prompt': 'list' object cannot be converted to 'PyString'
 AttributeError: 'Client' object has no attribute 'run_workflow'
 ```
@@ -158,7 +158,7 @@ UV_CACHE_DIR=$PWD/.uv-cache uv run --no-cache python python_client.py
 ### Issue: Node bindings fail to build
 
 **Symptoms:**
-```
+```text
 Error: Cannot find module 'simple-agents-node'
 napi:Error: Failed to load native addon
 ```
@@ -186,7 +186,7 @@ napi:Error: Failed to load native addon
 ### Issue: Rust build failures
 
 **Symptoms:**
-```
+```text
 error: linking with `cc` failed
 error: could not compile `simple-agents-core`
 ```
@@ -217,7 +217,7 @@ error: could not compile `simple-agents-core`
 ### Issue: WASM bindings build fails
 
 **Symptoms:**
-```
+```text
 error: wasm-bindgen not found
 error: failed to run custom build command for `simple-agents-wasm`
 ```
@@ -240,7 +240,7 @@ cargo install wasm-bindgen-cli --version 0.2.117
 ### Issue: "Invalid YAML syntax"
 
 **Symptoms:**
-```
+```text
 Error: failed to parse workflow yaml: invalid type
 RuntimeError: YamlError: mapping values are not allowed here
 ```
@@ -280,7 +280,7 @@ RuntimeError: YamlError: mapping values are not allowed here
 ### Issue: "Node not found" or "Invalid node reference"
 
 **Symptoms:**
-```
+```text
 Error: Node 'classify' not found in workflow
 RuntimeError: Invalid node reference: extract_company
 ```
@@ -319,7 +319,7 @@ RuntimeError: Invalid node reference: extract_company
 ### Issue: "Invalid JSONPath expression"
 
 **Symptoms:**
-```
+```text
 Error: Failed to evaluate condition: Invalid JSONPath
 RuntimeError: JSONPath error: path not found
 ```
@@ -359,7 +359,7 @@ RuntimeError: JSONPath error: path not found
 ### Issue: Schema validation failures
 
 **Symptoms:**
-```
+```text
 Error: Schema validation failed: missing required field 'response'
 Error: additionalProperties 'extra_field' not allowed
 ```
@@ -399,7 +399,7 @@ Error: additionalProperties 'extra_field' not allowed
 ### Issue: "Circular dependency detected"
 
 **Symptoms:**
-```
+```text
 Error: Circular dependency in workflow graph
 RuntimeError: Cycle detected: classify -> route -> classify
 ```
@@ -434,7 +434,7 @@ Workflows must be directed acyclic graphs (DAGs).
 ### Issue: Python binding contract failures
 
 **Symptoms:**
-```
+```text
 FAILED tests/test_binding_contract.py::test_contract - AssertionError
 ```
 
@@ -464,7 +464,7 @@ FAILED tests/test_binding_contract.py::test_contract - AssertionError
 ### Issue: Node binding contract failures
 
 **Symptoms:**
-```
+```text
 not ok 1 - Contract test: complete should return ResponseWithMetadata
 TypeError: Cannot read property 'content' of undefined
 ```
@@ -490,7 +490,7 @@ TypeError: Cannot read property 'content' of undefined
 ### Issue: Pydantic validation errors (Python)
 
 **Symptoms:**
-```
+```text
 pydantic.error_wrappers.ValidationError: 1 validation error for WorkflowExecutionRequest
 field required (type=value_error.missing)
 ```
@@ -525,7 +525,7 @@ field required (type=value_error.missing)
 ### Issue: TypeScript type errors
 
 **Symptoms:**
-```
+```text
 error TS2345: Argument of type 'string' is not assignable to parameter of type 'MessageInput[]'
 ```
 
@@ -560,7 +560,7 @@ error TS2345: Argument of type 'string' is not assignable to parameter of type '
 ### Issue: "Handler not found" (Python)
 
 **Symptoms:**
-```
+```text
 RuntimeError: Custom worker handler 'lookup_company' not found
 Error: No module named 'handlers'
 ```
@@ -606,7 +606,7 @@ Error: No module named 'handlers'
 ### Issue: "Handler not found" (TypeScript)
 
 **Symptoms:**
-```
+```text
 Error: custom_worker requires customWorkerDispatch callback
 Error: unknown custom worker handler: lookup_company
 ```
@@ -653,7 +653,7 @@ Error: unknown custom worker handler: lookup_company
 ### Issue: Custom worker returns wrong format
 
 **Symptoms:**
-```
+```text
 Error: Custom worker output is not valid JSON
 RuntimeError: Failed to parse custom worker result
 ```
@@ -696,7 +696,7 @@ RuntimeError: Failed to parse custom worker result
 ### Issue: TypeError in custom worker (Python)
 
 **Symptoms:**
-```
+```text
 TypeError: my_handler() got an unexpected keyword argument 'context'
 ```
 
@@ -766,7 +766,7 @@ def my_handler(*, context, payload):
 ### Issue: "stream and heal cannot both be true"
 
 **Symptoms:**
-```
+```text
 ValidationError: stream=True and heal=True cannot both be enabled
 RuntimeError: Node config conflict: streaming and healing are mutually exclusive
 ```
@@ -871,7 +871,7 @@ Use separate nodes - one for streaming (user-facing) and one for healing (data e
 ### Issue: "OTEL exporter failed"
 
 **Symptoms:**
-```
+```text
 ERROR opentelemetry_otlp: Export failed: connection refused
 Warning: Failed to export spans
 ```
@@ -1023,7 +1023,7 @@ Warning: Failed to export spans
 ### Issue: Azure OpenAI authentication errors
 
 **Symptoms:**
-```
+```text
 Error: 401 - Authentication failed
 Error: Deployment not found
 ```
@@ -1051,7 +1051,7 @@ Error: Deployment not found
 ### Issue: Local models (Ollama/vLLM) not working
 
 **Symptoms:**
-```
+```text
 Error: Connection refused
 Error: 404 Not Found
 Model not found
@@ -1094,7 +1094,7 @@ Model not found
 ### Issue: Rate limiting from provider
 
 **Symptoms:**
-```
+```text
 Error: 429 Too Many Requests
 Error: Rate limit exceeded
 ```

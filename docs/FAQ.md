@@ -71,8 +71,8 @@ SimpleAgents trades some flexibility for shipping speed and consistency.
 **A:**
 
 **For end users:**
-- Python 3.8+ (for Python bindings)
-- Node.js 16+ (for Node/TypeScript bindings)
+- Python >=3.9 (for Python bindings)
+- Node.js >=18 (for Node/TypeScript bindings)
 - Any OpenAI-compatible API key
 
 **For contributors:**
@@ -366,6 +366,7 @@ nodes:
 **Python:**
 ```python
 import base64
+from pathlib import Path
 
 b64 = base64.b64encode(Path("invoice.jpeg").read_bytes()).decode("ascii")
 
@@ -488,6 +489,8 @@ nodes:
 **A:**
 
 ```typescript
+import { Client } from "simple-agents-node";
+
 function customWorkerDispatch(req: {
   handler: string;
   payload: unknown;
@@ -520,8 +523,8 @@ const result = await client.runWorkflow(
 
 **A:** 
 
-- **Python:** Yes, handlers can be async functions
-- **TypeScript:** No, currently synchronous only (workaround: pre-fetch data or use the Python binding)
+- **Python:** No, handlers must be synchronous functions. The executor calls handlers directly and immediately serializes the return value, so `async def` would return a coroutine object that is never awaited.
+- **TypeScript:** No, currently synchronous only (workaround: pre-fetch data before workflow execution)
 
 ### Q: How do I share data between nodes?
 
@@ -622,7 +625,7 @@ def on_event(event: dict):
     
     elif event_type == "node_stream_thinking_delta":
         # Reasoning/thinking tokens (if model supports it)
-        print(f"[Thinking: {event.get('delta')}")
+        print(f"[Thinking: {event.get('delta')}]")
     
     elif event_type == "node_stream_output_delta":
         # Output tokens (split from thinking)
