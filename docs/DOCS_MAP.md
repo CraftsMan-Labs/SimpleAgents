@@ -5,6 +5,7 @@
 | Doc | Use this when |
 |-----|---------------|
 | [Workflow Quickstart](/WORKFLOW_QUICKSTART) | You want your first working YAML workflow in Python or TypeScript |
+| [FAQ](/FAQ) | You have questions about installation, configuration, usage, or best practices |
 | [Examples](/EXAMPLES) | You want runnable examples and commands you can copy-paste |
 | [YAML Workflow System](/YAML_WORKFLOW_SYSTEM) | You want to understand nodes, routing, custom workers, globals, and templating |
 | [Python Binding](/BINDINGS_PYTHON) | You want to run workflows or completions from Python |
