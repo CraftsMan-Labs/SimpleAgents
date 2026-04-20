@@ -142,9 +142,10 @@ See `docs/BINDINGS_WASM.md` for details.
 **1. Environment variables (recommended for development):**
 ```bash
 # .env file
-WORKFLOW_PROVIDER=openai
-WORKFLOW_API_BASE=https://api.openai.com/v1
-WORKFLOW_API_KEY=sk-your-key-here
+PROVIDER=openai
+CUSTOM_API_BASE=https://api.openai.com/v1
+CUSTOM_API_KEY=sk-your-key-here
+# Optional: CUSTOM_API_MODEL=gpt-4.1-mini
 ```
 
 **2. Explicit configuration (recommended for production):**
@@ -188,9 +189,9 @@ client = Client(
 
 Or set environment variables:
 ```bash
-WORKFLOW_PROVIDER=openai
-WORKFLOW_API_BASE=https://your-resource.openai.azure.com/openai/deployments/your-deployment
-WORKFLOW_API_KEY=your-azure-key
+PROVIDER=openai
+CUSTOM_API_BASE=https://your-resource.openai.azure.com/openai/deployments/your-deployment
+CUSTOM_API_KEY=your-azure-key
 ```
 
 ### Q: How do I use local models (Ollama, vLLM)?
@@ -272,6 +273,7 @@ nodes:
 ```python
 from simple_agents_py import Client
 from simple_agents_py.workflow_request import WorkflowExecutionRequest, WorkflowMessage, WorkflowRole
+from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 
 client = Client("openai")
 req = WorkflowExecutionRequest(
@@ -760,7 +762,7 @@ workflow_options={
 ```python
 from fastapi import FastAPI
 from simple_agents_py import Client
-from simple_agents_py.workflow_request import WorkflowExecutionRequest, WorkflowMessage
+from simple_agents_py.workflow_request import WorkflowExecutionRequest, WorkflowMessage, WorkflowRole
 
 app = FastAPI()
 client = Client("openai")
@@ -769,7 +771,7 @@ client = Client("openai")
 async def classify_email(text: str):
     req = WorkflowExecutionRequest(
         workflow_path="classifier.yaml",
-        messages=[WorkflowMessage(role="user", content=text)]
+        messages=[WorkflowMessage(role=WorkflowRole.USER, content=text)]
     )
     return client.run_workflow(workflow_execution_request_to_mapping(req))
 ```
@@ -844,7 +846,7 @@ config:
 2. Environment variable names match the provider:
    - OpenAI: `OPENAI_API_KEY`
    - Anthropic: `ANTHROPIC_API_KEY`
-   - Generic: `WORKFLOW_API_KEY`
+   - Generic: `CUSTOM_API_KEY`
 3. API key is not empty or whitespace
 
 ### Q: Common error: "Invalid JSON from LLM"
