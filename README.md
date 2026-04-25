@@ -111,6 +111,11 @@ result = client.run_workflow(workflow_execution_request_to_mapping(req))
 print(json.dumps(result, indent=2))
 ```
 
+SimpleAgents Builder Skills
+```
+npx skills add CraftsMan-Labs/SimpleAgents --skill simpleagents-builder
+```
+
 That's it. Your agentic SaaS is a config.
 
 ## What You Get
