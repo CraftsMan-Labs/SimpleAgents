@@ -125,37 +125,52 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 
 **Python** (`examples/python-test-simpleAgents/`):
 
-| File | What it demonstrates |
+| Location | What it demonstrates |
 |---|---|
-| `test-py-simple-agents.py` | Normal (blocking) YAML workflow run |
-| `test-py-simple-agents-streaming.py` | Streaming with `WorkflowExecutionFlags` |
-| `test-py-simple-agents-invoice-image.py` | Image input (multimodal) |
-| `test-py-simple-agents-invoice-image-streaming.py` | Image input + streaming |
-| `test-py-simple-agents-streaming-langfuse.py` | Streaming + Langfuse OTLP |
-| `test-py-simple-agents-invoice-image-jaeger.py` | Image input + Jaeger OTLP (`*-jaegar.py` remains as a compatibility alias) |
-| `fastapi_workflow_stream.py` | FastAPI SSE streaming endpoint |
-| `handlers.py` | Custom worker handler (`get_seller_name`) |
-| `test-py-simple-agents-eval.py` | Output-shaped eval dataset for `friendly.yaml` |
+| `runners/test-py-simple-agents.py` | Normal (blocking) YAML workflow run |
+| `runners/test-py-simple-agents-streaming.py` | Streaming with `WorkflowExecutionFlags` |
+| `runners/test-py-simple-agents-invoice-image.py` | Image input (multimodal) |
+| `runners/test-py-simple-agents-invoice-image-streaming.py` | Image input + streaming |
+| `runners/test-py-simple-agents-streaming-langfuse.py` | Streaming + Langfuse OTLP |
+| `runners/test-py-simple-agents-invoice-image-jaeger.py` | Image input + Jaeger OTLP (`*-jaegar.py` remains as a compatibility alias) |
+| `apps/fastapi_workflow_stream.py` | FastAPI SSE streaming endpoint |
+| `workflows/email-classification/handlers.py` | Custom worker handler (`get_seller_name`) |
+| `runners/test-py-simple-agents-eval.py` | Output-shaped eval dataset for `workflows/friendly/friendly.yaml` |
+| `runners/test-py-simple-agents-invoice-image-evals.py` | Invoice workflow evals for node-level and terminal-node checks |
+| `runners/test-py-simple-agents-rag-eval.py` | Mocked RAG chunk workflow + custom eval handler |
+| `example_paths.py` | Shared path helpers (`workflows/`, `evals/`, `assets/`) |
 
 **TypeScript** (`examples/napi-test-simpleAgents/`):
 
-| File | What it demonstrates |
+| Location | What it demonstrates |
 |---|---|
-| `test-simple-agents.ts` | Normal (blocking) YAML workflow run |
-| `test-simple-agents-streaming.ts` | Streaming with execution flags |
-| `test-simple-agents-invoice-image.ts` | Image input (multimodal) |
-| `test-simple-agents-streaming-langfuse.ts` | Streaming + Langfuse OTLP |
-| `test-simple-agents-invoice-image-jaeger.ts` | Image input + Jaeger OTLP (`*-jaegar.ts` remains as a compatibility alias) |
-| `handlers.ts` | Custom worker dispatch (`getSellerName`) |
-| `test-simple-agents-eval.ts` | Output-shaped eval dataset for `friendly.yaml` |
+| `runners/test-simple-agents.ts` | Normal (blocking) YAML workflow run |
+| `runners/test-simple-agents-streaming.ts` | Streaming with execution flags |
+| `runners/test-simple-agents-invoice-image.ts` | Image input (multimodal) |
+| `runners/test-simple-agents-streaming-langfuse.ts` | Streaming + Langfuse OTLP |
+| `runners/test-simple-agents-invoice-image-jaeger.ts` | Image input + Jaeger OTLP (`*-jaegar.ts` remains as a compatibility alias) |
+| `workflows/email-classification/handlers.ts` | Custom worker dispatch (`getSellerName`) |
+| `runners/test-simple-agents-eval.ts` | Output-shaped eval (datasets under `evals/`; friendly workflow may point at Python sibling) |
+| `runners/test-simple-agents-rag-eval.js` | Mocked RAG chunks + `evaluate_rag_chunks` custom eval |
+| `example_paths.ts` | Path helpers aligned with Python `example_paths.py` |
 
-**YAML workflows** (`examples/python-test-simpleAgents/` and `examples/napi-test-simpleAgents/`):
+**YAML workflows**
 
-| File | What it demonstrates |
+| Location | Notes |
 |---|---|
-| `test.yaml` | Email hierarchical classification with finance enrichment and custom worker |
-| `friendly.yaml` | Minimal single-node chat bot |
-| `friendly-eval.yaml` | Eval suite comparing expected output-shaped records |
+| `python-test-simpleAgents/workflows/email-classification/test.yaml` | Full email classification demo; paired with Python `handlers.py`. |
+| `python-test-simpleAgents/workflows/friendly/friendly.yaml` | Minimal single-node chat bot (`friendly-eval` golden tests point here). |
+| `napi-test-simpleAgents/workflows/email-classification/test.yaml` | Same routing graph as Python; paired with TypeScript `handlers.ts`. |
+
+**Eval suites**
+
+| Location | Notes |
+|---|---|
+| `python-test-simpleAgents/evals/friendly/` | Friendly-chat golden eval (`friendly-eval.yaml`). |
+| `python-test-simpleAgents/evals/invoice/` | Invoice regression suites (paths vs terminal-only). |
+| `python-test-simpleAgents/evals/rag/` | Mocked `rag-eval` workflow + scorer. |
+| `napi-test-simpleAgents/evals/friendly/` | Friendly eval referencing Python sibling workflows/datasets (`../../../python-test-simpleAgents/…`). |
+| `napi-test-simpleAgents/evals/rag/` | NAPI-local rag eval (`rag-eval.yaml`) pointing at `workflows/rag/rag-eval-workflow.yaml`. |
 
 ### Running the Examples
 
@@ -167,25 +182,28 @@ uv sync
 cd python-test-simpleAgents
 
 # Normal run
-uv run python test-py-simple-agents.py
+uv run python runners/test-py-simple-agents.py
 
 # Streaming
-uv run python test-py-simple-agents-streaming.py
+uv run python runners/test-py-simple-agents-streaming.py
 
-# With image
-uv run python test-py-simple-agents-invoice-image.py
+# With image (place JPEG at assets/test-invoice.jpeg)
+uv run python runners/test-py-simple-agents-invoice-image.py
 
 # Streaming + Langfuse
-uv run python test-py-simple-agents-streaming-langfuse.py
+uv run python runners/test-py-simple-agents-streaming-langfuse.py
 
 # Image + Jaeger
-uv run python test-py-simple-agents-invoice-image-jaeger.py
+uv run python runners/test-py-simple-agents-invoice-image-jaeger.py
 
 # Output-shaped eval
-uv run python test-py-simple-agents-eval.py
+uv run python runners/test-py-simple-agents-eval.py
+
+# Invoice workflow evals
+uv run python runners/test-py-simple-agents-invoice-image-evals.py
 
 # FastAPI server
-uv run uvicorn fastapi_workflow_stream:app --reload
+uv run uvicorn apps.fastapi_workflow_stream:app --reload
 ```
 
 **TypeScript / Bun** (from `examples/napi-test-simpleAgents/`):
@@ -195,22 +213,32 @@ cd examples/napi-test-simpleAgents
 bun install
 
 # Normal run
-bun run test-simple-agents.ts
+bun run run
+# or
+bun run runners/test-simple-agents.ts
 
 # Streaming
-bun run test-simple-agents-streaming.ts
+bun run stream
+# or
+bun run runners/test-simple-agents-streaming.ts
 
-# With image
-bun run test-simple-agents-invoice-image.ts
+# With image (JPEG at sibling `python-test-simpleAgents/assets/test-invoice.jpeg`)
+bun run invoice-image
+# or
+bun run runners/test-simple-agents-invoice-image.ts
 
 # Streaming + Langfuse
-bun run test-simple-agents-streaming-langfuse.ts
+bun run stream:langfuse
+# or
+bun run runners/test-simple-agents-streaming-langfuse.ts
 
 # Image + Jaeger
-bun run test-simple-agents-invoice-image-jaeger.ts
+bun run invoice-image:jaeger
+# or
+bun run runners/test-simple-agents-invoice-image-jaeger.ts
 
 # Output-shaped eval
-bun run test-simple-agents-eval.ts
+bun run runners/test-simple-agents-eval.ts
 ```
 
 ## Workflow Evals
@@ -221,7 +249,7 @@ Eval datasets are JSONL golden records. Each row includes workflow `input` and a
 {"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
 ```
 
-Use `comparison.mode: exact` to compare the full output object, or `comparison.mode: paths` to compare stable paths such as `$.terminal_node`, `$.trace`, and `$.outputs.chat_reply.output`.
+Use `comparison.mode: exact` to compare the full output object, or `comparison.mode: paths` to compare stable paths such as `$.terminal_node`, `$.trace`, and `$.outputs.chat_reply.output`. For multi-node workflows, prefer path comparisons against stable enum/string fields; `evals/invoice/invoice-image-node-eval.yaml` compares the route and key node outputs, while `evals/invoice/invoice-image-terminal-eval.yaml` checks only the terminal node. Invoice multimodal suites use **`evals/invoice/generated/*.dataset.jsonl`**: runner `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-evals.py` embeds **`assets/test-invoice.jpeg`** (same text + vision parts as `invoice_eval_multimodal.py` shares with `test-py-simple-agents-invoice-image-jaegar.py`).
 
 Or use the package.json scripts:
 
@@ -237,17 +265,17 @@ bun run invoice-image:jaeger  # image + jaeger
 
 **1. Start simple: single-node workflow**
 
-Read `examples/python-test-simpleAgents/friendly.yaml` -- one `llm_call` node, no routing, plain text output.
+Read `examples/python-test-simpleAgents/workflows/friendly/friendly.yaml` -- one `llm_call` node, no routing, plain text output.
 
 Run it:
 
 ```bash
-# In the streaming example, change the workflow_file line to point to friendly.yaml
+# In runners/test-py-simple-agents-streaming.py, point workflow_file at workflows/friendly/friendly.yaml
 ```
 
 **2. Add classification + routing + custom workers**
 
-Read `examples/python-test-simpleAgents/test.yaml` -- multi-node email classification with:
+Read `examples/python-test-simpleAgents/workflows/email-classification/test.yaml` -- multi-node email classification with:
 - `llm_call` nodes for classification and extraction
 - `switch` nodes for deterministic routing
 - `custom_worker` node for stakeholder lookup
@@ -256,19 +284,19 @@ Read `examples/python-test-simpleAgents/test.yaml` -- multi-node email classific
 
 **3. Add streaming**
 
-Compare `test-py-simple-agents.py` (blocking) with `test-py-simple-agents-streaming.py`:
+Compare `runners/test-py-simple-agents.py` (blocking) with `runners/test-py-simple-agents-streaming.py`:
 - Add `WorkflowExecutionFlags(node_llm_streaming=True)`
 - Use `client.stream_workflow()` with an `on_event` callback
 
 **4. Add image input**
 
-Compare `test-py-simple-agents.py` with `test-py-simple-agents-invoice-image.py`:
+Compare `runners/test-py-simple-agents.py` with `runners/test-py-simple-agents-invoice-image.py`:
 - Change `content` from a string to a list with `text` + `image_url` parts
 - Base64-encode the image file
 
 **5. Add observability**
 
-Compare the base streaming example with `test-py-simple-agents-streaming-langfuse.py`:
+Compare the base streaming example with `runners/test-py-simple-agents-streaming-langfuse.py`:
 - Configure OTLP env vars for Langfuse or Jaeger
 - Add `WorkflowRunOptions(telemetry=WorkflowTelemetryConfig(enabled=True))`
 
@@ -319,17 +347,17 @@ for step in output.step_timings {
 
 | Language | File | Purpose |
 |---|---|---|
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents.py` | Normal workflow run |
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` | Streaming workflow |
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image.py` | Image input |
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` | Langfuse tracing |
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaeger.py` | Jaeger tracing |
-| Python | `examples/python-test-simpleAgents/fastapi_workflow_stream.py` | FastAPI SSE server |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents.ts` | Normal workflow run |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` | Streaming workflow |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image.ts` | Image input |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming-langfuse.ts` | Langfuse tracing |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image-jaeger.ts` | Jaeger tracing |
+| Python | `examples/python-test-simpleAgents/runners/test-py-simple-agents.py` | Normal workflow run |
+| Python | `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming.py` | Streaming workflow |
+| Python | `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image.py` | Image input |
+| Python | `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming-langfuse.py` | Langfuse tracing |
+| Python | `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-jaeger.py` | Jaeger tracing |
+| Python | `examples/python-test-simpleAgents/apps/fastapi_workflow_stream.py` | FastAPI SSE server |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents.ts` | Normal workflow run |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-streaming.ts` | Streaming workflow |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image.ts` | Image input |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-streaming-langfuse.ts` | Langfuse tracing |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image-jaeger.ts` | Jaeger tracing |
 | Rust | `examples/full_api_example.rs` | Full Rust client API |
 | Rust | `examples/python_client.py` | Python client API (completions, streaming, healing, tools) |
 | Rust | `examples/node_client.js` | Node client API (completions, streaming) |

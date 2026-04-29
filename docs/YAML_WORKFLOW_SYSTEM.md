@@ -182,7 +182,7 @@ Use this when you want a workflow that decides whether to act or ask a follow-up
 3. one branch asks a question
 4. one branch performs the main action
 
-Good example: `examples/python-test-simpleAgents/test.yaml` (email classification with routing and custom workers)
+Good example: `examples/python-test-simpleAgents/workflows/email-classification/test.yaml` (email classification with routing and custom workers)
 
 ## Prompt Context and Run Memory
 
@@ -310,7 +310,7 @@ bun run test-simple-agents-streaming.ts
 Graph visualization:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
 ```
 
 ## Telemetry and Diagnostics
@@ -358,7 +358,7 @@ uv sync --directory examples --reinstall-package simple-agents-py
 Render Mermaid output first to confirm parse and wiring:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
 ```
 
 ### Non-deterministic routing behavior
