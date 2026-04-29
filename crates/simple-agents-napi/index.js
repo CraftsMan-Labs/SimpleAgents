@@ -322,6 +322,8 @@ if (clientProto) {
         "node_llm_streaming",
         "splitStreamDeltas",
         "split_stream_deltas",
+        "debugStreamParse",
+        "debug_stream_parse",
         "extraWorkflowInput",
         "extra_workflow_input",
         "workflowOptions",
@@ -357,6 +359,8 @@ if (clientProto) {
       nodeLlmStreaming: parsed.nodeLlmStreaming,
       splitStreamDeltas:
         request.splitStreamDeltas ?? request.split_stream_deltas,
+      debugStreamParse:
+        request.debugStreamParse ?? request.debug_stream_parse,
     };
     const dispatch =
       request.customWorkerDispatch ?? request.custom_worker_dispatch;
@@ -392,6 +396,8 @@ if (clientProto) {
         "node_llm_streaming",
         "splitStreamDeltas",
         "split_stream_deltas",
+        "debugStreamParse",
+        "debug_stream_parse",
         "extraWorkflowInput",
         "extra_workflow_input",
         "workflowOptions",
@@ -427,6 +433,8 @@ if (clientProto) {
       nodeLlmStreaming: parsed.nodeLlmStreaming,
       splitStreamDeltas:
         request.splitStreamDeltas ?? request.split_stream_deltas,
+      debugStreamParse:
+        request.debugStreamParse ?? request.debug_stream_parse,
     };
     const dispatch =
       request.customWorkerDispatch ?? request.custom_worker_dispatch;

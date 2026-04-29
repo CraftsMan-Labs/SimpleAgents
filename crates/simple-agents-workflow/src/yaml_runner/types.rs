@@ -156,7 +156,7 @@ pub struct YamlWorkflowTraceOptions {
 /// Global execution toggles for a workflow run (orthogonal to per-node YAML `heal` / `stream`).
 ///
 /// JSON uses snake_case keys: `healing`, `workflow_streaming`, `node_llm_streaming`,
-/// `split_stream_deltas`. Missing keys deserialize using [`Default`] (see
+/// `split_stream_deltas`, `debug_stream_parse`. Missing keys deserialize using [`Default`] (see
 /// [`Default::default`] on this type).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -172,6 +172,9 @@ pub struct YamlWorkflowExecutionFlags {
     /// When true, emit separate stream events for thinking vs output (`node_stream_thinking_delta`,
     /// `node_stream_output_delta`) in addition to `node_stream_delta`.
     pub split_stream_deltas: bool,
+    /// When true (or when env `SIMPLE_AGENTS_DEBUG_STREAM_PARSE` is `1`/`true`/`yes`), append the
+    /// partial streamed LLM text to structured JSON parse/coerce errors for debugging.
+    pub debug_stream_parse: bool,
 }
 
 impl Default for YamlWorkflowExecutionFlags {
@@ -182,6 +185,7 @@ impl Default for YamlWorkflowExecutionFlags {
             workflow_streaming: false,
             node_llm_streaming: true,
             split_stream_deltas: false,
+            debug_stream_parse: false,
         }
     }
 }

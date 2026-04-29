@@ -213,6 +213,7 @@ export interface WorkflowExecutionFlags {
   workflow_streaming?: boolean;
   node_llm_streaming?: boolean;
   split_stream_deltas?: boolean;
+  debug_stream_parse?: boolean;
 }
 
 export interface WorkflowExecutionRequest {

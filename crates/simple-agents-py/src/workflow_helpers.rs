@@ -173,6 +173,7 @@ pub(crate) struct PythonWorkflowExecutionOptions {
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
     pub split_stream_deltas: bool,
+    pub debug_stream_parse: bool,
 }
 
 const fn default_true() -> bool {
@@ -237,11 +238,12 @@ pub(crate) fn parse_workflow_execution_request(
             "workflow_streaming",
             "node_llm_streaming",
             "split_stream_deltas",
+            "debug_stream_parse",
         ];
         for key in execution_object.keys() {
             if !allowed_execution_keys.contains(&key.as_str()) {
                 return Err(PyRuntimeError::new_err(format!(
-                    "unknown execution key '{key}'; expected keys: model?, healing?, workflow_streaming?, node_llm_streaming?, split_stream_deltas?"
+                    "unknown execution key '{key}'; expected keys: model?, healing?, workflow_streaming?, node_llm_streaming?, split_stream_deltas?, debug_stream_parse?"
                 )));
             }
         }
@@ -265,12 +267,17 @@ pub(crate) fn parse_workflow_execution_request(
             .get("split_stream_deltas")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let debug_stream_parse = execution_object
+            .get("debug_stream_parse")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         PythonWorkflowExecutionOptions {
             model,
             healing,
             workflow_streaming,
             node_llm_streaming,
             split_stream_deltas,
+            debug_stream_parse,
         }
     } else {
         PythonWorkflowExecutionOptions {
@@ -308,6 +315,7 @@ pub(crate) fn workflow_execution_flags(
         workflow_streaming: options.workflow_streaming,
         node_llm_streaming: options.node_llm_streaming,
         split_stream_deltas: options.split_stream_deltas,
+        debug_stream_parse: options.debug_stream_parse,
     }
 }
 

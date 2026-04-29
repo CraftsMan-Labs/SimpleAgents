@@ -844,6 +844,7 @@ mod tests {
             tenant_context: YamlWorkflowTraceTenantContext::default(),
             trace_sampled: false,
             split_stream_deltas,
+            debug_stream_parse: false,
         }
     }
 

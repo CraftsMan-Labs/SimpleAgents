@@ -113,6 +113,7 @@ class WorkflowExecutionFlags(TypedDict, total=False):
     workflow_streaming: bool
     node_llm_streaming: bool
     split_stream_deltas: bool
+    debug_stream_parse: bool
 
 
 class WorkflowExecutionRequest(TypedDict, total=False):

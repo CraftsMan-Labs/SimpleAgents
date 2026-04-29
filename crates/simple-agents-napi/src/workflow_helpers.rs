@@ -39,6 +39,8 @@ pub(crate) struct WorkflowExecutionFlagsPatchNapi {
     pub(crate) node_llm_streaming: Option<bool>,
     #[serde(alias = "split_stream_deltas", alias = "splitStreamDeltas")]
     pub(crate) split_stream_deltas: Option<bool>,
+    #[serde(alias = "debug_stream_parse", alias = "debugStreamParse")]
+    pub(crate) debug_stream_parse: Option<bool>,
 }
 
 pub(crate) fn parse_workflow_execution_flags_patch(
@@ -69,6 +71,9 @@ pub(crate) fn apply_workflow_execution_flags_patch(
     }
     if let Some(v) = patch.split_stream_deltas {
         base.split_stream_deltas = v;
+    }
+    if let Some(v) = patch.debug_stream_parse {
+        base.debug_stream_parse = v;
     }
     base
 }

@@ -89,6 +89,10 @@ class WorkflowExecutionFlags(BaseModel):
         default=False,
         description="When True, emit thinking vs output stream events (Rust: split_stream_deltas).",
     )
+    debug_stream_parse: bool = Field(
+        default=False,
+        description="When True (or env SIMPLE_AGENTS_DEBUG_STREAM_PARSE), append partial LLM text to structured JSON parse errors (Rust: debug_stream_parse).",
+    )
 
 
 class WorkflowTraceContext(BaseModel):

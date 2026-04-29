@@ -69,7 +69,7 @@ def _node_stream_snapshot_log_line(event: WorkflowStreamEvent) -> str:
 def default_workflow_execution_bools() -> dict[str, bool]:
     """Rust ``YamlWorkflowExecutionFlags::default()`` as an explicit dict (bool fields only).
 
-    Keys: ``healing``, ``workflow_streaming``, ``node_llm_streaming``, ``split_stream_deltas``.
+    Keys: ``healing``, ``workflow_streaming``, ``node_llm_streaming``, ``split_stream_deltas``, ``debug_stream_parse``.
     """
 
     return {
@@ -77,13 +77,14 @@ def default_workflow_execution_bools() -> dict[str, bool]:
         "workflow_streaming": False,
         "node_llm_streaming": True,
         "split_stream_deltas": False,
+        "debug_stream_parse": False,
     }
 
 
 def merge_workflow_execution(execution: Mapping[str, Any] | None) -> dict[str, Any]:
     """Return *execution* merged on top of :func:`default_workflow_execution_bools`.
 
-    Later keys win. Non-bool values for the four flag keys are preserved as-is so
+    Later keys win. Non-bool values for the execution-flag keys are preserved as-is so
     ``model`` can still be merged separately by the Rust layer if present under
     ``execution``.
     """

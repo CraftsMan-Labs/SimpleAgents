@@ -143,6 +143,7 @@ pub(super) async fn execute_llm_node(
         tenant_context: options.trace.tenant.clone(),
         trace_sampled: telemetry_context.sampled,
         split_stream_deltas: execution_flags.split_stream_deltas,
+        debug_stream_parse: execution_flags.debug_stream_parse,
     };
 
     if let Some(span) = node_span.as_mut() {

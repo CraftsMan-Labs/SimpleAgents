@@ -2586,6 +2586,7 @@ nodes:
         assert!(!f.workflow_streaming);
         assert!(f.node_llm_streaming);
         assert!(!f.split_stream_deltas);
+        assert!(!f.debug_stream_parse);
     }
 
     #[test]

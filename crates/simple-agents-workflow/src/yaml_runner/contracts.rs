@@ -261,6 +261,8 @@ pub struct YamlLlmExecutionRequest {
     pub trace_sampled: bool,
     /// Split thinking/output stream events (mirrors [`YamlWorkflowExecutionFlags::split_stream_deltas`]).
     pub split_stream_deltas: bool,
+    /// Include partial streamed text in structured JSON parse error messages when debugging.
+    pub debug_stream_parse: bool,
 }
 
 #[derive(Debug, Clone)]

@@ -325,6 +325,7 @@ pub struct WorkflowYamlRunRequest {
     pub workflow_streaming: Option<bool>,
     pub node_llm_streaming: Option<bool>,
     pub split_stream_deltas: Option<bool>,
+    pub debug_stream_parse: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
     pub workflow_options: Option<WorkflowRunOptionsNapi>,
@@ -1426,7 +1427,7 @@ impl Client {
 
     #[napi(
         js_name = "runWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
     pub fn run_workflow(
@@ -1499,7 +1500,7 @@ impl Client {
 
     #[napi(
         js_name = "streamWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream_workflow(
