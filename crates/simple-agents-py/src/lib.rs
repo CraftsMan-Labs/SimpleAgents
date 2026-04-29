@@ -40,9 +40,8 @@ use provider_helpers::build_provider_from_name;
 use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
-    attach_workflow_events, build_workflow_input_from_execution_request,
-    parse_resume_output, parse_workflow_execution_request, workflow_execution_flags,
-    workflow_execution_options,
+    attach_workflow_events, build_workflow_input_from_execution_request, parse_resume_output,
+    parse_workflow_execution_request, workflow_execution_flags, workflow_execution_options,
     workflow_root_path, CombinedWorkflowEventSink, PythonCustomWorkerExecutor,
     PythonWorkflowEventSink, RecordingWorkflowEventSink,
 };
@@ -1179,7 +1178,6 @@ impl Client {
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
         Ok(py_value.into_py(py))
     }
-
 }
 
 // ---------------------------------------------------------------------------
