@@ -51,9 +51,16 @@ def run_eval_suite(
         raise ValueError("evaluator is required")
 
     records = _load_dataset(Path(req.dataset_path))
+    native_cases = _native_cases_by_id(client, req)
     cases: list[EvalCaseResult] = []
     for record in records:
-        cases.append(_run_case(client, req, record, evaluator))
+        cases.append(
+            _run_case(
+                record=record,
+                evaluator=evaluator,
+                native_case=native_cases.get(record.id),
+            )
+        )
 
     return _build_report(
         req.suite_id or Path(req.dataset_path).stem,
@@ -164,21 +171,60 @@ def _load_dataset(path: Path) -> list[EvalDatasetRecord]:
         records.append(record)
 
     if not records:
-        raise ValueError(f"eval dataset {path} must contain at least one record")
+        raise ValueError(
+            f"eval dataset {path} must contain at least one record"
+        )
     return records
 
 
 def _run_case(
-    client: Client,
-    request: EvalSuiteRequest,
     record: EvalDatasetRecord,
     evaluator: EvalEvaluator,
+    native_case: Any | None,
 ) -> EvalCaseResult:
-    try:
-        actual_output = cast(
-            dict[str, Any],
-            client.run_workflow(_workflow_request(request, record)),
+    if native_case is None:
+        return EvalCaseResult(
+            case_id=record.id,
+            status=EvalRunStatus.ERROR,
+            evaluations=[
+                EvalResult.errored("native eval runner did not return this case")
+            ],
+            error=EvalErrorInfo(
+                code="eval_case_error",
+                message="native eval runner did not return this case",
+            ),
         )
+    if not isinstance(native_case, dict):
+        return EvalCaseResult(
+            case_id=record.id,
+            status=EvalRunStatus.ERROR,
+            evaluations=[
+                EvalResult.errored(
+                    "native eval runner returned malformed case payload"
+                )
+            ],
+            error=EvalErrorInfo(
+                code="eval_case_error",
+                message="native eval runner returned malformed case payload",
+            ),
+        )
+    native_error = native_case.get("error")
+    workflow_output = native_case.get("workflow_output")
+    if native_error is not None or not isinstance(workflow_output, dict):
+        message = (
+            native_error.get("message")
+            if isinstance(native_error, dict)
+            else "native eval workflow execution failed"
+        )
+        text = str(message or "native eval workflow execution failed")
+        return EvalCaseResult(
+            case_id=record.id,
+            status=EvalRunStatus.ERROR,
+            evaluations=[EvalResult.errored(text)],
+            error=EvalErrorInfo(code="eval_case_error", message=text),
+        )
+    try:
+        actual_output = cast(dict[str, Any], workflow_output)
         case = EvalCase(
             id=record.id,
             input=record.input,
@@ -213,27 +259,25 @@ def _run_case(
         )
 
 
-def _workflow_request(
+def _native_cases_by_id(
+    client: Client,
     request: EvalSuiteRequest,
-    record: EvalDatasetRecord,
 ) -> dict[str, Any]:
-    workflow_input = dict(record.input)
-    messages = workflow_input.pop("messages", None)
-    if not isinstance(messages, list) or not messages:
+    native_payload = request.to_client_payload()
+    native_report = cast(dict[str, Any], client.run_eval_suite(native_payload))
+    native_cases = native_report.get("cases")
+    if not isinstance(native_cases, list):
         raise ValueError(
-            f"record {record.id!r} input.messages must be a non-empty list"
+            "native run_eval_suite returned malformed report.cases"
         )
-    payload: dict[str, Any] = {
-        "workflow_path": request.workflow_path,
-        "messages": messages,
-    }
-    if workflow_input:
-        payload["input"] = workflow_input
-    if request.execution is not None:
-        payload["execution"] = request.execution
-    if request.workflow_options is not None:
-        payload["workflow_options"] = request.workflow_options
-    return payload
+    case_map: dict[str, Any] = {}
+    for native_case in native_cases:
+        if not isinstance(native_case, dict):
+            continue
+        case_id = native_case.get("case_id")
+        if isinstance(case_id, str):
+            case_map[case_id] = native_case
+    return case_map
 
 
 def _coerce_eval_result(
