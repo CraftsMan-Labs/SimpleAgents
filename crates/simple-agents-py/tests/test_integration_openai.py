@@ -120,14 +120,14 @@ nodes:
         heal: true
     config:
       prompt: |
-        Return only this JSON object with no extra text:
+        Return JSON only with this required field:
         {{
-          \"state\": \"capabilities_query\",
-          \"reason\": \"short\"
+          \"state\": \"capabilities_query\"
         }}
+        You may include optional field \"reason\" as a short string.
       output_schema:
         type: object
-        required: [state, reason]
+        required: [state]
         properties:
           state:
             type: string
