@@ -103,7 +103,7 @@ test('streamWorkflow with onEvent and customWorkerDispatch resolves', async (t) 
   const result = await client.streamWorkflow(
     workflowPath,
     { messages },
-    (_err, eventJson) => {
+    (eventJson) => {
       events.push(eventJson);
     },
     undefined,
