@@ -14,11 +14,13 @@ use simple_agent_type::message::{ContentPart, Message, MessageContent, Role};
 use simple_agent_type::prelude::{
     ApiKey, CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
 };
+use simple_agent_type::provider::RetryConfig;
 use simple_agent_type::response::{CompletionChunk, CompletionResponse, FinishReason, Usage};
+use simple_agent_type::telemetry::ApiFormat;
 use simple_agent_type::tool::{ToolCall, ToolType};
 use simple_agents_core::{
-    CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
-    SimpleAgentsClient,
+    ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse,
+    HealedSchemaResponse, SimpleAgentsClient,
 };
 use simple_agents_healing::{
     schema::{Field as SchemaField, ObjectSchema, Schema},
@@ -34,7 +36,7 @@ use simple_agents_workflow::yaml_runner::{
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod workflow_custom_worker;
 mod workflow_helpers;
@@ -71,18 +73,109 @@ fn client_opts_from_js_object(opts: Option<&JsObject>) -> Result<ClientOptsFromJ
 fn build_provider_arc(
     api_key: Option<&str>,
     base_url: Option<&str>,
+    timeout: Option<Duration>,
 ) -> SaResult<Arc<dyn Provider>> {
     let provider = match api_key {
         Some(key) => {
             let key = ApiKey::new(key)?;
             match base_url {
-                Some(base) => OpenAiCompatProvider::with_base_url(key, base.to_string())?,
-                None => OpenAiCompatProvider::new(key)?,
+                Some(base) => OpenAiCompatProvider::with_base_url_and_format_and_timeout(
+                    key,
+                    base.to_string(),
+                    ApiFormat::ChatCompletions,
+                    timeout,
+                )?,
+                None => match timeout {
+                    Some(duration) => OpenAiCompatProvider::new_with_format_and_timeout(
+                        key,
+                        ApiFormat::ChatCompletions,
+                        duration,
+                    )?,
+                    None => OpenAiCompatProvider::new(key)?,
+                },
             }
         }
-        None => OpenAiCompatProvider::from_env()?,
+        None => match timeout {
+            Some(duration) => {
+                let api_key = std::env::var("OPENAI_API_KEY")
+                    .map_err(|_| config_err("OPENAI_API_KEY environment variable is required"))?;
+                let key = ApiKey::new(api_key)?;
+                let base = std::env::var("OPENAI_API_BASE").ok();
+                match base {
+                    Some(base) => OpenAiCompatProvider::with_base_url_and_format_and_timeout(
+                        key,
+                        base,
+                        ApiFormat::ChatCompletions,
+                        Some(duration),
+                    )?,
+                    None => OpenAiCompatProvider::new_with_format_and_timeout(
+                        key,
+                        ApiFormat::ChatCompletions,
+                        duration,
+                    )?,
+                }
+            }
+            None => OpenAiCompatProvider::from_env()?,
+        },
     };
     Ok(Arc::new(provider))
+}
+
+fn parse_client_timeout(options: Option<&ClientOptions>) -> SaResult<Option<Duration>> {
+    match options.and_then(|options| options.timeout_seconds) {
+        Some(value) if value.is_finite() && value > 0.0 => Ok(Some(Duration::from_secs_f64(value))),
+        Some(_) => Err(config_err(
+            "timeoutSeconds must be a positive finite number",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_client_retry_strategy(value: Option<&str>) -> SaResult<Option<f32>> {
+    match value {
+        Some("none") => Ok(None),
+        Some("fixed") => Ok(Some(1.0)),
+        Some("exponential") | None => Ok(Some(2.0)),
+        Some(other) => Err(config_err(format!(
+            "unknown retryStrategy '{other}'; expected 'none', 'fixed', or 'exponential'"
+        ))),
+    }
+}
+
+fn parse_client_retry_config(options: Option<&ClientOptions>) -> SaResult<RetryConfig> {
+    let mut retry = RetryConfig::default();
+    if let Some(attempts) = options.and_then(|options| options.retry_attempts) {
+        if attempts == 0 {
+            return Err(config_err(
+                "retryAttempts must be greater than or equal to 1",
+            ));
+        }
+        retry.max_attempts = attempts;
+    }
+    match parse_client_retry_strategy(
+        options.and_then(|options| options.retry_strategy.as_deref()),
+    )? {
+        Some(multiplier) => {
+            retry.backoff_multiplier = multiplier;
+            retry.jitter = false;
+        }
+        None => retry.max_attempts = 1,
+    }
+    Ok(retry)
+}
+
+fn build_client_config(
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    options: Option<&ClientOptions>,
+) -> SaResult<ClientConfig> {
+    Ok(ClientConfig {
+        provider: "openai".to_string(),
+        api_key: api_key.unwrap_or_default().to_string(),
+        base_url: base_url.map(str::to_string),
+        default_retry: parse_client_retry_config(options)?,
+        ..ClientConfig::default()
+    })
 }
 
 fn napi_err(error: SimpleAgentsError) -> Error {
@@ -235,6 +328,15 @@ pub struct WorkflowYamlRunRequest {
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
     pub workflow_options: Option<WorkflowRunOptionsNapi>,
+}
+
+#[napi(object)]
+#[derive(Default)]
+pub struct ClientOptions {
+    pub timeout_seconds: Option<f64>,
+    pub retry_attempts: Option<u32>,
+    /// "none" | "fixed" | "exponential"
+    pub retry_strategy: Option<String>,
 }
 
 #[napi(object)]
@@ -1225,19 +1327,32 @@ impl Client {
     /// Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
     /// the endpoint.
     #[napi(constructor)]
-    pub fn new(api_key: String, base_url: Option<String>) -> Result<Self> {
-        let provider =
-            build_provider_arc(Some(api_key.as_str()), base_url.as_deref()).map_err(napi_err)?;
-        let client = Arc::new(SimpleAgentsClient::new(provider));
+    pub fn new(
+        api_key: String,
+        base_url: Option<String>,
+        options: Option<ClientOptions>,
+    ) -> Result<Self> {
+        let timeout = parse_client_timeout(options.as_ref()).map_err(napi_err)?;
+        let provider = build_provider_arc(Some(api_key.as_str()), base_url.as_deref(), timeout)
+            .map_err(napi_err)?;
+        let config = build_client_config(
+            Some(api_key.as_str()),
+            base_url.as_deref(),
+            options.as_ref(),
+        )
+        .map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::from_config(provider, config));
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
         Ok(Self { runtime, client })
     }
 
     /// Create a client using environment variables for the API key.
     #[napi(factory)]
-    pub fn from_env() -> Result<Self> {
-        let provider = build_provider_arc(None, None).map_err(napi_err)?;
-        let client = Arc::new(SimpleAgentsClient::new(provider));
+    pub fn from_env(options: Option<ClientOptions>) -> Result<Self> {
+        let timeout = parse_client_timeout(options.as_ref()).map_err(napi_err)?;
+        let provider = build_provider_arc(None, None, timeout).map_err(napi_err)?;
+        let config = build_client_config(None, None, options.as_ref()).map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::from_config(provider, config));
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
         Ok(Self { runtime, client })
     }
@@ -1550,5 +1665,51 @@ pub fn sync_otel_env_from_process(
         if !name.is_empty() {
             std::env::set_var("OTEL_SERVICE_NAME", name);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_options_accept_timeout_and_retry() {
+        let options = ClientOptions {
+            timeout_seconds: Some(30.0),
+            retry_attempts: Some(2),
+            retry_strategy: Some("fixed".to_string()),
+        };
+
+        assert_eq!(
+            parse_client_timeout(Some(&options)).unwrap(),
+            Some(Duration::from_secs(30))
+        );
+        let retry = parse_client_retry_config(Some(&options)).unwrap();
+        assert_eq!(retry.max_attempts, 2);
+        assert_eq!(retry.backoff_multiplier, 1.0);
+    }
+
+    #[test]
+    fn client_options_reject_invalid_values() {
+        let bad_timeout = ClientOptions {
+            timeout_seconds: Some(0.0),
+            retry_attempts: None,
+            retry_strategy: None,
+        };
+        assert!(parse_client_timeout(Some(&bad_timeout)).is_err());
+
+        let bad_attempts = ClientOptions {
+            timeout_seconds: None,
+            retry_attempts: Some(0),
+            retry_strategy: None,
+        };
+        assert!(parse_client_retry_config(Some(&bad_attempts)).is_err());
+
+        let bad_strategy = ClientOptions {
+            timeout_seconds: None,
+            retry_attempts: None,
+            retry_strategy: Some("linear".to_string()),
+        };
+        assert!(parse_client_retry_config(Some(&bad_strategy)).is_err());
     }
 }

@@ -31,8 +31,8 @@
     "pretest:live": "npm run build:debug",
     "test": "npm run test:unit && npm run test:contract",
     "test:unit": "node --test test/unit.test.js test/workflow_event.test.js test/custom_worker.test.js test/wrapper.test.js",
-    "test:contract": "node --env-file-if-exists=../../.env --test test/contract.test.js",
-    "test:live": "node --env-file-if-exists=../../.env --test test/live.test.js",
+    "test:contract": "node scripts/node-test-with-env.mjs test/contract.test.js",
+    "test:live": "node scripts/node-test-with-env.mjs test/live.test.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "2.16.0",
+    "dotenv": "^16.4.5",
     "typescript": "5.4.5"
   }
 }

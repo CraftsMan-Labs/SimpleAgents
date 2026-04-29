@@ -54,6 +54,21 @@ function camelizeEvalResult(report) {
         firstFailedPath: caseResult.first_failed_path,
         expected: caseResult.expected,
         actual: caseResult.actual,
+        evaluations: Array.isArray(caseResult.evaluations)
+          ? caseResult.evaluations.map((evaluation) => ({
+              id: evaluation.id,
+              kind: evaluation.kind,
+              status: evaluation.status,
+              passed: evaluation.passed,
+              score: evaluation.score,
+              path: evaluation.path,
+              nodeId: evaluation.node_id,
+              expected: evaluation.expected,
+              actual: evaluation.actual,
+              reason: evaluation.reason,
+              metadata: evaluation.metadata,
+            }))
+          : caseResult.evaluations,
         workflowOutput: caseResult.workflow_output,
         error: caseResult.error,
       }))

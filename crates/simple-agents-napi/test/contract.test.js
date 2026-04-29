@@ -83,6 +83,23 @@ test('resume declaration includes optional customWorker', () => {
   );
 });
 
+test('client declaration includes timeout and retry options', () => {
+  const declarationPath = path.resolve(__dirname, '../index.d.ts');
+  const declaration = fs.readFileSync(declarationPath, 'utf8');
+  assert.ok(declaration.includes('interface ClientOptions'), 'ClientOptions should be declared');
+  assert.ok(declaration.includes('timeoutSeconds?: number'), 'timeoutSeconds should be declared');
+  assert.ok(declaration.includes('retryAttempts?: number'), 'retryAttempts should be declared');
+  assert.ok(declaration.includes('retryStrategy?: string'), 'retryStrategy should be declared');
+  assert.ok(
+    declaration.includes('options?: ClientOptions'),
+    'Client constructor should accept options',
+  );
+  assert.ok(
+    declaration.includes('static fromEnv(') && declaration.includes('ClientOptions'),
+    'fromEnv should accept options',
+  );
+});
+
 test('workflow DSL fixture preserves canonical IR wires', () => {
   const fixturePath = path.resolve(
     __dirname,

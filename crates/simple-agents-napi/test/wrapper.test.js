@@ -49,6 +49,21 @@ test('runEvalSuite camel-cases native eval report fields', async () => {
             first_failed_path: '$.outputs.final.answer',
             expected: { answer: 'yes' },
             actual: { answer: 'no' },
+            evaluations: [
+              {
+                id: 'rag-accuracy',
+                kind: 'custom',
+                status: 'failed',
+                passed: false,
+                score: 0.5,
+                path: '$.outputs.retrieve_chunks.output',
+                node_id: 'retrieve_chunks',
+                expected: ['doc-1', 'doc-2'],
+                actual: [{ source_id: 'doc-1' }],
+                reason: '1/2 expected sources matched',
+                metadata: { missing: ['doc-2'] },
+              },
+            ],
             workflow_output: { terminal_node: 'final' },
             error: null,
           },
@@ -69,6 +84,8 @@ test('runEvalSuite camel-cases native eval report fields', async () => {
   assert.strictEqual(report.cases[0].caseId, 'case-1');
   assert.strictEqual(report.cases[0].firstFailedNode, 'final');
   assert.strictEqual(report.cases[0].firstFailedPath, '$.outputs.final.answer');
+  assert.strictEqual(report.cases[0].evaluations[0].nodeId, 'retrieve_chunks');
+  assert.strictEqual(report.cases[0].evaluations[0].score, 0.5);
   assert.strictEqual(report.cases[0].workflowOutput.terminal_node, 'final');
   assert.strictEqual(report.suite_id, undefined);
   assert.strictEqual(report.summary.total_cases, undefined);

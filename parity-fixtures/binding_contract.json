@@ -46,7 +46,7 @@
   "node": {
     "required_type_symbols": [
       "export interface CompletionResult",
-      "export interface StreamEvent",
+      "export interface StreamChunk",
       "runWorkflow(",
       "streamWorkflow(",
       "resume(",

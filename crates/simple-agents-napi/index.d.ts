@@ -64,6 +64,12 @@ export interface WorkflowYamlRunRequest {
   extraWorkflowInput?: Record<string, unknown>
   workflowOptions?: WorkflowRunOptionsNapi
 }
+export interface ClientOptions {
+  timeoutSeconds?: number
+  retryAttempts?: number
+  /** "none" | "fixed" | "exponential" */
+  retryStrategy?: string
+}
 export interface CompleteOptions {
   maxTokens?: number
   temperature?: number
@@ -159,9 +165,9 @@ export class Client {
    * Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
    * the endpoint.
    */
-  constructor(apiKey: string, baseUrl?: string | undefined | null)
+  constructor(apiKey: string, baseUrl?: string | undefined | null, options?: ClientOptions | undefined | null)
   /** Create a client using environment variables for the API key. */
-  static fromEnv(): Client
+  static fromEnv(options?: ClientOptions | undefined | null): Client
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
   streamComplete(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
   runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
@@ -203,8 +209,23 @@ export interface EvalCaseResult {
   firstFailedPath?: string
   expected?: unknown
   actual?: unknown
+  evaluations?: Array<EvalResult>
   workflowOutput?: Record<string, unknown>
   error?: EvalErrorInfo
+}
+
+export interface EvalResult {
+  id: string
+  kind: 'deterministic' | 'custom'
+  status: 'passed' | 'failed' | 'error'
+  passed: boolean
+  score?: number
+  path?: string
+  nodeId?: string
+  expected?: unknown
+  actual?: unknown
+  reason?: string
+  metadata?: unknown
 }
 
 export interface EvalReport {

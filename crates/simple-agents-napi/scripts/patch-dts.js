@@ -34,8 +34,23 @@ export interface EvalCaseResult {
   firstFailedPath?: string
   expected?: unknown
   actual?: unknown
+  evaluations?: Array<EvalResult>
   workflowOutput?: Record<string, unknown>
   error?: EvalErrorInfo
+}
+
+export interface EvalResult {
+  id: string
+  kind: 'deterministic' | 'custom'
+  status: 'passed' | 'failed' | 'error'
+  passed: boolean
+  score?: number
+  path?: string
+  nodeId?: string
+  expected?: unknown
+  actual?: unknown
+  reason?: string
+  metadata?: unknown
 }
 
 export interface EvalReport {
