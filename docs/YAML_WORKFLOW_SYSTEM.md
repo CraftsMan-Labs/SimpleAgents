@@ -216,14 +216,14 @@ Globals are per-run memory managed by the runtime:
 
 - There is no top-level YAML `globals:` block in workflow files.
 - Globals start as an empty object for each run.
-- Read values in templates with `{{ globals.<key> }}`.
+- Read values in templates with <code v-pre>{{ globals.&lt;key&gt; }}</code>.
 
 Write/update globals in any node `config` using:
 
 - `config.set_globals`
 - `config.update_globals` with `set|append|increment|merge`
 
-Path values in `set_globals` / `update_globals.from` use direct paths (for example `nodes.classify.output.category`), not `{{ ... }}`.
+Path values in `set_globals` / `update_globals.from` use direct paths (for example `nodes.classify.output.category`), not <code v-pre>{{ ... }}</code>.
 
 Example:
 
