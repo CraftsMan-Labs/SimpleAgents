@@ -1,4 +1,5 @@
 pub mod client;
+pub mod evals;
 pub mod observability;
 pub mod yaml_runner;
 
