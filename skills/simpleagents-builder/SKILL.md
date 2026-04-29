@@ -772,17 +772,17 @@ Runnable skill examples (self-contained YAML + handler + runner):
 
 Bundled full examples in this skill:
 
-- `examples/python-test-simpleAgents/test.yaml` -- full email classification with finance enrichment
-- `examples/python-test-simpleAgents/friendly.yaml` -- minimal single-node chat bot
-- `examples/python-test-simpleAgents/handlers.py` -- Python custom worker handler
-- `examples/python-test-simpleAgents/test-py-simple-agents.py` -- normal Python run
-- `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` -- streaming Python run
-- `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` -- streaming with Langfuse
-- `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image.py` -- image input (normal)
-- `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-streaming.py` -- image input (streaming)
-- `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaegar.py` -- image input with Jaeger
-- `examples/python-test-simpleAgents/fastapi_workflow_stream.py` -- FastAPI streaming endpoint example
+- `examples/python-test-simpleAgents/workflows/email-classification/test.yaml` -- full email classification with finance enrichment
+- `examples/python-test-simpleAgents/workflows/friendly/friendly.yaml` -- minimal single-node chat bot
+- `examples/python-test-simpleAgents/workflows/email-classification/handlers.py` -- Python custom worker handler
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents.py` -- normal Python run
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming.py` -- streaming Python run
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming-langfuse.py` -- streaming with Langfuse
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image.py` -- image input (normal)
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-streaming.py` -- image input (streaming)
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-jaegar.py` -- image input with Jaeger
+- `examples/python-test-simpleAgents/apps/fastapi_workflow_stream.py` -- FastAPI streaming endpoint example
 - `examples/python-test-simpleAgents/README.md` -- setup and run instructions for Python examples
-- `examples/napi-test-simpleAgents/test.yaml` -- NAPI workflow YAML
-- `examples/napi-test-simpleAgents/handlers.ts` -- TypeScript custom worker dispatch
+- `examples/napi-test-simpleAgents/workflows/email-classification/test.yaml` -- NAPI workflow YAML
+- `examples/napi-test-simpleAgents/workflows/email-classification/handlers.ts` -- TypeScript custom worker dispatch
 - `examples/napi-test-simpleAgents/package.json` -- NAPI scripts and dependencies
