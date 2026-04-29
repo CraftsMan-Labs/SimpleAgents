@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
+from example_env import require_env
 from simple_agents_py import Client
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
@@ -82,9 +83,9 @@ def main() -> None:
     configure_langfuse_otel_from_env()
 
     client = Client(
-        os.environ["WORKFLOW_PROVIDER"],
-        api_base=os.environ["WORKFLOW_API_BASE"],
-        api_key=os.environ["WORKFLOW_API_KEY"],
+        require_env("WORKFLOW_PROVIDER"),
+        api_base=require_env("WORKFLOW_API_BASE"),
+        api_key=require_env("WORKFLOW_API_KEY"),
     )
 
     user_input = input("Enter your Input: ")

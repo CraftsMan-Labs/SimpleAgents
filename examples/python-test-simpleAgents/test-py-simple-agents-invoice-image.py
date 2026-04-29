@@ -7,11 +7,11 @@ From ``examples/``: ``uv sync`` (workspace member; ``simple-agents-py`` comes fr
 from __future__ import annotations
 
 import json
-import os
 import base64
 from pathlib import Path
 
 from dotenv import load_dotenv
+from example_env import require_env
 from simple_agents_py import Client as SimpleAgentsClient
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
@@ -26,14 +26,23 @@ workflow_file = Path(__file__).resolve().parent / "test.yaml"
 image_file = Path(__file__).resolve().parent / "test-invoice.jpeg"
 
 
+def require_file(path: Path) -> Path:
+    if not path.exists():
+        raise SystemExit(
+            f"Required example asset is missing: {path}\n"
+            "Add a small invoice JPEG at that path before running this example."
+        )
+    return path
+
+
 def main() -> None:
     client = SimpleAgentsClient(
-        os.environ["WORKFLOW_PROVIDER"],
-        api_base=os.environ["WORKFLOW_API_BASE"],
-        api_key=os.environ["WORKFLOW_API_KEY"],
+        require_env("WORKFLOW_PROVIDER"),
+        api_base=require_env("WORKFLOW_API_BASE"),
+        api_key=require_env("WORKFLOW_API_KEY"),
     )
 
-    b64 = base64.b64encode(image_file.read_bytes()).decode("ascii")
+    b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
 
     req = WorkflowExecutionRequest(
         workflow_path=str(workflow_file),

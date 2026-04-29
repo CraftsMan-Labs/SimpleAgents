@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import queue
 import threading
 from collections.abc import AsyncIterator, Mapping
@@ -10,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from example_env import require_env
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -39,9 +39,9 @@ class StreamResponse(BaseModel):
 
 def _client() -> Client:
     return Client(
-        os.environ["WORKFLOW_PROVIDER"],
-        api_base=os.environ["WORKFLOW_API_BASE"],
-        api_key=os.environ["WORKFLOW_API_KEY"],
+        require_env("WORKFLOW_PROVIDER"),
+        api_base=require_env("WORKFLOW_API_BASE"),
+        api_key=require_env("WORKFLOW_API_KEY"),
     )
 
 
