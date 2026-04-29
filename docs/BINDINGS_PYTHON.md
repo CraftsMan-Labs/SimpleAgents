@@ -172,16 +172,17 @@ streamed = client.stream_workflow(request, on_event=on_event)
 Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output` shaped like `YamlWorkflowRunOutput`. The runner compares actual output to expected output and reports the first mismatched path/node.
 
 ```python
-from simple_agents_py import Client
-from simple_agents_py.eval_request import EvalReport, EvalSuiteRequest
+from simple_agents_py import Client, EvalSuiteRequest, run_eval_suite
 
 client = Client("openai")
 request = EvalSuiteRequest(suite_path="friendly-eval.yaml")
-report = EvalReport.model_validate(client.run_eval_suite(request.to_client_payload()))
+report = run_eval_suite(client, request)
 
 print(report.status)
 print(report.cases[0].first_failed_path)
 ```
+
+For low-level integrations, `client.run_eval_suite(request.to_client_payload())` remains available and returns the same typed report shape.
 
 ### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
 
@@ -219,6 +220,8 @@ request = WorkflowExecutionRequest(
     ),
 )
 ```
+
+Python multimodal workflow messages use OpenAI-style content parts such as `{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}`. The Node binding also accepts its typed `ContentPartInput` shape (`{ type: "image", mediaType, data }`); do not blindly copy multimodal payloads across languages without translating the part shape.
 
 Requires `pip install simple-agents-py[pydantic]`.
 

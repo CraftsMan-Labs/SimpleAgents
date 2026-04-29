@@ -7,7 +7,8 @@
     "stream": "bun run test-simple-agents-streaming.ts",
     "stream:langfuse": "bun run test-simple-agents-streaming-langfuse.ts",
     "invoice-image": "bun run test-simple-agents-invoice-image.ts",
-    "invoice-image:jaeger": "bun run test-simple-agents-invoice-image-jaegar.ts"
+    "invoice-image:jaeger": "bun run test-simple-agents-invoice-image-jaeger.ts",
+    "invoice-image:jaegar": "bun run test-simple-agents-invoice-image-jaegar.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

@@ -132,7 +132,7 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 | `test-py-simple-agents-invoice-image.py` | Image input (multimodal) |
 | `test-py-simple-agents-invoice-image-streaming.py` | Image input + streaming |
 | `test-py-simple-agents-streaming-langfuse.py` | Streaming + Langfuse OTLP |
-| `test-py-simple-agents-invoice-image-jaegar.py` | Image input + Jaeger OTLP |
+| `test-py-simple-agents-invoice-image-jaeger.py` | Image input + Jaeger OTLP (`*-jaegar.py` remains as a compatibility alias) |
 | `fastapi_workflow_stream.py` | FastAPI SSE streaming endpoint |
 | `handlers.py` | Custom worker handler (`get_seller_name`) |
 | `test-py-simple-agents-eval.py` | Output-shaped eval dataset for `friendly.yaml` |
@@ -145,7 +145,7 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 | `test-simple-agents-streaming.ts` | Streaming with execution flags |
 | `test-simple-agents-invoice-image.ts` | Image input (multimodal) |
 | `test-simple-agents-streaming-langfuse.ts` | Streaming + Langfuse OTLP |
-| `test-simple-agents-invoice-image-jaegar.ts` | Image input + Jaeger OTLP |
+| `test-simple-agents-invoice-image-jaeger.ts` | Image input + Jaeger OTLP (`*-jaegar.ts` remains as a compatibility alias) |
 | `handlers.ts` | Custom worker dispatch (`getSellerName`) |
 | `test-simple-agents-eval.ts` | Output-shaped eval dataset for `friendly.yaml` |
 
@@ -179,7 +179,7 @@ uv run python test-py-simple-agents-invoice-image.py
 uv run python test-py-simple-agents-streaming-langfuse.py
 
 # Image + Jaeger
-uv run python test-py-simple-agents-invoice-image-jaegar.py
+uv run python test-py-simple-agents-invoice-image-jaeger.py
 
 # Output-shaped eval
 uv run python test-py-simple-agents-eval.py
@@ -207,7 +207,7 @@ bun run test-simple-agents-invoice-image.ts
 bun run test-simple-agents-streaming-langfuse.ts
 
 # Image + Jaeger
-bun run test-simple-agents-invoice-image-jaegar.ts
+bun run test-simple-agents-invoice-image-jaeger.ts
 
 # Output-shaped eval
 bun run test-simple-agents-eval.ts
@@ -323,13 +323,13 @@ for step in output.step_timings {
 | Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` | Streaming workflow |
 | Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image.py` | Image input |
 | Python | `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` | Langfuse tracing |
-| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaegar.py` | Jaeger tracing |
+| Python | `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaeger.py` | Jaeger tracing |
 | Python | `examples/python-test-simpleAgents/fastapi_workflow_stream.py` | FastAPI SSE server |
 | TypeScript | `examples/napi-test-simpleAgents/test-simple-agents.ts` | Normal workflow run |
 | TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` | Streaming workflow |
 | TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image.ts` | Image input |
 | TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-streaming-langfuse.ts` | Langfuse tracing |
-| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image-jaegar.ts` | Jaeger tracing |
+| TypeScript | `examples/napi-test-simpleAgents/test-simple-agents-invoice-image-jaeger.ts` | Jaeger tracing |
 | Rust | `examples/full_api_example.rs` | Full Rust client API |
 | Rust | `examples/python_client.py` | Python client API (completions, streaming, healing, tools) |
 | Rust | `examples/node_client.js` | Node client API (completions, streaming) |

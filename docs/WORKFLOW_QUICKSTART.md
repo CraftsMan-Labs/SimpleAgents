@@ -208,7 +208,7 @@ const client = new Client(
   process.env.WORKFLOW_API_BASE,
 );
 
-function onEvent(err: unknown, eventJson: string): void {
+function onEvent(eventJson: string): void {
   if (err) { console.error(err); return; }
   const event = parseWorkflowEvent(eventJson) as any;
   if (event.event_type === "node_stream_delta" && event.delta) {

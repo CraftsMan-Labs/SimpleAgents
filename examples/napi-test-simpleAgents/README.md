@@ -72,12 +72,12 @@ bun run invoice-image
 bun run test-simple-agents-invoice-image.ts
 ```
 
-**Invoice image + Jaeger OTLP** (like `test-py-simple-agents-invoice-image-jaegar.py`):
+**Invoice image + Jaeger OTLP** (like `test-py-simple-agents-invoice-image-jaeger.py`):
 
 ```bash
 bun run invoice-image:jaeger
 # or
-bun run test-simple-agents-invoice-image-jaegar.ts
+bun run test-simple-agents-invoice-image-jaeger.ts
 ```
 
 Each script prompts for input and runs `test.yaml` in this directory.
