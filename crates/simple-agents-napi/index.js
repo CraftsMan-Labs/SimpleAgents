@@ -2,6 +2,7 @@
 
 // Load the native addon built by napi-rs.
 const native = require("./index.node");
+const fs = require("node:fs");
 
 function wrapCustomWorkerDispatch(dispatch) {
   if (typeof dispatch !== "function") {
@@ -33,52 +34,80 @@ function assertKnownKeys(object, allowedKeys, label) {
   }
 }
 
-function camelizeEvalResult(report) {
-  if (!report || typeof report !== "object") {
-    return report;
+function normalizeEvalResult(value) {
+  if (typeof value === "boolean") {
+    return value
+      ? { id: "evaluator", status: "passed", passed: true }
+      : { id: "evaluator", status: "failed", passed: false, reason: "evaluator returned false" };
   }
-  const summary = report.summary && typeof report.summary === "object"
-    ? {
-        totalCases: report.summary.total_cases,
-        passedCases: report.summary.passed_cases,
-        failedCases: report.summary.failed_cases,
-        errorCases: report.summary.error_cases,
-        passRate: report.summary.pass_rate,
-      }
-    : report.summary;
-  const cases = Array.isArray(report.cases)
-    ? report.cases.map((caseResult) => ({
-        caseId: caseResult.case_id,
-        status: caseResult.status,
-        firstFailedNode: caseResult.first_failed_node,
-        firstFailedPath: caseResult.first_failed_path,
-        expected: caseResult.expected,
-        actual: caseResult.actual,
-        evaluations: Array.isArray(caseResult.evaluations)
-          ? caseResult.evaluations.map((evaluation) => ({
-              id: evaluation.id,
-              kind: evaluation.kind,
-              status: evaluation.status,
-              passed: evaluation.passed,
-              score: evaluation.score,
-              path: evaluation.path,
-              nodeId: evaluation.node_id,
-              expected: evaluation.expected,
-              actual: evaluation.actual,
-              reason: evaluation.reason,
-              metadata: evaluation.metadata,
-            }))
-          : caseResult.evaluations,
-        workflowOutput: caseResult.workflow_output,
-        error: caseResult.error,
-      }))
-    : report.cases;
+  if (!value || typeof value !== "object") {
+    throw new TypeError("evaluator must return boolean or EvalResult object");
+  }
+  const passed = value.passed ?? value.status === "passed";
+  const status = value.status || (passed ? "passed" : "failed");
   return {
-    suiteId: report.suite_id,
-    status: report.status,
-    summary,
+    id: value.id || "evaluator",
+    status,
+    passed,
+    score: value.score,
+    expected: value.expected,
+    actual: value.actual,
+    reason: value.reason,
+    metadata: value.metadata,
+  };
+}
+
+function buildEvalReport(suiteId, cases) {
+  const totalCases = cases.length;
+  const passedCases = cases.filter((c) => c.status === "passed").length;
+  const failedCases = cases.filter((c) => c.status === "failed").length;
+  const errorCases = cases.filter((c) => c.status === "error").length;
+  return {
+    suiteId,
+    status: errorCases ? "error" : failedCases ? "failed" : "passed",
+    summary: {
+      totalCases,
+      passedCases,
+      failedCases,
+      errorCases,
+      passRate: totalCases ? passedCases / totalCases : 0,
+    },
     cases,
   };
+}
+
+function loadEvalDataset(datasetPath) {
+  const records = [];
+  const seen = new Set();
+  const lines = fs.readFileSync(datasetPath, "utf8").split(/\r?\n/u);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    let record;
+    try {
+      record = JSON.parse(line);
+    } catch (err) {
+      throw new Error(`failed to parse eval dataset ${datasetPath} line ${index + 1}: ${err.message}`);
+    }
+    if (!record.id || typeof record.id !== "string") {
+      throw new Error(`eval dataset ${datasetPath} line ${index + 1}: id must be a non-empty string`);
+    }
+    if (seen.has(record.id)) {
+      throw new Error(`duplicate eval record id "${record.id}"`);
+    }
+    seen.add(record.id);
+    if (!record.input || typeof record.input !== "object" || Array.isArray(record.input)) {
+      throw new Error(`eval record "${record.id}" input must be an object`);
+    }
+    if (!record.expected_output || typeof record.expected_output !== "object" || Array.isArray(record.expected_output)) {
+      throw new Error(`eval record "${record.id}" expected_output must be an object`);
+    }
+    records.push(record);
+  }
+  if (records.length === 0) {
+    throw new Error(`eval dataset ${datasetPath} must contain at least one record`);
+  }
+  return records;
 }
 
 const clientProto = native.Client && native.Client.prototype;
@@ -86,7 +115,6 @@ if (clientProto) {
   const nativeResume = clientProto.resume;
   const nativeRunWorkflow = clientProto.runWorkflow;
   const nativeStreamWorkflow = clientProto.streamWorkflow;
-  const nativeRunEvalSuite = clientProto.runEvalSuite;
 
   clientProto.resume = function resume(checkpoint, opts) {
     return nativeResume.call(this, checkpoint, withWrappedCustomWorker(opts));
@@ -128,17 +156,79 @@ if (clientProto) {
     );
   };
 
-  clientProto.runEvalSuite = function runEvalSuite(
-    request,
-    customWorkerDispatch,
-  ) {
-    return Promise.resolve(
-      nativeRunEvalSuite.call(
-        this,
-        request,
-        wrapCustomWorkerDispatch(customWorkerDispatch),
-      ),
-    ).then(camelizeEvalResult);
+  clientProto.runEvalSuite = async function runEvalSuite(request) {
+    if (!request || typeof request !== "object") {
+      throw new TypeError("runEvalSuite request must be an object");
+    }
+    assertKnownKeys(
+      request,
+      new Set([
+        "workflowPath",
+        "datasetPath",
+        "suiteId",
+        "execution",
+        "workflowOptions",
+        "evaluator",
+        "customWorkerDispatch",
+      ]),
+      "runEvalSuite request",
+    );
+    const { workflowPath, datasetPath, evaluator } = request;
+    if (typeof workflowPath !== "string" || !workflowPath.trim()) {
+      throw new TypeError("workflowPath is required");
+    }
+    if (typeof datasetPath !== "string" || !datasetPath.trim()) {
+      throw new TypeError("datasetPath is required");
+    }
+    if (typeof evaluator !== "function") {
+      throw new TypeError("evaluator is required");
+    }
+    const records = loadEvalDataset(datasetPath);
+    const cases = [];
+    for (const record of records) {
+      try {
+        const actualOutput = await this.runWorkflow(
+          workflowPath,
+          record.input,
+          request.workflowOptions,
+          request.execution,
+          request.customWorkerDispatch,
+        );
+        const evalCase = {
+          id: record.id,
+          input: record.input,
+          expectedOutput: record.expected_output,
+          actualOutput,
+          record,
+        };
+        const evaluation = normalizeEvalResult(await evaluator(evalCase));
+        cases.push({
+          caseId: record.id,
+          status: evaluation.status,
+          expected: evaluation.expected,
+          actual: evaluation.actual,
+          evaluations: [evaluation],
+          workflowOutput: actualOutput,
+          error: evaluation.status === "error"
+            ? { code: "evaluator_error", message: evaluation.reason || "evaluator error" }
+            : undefined,
+        });
+      } catch (err) {
+        const message = err && err.message ? err.message : String(err);
+        cases.push({
+          caseId: record.id,
+          status: "error",
+          evaluations: [{
+            id: "evaluator",
+            status: "error",
+            passed: false,
+            reason: message,
+          }],
+          error: { code: "eval_case_error", message },
+        });
+      }
+    }
+    return buildEvalReport(request.suiteId || datasetPath.split(/[\\/]/u).pop().replace(/\.[^.]+$/u, ""), cases);
   };
 
   clientProto.runWorkflowYaml = function runWorkflowYaml(

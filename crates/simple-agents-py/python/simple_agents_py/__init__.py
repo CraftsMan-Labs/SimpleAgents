@@ -5,7 +5,8 @@ from . import eval_request
 from . import workflow_request
 from .simple_agents_py import *  # noqa: F403
 from .eval_request import *  # noqa: F403
-from .evals import run_eval_suite as run_eval_suite  # noqa: F401
+from . import evals
+from .evals import *  # noqa: F403
 from .workflow_stream import default_on_event as default_on_event  # noqa: F401
 from .models import *  # noqa: F403
 from .workflow_request import *  # noqa: F403
@@ -17,5 +18,5 @@ if _native_all is not None:
     _exported += [n for n in models.__all__ if n not in _exported]  # type: ignore[misc]  # noqa: F405
     _exported += [n for n in workflow_request.__all__ if n not in _exported]
     _exported += [n for n in eval_request.__all__ if n not in _exported]
-    _exported.append("run_eval_suite")
+    _exported += [n for n in evals.__all__ if n not in _exported]
     __all__ = _exported

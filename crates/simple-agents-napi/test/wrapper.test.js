@@ -28,69 +28,49 @@ function loadWrapperWithNative(native) {
   return module.exports;
 }
 
-test('runEvalSuite camel-cases native eval report fields', async () => {
+test('runEvalSuite runs dataset records through evaluator callback', async () => {
+  const datasetPath = path.join(__dirname, 'tmp-eval.dataset.jsonl');
+  fs.writeFileSync(
+    datasetPath,
+    `${JSON.stringify({
+      id: 'case-1',
+      input: { messages: [{ role: 'user', content: 'hi' }] },
+      expected_output: { terminal_node: 'final' },
+    })}\n`,
+    'utf8',
+  );
+
   class Client {
-    runEvalSuite() {
-      return {
-        suite_id: 'friendly',
-        status: 'failed',
-        summary: {
-          total_cases: 2,
-          passed_cases: 1,
-          failed_cases: 1,
-          error_cases: 0,
-          pass_rate: 0.5,
-        },
-        cases: [
-          {
-            case_id: 'case-1',
-            status: 'failed',
-            first_failed_node: 'final',
-            first_failed_path: '$.outputs.final.answer',
-            expected: { answer: 'yes' },
-            actual: { answer: 'no' },
-            evaluations: [
-              {
-                id: 'rag-accuracy',
-                kind: 'custom',
-                status: 'failed',
-                passed: false,
-                score: 0.5,
-                path: '$.outputs.retrieve_chunks.output',
-                node_id: 'retrieve_chunks',
-                expected: ['doc-1', 'doc-2'],
-                actual: [{ source_id: 'doc-1' }],
-                reason: '1/2 expected sources matched',
-                metadata: { missing: ['doc-2'] },
-              },
-            ],
-            workflow_output: { terminal_node: 'final' },
-            error: null,
-          },
-        ],
-      };
+    runWorkflow(_workflowPath, workflowInput) {
+      assert.strictEqual(JSON.stringify(workflowInput.messages), JSON.stringify([{ role: 'user', content: 'hi' }]));
+      return { terminal_node: 'final', terminal_output: { ok: true } };
     }
   }
 
   const binding = loadWrapperWithNative({ Client });
-  const report = await new binding.Client().runEvalSuite({ suitePath: 'eval.yaml' });
+  const report = await new binding.Client().runEvalSuite({
+    workflowPath: 'workflow.yaml',
+    datasetPath,
+    suiteId: 'friendly',
+    evaluator: ({ expectedOutput, actualOutput }) => ({
+      id: 'terminal_node',
+      status: expectedOutput.terminal_node === actualOutput.terminal_node ? 'passed' : 'failed',
+      passed: expectedOutput.terminal_node === actualOutput.terminal_node,
+    }),
+  });
 
   assert.strictEqual(report.suiteId, 'friendly');
-  assert.strictEqual(report.summary.totalCases, 2);
+  assert.strictEqual(report.status, 'passed');
+  assert.strictEqual(report.summary.totalCases, 1);
   assert.strictEqual(report.summary.passedCases, 1);
-  assert.strictEqual(report.summary.failedCases, 1);
+  assert.strictEqual(report.summary.failedCases, 0);
   assert.strictEqual(report.summary.errorCases, 0);
-  assert.strictEqual(report.summary.passRate, 0.5);
+  assert.strictEqual(report.summary.passRate, 1);
   assert.strictEqual(report.cases[0].caseId, 'case-1');
-  assert.strictEqual(report.cases[0].firstFailedNode, 'final');
-  assert.strictEqual(report.cases[0].firstFailedPath, '$.outputs.final.answer');
-  assert.strictEqual(report.cases[0].evaluations[0].nodeId, 'retrieve_chunks');
-  assert.strictEqual(report.cases[0].evaluations[0].score, 0.5);
+  assert.strictEqual(report.cases[0].evaluations[0].id, 'terminal_node');
   assert.strictEqual(report.cases[0].workflowOutput.terminal_node, 'final');
-  assert.strictEqual(report.suite_id, undefined);
-  assert.strictEqual(report.summary.total_cases, undefined);
-  assert.strictEqual(report.cases[0].first_failed_path, undefined);
-  assert.strictEqual(report.cases[0].workflow_output, undefined);
+
+  fs.rmSync(datasetPath);
 });
 
 test('wrapper installs workflow YAML compatibility aliases', () => {

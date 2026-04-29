@@ -1028,7 +1028,12 @@ pub struct RunWorkflowTask {
 pub struct EvalSuiteTask {
     runtime: Arc<Runtime>,
     client: Arc<SimpleAgentsClient>,
-    suite_path: String,
+    suite_id: Option<String>,
+    workflow_path: String,
+    dataset_path: String,
+    workflow_options: YamlWorkflowRunOptions,
+    workflow_flags: YamlWorkflowExecutionFlags,
+    max_concurrency: usize,
     custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
 }
 
@@ -1038,9 +1043,14 @@ impl Task for EvalSuiteTask {
 
     fn compute(&mut self) -> Result<Self::Output> {
         let request = EvalSuiteRunRequest {
-            suite_path: Path::new(self.suite_path.as_str()),
+            suite_id: self.suite_id.as_deref(),
+            workflow_path: Path::new(self.workflow_path.as_str()),
+            dataset_path: Path::new(self.dataset_path.as_str()),
             executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
             custom_worker: self.custom_worker.as_deref(),
+            execution: self.workflow_flags,
+            workflow_options: self.workflow_options.clone(),
+            max_concurrency: self.max_concurrency,
         };
         let report = self
             .runtime
@@ -1545,7 +1555,7 @@ impl Client {
 
     #[napi(
         js_name = "runEvalSuite",
-        ts_args_type = "request: EvalSuiteRequest, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "request: EvalSuiteRequest",
         ts_return_type = "Promise<EvalReport>"
     )]
     pub fn run_eval_suite(
@@ -1557,22 +1567,73 @@ impl Client {
             Error::from_reason("eval suite request must be an object".to_string())
         })?;
         for key in object.keys() {
-            if key != "suitePath" && key != "suite_path" {
+            if !matches!(
+                key.as_str(),
+                "workflowPath"
+                    | "workflow_path"
+                    | "datasetPath"
+                    | "dataset_path"
+                    | "suiteId"
+                    | "suite_id"
+                    | "workflowOptions"
+                    | "workflow_options"
+                    | "execution"
+                    | "maxConcurrency"
+                    | "max_concurrency"
+            ) {
                 return Err(Error::from_reason(format!(
                     "invalid eval suite request: unknown key '{}'",
                     key
                 )));
             }
         }
-        let suite_path = object
-            .get("suitePath")
-            .or_else(|| object.get("suite_path"))
+        let workflow_path = object
+            .get("workflowPath")
+            .or_else(|| object.get("workflow_path"))
             .and_then(JsonValue::as_str)
-            .ok_or_else(|| Error::from_reason("suitePath is required".to_string()))?
+            .ok_or_else(|| Error::from_reason("workflowPath is required".to_string()))?
             .to_string();
-        if suite_path.trim().is_empty() {
-            return Err(Error::from_reason("suitePath cannot be empty".to_string()));
+        let dataset_path = object
+            .get("datasetPath")
+            .or_else(|| object.get("dataset_path"))
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| Error::from_reason("datasetPath is required".to_string()))?
+            .to_string();
+        if workflow_path.trim().is_empty() {
+            return Err(Error::from_reason("workflowPath cannot be empty".to_string()));
         }
+        if dataset_path.trim().is_empty() {
+            return Err(Error::from_reason("datasetPath cannot be empty".to_string()));
+        }
+        let suite_id = object
+            .get("suiteId")
+            .or_else(|| object.get("suite_id"))
+            .and_then(JsonValue::as_str)
+            .map(str::to_string);
+        let workflow_options = object
+            .get("workflowOptions")
+            .or_else(|| object.get("workflow_options"))
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowRunOptions>(value.clone()).map_err(|error| {
+                    Error::from_reason(format!("invalid workflowOptions: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let workflow_flags = object
+            .get("execution")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone())
+                    .map_err(|error| Error::from_reason(format!("invalid execution: {error}")))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let max_concurrency = object
+            .get("maxConcurrency")
+            .or_else(|| object.get("max_concurrency"))
+            .and_then(JsonValue::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(1);
         let custom_worker = match custom_worker_dispatch {
             Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
             None => None,
@@ -1581,7 +1642,12 @@ impl Client {
         Ok(AsyncTask::new(EvalSuiteTask {
             runtime: self.runtime.clone(),
             client: self.client.clone(),
-            suite_path,
+            suite_id,
+            workflow_path,
+            dataset_path,
+            workflow_options,
+            workflow_flags,
+            max_concurrency,
             custom_worker,
         }))
     }

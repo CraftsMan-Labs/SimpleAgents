@@ -18,7 +18,8 @@ use simple_agents_healing::{CoercionEngine, JsonishParser};
 use simple_agents_providers::schema_converter;
 use simple_agents_workflow::yaml_runner::workflow_execution;
 use simple_agents_workflow::yaml_runner::{
-    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowSource,
+    YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding,
+    YamlWorkflowSource,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -976,44 +977,93 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
-    /// Run an output-shaped eval dataset against a YAML workflow.
+    /// Run an output-shaped eval dataset against a YAML workflow using native subset matching.
     #[pyo3(signature = (request))]
     fn run_eval_suite(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
         let raw: serde_json::Value = pythonize::depythonize(request).map_err(|error| {
             PyRuntimeError::new_err(format!(
-                "invalid eval suite request: {error}. expected keys: suite_path"
+                "invalid eval suite request: {error}. expected keys: workflow_path, dataset_path"
             ))
         })?;
         let object = raw.as_object().ok_or_else(|| {
             PyRuntimeError::new_err("eval suite request must be a dict/object".to_string())
         })?;
-        if object.keys().any(|key| key != "suite_path") {
-            return Err(PyRuntimeError::new_err(
-                "eval suite request only supports suite_path".to_string(),
-            ));
+        let allowed_keys = [
+            "workflow_path",
+            "dataset_path",
+            "suite_id",
+            "execution",
+            "workflow_options",
+            "max_concurrency",
+        ];
+        for key in object.keys() {
+            if !allowed_keys.contains(&key.as_str()) {
+                return Err(PyRuntimeError::new_err(format!(
+                    "unknown eval suite request key '{key}'; expected keys: workflow_path, dataset_path, suite_id?, execution?, workflow_options?, max_concurrency?"
+                )));
+            }
         }
-        let suite_path = object
-            .get("suite_path")
+        let workflow_path = object
+            .get("workflow_path")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| PyRuntimeError::new_err("suite_path is required".to_string()))?;
-        if suite_path.trim().is_empty() {
-            return Err(PyRuntimeError::new_err("suite_path cannot be empty"));
+            .ok_or_else(|| PyRuntimeError::new_err("workflow_path is required".to_string()))?;
+        let dataset_path = object
+            .get("dataset_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| PyRuntimeError::new_err("dataset_path is required".to_string()))?;
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err("workflow_path cannot be empty"));
+        }
+        if dataset_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err("dataset_path cannot be empty"));
         }
 
-        let suite_path_buf = std::path::PathBuf::from(suite_path);
-        let workflow_root = suite_path_buf
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let dataset_path_buf = std::path::PathBuf::from(dataset_path);
+        let workflow_root = workflow_path_buf
             .parent()
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let execution = object
+            .get("execution")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone()).map_err(
+                    |error| PyRuntimeError::new_err(format!("invalid execution: {error}")),
+                )
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let workflow_options = object
+            .get("workflow_options")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowRunOptions>(value.clone()).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let max_concurrency = object
+            .get("max_concurrency")
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(1);
+        let suite_id = object
+            .get("suite_id")
+            .and_then(serde_json::Value::as_str);
         let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let runtime = self
             .runtime
             .lock()
             .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
         let request = EvalSuiteRunRequest {
-            suite_path: suite_path_buf.as_path(),
+            suite_id,
+            workflow_path: workflow_path_buf.as_path(),
+            dataset_path: dataset_path_buf.as_path(),
             executor: YamlWorkflowExecutorBinding::Client(&self.client),
             custom_worker: Some(&custom_executor),
+            execution,
+            workflow_options,
+            max_concurrency,
         };
         let report = py
             .allow_threads(|| runtime.block_on(run_eval_suite(request)))
