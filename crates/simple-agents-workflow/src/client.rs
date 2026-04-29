@@ -220,22 +220,52 @@ struct EventSinkBridge<'a> {
 impl YamlWorkflowEventSink for EventSinkBridge<'_> {
     fn emit(&self, event: &crate::yaml_runner::YamlWorkflowEvent) {
         // Map YamlWorkflowEvent → WorkflowEvent
-        use crate::yaml_runner::{NodeType, TokenKind, WorkflowEvent};
+        use crate::yaml_runner::{TokenKind, WorkflowEvent};
         let mapped = match event.event_type.as_str() {
             "workflow_started" => Some(WorkflowEvent::WorkflowStarted {
                 workflow_id: event.node_id.clone().unwrap_or_default(),
             }),
             "node_started" => Some(WorkflowEvent::NodeStarted {
                 node_id: event.node_id.clone().unwrap_or_default(),
-                node_type: NodeType::LlmCall,
+                node_type: node_type_from_kind(event.node_kind.as_deref()),
             }),
             "node_completed" => Some(WorkflowEvent::NodeCompleted {
                 node_id: event.node_id.clone().unwrap_or_default(),
                 output: event
-                    .message
+                    .snapshot
                     .clone()
-                    .map(Value::String)
+                    .or_else(|| event.message.clone().map(Value::String))
                     .unwrap_or(Value::Null),
+            }),
+            "node_tool_call_requested" => tool_name_from_event(event).map(|tool_name| {
+                WorkflowEvent::ToolCallRequested {
+                    node_id: event.node_id.clone().unwrap_or_default(),
+                    tool_name,
+                    arguments: event
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("arguments"))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                }
+            }),
+            "node_tool_call_completed" => tool_name_from_event(event).map(|tool_name| {
+                WorkflowEvent::ToolCallCompleted {
+                    node_id: event.node_id.clone().unwrap_or_default(),
+                    tool_name,
+                    output: event
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("output"))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                }
+            }),
+            "node_tool_call_failed" => Some(WorkflowEvent::NodeFailed {
+                node_id: event.node_id.clone().unwrap_or_default(),
+                error: event.message.clone().unwrap_or_else(|| {
+                    "tool call failed without an error message".to_string()
+                }),
             }),
             "node_stream_delta" | "node_stream_output_delta" => {
                 Some(WorkflowEvent::LlmTokenDelta {
@@ -250,8 +280,8 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                 token_kind: TokenKind::Reasoning,
             }),
             "workflow_completed" => Some(WorkflowEvent::WorkflowCompleted {
-                output: Value::Null,
-                metadata: None,
+                output: event.snapshot.clone().unwrap_or(Value::Null),
+                metadata: event.metadata.clone(),
             }),
             _ => None,
         };
@@ -259,6 +289,27 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
             self.inner.emit(&ev);
         }
     }
+}
+
+fn node_type_from_kind(kind: Option<&str>) -> crate::yaml_runner::NodeType {
+    use crate::yaml_runner::NodeType;
+
+    match kind {
+        Some("llm_call") => NodeType::LlmCall,
+        Some("switch") => NodeType::Switch,
+        Some("custom_worker") => NodeType::CustomWorker,
+        Some("end") => NodeType::End,
+        _ => NodeType::Unknown,
+    }
+}
+
+fn tool_name_from_event(event: &crate::yaml_runner::YamlWorkflowEvent) -> Option<String> {
+    event
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("tool_name"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 /// Map the internal `YamlWorkflowRunOutput` to the cleaner public `WorkflowRunOutput`.

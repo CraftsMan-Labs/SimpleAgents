@@ -53,7 +53,9 @@ pub enum WorkflowEvent {
 pub enum NodeType {
     LlmCall,
     Switch,
+    CustomWorker,
     End,
+    Unknown,
 }
 
 /// The kind of LLM token in a streaming delta.
