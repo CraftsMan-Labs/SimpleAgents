@@ -1,0 +1,60 @@
+id: invoice-hitl-freeform-feedback
+version: 1.0.0
+entry_node: extract_invoice
+
+nodes:
+  - id: extract_invoice
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          vendor_name:
+            type: string
+          invoice_number:
+            type: string
+          total_amount:
+            type: number
+          currency:
+            type: string
+        required: [vendor_name, invoice_number, total_amount, currency]
+        additionalProperties: false
+      prompt: |
+        Extract invoice fields from the latest user-provided content.
+        Return JSON only:
+        {
+          "vendor_name": "string",
+          "invoice_number": "string",
+          "total_amount": 0,
+          "currency": "string"
+        }
+
+  - id: collect_reviewer_feedback
+    node_type:
+      human_input:
+        input_type: text
+        prompt: |
+          Please provide reviewer feedback for this extraction:
+          {{ nodes.extract_invoice.output }}
+
+  - id: persist_feedback
+    node_type:
+      custom_worker:
+        handler: save_feedback
+        handler_file: handlers.py
+    config:
+      payload:
+        extraction: "{{ nodes.extract_invoice.output }}"
+        reviewer_feedback: "{{ nodes.collect_reviewer_feedback.output }}"
+        feedback_store_path: "{{ input.feedback_store_path }}"
+
+edges:
+  - from: extract_invoice
+    to: collect_reviewer_feedback
+  - from: collect_reviewer_feedback
+    to: persist_feedback
