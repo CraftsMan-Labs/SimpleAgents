@@ -48,9 +48,7 @@ impl Serialize for EvalError {
             EvalError::ReadSuite { path, .. } => ("read_suite_failed", Some(path)),
             EvalError::ParseSuite { path, .. } => ("parse_suite_failed", Some(path)),
             EvalError::ReadDataset { path, .. } => ("read_dataset_failed", Some(path)),
-            EvalError::ParseDatasetLine { path, .. } => {
-                ("parse_dataset_line_failed", Some(path))
-            }
+            EvalError::ParseDatasetLine { path, .. } => ("parse_dataset_line_failed", Some(path)),
             EvalError::InvalidSuite { .. } => ("invalid_suite", None),
             EvalError::InvalidDataset { .. } => ("invalid_dataset", None),
         };
@@ -81,6 +79,8 @@ pub struct EvalSuite {
     pub workflow_options: Option<YamlWorkflowRunOptions>,
     #[serde(default)]
     pub comparison: EvalComparisonConfig,
+    #[serde(default)]
+    pub custom_evals: Vec<EvalCustomEvalConfig>,
     #[serde(default = "default_eval_max_concurrency")]
     pub max_concurrency: usize,
 }
@@ -113,10 +113,27 @@ pub struct EvalComparisonConfig {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct EvalCustomEvalConfig {
+    pub id: String,
+    pub handler: String,
+    #[serde(default)]
+    pub handler_file: Option<String>,
+    pub actual_path: String,
+    pub expected_path: String,
+    #[serde(default)]
+    pub threshold: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct EvalDatasetRecord {
     pub id: String,
     pub input: Value,
     pub expected_output: Value,
+    #[serde(default)]
+    pub rubric: Option<Value>,
+    #[serde(default)]
+    pub custom: Option<Value>,
     #[serde(default)]
     pub metadata: Option<Value>,
 }
@@ -158,10 +175,41 @@ pub struct EvalCaseResult {
     pub expected: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub actual: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub evaluations: Vec<EvalResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workflow_output: Option<YamlWorkflowRunOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<EvalErrorInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EvalResult {
+    pub id: String,
+    pub kind: EvalKind,
+    pub status: EvalRunStatus,
+    pub passed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub node_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub expected: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actual: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalKind {
+    Deterministic,
+    Custom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

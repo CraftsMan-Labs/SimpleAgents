@@ -60,6 +60,37 @@ pub(crate) fn validate_suite(suite: &EvalSuite) -> Result<(), EvalError> {
             return invalid_suite(format!("unsupported comparison path '{}'", path));
         }
     }
+    for custom_eval in &suite.custom_evals {
+        if custom_eval.id.trim().is_empty() {
+            return invalid_suite("custom_evals.id cannot be empty");
+        }
+        if custom_eval.handler.trim().is_empty() {
+            return invalid_suite(format!(
+                "custom_evals '{}' handler cannot be empty",
+                custom_eval.id
+            ));
+        }
+        if !is_supported_path(&custom_eval.actual_path) {
+            return invalid_suite(format!(
+                "custom_evals '{}' has unsupported actual_path '{}'",
+                custom_eval.id, custom_eval.actual_path
+            ));
+        }
+        if !is_supported_path(&custom_eval.expected_path) {
+            return invalid_suite(format!(
+                "custom_evals '{}' has unsupported expected_path '{}'",
+                custom_eval.id, custom_eval.expected_path
+            ));
+        }
+        if let Some(threshold) = custom_eval.threshold {
+            if !(0.0..=1.0).contains(&threshold) {
+                return invalid_suite(format!(
+                    "custom_evals '{}' threshold must be between 0.0 and 1.0",
+                    custom_eval.id
+                ));
+            }
+        }
+    }
     Ok(())
 }
 

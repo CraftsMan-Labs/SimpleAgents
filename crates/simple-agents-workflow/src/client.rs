@@ -50,9 +50,9 @@ use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClien
 
 use crate::yaml_runner::{
     workflow_execution, RunMetadata, StepTiming, WorkflowCheckpoint, WorkflowEventSink,
-    WorkflowRunOutput,
-    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
-    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
+    WorkflowRunOutput, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
+    YamlWorkflowSource,
 };
 
 use simple_agent_type::prelude::SimpleAgentsError;
@@ -238,8 +238,8 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                     .or_else(|| event.message.clone().map(Value::String))
                     .unwrap_or(Value::Null),
             }),
-            "node_tool_call_requested" => tool_name_from_event(event).map(|tool_name| {
-                WorkflowEvent::ToolCallRequested {
+            "node_tool_call_requested" => {
+                tool_name_from_event(event).map(|tool_name| WorkflowEvent::ToolCallRequested {
                     node_id: event.node_id.clone().unwrap_or_default(),
                     tool_name,
                     arguments: event
@@ -248,10 +248,10 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                         .and_then(|metadata| metadata.get("arguments"))
                         .cloned()
                         .unwrap_or(Value::Null),
-                }
-            }),
-            "node_tool_call_completed" => tool_name_from_event(event).map(|tool_name| {
-                WorkflowEvent::ToolCallCompleted {
+                })
+            }
+            "node_tool_call_completed" => {
+                tool_name_from_event(event).map(|tool_name| WorkflowEvent::ToolCallCompleted {
                     node_id: event.node_id.clone().unwrap_or_default(),
                     tool_name,
                     output: event
@@ -260,13 +260,14 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                         .and_then(|metadata| metadata.get("output"))
                         .cloned()
                         .unwrap_or(Value::Null),
-                }
-            }),
+                })
+            }
             "node_tool_call_failed" => Some(WorkflowEvent::NodeFailed {
                 node_id: event.node_id.clone().unwrap_or_default(),
-                error: event.message.clone().unwrap_or_else(|| {
-                    "tool call failed without an error message".to_string()
-                }),
+                error: event
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "tool call failed without an error message".to_string()),
             }),
             "node_stream_delta" | "node_stream_output_delta" => {
                 Some(WorkflowEvent::LlmTokenDelta {
