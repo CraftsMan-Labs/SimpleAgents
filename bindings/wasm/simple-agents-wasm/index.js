@@ -58,6 +58,105 @@ function assertWorkflowResultShape(result) {
   return result;
 }
 
+function parseClientOptions(config) {
+  const timeoutSeconds = config.timeoutSeconds;
+  if (timeoutSeconds !== undefined) {
+    if (typeof timeoutSeconds !== "number" || !Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) {
+      throw configError("config.timeoutSeconds must be a positive finite number");
+    }
+  }
+
+  const retryAttempts = config.retryAttempts ?? 3;
+  if (!Number.isInteger(retryAttempts) || retryAttempts < 1) {
+    throw configError("config.retryAttempts must be greater than or equal to 1");
+  }
+
+  const retryStrategy = config.retryStrategy ?? "exponential";
+  if (!["none", "fixed", "exponential"].includes(retryStrategy)) {
+    throw configError("config.retryStrategy must be 'none', 'fixed', or 'exponential'");
+  }
+
+  return { timeoutSeconds, retryAttempts, retryStrategy };
+}
+
+function retryDelayMs(strategy, failedAttempt) {
+  if (strategy === "none") {
+    return 0;
+  }
+  const baseMs = 1000;
+  if (strategy === "fixed") {
+    return baseMs;
+  }
+  return Math.min(baseMs * (2 ** Math.max(0, failedAttempt - 1)), 10000);
+}
+
+function retryAfterMs(response) {
+  const header = response?.headers?.get?.("retry-after");
+  if (!header) {
+    return undefined;
+  }
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : undefined;
+}
+
+function isRetryableResponse(response) {
+  const status = Number(response?.status ?? 0);
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function createManagedFetch(fetchImpl, options) {
+  const sourceFetch = typeof fetchImpl === "function" ? fetchImpl : globalThis.fetch;
+  if (typeof sourceFetch !== "function") {
+    throw configError("fetch is unavailable; pass config.fetchImpl");
+  }
+
+  return async function managedFetch(input, init = {}) {
+    let attempt = 1;
+    while (true) {
+      const controller = options.timeoutSeconds && typeof AbortController === "function"
+        ? new AbortController()
+        : undefined;
+      const timeoutId = controller
+        ? setTimeout(() => controller.abort(), options.timeoutSeconds * 1000)
+        : undefined;
+      const requestInit = controller ? { ...init, signal: controller.signal } : init;
+
+      try {
+        const response = await sourceFetch(input, requestInit);
+        if (
+          attempt >= options.retryAttempts
+          || options.retryStrategy === "none"
+          || !isRetryableResponse(response)
+        ) {
+          return response;
+        }
+        const delay = retryAfterMs(response) ?? retryDelayMs(options.retryStrategy, attempt);
+        if (delay > 0) {
+          await sleep(delay);
+        }
+        attempt += 1;
+      } catch (error) {
+        if (attempt >= options.retryAttempts || options.retryStrategy === "none") {
+          throw error;
+        }
+        const delay = retryDelayMs(options.retryStrategy, attempt);
+        if (delay > 0) {
+          await sleep(delay);
+        }
+        attempt += 1;
+      } finally {
+        if (timeoutId !== undefined) {
+          clearTimeout(timeoutId);
+        }
+      }
+    }
+  };
+}
+
 function normalizeWorkflowResult(result) {
   if (result === null || typeof result !== "object") {
     return result;
@@ -108,7 +207,12 @@ export class Client {
     }
 
     this.provider = provider;
-    this.config = config;
+    const clientOptions = parseClientOptions(config);
+    this.config = {
+      ...config,
+      fetchImpl: createManagedFetch(config.fetchImpl, clientOptions),
+    };
+    this.clientOptions = clientOptions;
     this.rustClient = null;
     this.readyPromise = null;
     this.fetchOverrideQueue = Promise.resolve();

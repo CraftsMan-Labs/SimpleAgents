@@ -112,6 +112,9 @@ export interface ClientConfig {
   apiKey: string;
   fetchImpl?: typeof fetch;
   headers?: Record<string, string>;
+  timeoutSeconds?: number;
+  retryAttempts?: number;
+  retryStrategy?: "none" | "fixed" | "exponential";
 }
 
 /** Matches Rust `YamlWorkflowTelemetryConfig` JSON (snake_case). */
@@ -210,6 +213,7 @@ export interface WorkflowExecutionFlags {
   workflow_streaming?: boolean;
   node_llm_streaming?: boolean;
   split_stream_deltas?: boolean;
+  debug_stream_parse?: boolean;
 }
 
 export interface WorkflowExecutionRequest {

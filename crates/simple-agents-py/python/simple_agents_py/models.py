@@ -113,6 +113,7 @@ class WorkflowExecutionFlags(TypedDict, total=False):
     workflow_streaming: bool
     node_llm_streaming: bool
     split_stream_deltas: bool
+    debug_stream_parse: bool
 
 
 class WorkflowExecutionRequest(TypedDict, total=False):
@@ -200,7 +201,7 @@ class WorkflowRunOutput(TypedDict, total=False):
 class WorkflowStreamEventModel(BaseModel):
     """One workflow runner event (parity with :class:`WorkflowEvent`)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     event_type: str | None = None
     node_id: str | None = None
@@ -219,7 +220,7 @@ class WorkflowStreamEventModel(BaseModel):
 class WorkflowRunOutputModel(BaseModel):
     """Workflow run result (parity with :class:`WorkflowRunOutput`)."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     workflow_id: str | None = None
     entry_node: str | None = None

@@ -1,7 +1,7 @@
 /**
  * Stream a YAML workflow with live events via `simple-agents-wasm`.
  *
- * Reuses `../napi-test-simpleAgents/test.yaml` for parity with existing examples.
+ * Reuses `../napi-test-simpleAgents/workflows/email-classification/test.yaml` for parity with existing examples.
  */
 
 import * as readline from "node:readline/promises";
@@ -12,10 +12,11 @@ import { dirname, join } from "node:path";
 import { Client, hasRustBackend } from "../../bindings/wasm/simple-agents-wasm/index.js";
 import type { WorkflowExecutionRequest } from "../../bindings/wasm/simple-agents-wasm/index.js";
 import { createWorkflowStreamPrinter } from "../../bindings/wasm/simple-agents-wasm/workflow_stream_printer.mjs";
+import { clientConfig } from "./example_config.js";
 import { workflowFunctions } from "./handlers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultWorkflowPath = join(__dirname, "../napi-test-simpleAgents/test.yaml");
+const defaultWorkflowPath = join(__dirname, "../napi-test-simpleAgents/workflows/email-classification/test.yaml");
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -45,7 +46,7 @@ async function main(): Promise<void> {
   const userInput = await rl.question("Enter your Input: ");
   rl.close();
 
-  const client = new Client(provider, { apiKey, baseUrl, fetchImpl: globalThis.fetch });
+  const client = new Client(provider, clientConfig(apiKey, baseUrl));
   const req: WorkflowExecutionRequest = {
     workflow_yaml: readFileSync(workflowPath, "utf8"),
     messages: [{ role: "user", content: userInput }],

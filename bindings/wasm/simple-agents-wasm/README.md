@@ -36,7 +36,10 @@ import { Client } from "simple-agents-wasm";
 
 const client = new Client("openai", {
   apiKey: "<BYOK>",
-  baseUrl: "https://api.openai.com/v1"
+  baseUrl: "https://api.openai.com/v1",
+  timeoutSeconds: 60,
+  retryAttempts: 3,
+  retryStrategy: "exponential"
 });
 
 const result = await client.complete("gpt-4o-mini", "Say hi in one line.");

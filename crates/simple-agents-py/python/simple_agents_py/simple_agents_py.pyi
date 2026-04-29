@@ -7,6 +7,7 @@ from typing import (
     Literal,
     Mapping,
     Sequence,
+    TypedDict,
     overload,
     Never,
 )
@@ -20,6 +21,7 @@ from .models import (
     WorkflowRunOptions,
     WorkflowRunOutput,
 )
+from .eval_request import EvalReport, EvalSuiteRequest
 
 # ---------------------------------------------------------------------------
 # Typed message API  (new unified surface)
@@ -190,7 +192,26 @@ class ClientBuilder:
 # Main Client
 # ---------------------------------------------------------------------------
 
+class ClientCreateRequest(TypedDict, total=False):
+    provider: str
+    api_key: str | None
+    api_base: str | None
+    base_url: str | None
+    model: str | None
+    api_format: str | None
+    timeout_seconds: float | None
+    retry_attempts: int | None
+    retry_strategy: str | None
+
+
 class Client:
+    @overload
+    def __init__(
+        self,
+        request: ClientCreateRequest | Mapping[str, object],
+    ) -> None: ...
+
+    @overload
     def __init__(
         self,
         provider: str,
@@ -201,6 +222,8 @@ class Client:
         model: str | None = None,
         api_format: str | None = None,
         timeout_seconds: float | None = None,
+        retry_attempts: int | None = None,
+        retry_strategy: str | None = None,
     ) -> None: ...
 
     # --- Direct LLM calls ---
@@ -337,6 +360,11 @@ class Client:
         on_event: Callable[[WorkflowEvent], object] | None = None,
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...
+
+    def run_eval_suite(
+        self,
+        request: EvalSuiteRequest | Mapping[str, JSONValue],
+    ) -> EvalReport: ...
 
 # ---------------------------------------------------------------------------
 # Module-level functions

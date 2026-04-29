@@ -1,7 +1,7 @@
 /**
  * Run a YAML workflow with a multimodal user message (text + invoice image, Jaeger OTLP).
  *
- * Parity with `examples/python-test-simpleAgents/test-py-simple-agents-invoice-image-jaegar.py`.
+ * Parity with `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-jaegar.py`.
  * From repo root `examples/`: `bun install` in this directory.
  *
  * Uses standard OTLP env vars (`SIMPLE_AGENTS_TRACING_ENABLED`, `OTEL_EXPORTER_OTLP_*`,
@@ -13,19 +13,22 @@
  * Env: `WORKFLOW_API_KEY` (required), `WORKFLOW_API_BASE` (optional).
  */
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { config as loadEnv } from "dotenv";
 import type { MessageInput } from "simple-agents-node";
 import { Client, syncOtelEnvFromProcess } from "simple-agents-node";
-import { customWorkerDispatch } from "./handlers.js";
+import {
+  PACKAGE_ROOT,
+  pathToPythonExamplesAsset,
+  pathToWorkflow,
+} from "../example_paths.js";
+import { customWorkerDispatch } from "../workflows/email-classification/handlers.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-loadEnv({ path: join(__dirname, ".env") });
+loadEnv({ path: join(PACKAGE_ROOT, ".env") });
 
-const workflowPath = join(__dirname, "test.yaml");
-const imagePath = join(__dirname, "../python-test-simpleAgents/test-invoice.jpeg");
+const workflowPath = pathToWorkflow("email-classification", "test.yaml");
+const imagePath = pathToPythonExamplesAsset("test-invoice.jpeg");
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -69,6 +72,11 @@ async function main(): Promise<void> {
 
   const apiKey = requireEnv("WORKFLOW_API_KEY");
   const baseUrl = process.env.WORKFLOW_API_BASE || undefined;
+  if (!existsSync(imagePath)) {
+    throw new Error(
+      `Required example asset is missing: ${imagePath}. Add a small invoice JPEG at that path before running this example.`,
+    );
+  }
   const b64 = readFileSync(imagePath).toString("base64");
 
   const messages: MessageInput[] = [

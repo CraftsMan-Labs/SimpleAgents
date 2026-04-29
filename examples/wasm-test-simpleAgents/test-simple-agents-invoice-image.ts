@@ -11,11 +11,12 @@ import type {
   MessageInput,
   WorkflowExecutionRequest,
 } from "../../bindings/wasm/simple-agents-wasm/index.js";
+import { clientConfig } from "./example_config.js";
 import { workflowFunctions } from "./handlers.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const defaultWorkflowPath = join(__dirname, "../napi-test-simpleAgents/test.yaml");
-const defaultImagePath = join(__dirname, "../python-test-simpleAgents/test-invoice.jpeg");
+const defaultWorkflowPath = join(__dirname, "../napi-test-simpleAgents/workflows/email-classification/test.yaml");
+const defaultImagePath = join(__dirname, "../python-test-simpleAgents/assets/test-invoice.jpeg");
 const fallbackPngB64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7Z6uoAAAAASUVORK5CYII=";
 
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
     },
   ];
 
-  const client = new Client(provider, { apiKey, baseUrl, fetchImpl: globalThis.fetch });
+  const client = new Client(provider, clientConfig(apiKey, baseUrl));
   const req: WorkflowExecutionRequest = {
     workflow_yaml: readFileSync(workflowPath, "utf8"),
     messages,

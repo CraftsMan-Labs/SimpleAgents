@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use serde_json::Value;
 use simple_agent_type::message::{MessageContent, Role};
 use simple_agent_type::tool::{ToolChoice, ToolType};
@@ -126,6 +126,40 @@ pub enum YamlWorkflowRunError {
     EventSinkCancelled { message: String },
 }
 
+impl Serialize for YamlWorkflowRunError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("YamlWorkflowRunError", 2)?;
+        state.serialize_field("code", yaml_workflow_run_error_code(self))?;
+        state.serialize_field("message", &self.to_string())?;
+        state.end()
+    }
+}
+
+fn yaml_workflow_run_error_code(error: &YamlWorkflowRunError) -> &'static str {
+    match error {
+        YamlWorkflowRunError::Read { .. } => "read_failed",
+        YamlWorkflowRunError::Parse { .. } => "parse_failed",
+        YamlWorkflowRunError::FileRejected { .. } => "file_rejected",
+        YamlWorkflowRunError::EmptyNodes { .. } => "empty_nodes",
+        YamlWorkflowRunError::MissingEntry { .. } => "missing_entry",
+        YamlWorkflowRunError::MissingNode { .. } => "missing_node",
+        YamlWorkflowRunError::UnsupportedNodeType { .. } => "unsupported_node_type",
+        YamlWorkflowRunError::UnsupportedCondition { .. } => "unsupported_condition",
+        YamlWorkflowRunError::InvalidSwitchTarget { .. } => "invalid_switch_target",
+        YamlWorkflowRunError::LlmPayloadNotObject { .. } => "llm_payload_not_object",
+        YamlWorkflowRunError::UnsupportedCustomHandler { .. } => "unsupported_custom_handler",
+        YamlWorkflowRunError::Llm { .. } => "llm_failed",
+        YamlWorkflowRunError::CustomWorker { .. } => "custom_worker_failed",
+        YamlWorkflowRunError::Validation { .. } => "validation_failed",
+        YamlWorkflowRunError::InvalidInput { .. } => "invalid_input",
+        YamlWorkflowRunError::IrRuntime { .. } => "ir_runtime_failed",
+        YamlWorkflowRunError::EventSinkCancelled { .. } => "event_sink_cancelled",
+    }
+}
+
 pub trait YamlWorkflowEventSink: Send + Sync {
     fn emit(&self, event: &YamlWorkflowEvent);
 
@@ -227,6 +261,8 @@ pub struct YamlLlmExecutionRequest {
     pub trace_sampled: bool,
     /// Split thinking/output stream events (mirrors [`YamlWorkflowExecutionFlags::split_stream_deltas`]).
     pub split_stream_deltas: bool,
+    /// Include partial streamed text in structured JSON parse error messages when debugging.
+    pub debug_stream_parse: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -255,10 +291,30 @@ pub trait YamlWorkflowCustomWorkerExecutor: Send + Sync {
     ) -> Result<Value, String>;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlGlobalUpdateOp {
+    Set,
+    Append,
+    Increment,
+    Merge,
+}
+
+impl YamlGlobalUpdateOp {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            YamlGlobalUpdateOp::Set => "set",
+            YamlGlobalUpdateOp::Append => "append",
+            YamlGlobalUpdateOp::Increment => "increment",
+            YamlGlobalUpdateOp::Merge => "merge",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct YamlGlobalUpdate {
-    pub op: String,
+    pub op: YamlGlobalUpdateOp,
     pub from: Option<String>,
     pub by: Option<f64>,
 }

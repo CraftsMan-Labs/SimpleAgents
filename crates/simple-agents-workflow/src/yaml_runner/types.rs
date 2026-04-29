@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::{YamlWorkflow, YamlWorkflowRunError};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlStepTiming {
     pub node_id: String,
     pub node_kind: String,
@@ -25,7 +25,7 @@ pub struct YamlStepTiming {
     pub tokens_per_second: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlLlmNodeMetrics {
     pub elapsed_ms: u128,
     pub prompt_tokens: u32,
@@ -36,7 +36,7 @@ pub struct YamlLlmNodeMetrics {
     pub tokens_per_second: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
@@ -156,7 +156,7 @@ pub struct YamlWorkflowTraceOptions {
 /// Global execution toggles for a workflow run (orthogonal to per-node YAML `heal` / `stream`).
 ///
 /// JSON uses snake_case keys: `healing`, `workflow_streaming`, `node_llm_streaming`,
-/// `split_stream_deltas`. Missing keys deserialize using [`Default`] (see
+/// `split_stream_deltas`, `debug_stream_parse`. Missing keys deserialize using [`Default`] (see
 /// [`Default::default`] on this type).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -172,6 +172,9 @@ pub struct YamlWorkflowExecutionFlags {
     /// When true, emit separate stream events for thinking vs output (`node_stream_thinking_delta`,
     /// `node_stream_output_delta`) in addition to `node_stream_delta`.
     pub split_stream_deltas: bool,
+    /// When true (or when env `SIMPLE_AGENTS_DEBUG_STREAM_PARSE` is `1`/`true`/`yes`), append the
+    /// partial streamed LLM text to structured JSON parse/coerce errors for debugging.
+    pub debug_stream_parse: bool,
 }
 
 impl Default for YamlWorkflowExecutionFlags {
@@ -182,6 +185,7 @@ impl Default for YamlWorkflowExecutionFlags {
             workflow_streaming: false,
             node_llm_streaming: true,
             split_stream_deltas: false,
+            debug_stream_parse: false,
         }
     }
 }
@@ -246,7 +250,7 @@ pub struct YamlWorkflowRunOptions {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct YamlLlmTokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -254,7 +258,7 @@ pub struct YamlLlmTokenUsage {
     pub reasoning_tokens: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlLlmExecutionResult {
     pub payload: Value,
     pub usage: Option<YamlLlmTokenUsage>,
@@ -262,7 +266,7 @@ pub struct YamlLlmExecutionResult {
     pub tool_calls: Vec<YamlToolCallTrace>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlToolCallTrace {
     pub id: String,
     pub name: String,

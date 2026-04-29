@@ -1,7 +1,7 @@
 /**
  * Run a YAML workflow (blocking, no stream events).
  *
- * Parity with `examples/python-test-simpleAgents/test-py-simple-agents.py`.
+ * Parity with `examples/python-test-simpleAgents/runners/test-py-simple-agents.py`.
  *
  * From repo root `examples/`: `bun install` in this directory (uses
  * `simple-agents-node` from `../../crates/simple-agents-napi`).
@@ -11,13 +11,11 @@
 
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { Client } from "simple-agents-node";
-import { customWorkerDispatch } from "./handlers.js";
+import { pathToWorkflow } from "../example_paths.js";
+import { customWorkerDispatch } from "../workflows/email-classification/handlers.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const workflowPath = join(__dirname, "test.yaml");
+const workflowPath = pathToWorkflow("email-classification", "test.yaml");
 
 function requireEnv(name: string): string {
   const v = process.env[name];

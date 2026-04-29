@@ -49,9 +49,10 @@ use simple_agent_type::message::Message;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 
 use crate::yaml_runner::{
-    workflow_execution, WorkflowCheckpoint, WorkflowEventSink, WorkflowRunOutput,
-    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
-    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
+    workflow_execution, RunMetadata, StepTiming, WorkflowCheckpoint, WorkflowEventSink,
+    WorkflowRunOutput, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
+    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
+    YamlWorkflowSource,
 };
 
 use simple_agent_type::prelude::SimpleAgentsError;
@@ -220,22 +221,53 @@ struct EventSinkBridge<'a> {
 impl YamlWorkflowEventSink for EventSinkBridge<'_> {
     fn emit(&self, event: &crate::yaml_runner::YamlWorkflowEvent) {
         // Map YamlWorkflowEvent → WorkflowEvent
-        use crate::yaml_runner::{NodeType, TokenKind, WorkflowEvent};
+        use crate::yaml_runner::{TokenKind, WorkflowEvent};
         let mapped = match event.event_type.as_str() {
             "workflow_started" => Some(WorkflowEvent::WorkflowStarted {
                 workflow_id: event.node_id.clone().unwrap_or_default(),
             }),
             "node_started" => Some(WorkflowEvent::NodeStarted {
                 node_id: event.node_id.clone().unwrap_or_default(),
-                node_type: NodeType::LlmCall,
+                node_type: node_type_from_kind(event.node_kind.as_deref()),
             }),
             "node_completed" => Some(WorkflowEvent::NodeCompleted {
                 node_id: event.node_id.clone().unwrap_or_default(),
                 output: event
+                    .snapshot
+                    .clone()
+                    .or_else(|| event.message.clone().map(Value::String))
+                    .unwrap_or(Value::Null),
+            }),
+            "node_tool_call_requested" => {
+                tool_name_from_event(event).map(|tool_name| WorkflowEvent::ToolCallRequested {
+                    node_id: event.node_id.clone().unwrap_or_default(),
+                    tool_name,
+                    arguments: event
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("arguments"))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                })
+            }
+            "node_tool_call_completed" => {
+                tool_name_from_event(event).map(|tool_name| WorkflowEvent::ToolCallCompleted {
+                    node_id: event.node_id.clone().unwrap_or_default(),
+                    tool_name,
+                    output: event
+                        .metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.get("output"))
+                        .cloned()
+                        .unwrap_or(Value::Null),
+                })
+            }
+            "node_tool_call_failed" => Some(WorkflowEvent::NodeFailed {
+                node_id: event.node_id.clone().unwrap_or_default(),
+                error: event
                     .message
                     .clone()
-                    .map(Value::String)
-                    .unwrap_or(Value::Null),
+                    .unwrap_or_else(|| "tool call failed without an error message".to_string()),
             }),
             "node_stream_delta" | "node_stream_output_delta" => {
                 Some(WorkflowEvent::LlmTokenDelta {
@@ -250,8 +282,8 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                 token_kind: TokenKind::Reasoning,
             }),
             "workflow_completed" => Some(WorkflowEvent::WorkflowCompleted {
-                output: Value::Null,
-                metadata: None,
+                output: event.snapshot.clone().unwrap_or(Value::Null),
+                metadata: event.metadata.clone(),
             }),
             _ => None,
         };
@@ -261,10 +293,57 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
     }
 }
 
+fn node_type_from_kind(kind: Option<&str>) -> crate::yaml_runner::NodeType {
+    use crate::yaml_runner::NodeType;
+
+    match kind {
+        Some("llm_call") => NodeType::LlmCall,
+        Some("switch") => NodeType::Switch,
+        Some("custom_worker") => NodeType::CustomWorker,
+        Some("end") => NodeType::End,
+        _ => NodeType::Unknown,
+    }
+}
+
+fn tool_name_from_event(event: &crate::yaml_runner::YamlWorkflowEvent) -> Option<String> {
+    event
+        .metadata
+        .as_ref()
+        .and_then(|metadata| metadata.get("tool_name"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
 /// Map the internal `YamlWorkflowRunOutput` to the cleaner public `WorkflowRunOutput`.
 fn yaml_output_to_workflow_output(
     output: crate::yaml_runner::YamlWorkflowRunOutput,
 ) -> WorkflowRunOutput {
+    let metadata = Some(RunMetadata {
+        total_elapsed_ms: output.total_elapsed_ms,
+        ttft_ms: output.ttft_ms,
+        total_input_tokens: output.total_input_tokens,
+        total_output_tokens: output.total_output_tokens,
+        total_tokens: output.total_tokens,
+        total_reasoning_tokens: output.total_reasoning_tokens,
+        tokens_per_second: output.tokens_per_second,
+        step_details: output
+            .step_timings
+            .iter()
+            .map(|step| StepTiming {
+                node_id: step.node_id.clone(),
+                node_type: step.node_kind.clone(),
+                model: step.model_name.clone(),
+                elapsed_ms: step.elapsed_ms,
+                input_tokens: step.prompt_tokens.map(u64::from),
+                output_tokens: step.completion_tokens.map(u64::from),
+                total_tokens: step.total_tokens.map(u64::from),
+                reasoning_tokens: step.reasoning_tokens.map(u64::from),
+                ttft_ms: None,
+            })
+            .collect(),
+        trace_id: output.trace_id.clone(),
+    });
+
     WorkflowRunOutput {
         workflow_id: output.workflow_id,
         entry_node: output.entry_node,
@@ -272,7 +351,7 @@ fn yaml_output_to_workflow_output(
         outputs: output.outputs,
         terminal_node: output.terminal_node,
         terminal_output: output.terminal_output,
-        metadata: None,
+        metadata,
         events: None,
     }
 }

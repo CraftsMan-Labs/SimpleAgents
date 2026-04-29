@@ -21,6 +21,7 @@ use simple_agent_type::telemetry::ApiFormat;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::common::HttpClient;
 use crate::healing_integration::{HealingConfig, HealingIntegration};
 use crate::utils::DEFAULT_TIMEOUT;
 
@@ -146,6 +147,20 @@ impl OpenAiCompatProvider {
         Self::with_base_url_and_format(api_key, Self::DEFAULT_BASE_URL.to_string(), api_format)
     }
 
+    /// Create a new OpenAI-compatible provider with a specific API format and HTTP timeout.
+    pub fn new_with_format_and_timeout(
+        api_key: ApiKey,
+        api_format: ApiFormat,
+        timeout: Duration,
+    ) -> Result<Self> {
+        Self::with_base_url_and_format_and_timeout(
+            api_key,
+            Self::DEFAULT_BASE_URL.to_string(),
+            api_format,
+            Some(timeout),
+        )
+    }
+
     /// Convenience constructor that returns a provider configured for the
     /// OpenAI platform with Chat Completions format.
     pub fn openai(api_key: String) -> Result<Self> {
@@ -169,16 +184,7 @@ impl OpenAiCompatProvider {
             std::env::var("OPENAI_API_BASE").unwrap_or_else(|_| Self::DEFAULT_BASE_URL.to_string());
         let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
 
-        let mut client_builder = Client::builder()
-            .timeout(DEFAULT_TIMEOUT)
-            .pool_max_idle_per_host(10)
-            .pool_idle_timeout(Duration::from_secs(90));
-        if is_local {
-            client_builder = client_builder.no_proxy();
-        }
-        let client = client_builder.build().map_err(|e| {
-            SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
-        })?;
+        let client = Self::build_http_client(DEFAULT_TIMEOUT, is_local)?;
 
         Self::with_client(api_key, base_url, client)
     }
@@ -194,14 +200,18 @@ impl OpenAiCompatProvider {
         base_url: String,
         api_format: ApiFormat,
     ) -> Result<Self> {
-        let client = Client::builder()
-            .timeout(DEFAULT_TIMEOUT)
-            .pool_max_idle_per_host(10)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .build()
-            .map_err(|e| {
-                SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e))
-            })?;
+        Self::with_base_url_and_format_and_timeout(api_key, base_url, api_format, None)
+    }
+
+    /// Create a new OpenAI provider with custom base URL, API format, and timeout.
+    pub fn with_base_url_and_format_and_timeout(
+        api_key: ApiKey,
+        base_url: String,
+        api_format: ApiFormat,
+        timeout: Option<Duration>,
+    ) -> Result<Self> {
+        let is_local = base_url.contains("localhost") || base_url.contains("127.0.0.1");
+        let client = Self::build_http_client(timeout.unwrap_or(DEFAULT_TIMEOUT), is_local)?;
 
         Ok(Self {
             api_key,
@@ -210,6 +220,12 @@ impl OpenAiCompatProvider {
             client,
             healing: None,
         })
+    }
+
+    fn build_http_client(timeout: Duration, is_local: bool) -> Result<Client> {
+        HttpClient::with_timeout_and_no_proxy(timeout, is_local)
+            .map(|client| client.inner().clone())
+            .map_err(|e| SimpleAgentsError::Config(format!("Failed to create HTTP client: {}", e)))
     }
 
     /// Enable healing system for automatic recovery from malformed responses.

@@ -1,0 +1,14 @@
+id: mocked-rag-workflow
+version: 1.0.0
+entry_node: retrieve_chunks
+
+nodes:
+  - id: retrieve_chunks
+    name: "Mock Retrieve Chunks"
+    node_type:
+      custom_worker:
+        handler: mock_retrieve_chunks
+        handler_file: rag_eval_handlers.py
+    config:
+      payload:
+        query: "What is the refund policy?"

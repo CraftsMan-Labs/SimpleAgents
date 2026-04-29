@@ -1,7 +1,7 @@
 /**
  * Custom worker handlers for `test.yaml` (`custom_worker.handler` values).
  *
- * Parity with `examples/python-test-simpleAgents/handlers.py`: the Rust runner
+ * Parity with `examples/python-test-simpleAgents/workflows/email-classification/handlers.py`: the Rust runner
  * loads `handlers.py` next to the workflow; in Node you pass the dispatch
  * function via `customWorker` on `Client.run` / `Client.stream`.
  */

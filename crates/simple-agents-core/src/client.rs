@@ -5,34 +5,18 @@ use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::{
     CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
 };
+use simple_agent_type::provider::RetryConfig;
 use simple_agent_type::telemetry::{ApiFormat, TelemetryConfig, TraceContext};
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::debug;
 
 // ---------------------------------------------------------------------------
 // Configuration types
 // ---------------------------------------------------------------------------
-
-/// Retry behaviour for failed LLM requests.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RetryConfig {
-    /// Maximum number of attempts (including the initial one).
-    pub max_attempts: u8,
-    /// Base back-off between retries in milliseconds.
-    pub backoff_ms: u64,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            backoff_ms: 1000,
-        }
-    }
-}
 
 /// Top-level configuration for a [`SimpleAgentsClient`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -223,8 +207,34 @@ impl SimpleAgentsClient {
         request.validate()?;
 
         let provider_request = self.provider.transform_request(request)?;
-        let provider_response = self.provider.execute(provider_request).await?;
+        let provider_response = self.execute_with_retries(provider_request).await?;
         self.provider.transform_response(provider_response)
+    }
+
+    async fn execute_with_retries(
+        &self,
+        provider_request: simple_agent_type::provider::ProviderRequest,
+    ) -> Result<simple_agent_type::provider::ProviderResponse> {
+        let retry = &self.config.default_retry;
+        let max_attempts = retry.max_attempts.max(1);
+        let mut attempt = 1;
+
+        loop {
+            match self.provider.execute(provider_request.clone()).await {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if attempt >= max_attempts || !is_retryable_error(&error) {
+                        return Err(error);
+                    }
+
+                    let delay = retry_delay(retry, attempt, &error);
+                    if !delay.is_zero() {
+                        tokio::time::sleep(delay).await;
+                    }
+                    attempt += 1;
+                }
+            }
+        }
     }
 
     async fn complete_json_internal(
@@ -289,6 +299,36 @@ impl SimpleAgentsClient {
             ))
         }
     }
+}
+
+fn is_retryable_error(error: &SimpleAgentsError) -> bool {
+    match error {
+        SimpleAgentsError::Provider(provider_error) => provider_error.is_retryable(),
+        SimpleAgentsError::Network(_) => true,
+        _ => false,
+    }
+}
+
+fn retry_after(error: &SimpleAgentsError) -> Option<Duration> {
+    match error {
+        SimpleAgentsError::Provider(simple_agent_type::error::ProviderError::RateLimit {
+            retry_after,
+        }) => *retry_after,
+        _ => None,
+    }
+}
+
+fn retry_delay(retry: &RetryConfig, failed_attempt: u32, error: &SimpleAgentsError) -> Duration {
+    if let Some(delay) = retry_after(error) {
+        return delay;
+    }
+
+    let factor = retry
+        .backoff_multiplier
+        .max(1.0)
+        .powi(failed_attempt.saturating_sub(1).min(31) as i32);
+    let delay = retry.initial_backoff.mul_f32(factor);
+    delay.min(retry.max_backoff.max(retry.initial_backoff))
 }
 
 #[cfg(test)]
@@ -372,6 +412,168 @@ mod tests {
             }
             _ => panic!("expected Response outcome"),
         }
+    }
+
+    struct RetryProvider {
+        name: &'static str,
+        failures_before_success: usize,
+        error: ProviderError,
+        calls: AtomicUsize,
+    }
+
+    impl RetryProvider {
+        fn new(name: &'static str, failures_before_success: usize, error: ProviderError) -> Self {
+            Self {
+                name,
+                failures_before_success,
+                error,
+                calls: AtomicUsize::new(0),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::Relaxed)
+        }
+    }
+
+    #[async_trait]
+    impl Provider for RetryProvider {
+        fn name(&self) -> &str {
+            self.name
+        }
+
+        fn transform_request(&self, _req: &CompletionRequest) -> Result<ProviderRequest> {
+            Ok(ProviderRequest::new("http://example.com"))
+        }
+
+        async fn execute(&self, _req: ProviderRequest) -> Result<ProviderResponse> {
+            let call = self.calls.fetch_add(1, Ordering::Relaxed);
+            if call < self.failures_before_success {
+                return Err(SimpleAgentsError::Provider(self.error.clone()));
+            }
+
+            Ok(ProviderResponse::new(
+                200,
+                serde_json::json!({"content": "ok"}),
+            ))
+        }
+
+        fn transform_response(&self, _resp: ProviderResponse) -> Result<CompletionResponse> {
+            Ok(CompletionResponse {
+                id: "resp_retry".to_string(),
+                model: "test-model".to_string(),
+                choices: vec![CompletionChoice {
+                    index: 0,
+                    message: Message::assistant("ok"),
+                    finish_reason: FinishReason::Stop,
+                    logprobs: None,
+                }],
+                usage: Usage::new(1, 1),
+                created: None,
+                provider: Some(self.name.to_string()),
+                healing_metadata: None,
+            })
+        }
+    }
+
+    fn retry_test_config(max_attempts: u32, backoff_multiplier: f32) -> ClientConfig {
+        ClientConfig {
+            default_retry: RetryConfig {
+                max_attempts,
+                initial_backoff: Duration::ZERO,
+                max_backoff: Duration::ZERO,
+                backoff_multiplier,
+                jitter: false,
+            },
+            ..ClientConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn complete_retries_retryable_provider_errors() {
+        let provider = Arc::new(RetryProvider::new(
+            "retry",
+            2,
+            ProviderError::ServerError("temporary".to_string()),
+        ));
+        let client = SimpleAgentsClient::from_config(provider.clone(), retry_test_config(3, 1.0));
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user("Hi"))
+            .build()
+            .unwrap();
+
+        let outcome = client
+            .complete(&request, CompletionOptions::default())
+            .await
+            .unwrap();
+
+        assert!(matches!(outcome, CompletionOutcome::Response(_)));
+        assert_eq!(provider.calls(), 3);
+    }
+
+    #[tokio::test]
+    async fn complete_does_not_retry_non_retryable_provider_errors() {
+        let provider = Arc::new(RetryProvider::new("retry", 1, ProviderError::InvalidApiKey));
+        let client = SimpleAgentsClient::from_config(provider.clone(), retry_test_config(3, 1.0));
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user("Hi"))
+            .build()
+            .unwrap();
+
+        let result = client
+            .complete(&request, CompletionOptions::default())
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(provider.calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn complete_does_not_retry_when_strategy_is_none() {
+        let provider = Arc::new(RetryProvider::new(
+            "retry",
+            1,
+            ProviderError::ServerError("temporary".to_string()),
+        ));
+        let client = SimpleAgentsClient::from_config(provider.clone(), retry_test_config(1, 1.0));
+
+        let request = CompletionRequest::builder()
+            .model("gpt-4")
+            .message(Message::user("Hi"))
+            .build()
+            .unwrap();
+
+        let result = client
+            .complete(&request, CompletionOptions::default())
+            .await;
+
+        assert!(result.is_err());
+        assert_eq!(provider.calls(), 1);
+    }
+
+    #[test]
+    fn retry_delay_uses_backoff_multiplier() {
+        let error =
+            SimpleAgentsError::Provider(ProviderError::ServerError("temporary".to_string()));
+        let fixed = RetryConfig {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(100),
+            max_backoff: Duration::from_millis(1_000),
+            backoff_multiplier: 1.0,
+            jitter: false,
+        };
+        let exponential = RetryConfig {
+            backoff_multiplier: 2.0,
+            ..fixed.clone()
+        };
+
+        assert_eq!(retry_delay(&fixed, 2, &error).as_millis(), 100);
+        assert_eq!(retry_delay(&exponential, 1, &error).as_millis(), 100);
+        assert_eq!(retry_delay(&exponential, 4, &error).as_millis(), 800);
     }
 
     struct StreamingProvider {

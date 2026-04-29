@@ -1,6 +1,6 @@
 /**
  * Run the email-classification workflow (TypeScript).
- * Based on examples/napi-test-simpleAgents/test-simple-agents.ts
+ * Based on examples/napi-test-simpleAgents/runners/test-simple-agents.ts
  *
  * npm install simple-agents-node dotenv
  * Create .env with WORKFLOW_API_KEY, WORKFLOW_API_BASE

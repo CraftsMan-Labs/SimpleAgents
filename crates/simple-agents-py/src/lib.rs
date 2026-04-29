@@ -3,25 +3,27 @@
 #![allow(clippy::useless_conversion)]
 
 use futures_util::{Stream, StreamExt};
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{CompletionChunk, Result};
+use simple_agent_type::provider::RetryConfig;
 use simple_agent_type::request::ResponseFormat;
 use simple_agents_core::{
-    CompletionMode, CompletionOptions, HealedJsonResponse, SimpleAgentsClient,
+    ClientConfig, CompletionMode, CompletionOptions, HealedJsonResponse, SimpleAgentsClient,
 };
 use simple_agents_healing::schema::Schema;
 use simple_agents_healing::{CoercionEngine, JsonishParser};
 use simple_agents_providers::schema_converter;
 use simple_agents_workflow::yaml_runner::workflow_execution;
 use simple_agents_workflow::yaml_runner::{
-    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowSource,
+    YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding,
+    YamlWorkflowSource,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod client_builder;
 mod completion_helpers;
@@ -35,6 +37,7 @@ use completion_helpers::{
     response_with_metadata_from_response, usage_to_pydict,
 };
 use provider_helpers::build_provider_from_name;
+use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
     attach_workflow_events, build_workflow_input_from_execution_request,
@@ -57,6 +60,124 @@ fn parse_python_schema(schema: &Bound<'_, PyAny>) -> PyResult<(serde_json::Value
     let sch = schema_converter::convert(&json_value)
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok((json_value, sch))
+}
+
+fn parse_timeout_seconds(timeout_seconds: Option<f64>) -> PyResult<Option<Duration>> {
+    match timeout_seconds {
+        Some(value) if value.is_finite() && value > 0.0 => Ok(Some(Duration::from_secs_f64(value))),
+        Some(_) => Err(PyValueError::new_err(
+            "timeout_seconds must be a positive finite number",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_retry_strategy(retry_strategy: Option<&str>) -> PyResult<Option<f32>> {
+    match retry_strategy {
+        Some("none") => Ok(None),
+        Some("fixed") => Ok(Some(1.0)),
+        Some("exponential") | None => Ok(Some(2.0)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown retry_strategy '{other}'; expected 'none', 'fixed', or 'exponential'"
+        ))),
+    }
+}
+
+fn parse_retry_config(
+    retry_attempts: Option<u32>,
+    retry_strategy: Option<&str>,
+) -> PyResult<RetryConfig> {
+    let mut retry = RetryConfig::default();
+    if let Some(attempts) = retry_attempts {
+        if attempts == 0 {
+            return Err(PyValueError::new_err(
+                "retry_attempts must be greater than or equal to 1",
+            ));
+        }
+        retry.max_attempts = attempts;
+    }
+    match parse_retry_strategy(retry_strategy)? {
+        Some(multiplier) => {
+            retry.backoff_multiplier = multiplier;
+            retry.jitter = false;
+        }
+        None => retry.max_attempts = 1,
+    }
+    Ok(retry)
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientCreateRequest {
+    provider: String,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    api_base: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_format: Option<String>,
+    #[serde(default)]
+    timeout_seconds: Option<f64>,
+    #[serde(default)]
+    retry_attempts: Option<u32>,
+    #[serde(default)]
+    retry_strategy: Option<String>,
+}
+
+fn py_client_config_error(error: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(format!("invalid Client request: {error}"))
+}
+
+fn depythonize_client_request_mapping(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<serde_json::Map<String, serde_json::Value>> {
+    let value: serde_json::Value = pythonize::depythonize(value).map_err(py_client_config_error)?;
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err(PyValueError::new_err(
+            "Client request must be a mapping or provider string",
+        )),
+    }
+}
+
+fn parse_client_create_request(
+    request: Option<&Bound<'_, PyAny>>,
+    kwargs: Option<&Bound<'_, PyDict>>,
+) -> PyResult<ClientCreateRequest> {
+    let mut raw = match request {
+        Some(request) => {
+            if let Ok(provider) = request.extract::<String>() {
+                let mut raw = serde_json::Map::new();
+                raw.insert("provider".to_string(), serde_json::Value::String(provider));
+                raw
+            } else {
+                if kwargs.is_some_and(|kwargs| !kwargs.is_empty()) {
+                    return Err(PyValueError::new_err(
+                        "Client request mapping cannot be combined with keyword options",
+                    ));
+                }
+                depythonize_client_request_mapping(request)?
+            }
+        }
+        None => serde_json::Map::new(),
+    };
+
+    if let Some(kwargs) = kwargs {
+        let keyword_options = depythonize_client_request_mapping(kwargs.as_any())?;
+        for (key, value) in keyword_options {
+            if raw.insert(key.clone(), value).is_some() {
+                return Err(PyValueError::new_err(format!(
+                    "Client request field '{key}' was provided more than once"
+                )));
+            }
+        }
+    }
+
+    serde_json::from_value(serde_json::Value::Object(raw)).map_err(py_client_config_error)
 }
 
 fn healed_json_response_to_py(
@@ -516,21 +637,47 @@ impl Client {
     /// otherwise the `OPENAI_API_KEY` environment variable is read.
     /// `api_base` and `base_url` are synonymous base-URL overrides.
     #[new]
-    #[pyo3(signature = (provider, *, api_key=None, api_base=None, base_url=None, model=None, api_format=None, timeout_seconds=None))]
+    #[pyo3(signature = (request=None, **kwargs))]
     fn new(
-        provider: &str,
-        api_key: Option<&str>,
-        api_base: Option<&str>,
-        base_url: Option<&str>,
-        model: Option<&str>,
-        api_format: Option<&str>,
-        timeout_seconds: Option<f64>,
+        request: Option<&Bound<'_, PyAny>>,
+        kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        let _ = (model, timeout_seconds);
+        let request = parse_client_create_request(request, kwargs)?;
+        if request.model.is_some() {
+            return Err(PyValueError::new_err(
+                "Client(model=...) is not supported yet; pass the model per request via completion model or workflow execution.model",
+            ));
+        }
+        let ClientCreateRequest {
+            provider,
+            api_key,
+            api_base,
+            base_url,
+            model: _,
+            api_format,
+            timeout_seconds,
+            retry_attempts,
+            retry_strategy,
+        } = request;
+        let timeout = parse_timeout_seconds(timeout_seconds)?;
+        let retry = parse_retry_config(retry_attempts, retry_strategy.as_deref())?;
         let effective_base = api_base.or(base_url);
-        let prov = build_provider_from_name(provider, api_key, effective_base, api_format)
-            .map_err(py_err)?;
-        let client = SimpleAgentsClient::new(prov);
+        let prov = build_provider_from_name(
+            provider.as_str(),
+            api_key.as_deref(),
+            effective_base.as_deref(),
+            api_format.as_deref(),
+            timeout,
+        )
+        .map_err(py_err)?;
+        let config = ClientConfig {
+            provider,
+            api_key: api_key.unwrap_or_default(),
+            base_url: effective_base,
+            default_retry: retry,
+            ..Default::default()
+        };
+        let client = SimpleAgentsClient::from_config(prov, config);
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self {
             runtime: Arc::new(Mutex::new(runtime)),
@@ -830,6 +977,101 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
+    /// Run an output-shaped eval dataset against a YAML workflow using native subset matching.
+    #[pyo3(signature = (request))]
+    fn run_eval_suite(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let raw: serde_json::Value = pythonize::depythonize(request).map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "invalid eval suite request: {error}. expected keys: workflow_path, dataset_path"
+            ))
+        })?;
+        let object = raw.as_object().ok_or_else(|| {
+            PyRuntimeError::new_err("eval suite request must be a dict/object".to_string())
+        })?;
+        let allowed_keys = [
+            "workflow_path",
+            "dataset_path",
+            "suite_id",
+            "execution",
+            "workflow_options",
+            "max_concurrency",
+        ];
+        for key in object.keys() {
+            if !allowed_keys.contains(&key.as_str()) {
+                return Err(PyRuntimeError::new_err(format!(
+                    "unknown eval suite request key '{key}'; expected keys: workflow_path, dataset_path, suite_id?, execution?, workflow_options?, max_concurrency?"
+                )));
+            }
+        }
+        let workflow_path = object
+            .get("workflow_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| PyRuntimeError::new_err("workflow_path is required".to_string()))?;
+        let dataset_path = object
+            .get("dataset_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| PyRuntimeError::new_err("dataset_path is required".to_string()))?;
+        if workflow_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err("workflow_path cannot be empty"));
+        }
+        if dataset_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err("dataset_path cannot be empty"));
+        }
+
+        let workflow_path_buf = std::path::PathBuf::from(workflow_path);
+        let dataset_path_buf = std::path::PathBuf::from(dataset_path);
+        let workflow_root = workflow_path_buf
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let execution = object
+            .get("execution")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone())
+                    .map_err(|error| PyRuntimeError::new_err(format!("invalid execution: {error}")))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let workflow_options = object
+            .get("workflow_options")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowRunOptions>(value.clone()).map_err(|error| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let max_concurrency = object
+            .get("max_concurrency")
+            .and_then(serde_json::Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(1);
+        let suite_id = object.get("suite_id").and_then(serde_json::Value::as_str);
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let request = EvalSuiteRunRequest {
+            suite_id,
+            workflow_path: workflow_path_buf.as_path(),
+            dataset_path: dataset_path_buf.as_path(),
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+            execution,
+            workflow_options,
+            max_concurrency,
+        };
+        let report = py
+            .allow_threads(|| runtime.block_on(run_eval_suite(request)))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let value = serde_json::to_value(report)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
     /// Run a YAML workflow with streaming events.
     #[pyo3(signature = (request, on_event=None, include_events_in_output=false))]
     fn stream_workflow(
@@ -876,6 +1118,7 @@ impl Client {
             } else {
                 let event_sink = PythonWorkflowEventSink {
                     callback: Some(callback),
+                    callback_error: std::sync::Mutex::new(None),
                 };
                 let execution_request = YamlWorkflowExecutionRequest {
                     source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
@@ -932,7 +1175,6 @@ impl Client {
         checkpoint: &Bound<'_, PyAny>,
         options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
-        let _ = options;
         // Extract workflow_path and messages from the checkpoint dict, then delegate to run()
         let checkpoint_val: serde_json::Value = pythonize::depythonize(checkpoint)
             .map_err(|e| PyRuntimeError::new_err(format!("invalid checkpoint: {e}")))?;
@@ -950,7 +1192,34 @@ impl Client {
         let workflow_input = serde_json::json!({ "messages": messages_val });
         let workflow_path_buf = std::path::PathBuf::from(&workflow_path);
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let default_options = YamlWorkflowRunOptions::default();
+        let run_options = if let Some(options) = options {
+            let value: serde_json::Value = pythonize::depythonize(options)
+                .map_err(|e| PyRuntimeError::new_err(format!("invalid resume options: {e}")))?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| PyRuntimeError::new_err("resume options must be a dict/object"))?;
+            for key in object.keys() {
+                if key != "workflow_options" && key != "workflowOptions" {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "resume options only supports workflow_options/workflowOptions; unknown key '{key}'"
+                    )));
+                }
+            }
+            let workflow_options = object
+                .get("workflow_options")
+                .or_else(|| object.get("workflowOptions"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            if workflow_options.is_null() {
+                YamlWorkflowRunOptions::default()
+            } else {
+                serde_json::from_value::<YamlWorkflowRunOptions>(workflow_options).map_err(|e| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {e}"))
+                })?
+            }
+        } else {
+            YamlWorkflowRunOptions::default()
+        };
         let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
         let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let runtime = self
@@ -963,7 +1232,7 @@ impl Client {
             workflow_input: &workflow_input,
             executor: YamlWorkflowExecutorBinding::Client(&self.client),
             custom_worker: Some(&custom_executor),
-            options: &default_options,
+            options: &run_options,
             flags,
         };
 

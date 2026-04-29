@@ -57,12 +57,19 @@ export interface ParsedWorkflowYamlExecutionRequest {
 export interface WorkflowYamlRunRequest {
   workflowPath: string
   messages: Array<MessageInput>
-  healing: boolean
-  workflowStreaming: boolean
-  nodeLlmStreaming: boolean
+  healing?: boolean
+  workflowStreaming?: boolean
+  nodeLlmStreaming?: boolean
   splitStreamDeltas?: boolean
+  debugStreamParse?: boolean
   extraWorkflowInput?: Record<string, unknown>
   workflowOptions?: WorkflowRunOptionsNapi
+}
+export interface ClientOptions {
+  timeoutSeconds?: number
+  retryAttempts?: number
+  /** "none" | "fixed" | "exponential" */
+  retryStrategy?: string
 }
 export interface CompleteOptions {
   maxTokens?: number
@@ -142,23 +149,6 @@ export interface StreamChunk {
   error?: string
   raw?: string
 }
-export interface StreamDelta {
-  id: string
-  model: string
-  index: number
-  role?: string
-  content?: string
-  finishReason?: string
-  raw?: string
-}
-export interface StreamErrorEvent {
-  message: string
-}
-export interface StreamEvent {
-  eventType: string
-  delta?: StreamDelta
-  error?: StreamErrorEvent
-}
 export declare function parseWorkflowYamlExecutionRequest(workflowPath: string, messages: Array<MessageInput>, flags: WorkflowYamlRunFlags, extraWorkflowInput?: Record<string, unknown>, workflowOptions?: WorkflowRunOptionsNapi): ParsedWorkflowYamlExecutionRequest
 /**
  * Copies OTLP-related variables into the Rust process environment (`std::env`).
@@ -176,13 +166,14 @@ export class Client {
    * Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
    * the endpoint.
    */
-  constructor(apiKey: string, baseUrl?: string | undefined | null)
+  constructor(apiKey: string, baseUrl?: string | undefined | null, options?: ClientOptions | undefined | null)
   /** Create a client using environment variables for the API key. */
-  static fromEnv(): Client
+  static fromEnv(options?: ClientOptions | undefined | null): Client
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
   streamComplete(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
-  runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
-  streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<Record<string, unknown>>
+  runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
+  streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<Record<string, unknown>>
+  runEvalSuite(request: EvalSuiteRequest): Promise<EvalReport>
   /**
    * Resume a workflow from a checkpoint.
    *
@@ -191,4 +182,91 @@ export class Client {
    * ```
    */
   resume(checkpoint: Record<string, unknown>, opts?: { workflowOptions?: Record<string, unknown>; customWorker?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown }): Record<string, unknown> | Promise<Record<string, unknown>>
+}
+
+// --- simple-agents wrapper API additions ---
+
+export interface EvalSuiteRequest {
+  workflowPath: string
+  datasetPath: string
+  evaluator: EvalEvaluator
+  suiteId?: string
+  execution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }
+  workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }
+  customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown
+}
+
+export interface EvalDatasetRecord {
+  id: string
+  input: Record<string, unknown>
+  expected_output: Record<string, unknown>
+  rubric?: unknown
+  custom?: unknown
+  metadata?: unknown
+}
+
+export interface EvalCase {
+  id: string
+  input: Record<string, unknown>
+  expectedOutput: Record<string, unknown>
+  actualOutput: Record<string, unknown>
+  record: EvalDatasetRecord
+}
+
+export type EvalEvaluator = (case_: EvalCase) => EvalResult | boolean | Promise<EvalResult | boolean>
+
+export interface EvalSummary {
+  totalCases: number
+  passedCases: number
+  failedCases: number
+  errorCases: number
+  passRate: number
+}
+
+export interface EvalErrorInfo {
+  code: string
+  message: string
+}
+
+export interface EvalCaseResult {
+  caseId: string
+  status: 'passed' | 'failed' | 'error'
+  expected?: unknown
+  actual?: unknown
+  evaluations?: Array<EvalResult>
+  workflowOutput?: Record<string, unknown>
+  error?: EvalErrorInfo
+}
+
+export interface EvalResult {
+  id: string
+  status: 'passed' | 'failed' | 'error'
+  passed: boolean
+  score?: number
+  expected?: unknown
+  actual?: unknown
+  reason?: string
+  metadata?: unknown
+}
+
+export interface EvalReport {
+  suiteId: string
+  status: 'passed' | 'failed' | 'error'
+  summary: EvalSummary
+  cases: Array<EvalCaseResult>
+}
+
+export interface WorkflowYamlRunRequest {
+  customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown
+}
+
+export interface Client {
+  runEvalSuite(request: EvalSuiteRequest): Promise<EvalReport>
+  run(request: WorkflowYamlRunRequest): Record<string, unknown> | Promise<Record<string, unknown>>
+  stream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<Record<string, unknown>>
+  runWorkflowYaml(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
+  runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
+  runWorkflowYamlStream(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<Record<string, unknown>>
+  executeWorkflowYaml(request: WorkflowYamlRunRequest): Record<string, unknown> | Promise<Record<string, unknown>>
+  executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<Record<string, unknown>>
 }

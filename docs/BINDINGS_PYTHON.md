@@ -167,6 +167,25 @@ def on_event(event: dict) -> None:
 streamed = client.stream_workflow(request, on_event=on_event)
 ```
 
+### Workflow evals
+
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output`. The runner executes the workflow and passes each case to your evaluator callback.
+
+```python
+from simple_agents_py import Client, output_subset, run_eval_suite
+
+client = Client("openai")
+report = run_eval_suite(
+    client,
+    workflow_path="workflows/friendly/friendly.yaml",
+    dataset_path="evals/friendly/friendly-eval.dataset.jsonl",
+    evaluator=output_subset,
+)
+
+print(report.status)
+print(report.cases[0].evaluations[0].reason)
+```
+
 ### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
 
 Higher-level helpers that add structured hooks, display modes, and Pydantic request coercion:
@@ -203,6 +222,8 @@ request = WorkflowExecutionRequest(
     ),
 )
 ```
+
+Python multimodal workflow messages use OpenAI-style content parts such as `{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}`. The Node binding also accepts its typed `ContentPartInput` shape (`{ type: "image", mediaType, data }`); do not blindly copy multimodal payloads across languages without translating the part shape.
 
 Requires `pip install simple-agents-py[pydantic]`.
 

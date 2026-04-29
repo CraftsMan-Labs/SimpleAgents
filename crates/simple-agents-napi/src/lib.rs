@@ -14,17 +14,20 @@ use simple_agent_type::message::{ContentPart, Message, MessageContent, Role};
 use simple_agent_type::prelude::{
     ApiKey, CompletionRequest, Provider, Result as SaResult, SimpleAgentsError,
 };
+use simple_agent_type::provider::RetryConfig;
 use simple_agent_type::response::{CompletionChunk, CompletionResponse, FinishReason, Usage};
+use simple_agent_type::telemetry::ApiFormat;
 use simple_agent_type::tool::{ToolCall, ToolType};
 use simple_agents_core::{
-    CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse, HealedSchemaResponse,
-    SimpleAgentsClient,
+    ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, HealedJsonResponse,
+    HealedSchemaResponse, SimpleAgentsClient,
 };
 use simple_agents_healing::{
     schema::{Field as SchemaField, ObjectSchema, Schema},
     CoercionEngine, JsonishParser,
 };
 use simple_agents_providers::openai::OpenAiCompatProvider;
+use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::yaml_runner::{
     validate_custom_worker_executor_for_file, workflow_execution, YamlWorkflowCustomWorkerExecutor,
     YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
@@ -33,7 +36,7 @@ use simple_agents_workflow::yaml_runner::{
 };
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod workflow_custom_worker;
 mod workflow_helpers;
@@ -41,7 +44,7 @@ mod workflow_options_napi;
 use workflow_helpers::{
     apply_workflow_execution_flags_patch, build_workflow_input_with_messages_envelope,
     normalize_workflow_input_messages, parse_workflow_execution_flags_patch,
-    parse_workflow_options, parse_workflow_request_options, validate_workflow_request,
+    parse_workflow_request_options, validate_workflow_request,
 };
 pub use workflow_options_napi::{
     WorkflowRunOptionsNapi, WorkflowTelemetryConfigNapi, WorkflowTraceConfigNapi,
@@ -70,18 +73,109 @@ fn client_opts_from_js_object(opts: Option<&JsObject>) -> Result<ClientOptsFromJ
 fn build_provider_arc(
     api_key: Option<&str>,
     base_url: Option<&str>,
+    timeout: Option<Duration>,
 ) -> SaResult<Arc<dyn Provider>> {
     let provider = match api_key {
         Some(key) => {
             let key = ApiKey::new(key)?;
             match base_url {
-                Some(base) => OpenAiCompatProvider::with_base_url(key, base.to_string())?,
-                None => OpenAiCompatProvider::new(key)?,
+                Some(base) => OpenAiCompatProvider::with_base_url_and_format_and_timeout(
+                    key,
+                    base.to_string(),
+                    ApiFormat::ChatCompletions,
+                    timeout,
+                )?,
+                None => match timeout {
+                    Some(duration) => OpenAiCompatProvider::new_with_format_and_timeout(
+                        key,
+                        ApiFormat::ChatCompletions,
+                        duration,
+                    )?,
+                    None => OpenAiCompatProvider::new(key)?,
+                },
             }
         }
-        None => OpenAiCompatProvider::from_env()?,
+        None => match timeout {
+            Some(duration) => {
+                let api_key = std::env::var("OPENAI_API_KEY")
+                    .map_err(|_| config_err("OPENAI_API_KEY environment variable is required"))?;
+                let key = ApiKey::new(api_key)?;
+                let base = std::env::var("OPENAI_API_BASE").ok();
+                match base {
+                    Some(base) => OpenAiCompatProvider::with_base_url_and_format_and_timeout(
+                        key,
+                        base,
+                        ApiFormat::ChatCompletions,
+                        Some(duration),
+                    )?,
+                    None => OpenAiCompatProvider::new_with_format_and_timeout(
+                        key,
+                        ApiFormat::ChatCompletions,
+                        duration,
+                    )?,
+                }
+            }
+            None => OpenAiCompatProvider::from_env()?,
+        },
     };
     Ok(Arc::new(provider))
+}
+
+fn parse_client_timeout(options: Option<&ClientOptions>) -> SaResult<Option<Duration>> {
+    match options.and_then(|options| options.timeout_seconds) {
+        Some(value) if value.is_finite() && value > 0.0 => Ok(Some(Duration::from_secs_f64(value))),
+        Some(_) => Err(config_err(
+            "timeoutSeconds must be a positive finite number",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_client_retry_strategy(value: Option<&str>) -> SaResult<Option<f32>> {
+    match value {
+        Some("none") => Ok(None),
+        Some("fixed") => Ok(Some(1.0)),
+        Some("exponential") | None => Ok(Some(2.0)),
+        Some(other) => Err(config_err(format!(
+            "unknown retryStrategy '{other}'; expected 'none', 'fixed', or 'exponential'"
+        ))),
+    }
+}
+
+fn parse_client_retry_config(options: Option<&ClientOptions>) -> SaResult<RetryConfig> {
+    let mut retry = RetryConfig::default();
+    if let Some(attempts) = options.and_then(|options| options.retry_attempts) {
+        if attempts == 0 {
+            return Err(config_err(
+                "retryAttempts must be greater than or equal to 1",
+            ));
+        }
+        retry.max_attempts = attempts;
+    }
+    match parse_client_retry_strategy(
+        options.and_then(|options| options.retry_strategy.as_deref()),
+    )? {
+        Some(multiplier) => {
+            retry.backoff_multiplier = multiplier;
+            retry.jitter = false;
+        }
+        None => retry.max_attempts = 1,
+    }
+    Ok(retry)
+}
+
+fn build_client_config(
+    api_key: Option<&str>,
+    base_url: Option<&str>,
+    options: Option<&ClientOptions>,
+) -> SaResult<ClientConfig> {
+    Ok(ClientConfig {
+        provider: "openai".to_string(),
+        api_key: api_key.unwrap_or_default().to_string(),
+        base_url: base_url.map(str::to_string),
+        default_retry: parse_client_retry_config(options)?,
+        ..ClientConfig::default()
+    })
 }
 
 fn napi_err(error: SimpleAgentsError) -> Error {
@@ -227,13 +321,23 @@ pub struct ParsedWorkflowYamlExecutionRequest {
 pub struct WorkflowYamlRunRequest {
     pub workflow_path: String,
     pub messages: Vec<MessageInput>,
-    pub healing: bool,
-    pub workflow_streaming: bool,
-    pub node_llm_streaming: bool,
+    pub healing: Option<bool>,
+    pub workflow_streaming: Option<bool>,
+    pub node_llm_streaming: Option<bool>,
     pub split_stream_deltas: Option<bool>,
+    pub debug_stream_parse: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
     pub workflow_options: Option<WorkflowRunOptionsNapi>,
+}
+
+#[napi(object)]
+#[derive(Default)]
+pub struct ClientOptions {
+    pub timeout_seconds: Option<f64>,
+    pub retry_attempts: Option<u32>,
+    /// "none" | "fixed" | "exponential"
+    pub retry_strategy: Option<String>,
 }
 
 #[napi(object)]
@@ -344,32 +448,6 @@ pub struct StreamChunk {
     pub is_complete: Option<bool>,
     pub error: Option<String>,
     pub raw: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamDelta {
-    pub id: String,
-    pub model: String,
-    pub index: u32,
-    pub role: Option<String>,
-    pub content: Option<String>,
-    pub finish_reason: Option<String>,
-    pub raw: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamErrorEvent {
-    pub message: String,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamEvent {
-    pub event_type: String,
-    pub delta: Option<StreamDelta>,
-    pub error: Option<StreamErrorEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -491,7 +569,10 @@ pub(crate) fn parse_message(input: MessageInput) -> SaResult<Message> {
                 tool_calls: None,
             };
             if let Some(calls_in) = tool_calls {
-                let calls = calls_in.into_iter().map(ToolCall::from).collect::<Vec<_>>();
+                let calls = calls_in
+                    .into_iter()
+                    .map(tool_call_from_js)
+                    .collect::<SaResult<Vec<_>>>()?;
                 if !calls.is_empty() {
                     msg = msg.with_tool_calls(calls);
                 }
@@ -591,17 +672,23 @@ impl From<ToolCall> for ToolCallResult {
     }
 }
 
-impl From<JsToolCall> for ToolCall {
-    fn from(value: JsToolCall) -> Self {
-        ToolCall {
-            id: value.id,
-            tool_type: ToolType::Function,
-            function: simple_agent_type::tool::ToolCallFunction {
-                name: value.function.name,
-                arguments: value.function.arguments,
-            },
+fn tool_call_from_js(value: JsToolCall) -> SaResult<ToolCall> {
+    let tool_type = match value.tool_type.as_str() {
+        "function" => ToolType::Function,
+        other => {
+            return Err(SimpleAgentsError::Config(format!(
+                "tool_call.tool_type must be 'function', got '{other}'"
+            )));
         }
-    }
+    };
+    Ok(ToolCall {
+        id: value.id,
+        tool_type,
+        function: simple_agent_type::tool::ToolCallFunction {
+            name: value.function.name,
+            arguments: value.function.arguments,
+        },
+    })
 }
 
 impl From<Usage> for CompletionUsage {
@@ -939,6 +1026,47 @@ pub struct RunWorkflowTask {
     record_events: bool,
 }
 
+pub struct EvalSuiteTask {
+    runtime: Arc<Runtime>,
+    client: Arc<SimpleAgentsClient>,
+    suite_id: Option<String>,
+    workflow_path: String,
+    dataset_path: String,
+    workflow_options: YamlWorkflowRunOptions,
+    workflow_flags: YamlWorkflowExecutionFlags,
+    max_concurrency: usize,
+    custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
+}
+
+impl Task for EvalSuiteTask {
+    type Output = JsonValue;
+    type JsValue = napi::JsUnknown;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let request = EvalSuiteRunRequest {
+            suite_id: self.suite_id.as_deref(),
+            workflow_path: Path::new(self.workflow_path.as_str()),
+            dataset_path: Path::new(self.dataset_path.as_str()),
+            executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
+            custom_worker: self.custom_worker.as_deref(),
+            execution: self.workflow_flags,
+            workflow_options: self.workflow_options.clone(),
+            max_concurrency: self.max_concurrency,
+        };
+        let report = self
+            .runtime
+            .block_on(run_eval_suite(request))
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_value(report).map_err(|error| {
+            Error::from_reason(format!("failed to serialize eval report: {error}"))
+        })
+    }
+
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        env.to_js_value(&output)
+    }
+}
+
 impl Task for RunWorkflowTask {
     type Output = JsonValue;
     type JsValue = napi::JsUnknown;
@@ -1026,7 +1154,7 @@ impl YamlWorkflowEventSink for NodeWorkflowEventSink {
             Err(_) => return,
         };
         self.callback
-            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
+            .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }
 
@@ -1068,7 +1196,7 @@ impl YamlWorkflowEventSink for NodeCombinedWorkflowEventSink {
             Err(_) => return,
         };
         self.callback
-            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
+            .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }
 
@@ -1179,7 +1307,7 @@ pub fn parse_workflow_yaml_execution_request(
         build_workflow_input_with_messages_envelope(messages, extra_workflow_input.as_ref())?;
     validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
     let opts_json = workflow_options_napi::workflow_run_options_napi_to_json(workflow_options)?;
-    let opts = parse_workflow_options(opts_json)?;
+    let opts = parse_workflow_request_options(opts_json)?;
     let workflow_options_value = serde_json::to_value(&opts).map_err(|error| {
         Error::from_reason(format!("failed to serialize workflow options: {error}"))
     })?;
@@ -1210,19 +1338,32 @@ impl Client {
     /// Uses `OpenAiCompatProvider` under the hood; pass `baseUrl` to override
     /// the endpoint.
     #[napi(constructor)]
-    pub fn new(api_key: String, base_url: Option<String>) -> Result<Self> {
-        let provider =
-            build_provider_arc(Some(api_key.as_str()), base_url.as_deref()).map_err(napi_err)?;
-        let client = Arc::new(SimpleAgentsClient::new(provider));
+    pub fn new(
+        api_key: String,
+        base_url: Option<String>,
+        options: Option<ClientOptions>,
+    ) -> Result<Self> {
+        let timeout = parse_client_timeout(options.as_ref()).map_err(napi_err)?;
+        let provider = build_provider_arc(Some(api_key.as_str()), base_url.as_deref(), timeout)
+            .map_err(napi_err)?;
+        let config = build_client_config(
+            Some(api_key.as_str()),
+            base_url.as_deref(),
+            options.as_ref(),
+        )
+        .map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::from_config(provider, config));
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
         Ok(Self { runtime, client })
     }
 
     /// Create a client using environment variables for the API key.
     #[napi(factory)]
-    pub fn from_env() -> Result<Self> {
-        let provider = build_provider_arc(None, None).map_err(napi_err)?;
-        let client = Arc::new(SimpleAgentsClient::new(provider));
+    pub fn from_env(options: Option<ClientOptions>) -> Result<Self> {
+        let timeout = parse_client_timeout(options.as_ref()).map_err(napi_err)?;
+        let provider = build_provider_arc(None, None, timeout).map_err(napi_err)?;
+        let config = build_client_config(None, None, options.as_ref()).map_err(napi_err)?;
+        let client = Arc::new(SimpleAgentsClient::from_config(provider, config));
         let runtime = Arc::new(Runtime::new().map_err(|e| Error::from_reason(e.to_string()))?);
         Ok(Self { runtime, client })
     }
@@ -1286,7 +1427,7 @@ impl Client {
 
     #[napi(
         js_name = "runWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
     pub fn run_workflow(
@@ -1359,7 +1500,7 @@ impl Client {
 
     #[napi(
         js_name = "streamWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream_workflow(
@@ -1411,6 +1552,109 @@ impl Client {
         };
 
         Ok(AsyncTask::new(task))
+    }
+
+    #[napi(
+        js_name = "runEvalSuite",
+        ts_args_type = "request: EvalSuiteRequest",
+        ts_return_type = "Promise<EvalReport>"
+    )]
+    pub fn run_eval_suite(
+        &self,
+        request: JsonValue,
+        custom_worker_dispatch: Option<JsFunction>,
+    ) -> Result<AsyncTask<EvalSuiteTask>> {
+        let object = request.as_object().ok_or_else(|| {
+            Error::from_reason("eval suite request must be an object".to_string())
+        })?;
+        for key in object.keys() {
+            if !matches!(
+                key.as_str(),
+                "workflowPath"
+                    | "workflow_path"
+                    | "datasetPath"
+                    | "dataset_path"
+                    | "suiteId"
+                    | "suite_id"
+                    | "workflowOptions"
+                    | "workflow_options"
+                    | "execution"
+                    | "maxConcurrency"
+                    | "max_concurrency"
+            ) {
+                return Err(Error::from_reason(format!(
+                    "invalid eval suite request: unknown key '{}'",
+                    key
+                )));
+            }
+        }
+        let workflow_path = object
+            .get("workflowPath")
+            .or_else(|| object.get("workflow_path"))
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| Error::from_reason("workflowPath is required".to_string()))?
+            .to_string();
+        let dataset_path = object
+            .get("datasetPath")
+            .or_else(|| object.get("dataset_path"))
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| Error::from_reason("datasetPath is required".to_string()))?
+            .to_string();
+        if workflow_path.trim().is_empty() {
+            return Err(Error::from_reason(
+                "workflowPath cannot be empty".to_string(),
+            ));
+        }
+        if dataset_path.trim().is_empty() {
+            return Err(Error::from_reason(
+                "datasetPath cannot be empty".to_string(),
+            ));
+        }
+        let suite_id = object
+            .get("suiteId")
+            .or_else(|| object.get("suite_id"))
+            .and_then(JsonValue::as_str)
+            .map(str::to_string);
+        let workflow_options = object
+            .get("workflowOptions")
+            .or_else(|| object.get("workflow_options"))
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowRunOptions>(value.clone()).map_err(|error| {
+                    Error::from_reason(format!("invalid workflowOptions: {error}"))
+                })
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let workflow_flags = object
+            .get("execution")
+            .map(|value| {
+                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone())
+                    .map_err(|error| Error::from_reason(format!("invalid execution: {error}")))
+            })
+            .transpose()?
+            .unwrap_or_default();
+        let max_concurrency = object
+            .get("maxConcurrency")
+            .or_else(|| object.get("max_concurrency"))
+            .and_then(JsonValue::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(1);
+        let custom_worker = match custom_worker_dispatch {
+            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
+            None => None,
+        };
+
+        Ok(AsyncTask::new(EvalSuiteTask {
+            runtime: self.runtime.clone(),
+            client: self.client.clone(),
+            suite_id,
+            workflow_path,
+            dataset_path,
+            workflow_options,
+            workflow_flags,
+            max_concurrency,
+            custom_worker,
+        }))
     }
 
     /// Resume a workflow from a checkpoint.
@@ -1492,5 +1736,51 @@ pub fn sync_otel_env_from_process(
         if !name.is_empty() {
             std::env::set_var("OTEL_SERVICE_NAME", name);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn client_options_accept_timeout_and_retry() {
+        let options = ClientOptions {
+            timeout_seconds: Some(30.0),
+            retry_attempts: Some(2),
+            retry_strategy: Some("fixed".to_string()),
+        };
+
+        assert_eq!(
+            parse_client_timeout(Some(&options)).unwrap(),
+            Some(Duration::from_secs(30))
+        );
+        let retry = parse_client_retry_config(Some(&options)).unwrap();
+        assert_eq!(retry.max_attempts, 2);
+        assert_eq!(retry.backoff_multiplier, 1.0);
+    }
+
+    #[test]
+    fn client_options_reject_invalid_values() {
+        let bad_timeout = ClientOptions {
+            timeout_seconds: Some(0.0),
+            retry_attempts: None,
+            retry_strategy: None,
+        };
+        assert!(parse_client_timeout(Some(&bad_timeout)).is_err());
+
+        let bad_attempts = ClientOptions {
+            timeout_seconds: None,
+            retry_attempts: Some(0),
+            retry_strategy: None,
+        };
+        assert!(parse_client_retry_config(Some(&bad_attempts)).is_err());
+
+        let bad_strategy = ClientOptions {
+            timeout_seconds: None,
+            retry_attempts: None,
+            retry_strategy: Some("linear".to_string()),
+        };
+        assert!(parse_client_retry_config(Some(&bad_strategy)).is_err());
     }
 }

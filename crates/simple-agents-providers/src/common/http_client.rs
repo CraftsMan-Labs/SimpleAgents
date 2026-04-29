@@ -68,11 +68,26 @@ impl HttpClient {
     /// let client = HttpClient::with_timeout(Duration::from_secs(60)).unwrap();
     /// ```
     pub fn with_timeout(timeout: Duration) -> Result<Self, reqwest::Error> {
+        Self::with_timeout_and_no_proxy(timeout, false)
+    }
+
+    /// Creates a new HTTP client with custom timeout and optional proxy bypass.
+    ///
+    /// The proxy bypass is used for local OpenAI-compatible test servers where
+    /// system proxy settings can otherwise route localhost traffic incorrectly.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the client fails to build.
+    pub fn with_timeout_and_no_proxy(
+        timeout: Duration,
+        no_proxy: bool,
+    ) -> Result<Self, reqwest::Error> {
         let inner = Client::builder()
             .timeout(timeout)
             .pool_max_idle_per_host(10)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .build()?;
+            .pool_idle_timeout(Duration::from_secs(90));
+        let inner = if no_proxy { inner.no_proxy() } else { inner }.build()?;
 
         Ok(Self { inner })
     }

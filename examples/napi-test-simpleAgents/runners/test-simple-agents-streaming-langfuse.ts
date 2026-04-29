@@ -5,7 +5,7 @@
  * export settings and `syncOtelEnvFromProcess` so the native layer sees OTLP env
  * (Bun/Node `process.env` updates are not always visible to Rust `std::env`).
  *
- * Parity with `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py`.
+ * Parity with `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming-langfuse.py`.
  * LLM nodes in the YAML should use `stream: true` if you want token deltas.
  *
  * From repo root `examples/`: `bun install` in this directory.
@@ -24,15 +24,14 @@
 import { config as loadEnv } from "dotenv";
 import * as readline from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Client, syncOtelEnvFromProcess } from "simple-agents-node";
 import { parseWorkflowEvent } from "simple-agents-node/workflow_event";
-import { customWorkerDispatch } from "./handlers.js";
+import { PACKAGE_ROOT, pathToWorkflow } from "../example_paths.js";
+import { customWorkerDispatch } from "../workflows/email-classification/handlers.js";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-loadEnv({ path: join(__dirname, ".env") });
-const workflowPath = join(__dirname, "test.yaml");
+loadEnv({ path: join(PACKAGE_ROOT, ".env") });
+const workflowPath = pathToWorkflow("email-classification", "test.yaml");
 
 function requireEnv(name: string): string {
   const v = process.env[name];

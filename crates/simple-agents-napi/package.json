@@ -1,6 +1,6 @@
 {
   "name": "simple-agents-node",
-  "version": "0.3.11",
+  "version": "0.4.0",
   "description": "Node.js bindings for SimpleAgents using napi-rs",
   "main": "index.js",
   "types": "index.d.ts",
@@ -23,16 +23,16 @@
     }
   },
   "scripts": {
-    "build": "napi build --release",
-    "build:debug": "napi build",
+    "build": "napi build --release && node scripts/patch-dts.js",
+    "build:debug": "napi build && node scripts/patch-dts.js",
     "pretest": "npm run build:debug",
     "pretest:unit": "npm run build:debug",
     "pretest:contract": "npm run build:debug",
     "pretest:live": "npm run build:debug",
     "test": "npm run test:unit && npm run test:contract",
-    "test:unit": "node --env-file-if-exists=../../.env --test test/unit.test.js test/workflow_event.test.js test/custom_worker.test.js",
-    "test:contract": "node --env-file-if-exists=../../.env --test test/contract.test.js",
-    "test:live": "node --env-file-if-exists=../../.env --test test/live.test.js",
+    "test:unit": "node --test test/unit.test.js test/workflow_event.test.js test/custom_worker.test.js test/wrapper.test.js",
+    "test:contract": "node scripts/node-test-with-env.mjs test/contract.test.js",
+    "test:live": "node scripts/node-test-with-env.mjs test/live.test.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {
@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@napi-rs/cli": "2.16.0",
+    "dotenv": "^16.4.5",
     "typescript": "5.4.5"
   }
 }

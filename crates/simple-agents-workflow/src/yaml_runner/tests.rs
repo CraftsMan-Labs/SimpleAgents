@@ -1443,6 +1443,39 @@ nodes:
         .any(|diagnostic| diagnostic.code == "invalid_tools_format"));
 }
 
+#[test]
+fn validates_duplicate_edges_from_same_node() {
+    let yaml = r#"
+id: duplicate-edge
+entry_node: start
+nodes:
+  - id: start
+    node_type:
+      switch:
+        branches:
+          - condition: $.input.route == 'a'
+            target: a
+        default: b
+  - id: a
+    node_type:
+      end: {}
+  - id: b
+    node_type:
+      end: {}
+edges:
+  - from: start
+    to: a
+  - from: start
+    to: b
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let diagnostics = verify_yaml_workflow(&workflow);
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.code == "duplicate_edge_from"));
+}
+
 #[tokio::test]
 async fn custom_worker_node_requires_executor() {
     let yaml = r#"
@@ -2553,6 +2586,7 @@ nodes:
         assert!(!f.workflow_streaming);
         assert!(f.node_llm_streaming);
         assert!(!f.split_stream_deltas);
+        assert!(!f.debug_stream_parse);
     }
 
     #[test]

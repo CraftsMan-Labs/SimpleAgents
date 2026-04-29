@@ -173,6 +173,7 @@ pub(crate) struct PythonWorkflowExecutionOptions {
     pub workflow_streaming: bool,
     pub node_llm_streaming: bool,
     pub split_stream_deltas: bool,
+    pub debug_stream_parse: bool,
 }
 
 const fn default_true() -> bool {
@@ -190,6 +191,22 @@ pub(crate) fn parse_workflow_execution_request(
     let object = raw.as_object().ok_or_else(|| {
         PyRuntimeError::new_err("workflow execution request must be a dict/object".to_string())
     })?;
+    let allowed_keys = [
+        "workflow_path",
+        "messages",
+        "context",
+        "media",
+        "input",
+        "execution",
+        "workflow_options",
+    ];
+    for key in object.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(PyRuntimeError::new_err(format!(
+                "unknown workflow execution request key '{key}'; expected keys: workflow_path, messages, context?, media?, input?, execution?, workflow_options?"
+            )));
+        }
+    }
     let workflow_path = object
         .get("workflow_path")
         .and_then(Value::as_str)
@@ -215,6 +232,21 @@ pub(crate) fn parse_workflow_execution_request(
         let execution_object = execution_value.as_object().ok_or_else(|| {
             PyRuntimeError::new_err("execution must be a dict/object".to_string())
         })?;
+        let allowed_execution_keys = [
+            "model",
+            "healing",
+            "workflow_streaming",
+            "node_llm_streaming",
+            "split_stream_deltas",
+            "debug_stream_parse",
+        ];
+        for key in execution_object.keys() {
+            if !allowed_execution_keys.contains(&key.as_str()) {
+                return Err(PyRuntimeError::new_err(format!(
+                    "unknown execution key '{key}'; expected keys: model?, healing?, workflow_streaming?, node_llm_streaming?, split_stream_deltas?, debug_stream_parse?"
+                )));
+            }
+        }
         let model = execution_object
             .get("model")
             .and_then(Value::as_str)
@@ -235,12 +267,17 @@ pub(crate) fn parse_workflow_execution_request(
             .get("split_stream_deltas")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let debug_stream_parse = execution_object
+            .get("debug_stream_parse")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         PythonWorkflowExecutionOptions {
             model,
             healing,
             workflow_streaming,
             node_llm_streaming,
             split_stream_deltas,
+            debug_stream_parse,
         }
     } else {
         PythonWorkflowExecutionOptions {
@@ -278,6 +315,7 @@ pub(crate) fn workflow_execution_flags(
         workflow_streaming: options.workflow_streaming,
         node_llm_streaming: options.node_llm_streaming,
         split_stream_deltas: options.split_stream_deltas,
+        debug_stream_parse: options.debug_stream_parse,
     }
 }
 
@@ -322,13 +360,24 @@ pub(crate) fn build_workflow_input_from_execution_request(
 
 pub(crate) struct PythonWorkflowEventSink {
     pub(crate) callback: Option<Py<PyAny>>,
+    pub(crate) callback_error: Mutex<Option<String>>,
 }
 
 unsafe impl Send for PythonWorkflowEventSink {}
 unsafe impl Sync for PythonWorkflowEventSink {}
 
 impl YamlWorkflowEventSink for PythonWorkflowEventSink {
+    fn is_cancelled(&self) -> bool {
+        self.callback_error
+            .lock()
+            .map(|error| error.is_some())
+            .unwrap_or(true)
+    }
+
     fn emit(&self, event: &YamlWorkflowEvent) {
+        if self.is_cancelled() {
+            return;
+        }
         let Some(callback) = self.callback.as_ref() else {
             return;
         };
@@ -351,7 +400,9 @@ impl YamlWorkflowEventSink for PythonWorkflowEventSink {
                 }
             };
             if let Err(error) = callback.bind(py).call1((py_event,)) {
-                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
+                if let Ok(mut callback_error) = self.callback_error.lock() {
+                    *callback_error = Some(error.to_string());
+                }
             }
         });
     }
@@ -360,6 +411,7 @@ impl YamlWorkflowEventSink for PythonWorkflowEventSink {
 pub(crate) struct CombinedWorkflowEventSink {
     events: Mutex<Vec<YamlWorkflowEvent>>,
     pub(crate) callback: Option<Py<PyAny>>,
+    callback_error: Mutex<Option<String>>,
     record: bool,
 }
 
@@ -371,6 +423,7 @@ impl CombinedWorkflowEventSink {
         Self {
             events: Mutex::new(Vec::new()),
             callback,
+            callback_error: Mutex::new(None),
             record,
         }
     }
@@ -404,7 +457,17 @@ impl CombinedWorkflowEventSink {
 }
 
 impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
+    fn is_cancelled(&self) -> bool {
+        self.callback_error
+            .lock()
+            .map(|error| error.is_some())
+            .unwrap_or(true)
+    }
+
     fn emit(&self, event: &YamlWorkflowEvent) {
+        if self.is_cancelled() {
+            return;
+        }
         if self.record {
             match self.events.lock() {
                 Ok(mut events) => events.push(event.clone()),
@@ -440,7 +503,9 @@ impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
                 }
             };
             if let Err(error) = callback.bind(py).call1((py_event,)) {
-                eprintln!("[simple-agents-py] workflow event callback failed: {error}");
+                if let Ok(mut callback_error) = self.callback_error.lock() {
+                    *callback_error = Some(error.to_string());
+                }
             }
         });
     }

@@ -1,5 +1,5 @@
 use napi::bindgen_prelude::{Either, Error, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value as JsonValue};
 use simple_agents_workflow::yaml_runner::{YamlWorkflowExecutionFlags, YamlWorkflowRunOptions};
 
@@ -7,25 +7,13 @@ use crate::{parse_message, ContentPartInput, MessageInput};
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{Result as SaResult, SimpleAgentsError};
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WorkflowRequestOptions {
     #[serde(flatten)]
     pub(crate) run_options: YamlWorkflowRunOptions,
     #[serde(default)]
     pub(crate) include_events: bool,
-}
-
-pub(crate) fn parse_workflow_options(
-    workflow_options: Option<JsonValue>,
-) -> Result<YamlWorkflowRunOptions> {
-    workflow_options
-        .map(|value| {
-            serde_json::from_value::<YamlWorkflowRunOptions>(value)
-                .map_err(|error| Error::from_reason(format!("invalid workflowOptions: {error}")))
-        })
-        .transpose()
-        .map(|value| value.unwrap_or_default())
 }
 
 pub(crate) fn parse_workflow_request_options(
@@ -51,6 +39,8 @@ pub(crate) struct WorkflowExecutionFlagsPatchNapi {
     pub(crate) node_llm_streaming: Option<bool>,
     #[serde(alias = "split_stream_deltas", alias = "splitStreamDeltas")]
     pub(crate) split_stream_deltas: Option<bool>,
+    #[serde(alias = "debug_stream_parse", alias = "debugStreamParse")]
+    pub(crate) debug_stream_parse: Option<bool>,
 }
 
 pub(crate) fn parse_workflow_execution_flags_patch(
@@ -81,6 +71,9 @@ pub(crate) fn apply_workflow_execution_flags_patch(
     }
     if let Some(v) = patch.split_stream_deltas {
         base.split_stream_deltas = v;
+    }
+    if let Some(v) = patch.debug_stream_parse {
+        base.debug_stream_parse = v;
     }
     base
 }

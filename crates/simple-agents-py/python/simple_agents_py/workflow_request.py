@@ -11,24 +11,15 @@ or directly to ``Client.run_workflow`` / ``Client.stream_workflow`` without hand
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeAlias
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
+from ._path_utils import coerce_path
+
 
 def _coerce_workflow_path(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    fspath = getattr(value, "__fspath__", None)
-    if callable(fspath):
-        return str(fspath())
-    raise TypeError(
-        "workflow_path must be str, pathlib.Path, or os.PathLike[str], "
-        f"not {type(value).__name__}"
-    )
+    return coerce_path(value, field_name="workflow_path")
 
 
 WorkflowPath = Annotated[str, BeforeValidator(_coerce_workflow_path)]
@@ -55,10 +46,12 @@ class WorkflowMessage(BaseModel):
         ])
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     role: WorkflowRole | str
     content: str | list[dict[str, Any]]
+    name: str | None = None
+    tool_call_id: str | None = None
 
     @model_validator(mode="after")
     def _content_not_empty_list(self) -> "WorkflowMessage":
@@ -73,6 +66,8 @@ class WorkflowExecutionFlags(BaseModel):
     Booleans match Rust ``YamlWorkflowExecutionFlags``. ``model`` is a binding convenience:
     when set, it is merged into ``workflow_options.model`` (same as :class:`WorkflowRunOptions`).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str | None = Field(
         default=None,
@@ -93,6 +88,10 @@ class WorkflowExecutionFlags(BaseModel):
     split_stream_deltas: bool = Field(
         default=False,
         description="When True, emit thinking vs output stream events (Rust: split_stream_deltas).",
+    )
+    debug_stream_parse: bool = Field(
+        default=False,
+        description="When True (or env SIMPLE_AGENTS_DEBUG_STREAM_PARSE), append partial LLM text to structured JSON parse errors (Rust: debug_stream_parse).",
     )
 
 
@@ -154,16 +153,14 @@ class WorkflowRunOptions(BaseModel):
     trace: WorkflowTraceConfig | None = None
 
 
-class WorkflowInput(BaseModel):
-    """Arbitrary workflow input fields (e.g. ``email_text``). Use keyword args, not a dict."""
-
-    model_config = ConfigDict(extra="allow")
+WorkflowInput: TypeAlias = dict[str, Any]
+"""Explicit arbitrary workflow payload map, e.g. ``WorkflowInput(email_text="hello")``."""
 
 
 class WorkflowExecutionRequest(BaseModel):
     """Messages-first workflow request; aligns with ``WorkflowExecutionRequest`` in the ``.pyi``."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     workflow_path: WorkflowPath
     messages: list[WorkflowMessage]
@@ -186,3 +183,18 @@ class WorkflowExecutionRequest(BaseModel):
 
             data["execution"] = merge_workflow_execution(data["execution"])
         return data
+
+
+__all__ = [
+    "WorkflowExecutionFlags",
+    "WorkflowExecutionRequest",
+    "WorkflowInput",
+    "WorkflowMessage",
+    "WorkflowPath",
+    "WorkflowRole",
+    "WorkflowRunOptions",
+    "WorkflowTelemetryConfig",
+    "WorkflowTraceConfig",
+    "WorkflowTraceContext",
+    "WorkflowTraceTenant",
+]

@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest  # type: ignore[reportMissingImports]
 
+from repo_dotenv import load_root_dotenv_into
+
 _STREAM_EVENT_TYPES = (
     "node_stream_delta",
     "node_stream_thinking_delta",
@@ -33,6 +35,7 @@ _INVOICE_INPUT_TEXT = (
 
 
 def _resolved_live_env() -> dict[str, str]:
+    load_root_dotenv_into(os.environ, override=False)
     provider = os.getenv("WORKFLOW_PROVIDER") or os.getenv("CUSTOM_PROVIDER") or "openai"
     api_base = os.getenv("WORKFLOW_API_BASE") or os.getenv("CUSTOM_API_BASE")
     api_key = os.getenv("WORKFLOW_API_KEY") or os.getenv("CUSTOM_API_KEY")
@@ -62,13 +65,18 @@ def _examples_dir() -> Path:
     return _repo_root() / "examples" / "python-test-simpleAgents"
 
 
+def _runners_dir() -> Path:
+    return _examples_dir() / "runners"
+
+
 def _run_example(script_name: str, stdin_text: str | None = None) -> str:
     live_env = _resolved_live_env()
-    script_path = _examples_dir() / script_name
+    script_path = _runners_dir() / script_name
     if not script_path.exists():
         pytest.fail(f"Example script not found: {script_path}")
 
     env = os.environ.copy()
+    load_root_dotenv_into(env, override=False)
     env.update(live_env)
 
     result = subprocess.run(
@@ -78,7 +86,7 @@ def _run_example(script_name: str, stdin_text: str | None = None) -> str:
             "--directory",
             str(_examples_dir()),
             "python",
-            script_name,
+            str(Path("runners") / script_name),
         ],
         cwd=str(_repo_root()),
         input=stdin_text,
@@ -157,7 +165,8 @@ def test_example_streaming_emits_chunks_and_output_shape() -> None:
 
 
 def test_example_invoice_image_output_shape() -> None:
-    image_path = _examples_dir() / "test-invoice.jpeg"
+    # Match ``example_paths.asset("test-invoice.jpeg")`` used by the runner script.
+    image_path = _examples_dir() / "assets" / "test-invoice.jpeg"
     if not image_path.exists():
         pytest.skip(f"Missing invoice fixture image: {image_path}")
 

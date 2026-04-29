@@ -66,8 +66,8 @@ mod client;
 mod healing;
 
 pub use client::{
-    ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, ExecutionFlags,
-    RetryConfig, RunOptions, SimpleAgentsClient,
+    ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, ExecutionFlags, RunOptions,
+    SimpleAgentsClient,
 };
 pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
 

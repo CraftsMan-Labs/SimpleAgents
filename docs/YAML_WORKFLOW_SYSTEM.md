@@ -71,6 +71,40 @@ The simplest pattern to reuse is:
 2. `switch` router
 3. action node
 
+## Workflow Evals
+
+Workflow eval datasets are output-shaped golden records. Each JSONL row stores the workflow `input` and an `expected_output` object shaped like the meaningful parts of `YamlWorkflowRunOutput`.
+
+Example row:
+
+```json
+{"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
+```
+
+The public eval helpers take the workflow path, dataset path, and an evaluator callback in code. The callback receives the input, expected output, actual workflow output, and full dataset record, then returns pass/fail/score/reason. This avoids suite-level path lists, which do not scale when different inputs route through different nodes.
+
+Python:
+
+```python
+report = run_eval_suite(
+    client,
+    workflow_path="workflows/friendly/friendly.yaml",
+    dataset_path="evals/friendly/friendly-eval.dataset.jsonl",
+    evaluator=output_subset,
+)
+```
+
+TypeScript:
+
+```ts
+const report = await client.runEvalSuite({
+  workflowPath: "workflows/friendly/friendly.yaml",
+  datasetPath: "evals/friendly/friendly-eval.dataset.jsonl",
+  evaluator: ({ expectedOutput, actualOutput }) =>
+    expectedOutput.terminal_node === actualOutput.terminal_node,
+});
+```
+
 ## Supported Node Types
 
 - `llm_call`: structured LLM generation with optional tools and streaming flags
@@ -168,7 +202,7 @@ Use this when you want a workflow that decides whether to act or ask a follow-up
 3. one branch asks a question
 4. one branch performs the main action
 
-Good example: `examples/python-test-simpleAgents/test.yaml` (email classification with routing and custom workers)
+Good example: `examples/python-test-simpleAgents/workflows/email-classification/test.yaml` (email classification with routing and custom workers)
 
 ## Prompt Context and Run Memory
 
@@ -182,14 +216,14 @@ Globals are per-run memory managed by the runtime:
 
 - There is no top-level YAML `globals:` block in workflow files.
 - Globals start as an empty object for each run.
-- Read values in templates with `{{ globals.<key> }}`.
+- Read values in templates with <code v-pre>{{ globals.&lt;key&gt; }}</code>.
 
 Write/update globals in any node `config` using:
 
 - `config.set_globals`
 - `config.update_globals` with `set|append|increment|merge`
 
-Path values in `set_globals` / `update_globals.from` use direct paths (for example `nodes.classify.output.category`), not `{{ ... }}`.
+Path values in `set_globals` / `update_globals.from` use direct paths (for example `nodes.classify.output.category`), not <code v-pre>{{ ... }}</code>.
 
 Example:
 
@@ -296,7 +330,7 @@ bun run test-simple-agents-streaming.ts
 Graph visualization:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
 ```
 
 ## Telemetry and Diagnostics
@@ -344,7 +378,7 @@ uv sync --directory examples --reinstall-package simple-agents-py
 Render Mermaid output first to confirm parse and wiring:
 
 ```bash
-cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/test.yaml
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
 ```
 
 ### Non-deterministic routing behavior

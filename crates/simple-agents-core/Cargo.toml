@@ -15,12 +15,12 @@ serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
 futures-core = "0.3"
+tokio.workspace = true
 
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.3.11" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.4.0" }
 
 [dev-dependencies]
 async-trait.workspace = true
 futures-util.workspace = true
-tokio.workspace = true
 serde_json.workspace = true

@@ -1,0 +1,1 @@
+{"id":"refund-policy-rag","input":{"messages":[{"role":"user","content":"What is the refund policy?"}]},"expected_output":{"terminal_node":"retrieve_chunks"},"custom":{"expected_sources":["refund-policy-v3","terms-section-8"]},"metadata":{"tags":["rag","mocked-chunks"]}}

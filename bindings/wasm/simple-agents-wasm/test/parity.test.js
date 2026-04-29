@@ -71,6 +71,58 @@ test("complete() returns parity shape keys", async () => {
   assert.equal(result.usage.totalTokens, 11);
 });
 
+test("complete() honors retry options for retryable responses", async () => {
+  let calls = 0;
+  const mockFetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response("temporary", {
+        status: 500,
+        headers: { "retry-after": "0" }
+      });
+    }
+    return makeJsonResponse({
+      id: "cmpl_retry",
+      model: "gpt-4o-mini",
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { role: "assistant", content: "ok", tool_calls: [] }
+        }
+      ]
+    });
+  };
+
+  const client = new Client("openai", {
+    apiKey: "test-key",
+    baseUrl: "https://example.com/v1",
+    fetchImpl: mockFetch,
+    retryAttempts: 2,
+    retryStrategy: "fixed"
+  });
+
+  const result = await client.complete("gpt-4o-mini", "hi");
+
+  assert.equal(result.content, "ok");
+  assert.equal(calls, 2);
+});
+
+test("constructor rejects invalid timeout and retry options", () => {
+  assert.throws(
+    () => new Client("openai", { apiKey: "test-key", timeoutSeconds: 0 }),
+    /timeoutSeconds/
+  );
+  assert.throws(
+    () => new Client("openai", { apiKey: "test-key", retryAttempts: 0 }),
+    /retryAttempts/
+  );
+  assert.throws(
+    () => new Client("openai", { apiKey: "test-key", retryStrategy: "linear" }),
+    /retryStrategy/
+  );
+});
+
 test("streamEvents() emits delta + done with parity event shape", async () => {
   const mockFetch = async () =>
     makeSseResponse([

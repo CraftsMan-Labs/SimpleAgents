@@ -127,7 +127,26 @@ console.log(result.total_elapsed_ms)
 
 Use `extraWorkflowInput` for additional keys merged into runner input (for example legacy `email_text` when the YAML still references it).
 
-**Streaming:** `executeWorkflowYamlStream(request, onEvent)` emits live workflow events via `onEvent(err, eventJson)` (JSON strings) and resolves to the final structured output.
+**Streaming:** `executeWorkflowYamlStream(request, onEvent)` emits live workflow events via `onEvent(eventJson)` (JSON strings) and resolves to the final structured output.
+
+### Workflow evals
+
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output`. The runner executes the workflow and passes each case to your evaluator callback.
+
+```ts
+import { Client, type EvalReport } from "simple-agents-node";
+
+const client = new Client(process.env.WORKFLOW_API_KEY!, process.env.WORKFLOW_API_BASE);
+const report: EvalReport = await client.runEvalSuite({
+  workflowPath: "workflows/friendly/friendly.yaml",
+  datasetPath: "evals/friendly/friendly-eval.dataset.jsonl",
+  evaluator: ({ expectedOutput, actualOutput }) =>
+    expectedOutput.terminal_node === actualOutput.terminal_node,
+});
+
+console.log(report.status);
+console.log(report.cases[0]?.evaluations?.[0]?.reason);
+```
 
 ### Legacy path helpers
 
