@@ -3,7 +3,7 @@
 #![allow(clippy::useless_conversion)]
 
 use futures_util::{Stream, StreamExt};
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use simple_agent_type::message::Message;
@@ -35,6 +35,7 @@ use completion_helpers::{
     response_with_metadata_from_response, usage_to_pydict,
 };
 use provider_helpers::build_provider_from_name;
+use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
     attach_workflow_events, build_workflow_input_from_execution_request,
@@ -526,7 +527,16 @@ impl Client {
         api_format: Option<&str>,
         timeout_seconds: Option<f64>,
     ) -> PyResult<Self> {
-        let _ = (model, timeout_seconds);
+        if model.is_some() {
+            return Err(PyValueError::new_err(
+                "Client(model=...) is not supported yet; pass the model per request via completion model or workflow execution.model",
+            ));
+        }
+        if timeout_seconds.is_some() {
+            return Err(PyValueError::new_err(
+                "Client(timeout_seconds=...) is not supported yet",
+            ));
+        }
         let effective_base = api_base.or(base_url);
         let prov = build_provider_from_name(provider, api_key, effective_base, api_format)
             .map_err(py_err)?;
@@ -830,6 +840,55 @@ impl Client {
         Ok(py_value.into_py(py))
     }
 
+    /// Run an output-shaped eval dataset against a YAML workflow.
+    #[pyo3(signature = (request))]
+    fn run_eval_suite(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let raw: serde_json::Value = pythonize::depythonize(request).map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "invalid eval suite request: {error}. expected keys: suite_path"
+            ))
+        })?;
+        let object = raw.as_object().ok_or_else(|| {
+            PyRuntimeError::new_err("eval suite request must be a dict/object".to_string())
+        })?;
+        if object.keys().any(|key| key != "suite_path") {
+            return Err(PyRuntimeError::new_err(
+                "eval suite request only supports suite_path".to_string(),
+            ));
+        }
+        let suite_path = object
+            .get("suite_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| PyRuntimeError::new_err("suite_path is required".to_string()))?;
+        if suite_path.trim().is_empty() {
+            return Err(PyRuntimeError::new_err("suite_path cannot be empty"));
+        }
+
+        let suite_path_buf = std::path::PathBuf::from(suite_path);
+        let workflow_root = suite_path_buf
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
+        let runtime = self
+            .runtime
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
+        let request = EvalSuiteRunRequest {
+            suite_path: suite_path_buf.as_path(),
+            executor: YamlWorkflowExecutorBinding::Client(&self.client),
+            custom_worker: Some(&custom_executor),
+        };
+        let report = py
+            .allow_threads(|| runtime.block_on(run_eval_suite(request)))
+            .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
+        let value = serde_json::to_value(report)
+            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
+        let py_value = pythonize::pythonize(py, &value)
+            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
+        Ok(py_value.into_py(py))
+    }
+
     /// Run a YAML workflow with streaming events.
     #[pyo3(signature = (request, on_event=None, include_events_in_output=false))]
     fn stream_workflow(
@@ -932,7 +991,6 @@ impl Client {
         checkpoint: &Bound<'_, PyAny>,
         options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
-        let _ = options;
         // Extract workflow_path and messages from the checkpoint dict, then delegate to run()
         let checkpoint_val: serde_json::Value = pythonize::depythonize(checkpoint)
             .map_err(|e| PyRuntimeError::new_err(format!("invalid checkpoint: {e}")))?;
@@ -950,7 +1008,33 @@ impl Client {
         let workflow_input = serde_json::json!({ "messages": messages_val });
         let workflow_path_buf = std::path::PathBuf::from(&workflow_path);
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let default_options = YamlWorkflowRunOptions::default();
+        let run_options = if let Some(options) = options {
+            let value: serde_json::Value = pythonize::depythonize(options)
+                .map_err(|e| PyRuntimeError::new_err(format!("invalid resume options: {e}")))?;
+            let object = value.as_object().ok_or_else(|| {
+                PyRuntimeError::new_err("resume options must be a dict/object")
+            })?;
+            for key in object.keys() {
+                if key != "workflow_options" && key != "workflowOptions" {
+                    return Err(PyRuntimeError::new_err(format!(
+                        "resume options only supports workflow_options/workflowOptions; unknown key '{key}'"
+                    )));
+                }
+            }
+            let workflow_options = object
+                .get("workflow_options")
+                .or_else(|| object.get("workflowOptions"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            if workflow_options.is_null() {
+                YamlWorkflowRunOptions::default()
+            } else {
+                serde_json::from_value::<YamlWorkflowRunOptions>(workflow_options)
+                    .map_err(|e| PyRuntimeError::new_err(format!("invalid workflow_options: {e}")))?
+            }
+        } else {
+            YamlWorkflowRunOptions::default()
+        };
         let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
         let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let runtime = self
@@ -963,7 +1047,7 @@ impl Client {
             workflow_input: &workflow_input,
             executor: YamlWorkflowExecutorBinding::Client(&self.client),
             custom_worker: Some(&custom_executor),
-            options: &default_options,
+            options: &run_options,
             flags,
         };
 

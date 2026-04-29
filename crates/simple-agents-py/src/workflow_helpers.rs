@@ -190,6 +190,22 @@ pub(crate) fn parse_workflow_execution_request(
     let object = raw.as_object().ok_or_else(|| {
         PyRuntimeError::new_err("workflow execution request must be a dict/object".to_string())
     })?;
+    let allowed_keys = [
+        "workflow_path",
+        "messages",
+        "context",
+        "media",
+        "input",
+        "execution",
+        "workflow_options",
+    ];
+    for key in object.keys() {
+        if !allowed_keys.contains(&key.as_str()) {
+            return Err(PyRuntimeError::new_err(format!(
+                "unknown workflow execution request key '{key}'; expected keys: workflow_path, messages, context?, media?, input?, execution?, workflow_options?"
+            )));
+        }
+    }
     let workflow_path = object
         .get("workflow_path")
         .and_then(Value::as_str)
@@ -215,6 +231,20 @@ pub(crate) fn parse_workflow_execution_request(
         let execution_object = execution_value.as_object().ok_or_else(|| {
             PyRuntimeError::new_err("execution must be a dict/object".to_string())
         })?;
+        let allowed_execution_keys = [
+            "model",
+            "healing",
+            "workflow_streaming",
+            "node_llm_streaming",
+            "split_stream_deltas",
+        ];
+        for key in execution_object.keys() {
+            if !allowed_execution_keys.contains(&key.as_str()) {
+                return Err(PyRuntimeError::new_err(format!(
+                    "unknown execution key '{key}'; expected keys: model?, healing?, workflow_streaming?, node_llm_streaming?, split_stream_deltas?"
+                )));
+            }
+        }
         let model = execution_object
             .get("model")
             .and_then(Value::as_str)
