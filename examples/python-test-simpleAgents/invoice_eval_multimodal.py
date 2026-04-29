@@ -58,30 +58,51 @@ _EXPECTED_NODE: dict[str, Any] = {
 }
 
 
-def multimodal_invoice_content_parts(image_b64: str) -> list[dict[str, Any]]:
+# Reimbursement prose + same JPEG: model should route to ``finalize_finance_classification``.
+# Paired with **invoice** ``expected_output`` in mismatch datasets so path comparison **fails**
+# when the route is correct (harness / deliberate-wrong-golden check).
+
+REIMBURSEMENT_USER_TEXT_FOR_EVAL = """Employee expense reimbursement request — not a vendor invoice.
+
+I need reimbursement for $1,240.80 in airfare and meals from a client workshop last week, per company travel policy. I am submitting employee expense claims with receipts attached; this is not a supplier bill, payable notice, or vendor cloud-services invoice.
+
+Classify and route this per the workflow, using both the text and the attached image."""
+
+_CASE_ID_TERMINAL_MISMATCH = "finance-reimbursement-input-invoice-expected-terminal"
+_CASE_ID_NODE_MISMATCH = "finance-reimbursement-input-invoice-expected-node-paths"
+
+
+def multimodal_content_parts(user_text: str, image_b64: str) -> list[dict[str, Any]]:
     data_url = f"data:image/jpeg;base64,{image_b64}"
     return [
-        {"type": "text", "text": INVOICE_USER_TEXT_FOR_EVAL},
+        {"type": "text", "text": user_text},
         {"type": "image_url", "image_url": {"url": data_url}},
     ]
+
+
+def multimodal_invoice_content_parts(image_b64: str) -> list[dict[str, Any]]:
+    return multimodal_content_parts(INVOICE_USER_TEXT_FOR_EVAL, image_b64)
 
 
 def eval_input_json(image_b64: str) -> dict[str, Any]:
     """Eval ``input`` blob (forwarded to the workflow as JSON)."""
 
+    return eval_input_json_with_text(image_b64, INVOICE_USER_TEXT_FOR_EVAL)
+
+
+def eval_input_json_with_text(image_b64: str, user_text: str) -> dict[str, Any]:
     return {
         "messages": [
             {
                 "role": "user",
-                "content": multimodal_invoice_content_parts(image_b64),
+                "content": multimodal_content_parts(user_text, image_b64),
             },
         ]
     }
 
 
 def write_invoice_eval_generated_datasets(invoice_dir: Path, image_path: Path) -> None:
-    """Write terminal + node JSONL under invoice_dir/generated/ from JPEG bytes."""
-
+    """Write four JSONL files: two invoice goldens + two mismatch (wrong goldens) rows."""
 
     invoice_dir.mkdir(parents=True, exist_ok=True)
     generated = invoice_dir / "generated"
@@ -116,10 +137,41 @@ def write_invoice_eval_generated_datasets(invoice_dir: Path, image_path: Path) -
         encoding="utf-8",
     )
 
+    inp_mismatch = eval_input_json_with_text(image_b64, REIMBURSEMENT_USER_TEXT_FOR_EVAL)
+
+    mismatch_terminal_path = generated / "invoice-image-terminal-eval-mismatch.dataset.jsonl"
+    mismatch_terminal_path.write_text(
+        json.dumps(
+            {
+                "id": _CASE_ID_TERMINAL_MISMATCH,
+                "input": inp_mismatch,
+                "expected_output": _EXPECTED_TERMINAL,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    mismatch_node_path = generated / "invoice-image-node-eval-mismatch.dataset.jsonl"
+    mismatch_node_path.write_text(
+        json.dumps(
+            {
+                "id": _CASE_ID_NODE_MISMATCH,
+                "input": inp_mismatch,
+                "expected_output": _EXPECTED_NODE,
+            },
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
 
 __all__ = [
     "INVOICE_USER_TEXT_FOR_EVAL",
+    "REIMBURSEMENT_USER_TEXT_FOR_EVAL",
     "eval_input_json",
+    "eval_input_json_with_text",
+    "multimodal_content_parts",
     "multimodal_invoice_content_parts",
     "write_invoice_eval_generated_datasets",
 ]

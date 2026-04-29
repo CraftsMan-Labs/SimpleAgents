@@ -8,7 +8,8 @@ const { Client } = simpleAgentsNode;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(__dirname, "..");
-const ragEvalSuitePath = join(packageRoot, "evals", "rag", "rag-eval.yaml");
+const ragWorkflowPath = join(packageRoot, "workflows", "rag", "rag-eval-workflow.yaml");
+const ragDatasetPath = join(packageRoot, "evals", "rag", "rag-eval.dataset.jsonl");
 
 function customWorkerDispatch(req) {
   if (req.handler === "mock_retrieve_chunks") {
@@ -27,38 +28,45 @@ function customWorkerDispatch(req) {
       },
     ];
   }
-
-  if (req.handler === "evaluate_rag_chunks") {
-    const actualIds = new Set(
-      req.payload.actual
-        .map((chunk) => chunk.source_id)
-        .filter((sourceId) => Boolean(sourceId)),
-    );
-    const expectedIds = new Set(req.payload.expected);
-    const matched = [...expectedIds].filter((sourceId) => actualIds.has(sourceId));
-    const score = expectedIds.size === 0 ? 1 : matched.length / expectedIds.size;
-
-    return {
-      score,
-      passed: score >= (req.payload.threshold ?? 1),
-      reason: `${matched.length}/${expectedIds.size} expected sources matched`,
-      metadata: {
-        matched,
-        missing: [...expectedIds].filter((sourceId) => !actualIds.has(sourceId)),
-      },
-    };
-  }
-
   throw new Error(`unknown custom worker handler: ${req.handler}`);
+}
+
+function evaluateRagChunks(case_) {
+  const chunks = case_.actualOutput.outputs?.retrieve_chunks?.output ?? [];
+  const actualIds = new Set(
+    chunks
+      .map((chunk) => chunk.source_id)
+      .filter((sourceId) => Boolean(sourceId)),
+  );
+  const expectedIds = new Set(case_.record.custom?.expected_sources ?? []);
+  const matched = [...expectedIds].filter((sourceId) => actualIds.has(sourceId));
+  const score = expectedIds.size === 0 ? 1 : matched.length / expectedIds.size;
+  return {
+    id: "rag_chunks",
+    status: score >= 0.8 ? "passed" : "failed",
+    passed: score >= 0.8,
+    score,
+    expected: [...expectedIds],
+    actual: [...actualIds],
+    reason: `${matched.length}/${expectedIds.size} expected sources matched`,
+    metadata: {
+      matched,
+      missing: [...expectedIds].filter((sourceId) => !actualIds.has(sourceId)),
+    },
+  };
 }
 
 const client = new Client(
   process.env.WORKFLOW_API_KEY ?? "sk-mocked-rag-eval-000000000000",
 );
-const report = await client.runEvalSuite(
-  { suitePath: ragEvalSuitePath },
+const report = await client.runEvalSuite({
+  workflowPath: ragWorkflowPath,
+  datasetPath: ragDatasetPath,
+  execution: { nodeLlmStreaming: false },
+  workflowOptions: { telemetry: { enabled: false } },
   customWorkerDispatch,
-);
+  evaluator: evaluateRagChunks,
+});
 
 console.log(JSON.stringify(report, null, 2));
 process.exit(report.status === "passed" ? 0 : 1);

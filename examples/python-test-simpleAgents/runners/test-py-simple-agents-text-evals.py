@@ -7,20 +7,49 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from example_env import require_env
-from example_paths import eval_suite
-from simple_agents_py import Client, EvalSuiteRequest, run_eval_suite
+from example_paths import eval_suite, workflows
+from simple_agents_py import Client, EvalCase, EvalResult, output_subset, run_eval_suite
 
-# (label, yaml path, mock client for RAG offline run)
-SUITES: tuple[tuple[str, Path, bool], ...] = (
+def rag_chunks_match(case: EvalCase) -> EvalResult:
+    chunks = (
+        case.actual_output.get("outputs", {})
+        .get("retrieve_chunks", {})
+        .get("output", [])
+    )
+    actual_ids = {
+        chunk.get("source_id")
+        for chunk in chunks
+        if isinstance(chunk, dict) and chunk.get("source_id")
+    }
+    expected_ids = set(case.record.custom.get("expected_sources", []))
+    matched = actual_ids.intersection(expected_ids)
+    score = len(matched) / len(expected_ids) if expected_ids else 1.0
+    if score >= 0.8:
+        return EvalResult.passed_result(id="rag_chunks", score=score)
+    return EvalResult.failed(
+        f"{len(matched)}/{len(expected_ids)} expected sources matched",
+        id="rag_chunks",
+        score=score,
+        expected=sorted(expected_ids),
+        actual=sorted(actual_ids),
+    )
+
+
+# (label, workflow path, dataset path, mock client, evaluator)
+SUITES = (
     (
         "friendly-eval",
-        eval_suite("friendly", "friendly-eval.yaml"),
+        workflows("friendly", "friendly.yaml"),
+        eval_suite("friendly", "friendly-eval.dataset.jsonl"),
         False,
+        output_subset,
     ),
     (
         "rag-eval",
-        eval_suite("rag", "rag-eval.yaml"),
+        workflows("rag", "rag-eval-workflow.yaml"),
+        eval_suite("rag", "rag-eval.dataset.jsonl"),
         True,
+        rag_chunks_match,
     ),
 )
 
@@ -42,13 +71,20 @@ def _client(use_mock: bool) -> Client:
 print(f"Text evals: starting ({len(SUITES)} suites)…", file=sys.stderr, flush=True)
 
 ok = True
-for label, suite_path, use_mock in SUITES:
-    p = suite_path.resolve()
+for label, workflow_path, dataset_path, use_mock, evaluator in SUITES:
+    p = dataset_path.resolve()
     client = _client(use_mock)
     scope = "mocked HTTP" if use_mock else "real API"
     print("", file=sys.stderr)
     print(f"[{label}] running… ({p.name}, {scope})", file=sys.stderr, flush=True)
-    report = run_eval_suite(client, EvalSuiteRequest(suite_path=str(p)))
+    report = run_eval_suite(
+        client,
+        workflow_path=workflow_path,
+        dataset_path=p,
+        evaluator=evaluator,
+        execution={"node_llm_streaming": False},
+        workflow_options={"telemetry": {"enabled": False}},
+    )
     passed = report.status == "passed"
     ok = ok and passed
     verdict = "PASSED" if passed else str(report.status).upper()

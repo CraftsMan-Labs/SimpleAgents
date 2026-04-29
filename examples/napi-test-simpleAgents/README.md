@@ -17,14 +17,16 @@ workflows/
   rag/                    rag-eval-workflow.yaml (mocked retrieval for rag eval)
 
 evals/
-  friendly/               friendly-eval.yaml (references Python sibling friendly workflow + dataset JSONL)
-  rag/                    rag-eval.{yaml,dataset.jsonl}
+  friendly/               friendly-eval.dataset.jsonl
+  rag/                    rag-eval.dataset.jsonl
+  invoice/                generated/*.jsonl (multimodal)
 
 runners/                  CLI scripts (test-simple-agents*.ts, rag-eval*.js)
 
 assets/README.md           Optional local assets (invoice JPEG usually shared from python-test-simpleAgents)
 
 example_paths.ts           join helpers for workflows, eval suites, sibling Python asset paths.
+invoice_eval_multimodal.ts generates multimodal JSONL for invoice evals (parity with Python).
 ```
 
 ## Quick start
@@ -50,7 +52,7 @@ Set at least:
 - `WORKFLOW_API_KEY` — required  
 - `WORKFLOW_API_BASE` — optional (OpenAI-compatible base URL)
 
-Scripts that use `dotenv` load `.env` from the package root (`join(PACKAGE_ROOT, ".env")`).
+Scripts that call `loadNapiExampleEnv()` (see `example_paths.ts`) load, in order: the monorepo root `.env`, `examples/.env`, then this package’s `.env` (package keys override when duplicated).
 
 ## Scripts
 
@@ -63,6 +65,7 @@ Bundled shortcuts (see `package.json`):
 | `bun run stream:langfuse` | `runners/test-simple-agents-streaming-langfuse.ts` |
 | `bun run invoice-image` | `runners/test-simple-agents-invoice-image.ts` |
 | `bun run invoice-image:jaeger` | `runners/test-simple-agents-invoice-image-jaeger.ts` |
+| `bun run invoice-image:evals` | `runners/test-simple-agents-invoice-image-evals.ts` |
 
 **Invoice JPEG:** multimodal demos read  
 `examples/python-test-simpleAgents/assets/test-invoice.jpeg` (same path helper as Python’s `asset("test-invoice.jpeg")`).

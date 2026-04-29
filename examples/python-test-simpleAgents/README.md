@@ -93,7 +93,7 @@ uv run python runners/test-py-simple-agents.py
 uv run python runners/test-py-simple-agents-streaming.py
 ```
 
-**Text eval bundles** (`evals/` JSONL + path comparisons):
+**Text eval bundles** (`evals/` JSONL + evaluator callbacks):
 
 ```bash
 # Friendly (plain string message) + RAG (mocked provider; offline-friendly)
@@ -119,7 +119,7 @@ Then:
 
 `handlers.py` lives next to `workflows/email-classification/test.yaml`. The runner loads it for `custom_worker` nodes.
 
-**Eval suites:** `Client.run_eval_suite` resolves handler files relative to the **eval suite YAML’s directory**. Invoice and RAG eval folders include a small mirrored copy of the handler module (see comments in those files) so eval runs find `get_seller_name` / RAG helpers without changing the Rust contract.
+**Eval suites:** eval runners now pass `workflow_path`, `dataset_path`, and an evaluator function in code. Workflow custom workers resolve relative to the workflow YAML, and eval-specific assertions live in the runner callback.
 
 ## Related
 

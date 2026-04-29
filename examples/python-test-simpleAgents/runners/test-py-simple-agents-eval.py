@@ -5,9 +5,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from example_env import require_env
-from example_paths import eval_suite
-from simple_agents_py import Client
-from simple_agents_py.eval_request import EvalReport, EvalSuiteRequest
+from example_paths import eval_suite, workflows
+from simple_agents_py import Client, output_subset, run_eval_suite
 
 client = Client(
     require_env("WORKFLOW_PROVIDER"),
@@ -15,10 +14,14 @@ client = Client(
     api_key=require_env("WORKFLOW_API_KEY"),
 )
 
-request = EvalSuiteRequest(
-    suite_path=str(eval_suite("friendly", "friendly-eval.yaml")),
+report = run_eval_suite(
+    client,
+    workflow_path=workflows("friendly", "friendly.yaml"),
+    dataset_path=eval_suite("friendly", "friendly-eval.dataset.jsonl"),
+    evaluator=output_subset,
+    execution={"node_llm_streaming": False},
+    workflow_options={"telemetry": {"enabled": False}},
 )
-report = EvalReport.model_validate(client.run_eval_suite(request.to_client_payload()))
 
 print(json.dumps(report.model_dump(mode="json"), indent=2))
 raise SystemExit(0 if report.status == "passed" else 1)

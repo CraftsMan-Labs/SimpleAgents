@@ -10,7 +10,8 @@
     "rag-eval:ts": "bun run runners/test-simple-agents-rag-eval.ts",
     "invoice-image": "bun run runners/test-simple-agents-invoice-image.ts",
     "invoice-image:jaeger": "bun run runners/test-simple-agents-invoice-image-jaeger.ts",
-    "invoice-image:jaegar": "bun run runners/test-simple-agents-invoice-image-jaegar.ts"
+    "invoice-image:jaegar": "bun run runners/test-simple-agents-invoice-image-jaegar.ts",
+    "invoice-image:evals": "bun run runners/test-simple-agents-invoice-image-evals.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
