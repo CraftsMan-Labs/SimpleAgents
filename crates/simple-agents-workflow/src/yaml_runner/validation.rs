@@ -257,6 +257,65 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
             }
         }
 
+        if let Some(human) = &node.node_type.human_input {
+            match human.input_type {
+                YamlHumanInputType::Choice => {
+                    let options = human.options.as_ref();
+                    if options.is_none() || options.is_some_and(|items| items.is_empty()) {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "missing_human_choice_options".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message:
+                                "human_input.input_type=choice requires non-empty options list"
+                                    .to_string(),
+                        });
+                    }
+                }
+                YamlHumanInputType::Text => {
+                    if human.options.as_ref().is_some_and(|items| !items.is_empty()) {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "human_text_options_ignored".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Warning,
+                            message:
+                                "human_input.options are ignored for input_type=text".to_string(),
+                        });
+                    }
+                }
+                YamlHumanInputType::Form => {
+                    let Some(form_schema) = human.form_schema.as_ref() else {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "missing_human_form_schema".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message: "human_input.input_type=form requires form_schema"
+                                .to_string(),
+                        });
+                        continue;
+                    };
+                    if let Err(message) = validate_json_schema(form_schema) {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "invalid_human_form_schema".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Error,
+                            message,
+                        });
+                    }
+                    if !schema_expects_object(form_schema) {
+                        diagnostics.push(YamlWorkflowDiagnostic {
+                            node_id: Some(node.id.clone()),
+                            code: "human_form_schema_not_object".to_string(),
+                            severity: YamlWorkflowDiagnosticSeverity::Warning,
+                            message:
+                                "human_input.form_schema should use type=object for editable form data"
+                                    .to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
         if let Some(config) = node.config.as_ref() {
             if let Some(update_globals) = config.update_globals.as_ref() {
                 for (key, update) in update_globals {

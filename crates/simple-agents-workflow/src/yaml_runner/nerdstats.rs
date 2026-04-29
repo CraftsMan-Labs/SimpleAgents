@@ -1,6 +1,8 @@
 use serde_json::{json, Value};
 
 use super::types::YamlWorkflowRunOutput;
+#[cfg(test)]
+use super::types::YamlWorkflowRunStatus;
 
 pub(crate) fn workflow_nerdstats(output: &YamlWorkflowRunOutput) -> Value {
     let llm_nodes_without_usage: Vec<String> = output
@@ -73,8 +75,11 @@ mod tests {
             entry_node: "classify".to_string(),
             trace: vec!["classify".to_string()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "classify".to_string(),
             terminal_output: Some(json!({"ok": true})),
+            status: YamlWorkflowRunStatus::Completed,
+            human_request: None,
             step_timings: vec![YamlStepTiming {
                 node_id: "classify".to_string(),
                 node_kind: "llm_call".to_string(),
@@ -133,8 +138,11 @@ mod tests {
             entry_node: "step".to_string(),
             trace: vec!["step".to_string()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "step".to_string(),
             terminal_output: Some(json!({"ok": true})),
+            status: YamlWorkflowRunStatus::Completed,
+            human_request: None,
             step_timings: vec![YamlStepTiming {
                 node_id: "step".to_string(),
                 node_kind: "llm_call".to_string(),
@@ -171,8 +179,11 @@ mod tests {
             entry_node: "start".to_string(),
             trace: vec!["start".to_string()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "start".to_string(),
             terminal_output: Some(json!({"ok": true})),
+            status: YamlWorkflowRunStatus::Completed,
+            human_request: None,
             step_timings: vec![YamlStepTiming {
                 node_id: "start".to_string(),
                 node_kind: "llm_call".to_string(),

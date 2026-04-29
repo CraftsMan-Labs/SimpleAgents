@@ -32,6 +32,10 @@ pub enum WorkflowEvent {
         tool_name: String,
         output: Value,
     },
+    /// Human input was requested; workflow is paused.
+    HumanInputRequested { node_id: String, request: Value },
+    /// Human input was received; workflow can resume.
+    HumanInputReceived { node_id: String, response: Value },
     /// A node is retrying after failure.
     NodeRetrying {
         node_id: String,
@@ -54,6 +58,7 @@ pub enum NodeType {
     LlmCall,
     Switch,
     CustomWorker,
+    HumanInput,
     End,
     Unknown,
 }
@@ -125,6 +130,12 @@ impl WorkflowEventSink for DefaultEventPrinter {
                 tool_name, node_id, ..
             } => {
                 eprintln!("[tool] {node_id} {tool_name} done");
+            }
+            WorkflowEvent::HumanInputRequested { node_id, .. } => {
+                eprintln!("[human] {node_id} waiting for response");
+            }
+            WorkflowEvent::HumanInputReceived { node_id, .. } => {
+                eprintln!("[human] {node_id} response received");
             }
             WorkflowEvent::NodeRetrying {
                 node_id,

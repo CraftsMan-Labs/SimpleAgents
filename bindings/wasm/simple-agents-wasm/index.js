@@ -11,12 +11,17 @@ function buildWorkflowInputFromExecutionRequest(request) {
   if (typeof request.workflow_yaml !== "string" || request.workflow_yaml.trim().length === 0) {
     throw configError("workflow_yaml must be a non-empty string");
   }
-  if (!Array.isArray(request.messages) || request.messages.length === 0) {
-    throw configError("messages must be a non-empty array");
+  if (
+    (!Array.isArray(request.messages) || request.messages.length === 0)
+    && (request.resume === null || request.resume === undefined)
+  ) {
+    throw configError("messages must be a non-empty array unless resume is provided");
   }
 
   const input = request.input && typeof request.input === "object" ? { ...request.input } : {};
-  input.messages = request.messages;
+  if (Array.isArray(request.messages) && request.messages.length > 0) {
+    input.messages = request.messages;
+  }
   if (request.context && typeof request.context === "object") {
     input.context = request.context;
   }
@@ -35,6 +40,12 @@ function buildWorkflowOptionsFromExecutionRequest(request, onEvent) {
     : {};
   if (typeof execution.model === "string" && execution.model.trim().length > 0) {
     options.model = execution.model;
+  }
+  if (request.resume !== undefined) {
+    options.resume = request.resume;
+  }
+  if (request.human_response !== undefined) {
+    options.human_response = request.human_response;
   }
   if (typeof onEvent === "function") {
     options.onEvent = onEvent;

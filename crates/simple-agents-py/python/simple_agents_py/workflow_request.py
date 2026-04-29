@@ -163,12 +163,20 @@ class WorkflowExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workflow_path: WorkflowPath
-    messages: list[WorkflowMessage]
+    messages: list[WorkflowMessage] = Field(default_factory=list)
     context: dict[str, Any] | None = None
     media: dict[str, Any] | None = None
     input: WorkflowInput | None = None
+    resume: dict[str, Any] | None = None
+    human_response: Any | None = None
     execution: WorkflowExecutionFlags | None = None
     workflow_options: WorkflowRunOptions | None = None
+
+    @model_validator(mode="after")
+    def _messages_or_resume(self) -> "WorkflowExecutionRequest":
+        if len(self.messages) == 0 and self.resume is None:
+            raise ValueError("messages must contain at least one message unless resume is provided")
+        return self
 
     def to_client_payload(self, *, merge_execution_defaults: bool = False) -> dict[str, Any]:
         """Same mapping as :func:`workflow_payload.workflow_execution_request_to_mapping`.

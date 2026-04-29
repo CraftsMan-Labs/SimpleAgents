@@ -14,10 +14,18 @@ pub struct WorkflowRunOutput {
     pub trace: Vec<String>,
     /// Outputs collected from each node, keyed by node ID.
     pub outputs: BTreeMap<String, Value>,
+    /// Globals map carried across nodes.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty", default)]
+    pub globals: BTreeMap<String, Value>,
     /// The last node in the trace.
     pub terminal_node: String,
     /// The output value of the terminal node.
     pub terminal_output: Option<Value>,
+    /// Run status (`completed` or `awaiting_human_input`).
+    pub status: String,
+    /// Human request payload when status is awaiting input.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub human_request: Option<Value>,
     /// Optional performance metadata.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<RunMetadata>,
@@ -128,8 +136,11 @@ mod tests {
             entry_node: "start".into(),
             trace: vec!["start".into()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "start".into(),
             terminal_output: Some(serde_json::json!("done")),
+            status: "completed".into(),
+            human_request: None,
             metadata: None,
             events: None,
         };

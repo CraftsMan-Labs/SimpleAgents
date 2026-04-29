@@ -236,6 +236,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             workflow_input: &workflow_input,
             executor: YamlWorkflowExecutorBinding::Client(&client),
             custom_worker: None,
+            resume: None,
+            human_response: None,
             options: &options,
             flags,
         };

@@ -1,4 +1,4 @@
-//! [`WorkflowClient`] — wraps [`SimpleAgentsClient`] and adds workflow `run`, `stream`, `resume`.
+//! [`WorkflowClient`] — wraps [`SimpleAgentsClient`] and adds workflow `run` and `stream`.
 //!
 //! Because `simple-agents-core` cannot depend on `simple-agents-workflow` (that would create a
 //! circular dependency), the workflow methods live here instead of on `SimpleAgentsClient`.
@@ -49,10 +49,9 @@ use simple_agent_type::message::Message;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 
 use crate::yaml_runner::{
-    workflow_execution, RunMetadata, StepTiming, WorkflowCheckpoint, WorkflowEventSink,
-    WorkflowRunOutput, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
-    YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding, YamlWorkflowRunOptions,
-    YamlWorkflowSource,
+    workflow_execution, RunMetadata, StepTiming, WorkflowEventSink, WorkflowRunOutput,
+    YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 
 use simple_agent_type::prelude::SimpleAgentsError;
@@ -98,7 +97,7 @@ pub struct RunOptions {
 
 /// A client that wraps [`SimpleAgentsClient`] and exposes workflow operations.
 ///
-/// The workflow methods (`run`, `stream`, `resume`) live here rather than on
+/// The workflow methods (`run`, `stream`) live here rather than on
 /// `SimpleAgentsClient` because `simple-agents-core` cannot depend on
 /// `simple-agents-workflow` without creating a circular crate dependency.
 pub struct WorkflowClient {
@@ -133,6 +132,8 @@ impl WorkflowClient {
             workflow_input: &input,
             executor: YamlWorkflowExecutorBinding::Client(&self.inner),
             custom_worker: None,
+            resume: None,
+            human_response: None,
             options: &options.workflow_options,
             flags: options.execution_flags,
         };
@@ -164,6 +165,8 @@ impl WorkflowClient {
             workflow_input: &input,
             executor: YamlWorkflowExecutorBinding::Client(&self.inner),
             custom_worker: None,
+            resume: None,
+            human_response: None,
             options: &options.workflow_options,
             flags,
         };
@@ -175,17 +178,6 @@ impl WorkflowClient {
             .map_err(|e| WorkflowError::Workflow(e.to_string()))?;
 
         Ok(yaml_output_to_workflow_output(output))
-    }
-
-    /// Resume a workflow from a saved checkpoint.
-    pub async fn resume(
-        &self,
-        checkpoint: WorkflowCheckpoint,
-        options: RunOptions,
-    ) -> Result<WorkflowRunOutput, WorkflowError> {
-        // Reconstruct a messages-based input from the checkpoint
-        let messages = checkpoint.original_messages.clone();
-        self.run(&checkpoint.workflow_path, messages, options).await
     }
 
     /// Direct LLM completion (delegates to the inner client).
@@ -262,6 +254,14 @@ impl YamlWorkflowEventSink for EventSinkBridge<'_> {
                         .unwrap_or(Value::Null),
                 })
             }
+            "human_input_requested" => Some(WorkflowEvent::HumanInputRequested {
+                node_id: event.node_id.clone().unwrap_or_default(),
+                request: event.metadata.clone().unwrap_or(Value::Null),
+            }),
+            "human_input_received" => Some(WorkflowEvent::HumanInputReceived {
+                node_id: event.node_id.clone().unwrap_or_default(),
+                response: event.metadata.clone().unwrap_or(Value::Null),
+            }),
             "node_tool_call_failed" => Some(WorkflowEvent::NodeFailed {
                 node_id: event.node_id.clone().unwrap_or_default(),
                 error: event
@@ -300,6 +300,7 @@ fn node_type_from_kind(kind: Option<&str>) -> crate::yaml_runner::NodeType {
         Some("llm_call") => NodeType::LlmCall,
         Some("switch") => NodeType::Switch,
         Some("custom_worker") => NodeType::CustomWorker,
+        Some("human_input") => NodeType::HumanInput,
         Some("end") => NodeType::End,
         _ => NodeType::Unknown,
     }
@@ -349,8 +350,19 @@ fn yaml_output_to_workflow_output(
         entry_node: output.entry_node,
         trace: output.trace,
         outputs: output.outputs,
+        globals: output.globals,
         terminal_node: output.terminal_node,
         terminal_output: output.terminal_output,
+        status: match output.status {
+            crate::yaml_runner::YamlWorkflowRunStatus::Completed => "completed".to_string(),
+            crate::yaml_runner::YamlWorkflowRunStatus::AwaitingHumanInput => {
+                "awaiting_human_input".to_string()
+            }
+        },
+        human_request: output
+            .human_request
+            .as_ref()
+            .and_then(|request| serde_json::to_value(request).ok()),
         metadata,
         events: None,
     }

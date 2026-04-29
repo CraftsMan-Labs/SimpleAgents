@@ -8,6 +8,8 @@ use super::types::{
     YamlLlmTokenUsage, YamlToolTraceMode, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
     YamlWorkflowRunOutput, YamlWorkflowTraceTenantContext,
 };
+#[cfg(test)]
+use super::types::YamlWorkflowRunStatus;
 
 const MAX_SPAN_PAYLOAD_CHARS: usize = 32 * 1024;
 
@@ -683,8 +685,11 @@ mod tests {
             entry_node: "start".to_string(),
             trace: vec!["start".to_string()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "start".to_string(),
             terminal_output: Some(serde_json::json!({"ok": true})),
+            status: YamlWorkflowRunStatus::Completed,
+            human_request: None,
             step_timings: vec![YamlStepTiming {
                 node_id: "start".to_string(),
                 node_kind: "llm_call".to_string(),
@@ -743,8 +748,11 @@ mod tests {
             entry_node: "start".to_string(),
             trace: vec!["start".to_string()],
             outputs: BTreeMap::new(),
+            globals: BTreeMap::new(),
             terminal_node: "start".to_string(),
             terminal_output: Some(serde_json::json!({"ok": true})),
+            status: YamlWorkflowRunStatus::Completed,
+            human_request: None,
             step_timings: Vec::new(),
             llm_node_metrics: BTreeMap::new(),
             llm_node_models: BTreeMap::new(),
