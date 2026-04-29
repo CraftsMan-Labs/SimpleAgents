@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::{YamlWorkflow, YamlWorkflowRunError};
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlStepTiming {
     pub node_id: String,
     pub node_kind: String,
@@ -25,7 +25,7 @@ pub struct YamlStepTiming {
     pub tokens_per_second: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlLlmNodeMetrics {
     pub elapsed_ms: u128,
     pub prompt_tokens: u32,
@@ -36,7 +36,7 @@ pub struct YamlLlmNodeMetrics {
     pub tokens_per_second: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
@@ -246,7 +246,7 @@ pub struct YamlWorkflowRunOptions {
     pub model: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct YamlLlmTokenUsage {
     pub prompt_tokens: u32,
     pub completion_tokens: u32,
@@ -254,7 +254,7 @@ pub struct YamlLlmTokenUsage {
     pub reasoning_tokens: Option<u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlLlmExecutionResult {
     pub payload: Value,
     pub usage: Option<YamlLlmTokenUsage>,
@@ -262,7 +262,7 @@ pub struct YamlLlmExecutionResult {
     pub tool_calls: Vec<YamlToolCallTrace>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlToolCallTrace {
     pub id: String,
     pub name: String,
