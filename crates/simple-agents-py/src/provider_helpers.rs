@@ -2,17 +2,29 @@ use simple_agent_type::prelude::{ApiKey, Provider, Result, SimpleAgentsError};
 use simple_agent_type::telemetry::ApiFormat;
 use simple_agents_providers::openai::OpenAiCompatProvider;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub(crate) fn build_provider(
     api_key: &str,
     base_url: Option<&str>,
     api_format: Option<&str>,
+    timeout: Option<Duration>,
 ) -> Result<Arc<dyn Provider>> {
     let key = ApiKey::new(api_key)?;
     let format = parse_api_format(api_format)?;
     let provider = match base_url {
-        Some(url) => OpenAiCompatProvider::with_base_url_and_format(key, url.to_string(), format)?,
-        None => OpenAiCompatProvider::new_with_format(key, format)?,
+        Some(url) => OpenAiCompatProvider::with_base_url_and_format_and_timeout(
+            key,
+            url.to_string(),
+            format,
+            timeout,
+        )?,
+        None => match timeout {
+            Some(duration) => {
+                OpenAiCompatProvider::new_with_format_and_timeout(key, format, duration)?
+            }
+            None => OpenAiCompatProvider::new_with_format(key, format)?,
+        },
     };
     Ok(Arc::new(provider))
 }
@@ -27,6 +39,7 @@ pub(crate) fn build_provider_from_name(
     api_key: Option<&str>,
     base_url: Option<&str>,
     api_format: Option<&str>,
+    timeout: Option<Duration>,
 ) -> Result<Arc<dyn Provider>> {
     let key_required = |name: &str| {
         api_key.map(str::to_string).ok_or_else(|| {
@@ -47,18 +60,18 @@ pub(crate) fn build_provider_from_name(
                     )
                 })?
             };
-            build_provider(&key, base_url, api_format)
+            build_provider(&key, base_url, api_format, timeout)
         }
         // OpenAI-compatible HTTP shape; used for multi-provider demos/tests (routing).
         "anthropic" => {
             let key = key_required("anthropic")?;
             let base = base_url.unwrap_or("https://api.anthropic.com/v1");
-            build_provider(&key, Some(base), api_format)
+            build_provider(&key, Some(base), api_format, timeout)
         }
         "openrouter" => {
             let key = key_required("openrouter")?;
             let base = base_url.unwrap_or("https://openrouter.ai/api/v1");
-            build_provider(&key, Some(base), api_format)
+            build_provider(&key, Some(base), api_format, timeout)
         }
         other => Err(SimpleAgentsError::Config(format!(
             "Unknown provider: {other}"

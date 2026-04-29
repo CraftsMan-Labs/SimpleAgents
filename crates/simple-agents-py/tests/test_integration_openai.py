@@ -7,11 +7,14 @@ from typing import TYPE_CHECKING, Tuple
 import pytest  # type: ignore[reportMissingImports]
 from simple_agents_py import ResponseWithMetadata
 
+from repo_dotenv import load_root_dotenv_into
+
 if TYPE_CHECKING:
     import simple_agents_py
 
 
 def _require_env() -> Tuple[str, str, str]:
+    load_root_dotenv_into(os.environ, override=False)
     api_base = os.getenv("CUSTOM_API_BASE")
     api_key = os.getenv("CUSTOM_API_KEY")
     model = os.getenv("CUSTOM_API_MODEL")

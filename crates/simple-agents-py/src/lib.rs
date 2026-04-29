@@ -8,9 +8,10 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use simple_agent_type::message::Message;
 use simple_agent_type::prelude::{CompletionChunk, Result};
+use simple_agent_type::provider::RetryConfig;
 use simple_agent_type::request::ResponseFormat;
 use simple_agents_core::{
-    CompletionMode, CompletionOptions, HealedJsonResponse, SimpleAgentsClient,
+    ClientConfig, CompletionMode, CompletionOptions, HealedJsonResponse, SimpleAgentsClient,
 };
 use simple_agents_healing::schema::Schema;
 use simple_agents_healing::{CoercionEngine, JsonishParser};
@@ -21,7 +22,7 @@ use simple_agents_workflow::yaml_runner::{
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod client_builder;
 mod completion_helpers;
@@ -58,6 +59,50 @@ fn parse_python_schema(schema: &Bound<'_, PyAny>) -> PyResult<(serde_json::Value
     let sch = schema_converter::convert(&json_value)
         .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
     Ok((json_value, sch))
+}
+
+fn parse_timeout_seconds(timeout_seconds: Option<f64>) -> PyResult<Option<Duration>> {
+    match timeout_seconds {
+        Some(value) if value.is_finite() && value > 0.0 => Ok(Some(Duration::from_secs_f64(value))),
+        Some(_) => Err(PyValueError::new_err(
+            "timeout_seconds must be a positive finite number",
+        )),
+        None => Ok(None),
+    }
+}
+
+fn parse_retry_strategy(retry_strategy: Option<&str>) -> PyResult<Option<f32>> {
+    match retry_strategy {
+        Some("none") => Ok(None),
+        Some("fixed") => Ok(Some(1.0)),
+        Some("exponential") | None => Ok(Some(2.0)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown retry_strategy '{other}'; expected 'none', 'fixed', or 'exponential'"
+        ))),
+    }
+}
+
+fn parse_retry_config(
+    retry_attempts: Option<u32>,
+    retry_strategy: Option<&str>,
+) -> PyResult<RetryConfig> {
+    let mut retry = RetryConfig::default();
+    if let Some(attempts) = retry_attempts {
+        if attempts == 0 {
+            return Err(PyValueError::new_err(
+                "retry_attempts must be greater than or equal to 1",
+            ));
+        }
+        retry.max_attempts = attempts;
+    }
+    match parse_retry_strategy(retry_strategy)? {
+        Some(multiplier) => {
+            retry.backoff_multiplier = multiplier;
+            retry.jitter = false;
+        }
+        None => retry.max_attempts = 1,
+    }
+    Ok(retry)
 }
 
 fn healed_json_response_to_py(
@@ -517,7 +562,7 @@ impl Client {
     /// otherwise the `OPENAI_API_KEY` environment variable is read.
     /// `api_base` and `base_url` are synonymous base-URL overrides.
     #[new]
-    #[pyo3(signature = (provider, *, api_key=None, api_base=None, base_url=None, model=None, api_format=None, timeout_seconds=None))]
+    #[pyo3(signature = (provider, *, api_key=None, api_base=None, base_url=None, model=None, api_format=None, timeout_seconds=None, retry_attempts=None, retry_strategy=None))]
     fn new(
         provider: &str,
         api_key: Option<&str>,
@@ -526,21 +571,25 @@ impl Client {
         model: Option<&str>,
         api_format: Option<&str>,
         timeout_seconds: Option<f64>,
+        retry_attempts: Option<u32>,
+        retry_strategy: Option<&str>,
     ) -> PyResult<Self> {
         if model.is_some() {
             return Err(PyValueError::new_err(
                 "Client(model=...) is not supported yet; pass the model per request via completion model or workflow execution.model",
             ));
         }
-        if timeout_seconds.is_some() {
-            return Err(PyValueError::new_err(
-                "Client(timeout_seconds=...) is not supported yet",
-            ));
-        }
+        let timeout = parse_timeout_seconds(timeout_seconds)?;
+        let retry = parse_retry_config(retry_attempts, retry_strategy)?;
         let effective_base = api_base.or(base_url);
-        let prov = build_provider_from_name(provider, api_key, effective_base, api_format)
+        let prov = build_provider_from_name(provider, api_key, effective_base, api_format, timeout)
             .map_err(py_err)?;
-        let client = SimpleAgentsClient::new(prov);
+        let mut config = ClientConfig::default();
+        config.provider = provider.to_string();
+        config.api_key = api_key.unwrap_or_default().to_string();
+        config.base_url = effective_base.map(str::to_string);
+        config.default_retry = retry;
+        let client = SimpleAgentsClient::from_config(prov, config);
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self {
             runtime: Arc::new(Mutex::new(runtime)),
@@ -1012,9 +1061,9 @@ impl Client {
         let run_options = if let Some(options) = options {
             let value: serde_json::Value = pythonize::depythonize(options)
                 .map_err(|e| PyRuntimeError::new_err(format!("invalid resume options: {e}")))?;
-            let object = value.as_object().ok_or_else(|| {
-                PyRuntimeError::new_err("resume options must be a dict/object")
-            })?;
+            let object = value
+                .as_object()
+                .ok_or_else(|| PyRuntimeError::new_err("resume options must be a dict/object"))?;
             for key in object.keys() {
                 if key != "workflow_options" && key != "workflowOptions" {
                     return Err(PyRuntimeError::new_err(format!(
@@ -1030,8 +1079,9 @@ impl Client {
             if workflow_options.is_null() {
                 YamlWorkflowRunOptions::default()
             } else {
-                serde_json::from_value::<YamlWorkflowRunOptions>(workflow_options)
-                    .map_err(|e| PyRuntimeError::new_err(format!("invalid workflow_options: {e}")))?
+                serde_json::from_value::<YamlWorkflowRunOptions>(workflow_options).map_err(|e| {
+                    PyRuntimeError::new_err(format!("invalid workflow_options: {e}"))
+                })?
             }
         } else {
             YamlWorkflowRunOptions::default()

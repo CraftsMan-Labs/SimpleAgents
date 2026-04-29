@@ -202,6 +202,8 @@ class Client:
         model: str | None = None,
         api_format: str | None = None,
         timeout_seconds: float | None = None,
+        retry_attempts: int | None = None,
+        retry_strategy: str | None = None,
     ) -> None: ...
 
     # --- Direct LLM calls ---

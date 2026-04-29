@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Annotated, Any
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
 from ._path_utils import coerce_path
 
@@ -64,8 +64,25 @@ class EvalCaseResult(BaseModel):
     first_failed_path: str | None = None
     expected: Any | None = None
     actual: Any | None = None
+    evaluations: list["EvalResult"] = Field(default_factory=list)
     workflow_output: dict[str, Any] | None = None
     error: EvalErrorInfo | None = None
+
+
+class EvalResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    kind: str
+    status: EvalRunStatus
+    passed: bool
+    score: float | None = None
+    path: str | None = None
+    node_id: str | None = None
+    expected: Any | None = None
+    actual: Any | None = None
+    reason: str | None = None
+    metadata: Any | None = None
 
 
 class EvalReport(BaseModel):
@@ -82,6 +99,7 @@ __all__ = [
     "EvalErrorInfo",
     "EvalPath",
     "EvalReport",
+    "EvalResult",
     "EvalRunStatus",
     "EvalSuiteRequest",
     "EvalSummary",

@@ -208,8 +208,9 @@ impl ClientBuilder {
             return Err(PyRuntimeError::new_err("At least one provider is required"));
         }
         let (name, key, base) = &self.providers[0];
-        let prov = build_provider_from_name(name.as_str(), key.as_deref(), base.as_deref(), None)
-            .map_err(py_err)?;
+        let prov =
+            build_provider_from_name(name.as_str(), key.as_deref(), base.as_deref(), None, None)
+                .map_err(py_err)?;
         let healing = if let Some(ref h) = self.healing {
             let bound = h.bind(py);
             healing_settings_from_py(bound.as_any())?
