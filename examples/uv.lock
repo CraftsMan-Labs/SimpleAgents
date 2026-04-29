@@ -403,7 +403,6 @@ source = { virtual = "python-test-simpleAgents" }
 dependencies = [
     { name = "fastapi" },
     { name = "openai" },
-    { name = "python-dotenv" },
     { name = "simple-agents-py" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -412,7 +411,6 @@ dependencies = [
 requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "openai", specifier = ">=2.30.0" },
-    { name = "python-dotenv", specifier = ">=1.0" },
     { name = "simple-agents-py", extras = ["pydantic"], editable = "../crates/simple-agents-py" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
@@ -501,6 +499,7 @@ dependencies = [
 requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "python-dotenv", marker = "extra == 'dev'", specifier = ">=1.0" },
 ]
 provides-extras = ["dev", "pydantic"]
 

@@ -1,7 +1,9 @@
 import { config } from "dotenv";
+import { join } from "node:path";
 import { Client, type EvalReport } from "simple-agents-node";
+import { PACKAGE_ROOT, pathToEvalSuite } from "../example_paths.js";
 
-config();
+config({ path: join(PACKAGE_ROOT, ".env") });
 
 const client = new Client(
   process.env.WORKFLOW_API_KEY ?? "",
@@ -9,7 +11,7 @@ const client = new Client(
 );
 
 const report: EvalReport = await client.runEvalSuite({
-  suitePath: "friendly-eval.yaml",
+  suitePath: pathToEvalSuite("friendly", "friendly-eval.yaml"),
 });
 
 console.log(JSON.stringify(report, null, 2));

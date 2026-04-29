@@ -6,11 +6,16 @@ From ``examples/``: ``uv sync`` (workspace member; ``simple-agents-py`` comes fr
 
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+# Run as `python runners/<script>.py` — keep package root importable.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import json
+
 from example_env import require_env
+from example_paths import workflows
 from simple_agents_py import Client as SimpleAgentsClient
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
@@ -19,9 +24,7 @@ from simple_agents_py.workflow_request import (
     WorkflowRole,
 )
 
-load_dotenv()
-
-workflow_file = Path(__file__).resolve().parent / "test.yaml"
+workflow_file = workflows("email-classification", "test.yaml")
 
 
 def main() -> None:

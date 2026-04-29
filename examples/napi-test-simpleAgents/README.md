@@ -1,11 +1,31 @@
 # napi-test-simpleAgents
 
-Minimal Bun + TypeScript examples for `simple-agents-node`, aligned with:
+Minimal Bun + TypeScript examples for `simple-agents-node`, mirroring `examples/python-test-simpleAgents/`.
 
-- `examples/python-test-simpleAgents/test-py-simple-agents.py` — blocking workflow run
-- `examples/python-test-simpleAgents/test-py-simple-agents-streaming.py` — streamed events + final result
-- `examples/python-test-simpleAgents/test-py-simple-agents-streaming-langfuse.py` — same, with Langfuse OTLP (optional)
-- `examples/python-test-simpleAgents/handlers.py` — Python loads this next to the YAML; Node uses `handlers.ts` with explicit `customWorker` (below)
+Aligned with:
+
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents.py` — blocking workflow run
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming.py` — streamed events + final result
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-streaming-langfuse.py` — same, with Langfuse OTLP (optional)
+- Workflows ship under `workflows/`; Python loads `handlers.py` next to the YAML; Node uses `handlers.ts` with explicit `customWorker`.
+
+## Layout
+
+```text
+workflows/
+  email-classification/   test.yaml + handlers.ts
+  rag/                    rag-eval-workflow.yaml (mocked retrieval for rag eval)
+
+evals/
+  friendly/               friendly-eval.yaml (references Python sibling friendly workflow + dataset JSONL)
+  rag/                    rag-eval.{yaml,dataset.jsonl}
+
+runners/                  CLI scripts (test-simple-agents*.ts, rag-eval*.js)
+
+assets/README.md           Optional local assets (invoice JPEG usually shared from python-test-simpleAgents)
+
+example_paths.ts           join helpers for workflows, eval suites, sibling Python asset paths.
+```
 
 ## Quick start
 
@@ -21,12 +41,6 @@ bun run stream    # streaming CLI
 
 ## Setup
 
-From this directory:
-
-```bash
-bun install
-```
-
 The package depends on the local crate via `file:../../crates/simple-agents-napi` (see `package.json`). If you change the NAPI crate, rebuild it from `crates/simple-agents-napi` (`npm run build` / `napi build`) before re-running.
 
 ## Environment
@@ -36,54 +50,23 @@ Set at least:
 - `WORKFLOW_API_KEY` — required  
 - `WORKFLOW_API_BASE` — optional (OpenAI-compatible base URL)
 
-Bun loads `.env` from this folder when present (same idea as Python `python-dotenv` in the sibling example).
+Scripts that use `dotenv` load `.env` from the package root (`join(PACKAGE_ROOT, ".env")`).
 
 ## Scripts
 
-**Non-streaming** (like `test-py-simple-agents.py`):
+Bundled shortcuts (see `package.json`):
 
-```bash
-bun run run
-# or
-bun run test-simple-agents.ts
-```
+| npm script | Direct path |
+|---|---|
+| `bun run run` | `runners/test-simple-agents.ts` |
+| `bun run stream` | `runners/test-simple-agents-streaming.ts` |
+| `bun run stream:langfuse` | `runners/test-simple-agents-streaming-langfuse.ts` |
+| `bun run invoice-image` | `runners/test-simple-agents-invoice-image.ts` |
+| `bun run invoice-image:jaeger` | `runners/test-simple-agents-invoice-image-jaeger.ts` |
 
-**Streaming** (like `test-py-simple-agents-streaming.py`):
-
-```bash
-bun run stream
-# or
-bun run test-simple-agents-streaming.ts
-```
-
-**Streaming + Langfuse** (like `test-py-simple-agents-streaming-langfuse.py`):
-
-```bash
-bun run stream:langfuse
-# or
-bun run test-simple-agents-streaming-langfuse.ts
-```
-
-**Invoice image** (multimodal text + image):
-
-```bash
-bun run invoice-image
-# or
-bun run test-simple-agents-invoice-image.ts
-```
-
-**Invoice image + Jaeger OTLP** (like `test-py-simple-agents-invoice-image-jaeger.py`):
-
-```bash
-bun run invoice-image:jaeger
-# or
-bun run test-simple-agents-invoice-image-jaeger.ts
-```
-
-Each script prompts for input and runs `test.yaml` in this directory.
+**Invoice JPEG:** multimodal demos read  
+`examples/python-test-simpleAgents/assets/test-invoice.jpeg` (same path helper as Python’s `asset("test-invoice.jpeg")`).
 
 ## Custom workers
 
-Python discovers `handlers.py` next to the workflow automatically. In Node you pass
-`customWorkerDispatch` from `./handlers.ts` as the final argument to
-`Client.runWorkflow` / `Client.streamWorkflow` (see the `test-*.ts` files).
+Pass `customWorkerDispatch` from `../workflows/email-classification/handlers.js` into `Client.runWorkflow` / `Client.streamWorkflow` — see runners.

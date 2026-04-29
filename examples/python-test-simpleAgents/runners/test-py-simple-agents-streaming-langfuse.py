@@ -8,7 +8,7 @@ From ``examples/``: ``uv sync`` (workspace member; local ``simple-agents-py``).
 LLM nodes in the YAML should use stream: true if you want token deltas.
 
 **Langfuse:** set ``LANGFUSE_PUBLIC_KEY``, ``LANGFUSE_SECRET_KEY``, and
-``LANGFUSE_BASE_URL`` (e.g. ``http://localhost:3000``) in ``.env``. This script maps
+``LANGFUSE_BASE_URL`` (e.g. ``http://localhost:3000``) in your shell (repo root). This script maps
 them to SimpleAgents OTLP settings (``SIMPLE_AGENTS_TRACING_ENABLED``,
 ``OTEL_EXPORTER_OTLP_*``) as in ``docs/OTEL_CONFIGURATION.md``. Optional:
 ``OTEL_SERVICE_NAME`` (defaults to ``simple-agents-workflow`` in the runtime).
@@ -19,10 +19,13 @@ from __future__ import annotations
 import base64
 import json
 import os
+import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from example_env import require_env
+from example_paths import workflows
 from simple_agents_py import Client
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
@@ -73,10 +76,8 @@ def default_on_event(event: WorkflowStreamEvent) -> None:
     print(event)
 
 
-load_dotenv()
-
-workflow_file = Path(__file__).resolve().parent / "test.yaml"
-# workflow_file = Path(__file__).resolve().parent / "friendly.yaml"
+workflow_file = workflows("email-classification", "test.yaml")
+# workflow_file = workflows("friendly", "friendly.yaml")
 
 
 def main() -> None:

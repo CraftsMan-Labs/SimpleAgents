@@ -1,6 +1,31 @@
 # python-test-simpleAgents
 
-Sample scripts that run the bundled `test.yaml` workflow with `simple-agents-py` (local crate via the `examples` workspace).
+Sample scripts that run bundled YAML workflows under `simple-agents-py` (local crate via the `examples` workspace).
+
+## Layout
+
+```text
+workflows/
+  email-classification/   test.yaml + handlers.py (custom worker lookup)
+  friendly/               friendly.yaml
+  rag/                    rag-eval-workflow.yaml + rag_eval_handlers.py
+
+evals/
+  friendly/               friendly-eval.{yaml,dataset.jsonl}
+  invoice/               invoice-image-* eval suites (+ handlers.py mirror for run_eval_suite)
+  rag/                    rag-eval.{yaml,dataset.jsonl} (+ mirrored rag_eval_handlers.py)
+
+runners/                  CLI entrypoints (test-py-simple-agents*.py)
+
+apps/
+  fastapi_workflow_stream.py
+
+assets/
+  test-invoice.jpeg       Place a small invoice JPEG here for image examples (gitignored).
+
+example_paths.py          Resolves workflow / eval / asset paths from any script location.
+handlers.py               (removed from root — live under workflows/email-classification/)
+```
 
 ## Prerequisites
 
@@ -16,7 +41,7 @@ cd examples
 uv sync
 ```
 
-Or only this member (if you already use the parent workspace):
+Or only this member:
 
 ```bash
 cd examples/python-test-simpleAgents
@@ -32,43 +57,56 @@ uv sync --reinstall-package simple-agents-py
 
 ## Environment
 
-Create a `.env` file in **this directory** (it is gitignored). The scripts use `python-dotenv` to load it.
+Set variables in your process (shell, IDE, or CI) — **usually from the SimpleAgents repository root**. The scripts only read `os.environ` and do **not** load `.env` files.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `WORKFLOW_PROVIDER` | yes | Provider name passed to `Client` (e.g. `openai`) |
-| `WORKFLOW_API_BASE` | yes | Base URL for the API (OpenAI-compatible endpoint) |
-| `WORKFLOW_API_KEY` | yes | API key |
+| Variable           | Required | Description                                              |
+|--------------------|----------|----------------------------------------------------------|
+| `WORKFLOW_PROVIDER`| yes      | Provider name passed to `Client` (e.g. `openai`)        |
+| `WORKFLOW_API_BASE`| yes      | Base URL for the API (OpenAI-compatible endpoint)       |
+| `WORKFLOW_API_KEY` | yes      | API key                                                   |
 
-Example:
+Example from repo root:
 
 ```bash
-WORKFLOW_PROVIDER=openai
-WORKFLOW_API_BASE=https://api.openai.com/v1
-WORKFLOW_API_KEY=sk-...
+cd /path/to/SimpleAgents
+export WORKFLOW_PROVIDER=openai
+export WORKFLOW_API_BASE=https://api.openai.com/v1
+export WORKFLOW_API_KEY=sk-...
 ```
+
+If you keep secrets in a root `.env` file, load it with your shell (for example `set -a && source .env && set +a` in bash) before `uv run`.
 
 ## CLI scripts
 
-Run commands **from this directory** with `uv run` so the workspace environment is used.
+Run commands **from this directory** with `uv run`:
 
 **Blocking run** (single JSON result):
 
 ```bash
 cd examples/python-test-simpleAgents
-uv run python test-py-simple-agents.py
+uv run python runners/test-py-simple-agents.py
 ```
 
 **Streaming** (events to stdout, then final JSON):
 
 ```bash
-uv run python test-py-simple-agents-streaming.py
+uv run python runners/test-py-simple-agents-streaming.py
+```
+
+**Text eval bundles** (`evals/` JSONL + path comparisons):
+
+```bash
+# Friendly (plain string message) + RAG (mocked provider; offline-friendly)
+uv run python runners/test-py-simple-agents-text-evals.py
+
+# Single friendly suite only
+uv run python runners/test-py-simple-agents-eval.py
 ```
 
 **FastAPI server** (HTTP chat + SSE):
 
 ```bash
-uv run uvicorn fastapi_workflow_stream:app --reload --host 127.0.0.1 --port 8000
+uv run uvicorn apps.fastapi_workflow_stream:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Then:
@@ -79,7 +117,9 @@ Then:
 
 ## Custom workers
 
-`handlers.py` lives next to `test.yaml`. The Rust runner loads it automatically for `custom_worker` nodes (see `test.yaml`).
+`handlers.py` lives next to `workflows/email-classification/test.yaml`. The runner loads it for `custom_worker` nodes.
+
+**Eval suites:** `Client.run_eval_suite` resolves handler files relative to the **eval suite YAML’s directory**. Invoice and RAG eval folders include a small mirrored copy of the handler module (see comments in those files) so eval runs find `get_seller_name` / RAG helpers without changing the Rust contract.
 
 ## Related
 

@@ -3,13 +3,16 @@ from __future__ import annotations
 import asyncio
 import json
 import queue
+import sys
 import threading
 from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from example_env import require_env
+from example_paths import workflows
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -24,8 +27,7 @@ from simple_agents_py.workflow_request import (
 )
 from simple_agents_py.workflow_stream import merge_workflow_execution
 
-load_dotenv()
-WORKFLOW_FILE = Path(__file__).resolve().parent / "test.yaml"
+WORKFLOW_FILE = workflows("email-classification", "test.yaml")
 app = FastAPI(title="SimpleAgents workflow stream")
 
 

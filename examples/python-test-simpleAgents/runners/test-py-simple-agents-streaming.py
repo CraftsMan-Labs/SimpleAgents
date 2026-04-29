@@ -1,38 +1,29 @@
-"""Run a YAML workflow with a multimodal invoice image message.
+"""Stream a YAML workflow with live events (Pydantic request).
 
-From ``examples/``: ``uv sync`` (workspace member; ``simple-agents-py`` comes from
-``examples/pyproject.toml`` → ``../crates/simple-agents-py``).
+From ``examples/``: ``uv sync`` (workspace member; local ``simple-agents-py``).
+
+LLM nodes in the YAML should use stream: true if you want token deltas.
 """
 
 from __future__ import annotations
 
-import json
-import base64
+import sys
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from example_env import require_env
-from simple_agents_py import Client as SimpleAgentsClient
+from example_paths import workflows
+from simple_agents_py import Client
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
+    WorkflowExecutionFlags,
     WorkflowExecutionRequest,
     WorkflowMessage,
     WorkflowRole,
 )
 from simple_agents_py.workflow_stream import WorkflowStreamEvent
 
-load_dotenv()
-
-workflow_file = Path(__file__).resolve().parent / "test.yaml"
-image_file = Path(__file__).resolve().parent / "test-invoice.jpeg"
-
-def require_file(path: Path) -> Path:
-    if not path.exists():
-        raise SystemExit(
-            f"Required example asset is missing: {path}\n"
-            "Add a small invoice JPEG at that path before running this example."
-        )
-    return path
 
 def default_on_event(event: WorkflowStreamEvent) -> None:
     """Print streamed tokens to stdout; log structured snapshots to stderr.
@@ -53,35 +44,36 @@ def default_on_event(event: WorkflowStreamEvent) -> None:
     print(event)
 
 
+workflow_file = workflows("email-classification", "test.yaml")
+# workflow_file = workflows("friendly", "friendly.yaml")
+
+
 def main() -> None:
-    client = SimpleAgentsClient(
+    client = Client(
         require_env("WORKFLOW_PROVIDER"),
         api_base=require_env("WORKFLOW_API_BASE"),
         api_key=require_env("WORKFLOW_API_KEY"),
     )
 
-    b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
+    user_input = input("Enter your Input: ")
 
     req = WorkflowExecutionRequest(
         workflow_path=str(workflow_file),
-        messages=[
-            WorkflowMessage(
-                role=WorkflowRole.USER,
-                content=[
-                    {
-                        "type": "text",
-                        "text": "Invoice image. Classify and route this per workflow.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    },
-                ],
-            ),
-        ],
+        messages=[WorkflowMessage(role=WorkflowRole.USER, content=user_input)],
+        execution=WorkflowExecutionFlags(
+            node_llm_streaming=True,
+            split_stream_deltas=False,
+        ),
     )
 
-    result = client.stream_workflow(workflow_execution_request_to_mapping(req), on_event=default_on_event,)
+    result = client.stream_workflow(
+        workflow_execution_request_to_mapping(req),
+        on_event=default_on_event,
+    )
+
+    print("\n")
+    import json
+
     print(json.dumps(result, indent=2))
 
 

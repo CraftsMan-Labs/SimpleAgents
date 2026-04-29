@@ -1,5 +1,5 @@
 id: friendly-chat-output-golden
-workflow_path: friendly.yaml
+workflow_path: ../../workflows/friendly/friendly.yaml
 dataset_path: friendly-eval.dataset.jsonl
 execution:
   node_llm_streaming: false

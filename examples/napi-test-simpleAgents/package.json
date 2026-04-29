@@ -3,12 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "run": "bun run test-simple-agents.ts",
-    "stream": "bun run test-simple-agents-streaming.ts",
-    "stream:langfuse": "bun run test-simple-agents-streaming-langfuse.ts",
-    "invoice-image": "bun run test-simple-agents-invoice-image.ts",
-    "invoice-image:jaeger": "bun run test-simple-agents-invoice-image-jaeger.ts",
-    "invoice-image:jaegar": "bun run test-simple-agents-invoice-image-jaegar.ts"
+    "run": "bun run runners/test-simple-agents.ts",
+    "stream": "bun run runners/test-simple-agents-streaming.ts",
+    "stream:langfuse": "bun run runners/test-simple-agents-streaming-langfuse.ts",
+    "rag-eval": "node runners/test-simple-agents-rag-eval.js",
+    "rag-eval:ts": "bun run runners/test-simple-agents-rag-eval.ts",
+    "invoice-image": "bun run runners/test-simple-agents-invoice-image.ts",
+    "invoice-image:jaeger": "bun run runners/test-simple-agents-invoice-image-jaeger.ts",
+    "invoice-image:jaegar": "bun run runners/test-simple-agents-invoice-image-jaegar.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

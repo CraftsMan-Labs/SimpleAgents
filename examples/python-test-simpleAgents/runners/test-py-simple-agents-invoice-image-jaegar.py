@@ -14,14 +14,17 @@ This script enables tracing and applies Jaeger-friendly defaults (gRPC to
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
-import base64
 from pathlib import Path
 
-from dotenv import load_dotenv
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from example_env import require_env
+from example_paths import asset, workflows
+from invoice_eval_multimodal import multimodal_invoice_content_parts
 from simple_agents_py import Client as SimpleAgentsClient
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
@@ -32,10 +35,8 @@ from simple_agents_py.workflow_request import (
     WorkflowTelemetryConfig,
 )
 
-load_dotenv()
-
-workflow_file = Path(__file__).resolve().parent / "test.yaml"
-image_file = Path(__file__).resolve().parent / "test-invoice.jpeg"
+workflow_file = workflows("email-classification", "test.yaml")
+image_file = asset("test-invoice.jpeg")
 
 
 def require_file(path: Path) -> Path:
@@ -88,16 +89,7 @@ def main() -> None:
         messages=[
             WorkflowMessage(
                 role=WorkflowRole.USER,
-                content=[
-                    {
-                        "type": "text",
-                        "text": "Invoice image. Classify and route this per workflow.",
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-                    },
-                ],
+                content=multimodal_invoice_content_parts(b64),
             ),
         ],
         workflow_options=WorkflowRunOptions(

@@ -2,9 +2,9 @@
 
 Minimal Bun + TypeScript examples for `simple-agents-wasm`, aligned with:
 
-- `examples/napi-test-simpleAgents/test-simple-agents.ts` - blocking workflow run
-- `examples/napi-test-simpleAgents/test-simple-agents-streaming.ts` - streamed events + final result
-- `examples/napi-test-simpleAgents/test-simple-agents-invoice-image.ts` - multimodal text + image input
+- `examples/napi-test-simpleAgents/runners/test-simple-agents.ts` - blocking workflow run
+- `examples/napi-test-simpleAgents/runners/test-simple-agents-streaming.ts` - streamed events + final result
+- `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image.ts` - multimodal text + image input
 
 ## Quick start
 
@@ -44,7 +44,10 @@ bun run invoice-image  # multimodal invoice image
 - `WORKFLOW_PROVIDER` - `openai` (default) or `openrouter`
 - `WORKFLOW_API_KEY` - required
 - `WORKFLOW_API_BASE` - optional
+- `WORKFLOW_TIMEOUT_SECONDS` - optional positive number
+- `WORKFLOW_RETRY_ATTEMPTS` - optional integer >= 1
+- `WORKFLOW_RETRY_STRATEGY` - optional `none`, `fixed`, or `exponential`
 - `WORKFLOW_YAML_PATH` - optional override for workflow YAML path
 - `INVOICE_IMAGE_PATH` - optional image path for invoice example (falls back to a tiny embedded PNG)
 
-By default, scripts use `../napi-test-simpleAgents/test.yaml` to keep workflow behavior in sync.
+By default, scripts use `../napi-test-simpleAgents/workflows/email-classification/test.yaml` to keep workflow behavior in sync.
