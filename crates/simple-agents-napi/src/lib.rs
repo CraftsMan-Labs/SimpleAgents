@@ -1443,6 +1443,7 @@ impl Client {
         ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Record<string, unknown> | Promise<Record<string, unknown>>"
     )]
+    #[allow(clippy::too_many_arguments)]
     pub fn run_workflow(
         &self,
         workflow_path: String,
@@ -1524,6 +1525,7 @@ impl Client {
         ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
+    #[allow(clippy::too_many_arguments)]
     pub fn stream_workflow(
         &self,
         workflow_path: String,
@@ -1681,7 +1683,6 @@ impl Client {
             custom_worker,
         }))
     }
-
 }
 
 /// Copies OTLP-related variables into the Rust process environment (`std::env`).
