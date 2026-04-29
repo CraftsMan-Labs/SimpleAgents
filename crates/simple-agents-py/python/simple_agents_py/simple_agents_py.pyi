@@ -20,6 +20,7 @@ from .models import (
     WorkflowRunOptions,
     WorkflowRunOutput,
 )
+from .eval_request import EvalReport, EvalSuiteRequest
 
 # ---------------------------------------------------------------------------
 # Typed message API  (new unified surface)
@@ -337,6 +338,11 @@ class Client:
         on_event: Callable[[WorkflowEvent], object] | None = None,
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...
+
+    def run_eval_suite(
+        self,
+        request: EvalSuiteRequest | Mapping[str, JSONValue],
+    ) -> EvalReport: ...
 
 # ---------------------------------------------------------------------------
 # Module-level functions

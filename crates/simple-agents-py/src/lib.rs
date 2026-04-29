@@ -935,6 +935,7 @@ impl Client {
             } else {
                 let event_sink = PythonWorkflowEventSink {
                     callback: Some(callback),
+                    callback_error: std::sync::Mutex::new(None),
                 };
                 let execution_request = YamlWorkflowExecutionRequest {
                     source: YamlWorkflowSource::File(workflow_path_buf.as_path()),

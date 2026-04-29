@@ -11,24 +11,15 @@ or directly to ``Client.run_workflow`` / ``Client.stream_workflow`` without hand
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
 from typing import Annotated, Any, TypeAlias
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
+from ._path_utils import coerce_path
+
 
 def _coerce_workflow_path(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    fspath = getattr(value, "__fspath__", None)
-    if callable(fspath):
-        return str(fspath())
-    raise TypeError(
-        "workflow_path must be str, pathlib.Path, or os.PathLike[str], "
-        f"not {type(value).__name__}"
-    )
+    return coerce_path(value, field_name="workflow_path")
 
 
 WorkflowPath = Annotated[str, BeforeValidator(_coerce_workflow_path)]

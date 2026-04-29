@@ -3,21 +3,15 @@
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
 
+from ._path_utils import coerce_path
+
 
 def _coerce_path(value: Any) -> str:
-    if isinstance(value, str):
-        return value
-    if isinstance(value, Path):
-        return str(value)
-    fspath = getattr(value, "__fspath__", None)
-    if callable(fspath):
-        return str(fspath())
-    raise TypeError(f"suite_path must be path-like, not {type(value).__name__}")
+    return coerce_path(value, field_name="suite_path")
 
 
 EvalPath = Annotated[str, BeforeValidator(_coerce_path)]
