@@ -372,6 +372,43 @@ export function customWorkerDispatch(req: {
 const result = await client.runWorkflow(path, input, undefined, undefined, customWorkerDispatch);
 ```
 
+### Human In The Loop (HITL)
+
+`human_input` pauses the workflow and returns:
+
+- `status: "awaiting_human_input"`
+- `human_request` payload (prompt/options/form_data)
+
+Resume by calling `client.run_workflow(...)` again with `resume` + `human_response`:
+
+```python
+paused = client.run_workflow({
+    "workflow_path": "workflows/invoice-hitl/approve-reject.yaml",
+    "messages": [...],
+})
+
+if paused["status"] == "awaiting_human_input":
+    resumed = client.run_workflow({
+        "workflow_path": "workflows/invoice-hitl/approve-reject.yaml",
+        "resume": paused,
+        "human_response": "approve",  # choice | text | form object
+    })
+```
+
+Runnable Python invoice HITL examples:
+
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-approve-reject.py`
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-freeform-feedback.py`
+- `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-form-feedback.py`
+
+From `examples/`:
+
+```bash
+uv run python python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-approve-reject.py
+uv run python python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-freeform-feedback.py
+uv run python python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-form-feedback.py
+```
+
 ---
 
 ## Observability Integrations
@@ -503,13 +540,14 @@ const workflowOptions = { telemetry: { enabled: true, nerdstats: true } };
 
 ## YAML Building Blocks
 
-Three node types. That's it.
+Four node types. That's it.
 
 | Type | Purpose | Example |
 |---|---|---|
 | `llm_call` | Call an LLM, get structured output | Classify text, generate reply, extract data |
 | `switch` | Route based on previous node output | If finance -> go here, if HR -> go there |
 | `custom_worker` | Run your code | Database lookup, API call, business logic |
+| `human_input` | Pause for a human decision/input | Approve/reject, free text, or editable form review |
 
 ### Pattern: Classify -> Route -> Act
 

@@ -110,6 +110,7 @@ const report = await client.runEvalSuite({
 - `llm_call`: structured LLM generation with optional tools and streaming flags
 - `switch`: condition-driven routing with deterministic default
 - `custom_worker`: deterministic external logic handler
+- `human_input`: pause for human review/input and resume with `human_response`
 
 ### `llm_call`
 
@@ -192,6 +193,48 @@ Use `custom_worker` when code must run deterministically outside the model.
 | **WASM / browser** (`runWorkflowYamlString`) | Yes — register functions in `workflowOptions.functions` | JS signature is `(args, graphContext)`; see [BINDINGS_WASM.md](BINDINGS_WASM.md). |
 
 Worker context includes trace correlation fields under `context.trace` so external code can propagate telemetry.
+
+### `human_input`
+
+```yaml
+- id: review_invoice
+  node_type:
+    human_input:
+      input_type: choice
+      prompt: "Approve extracted invoice?"
+      options:
+        - value: approve
+          label: Approve
+        - value: reject
+          label: Reject
+```
+
+Supported `input_type` values:
+
+- `choice`: requires non-empty `options`; human responds with one option `value`
+- `text`: human responds with a string
+- `form`: requires `form_schema`; optional `form_prefill`; human responds with object data
+
+Runtime behavior:
+
+- First run pauses at this node with `status: "awaiting_human_input"` and `human_request`.
+- Resume by sending the paused output back as `resume` plus `human_response`.
+- The resumed run continues from the paused node and preserves trace continuity.
+
+Python resume pattern:
+
+```python
+paused = client.run_workflow({
+    "workflow_path": "workflows/invoice-hitl/form-feedback.yaml",
+    "messages": [...],
+})
+
+resumed = client.run_workflow({
+    "workflow_path": "workflows/invoice-hitl/form-feedback.yaml",
+    "resume": paused,
+    "human_response": {"vendor_name": "Acme, Inc.", "total_amount": 120.0},
+})
+```
 
 ## A Good First Multi-Node Pattern
 
