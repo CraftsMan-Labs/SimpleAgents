@@ -167,6 +167,22 @@ def on_event(event: dict) -> None:
 streamed = client.stream_workflow(request, on_event=on_event)
 ```
 
+### Workflow evals
+
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output` shaped like `YamlWorkflowRunOutput`. The runner compares actual output to expected output and reports the first mismatched path/node.
+
+```python
+from simple_agents_py import Client
+from simple_agents_py.eval_request import EvalReport, EvalSuiteRequest
+
+client = Client("openai")
+request = EvalSuiteRequest(suite_path="friendly-eval.yaml")
+report = EvalReport.model_validate(client.run_eval_suite(request.to_client_payload()))
+
+print(report.status)
+print(report.cases[0].first_failed_path)
+```
+
 ### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
 
 Higher-level helpers that add structured hooks, display modes, and Pydantic request coercion:

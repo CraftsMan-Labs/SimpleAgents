@@ -129,6 +129,22 @@ Use `extraWorkflowInput` for additional keys merged into runner input (for examp
 
 **Streaming:** `executeWorkflowYamlStream(request, onEvent)` emits live workflow events via `onEvent(err, eventJson)` (JSON strings) and resolves to the final structured output.
 
+### Workflow evals
+
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output` shaped like `YamlWorkflowRunOutput`. The runner compares actual output to expected output and reports the first mismatched path/node.
+
+```ts
+import { Client, type EvalReport } from "simple-agents-node";
+
+const client = new Client(process.env.WORKFLOW_API_KEY!, process.env.WORKFLOW_API_BASE);
+const report: EvalReport = await client.runEvalSuite({
+  suitePath: "friendly-eval.yaml",
+});
+
+console.log(report.status);
+console.log(report.cases[0]?.first_failed_path);
+```
+
 ### Legacy path helpers
 
 `runWorkflowYaml`, `runWorkflowYamlWithEvents`, and `runWorkflowYamlStream` take `(workflowPath, workflowInput)` and remain for compatibility. Prefer `executeWorkflowYaml` / `executeWorkflowYamlStream` for new code.
