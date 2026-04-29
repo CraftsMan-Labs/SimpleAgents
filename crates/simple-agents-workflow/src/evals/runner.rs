@@ -92,7 +92,9 @@ fn compare_record(
         expected: mismatch
             .as_ref()
             .and_then(|mismatch| mismatch.expected.clone()),
-        actual: mismatch.as_ref().and_then(|mismatch| mismatch.actual.clone()),
+        actual: mismatch
+            .as_ref()
+            .and_then(|mismatch| mismatch.actual.clone()),
         reason,
         metadata: None,
     };

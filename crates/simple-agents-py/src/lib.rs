@@ -1027,9 +1027,8 @@ impl Client {
         let execution = object
             .get("execution")
             .map(|value| {
-                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone()).map_err(
-                    |error| PyRuntimeError::new_err(format!("invalid execution: {error}")),
-                )
+                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone())
+                    .map_err(|error| PyRuntimeError::new_err(format!("invalid execution: {error}")))
             })
             .transpose()?
             .unwrap_or_default();
@@ -1047,9 +1046,7 @@ impl Client {
             .and_then(serde_json::Value::as_u64)
             .map(|value| value as usize)
             .unwrap_or(1);
-        let suite_id = object
-            .get("suite_id")
-            .and_then(serde_json::Value::as_str);
+        let suite_id = object.get("suite_id").and_then(serde_json::Value::as_str);
         let custom_executor = PythonCustomWorkerExecutor { workflow_root };
         let runtime = self
             .runtime

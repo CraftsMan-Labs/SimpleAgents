@@ -1601,10 +1601,14 @@ impl Client {
             .ok_or_else(|| Error::from_reason("datasetPath is required".to_string()))?
             .to_string();
         if workflow_path.trim().is_empty() {
-            return Err(Error::from_reason("workflowPath cannot be empty".to_string()));
+            return Err(Error::from_reason(
+                "workflowPath cannot be empty".to_string(),
+            ));
         }
         if dataset_path.trim().is_empty() {
-            return Err(Error::from_reason("datasetPath cannot be empty".to_string()));
+            return Err(Error::from_reason(
+                "datasetPath cannot be empty".to_string(),
+            ));
         }
         let suite_id = object
             .get("suiteId")

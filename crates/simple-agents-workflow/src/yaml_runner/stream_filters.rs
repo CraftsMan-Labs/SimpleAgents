@@ -290,11 +290,8 @@ pub(crate) fn parse_streamed_structured_payload(
     match heal_and_coerce_stream_payload(primary, schema) {
         Ok(resolution) => Ok(resolution),
         Err(primary_err) => match resolved {
-            Some(candidate) if candidate != raw => {
-                heal_and_coerce_stream_payload(raw, schema).map_err(|raw_err| {
-                    format!("{primary_err}; full-text retry: {raw_err}")
-                })
-            }
+            Some(candidate) if candidate != raw => heal_and_coerce_stream_payload(raw, schema)
+                .map_err(|raw_err| format!("{primary_err}; full-text retry: {raw_err}")),
             _ => Err(primary_err),
         },
     }
@@ -379,12 +376,16 @@ mod tests {
                 "reason": { "type": "string" }
             }
         });
-        let result = parse_streamed_structured_payload(raw, true, Some(&schema)).expect("full retry");
+        let result =
+            parse_streamed_structured_payload(raw, true, Some(&schema)).expect("full retry");
         assert_eq!(
             result.payload.get("state").and_then(Value::as_str),
             Some("capabilities_query")
         );
-        assert_eq!(result.payload.get("reason").and_then(Value::as_str), Some("short"));
+        assert_eq!(
+            result.payload.get("reason").and_then(Value::as_str),
+            Some("short")
+        );
     }
 
     #[test]
