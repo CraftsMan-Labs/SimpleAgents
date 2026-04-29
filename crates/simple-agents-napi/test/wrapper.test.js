@@ -118,3 +118,34 @@ test('typed workflow request wrappers reject unknown keys', () => {
     /unknown key "typo"/,
   );
 });
+
+test('runEvalSuite marks case error for unknown evaluator status', async () => {
+  const datasetPath = path.join(__dirname, 'tmp-eval-invalid-status.dataset.jsonl');
+  fs.writeFileSync(
+    datasetPath,
+    `${JSON.stringify({
+      id: 'case-1',
+      input: { messages: [{ role: 'user', content: 'hi' }] },
+      expected_output: { terminal_node: 'final' },
+    })}\n`,
+    'utf8',
+  );
+
+  class Client {
+    runWorkflow() {
+      return { terminal_node: 'final' };
+    }
+  }
+
+  const binding = loadWrapperWithNative({ Client });
+  const report = await new binding.Client().runEvalSuite({
+    workflowPath: 'workflow.yaml',
+    datasetPath,
+    evaluator: () => ({ status: 'banana', passed: false }),
+  });
+  assert.strictEqual(report.status, 'error');
+  assert.strictEqual(report.cases[0].status, 'error');
+  assert.match(report.cases[0].error.message, /evaluator status must be one of/);
+
+  fs.rmSync(datasetPath);
+});

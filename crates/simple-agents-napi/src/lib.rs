@@ -44,7 +44,7 @@ mod workflow_options_napi;
 use workflow_helpers::{
     apply_workflow_execution_flags_patch, build_workflow_input_with_messages_envelope,
     normalize_workflow_input_messages, parse_workflow_execution_flags_patch,
-    parse_workflow_options, parse_workflow_request_options, validate_workflow_request,
+    parse_workflow_request_options, validate_workflow_request,
 };
 pub use workflow_options_napi::{
     WorkflowRunOptionsNapi, WorkflowTelemetryConfigNapi, WorkflowTraceConfigNapi,
@@ -1306,7 +1306,7 @@ pub fn parse_workflow_yaml_execution_request(
         build_workflow_input_with_messages_envelope(messages, extra_workflow_input.as_ref())?;
     validate_workflow_request(workflow_path.as_str(), &workflow_input)?;
     let opts_json = workflow_options_napi::workflow_run_options_napi_to_json(workflow_options)?;
-    let opts = parse_workflow_options(opts_json)?;
+    let opts = parse_workflow_request_options(opts_json)?;
     let workflow_options_value = serde_json::to_value(&opts).map_err(|error| {
         Error::from_reason(format!("failed to serialize workflow options: {error}"))
     })?;

@@ -43,8 +43,18 @@ function normalizeEvalResult(value) {
   if (!value || typeof value !== "object") {
     throw new TypeError("evaluator must return boolean or EvalResult object");
   }
+  const allowedStatuses = new Set(["passed", "failed", "error"]);
   const passed = value.passed ?? value.status === "passed";
   const status = value.status || (passed ? "passed" : "failed");
+  if (!allowedStatuses.has(status)) {
+    throw new TypeError(`evaluator status must be one of "passed", "failed", "error"; got "${status}"`);
+  }
+  if (status === "passed" && passed !== true) {
+    throw new TypeError('evaluator result is inconsistent: status "passed" requires passed=true');
+  }
+  if ((status === "failed" || status === "error") && passed !== false) {
+    throw new TypeError(`evaluator result is inconsistent: status "${status}" requires passed=false`);
+  }
   return {
     id: value.id || "evaluator",
     status,
