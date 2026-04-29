@@ -80,7 +80,7 @@ wheels = [
 
 [[package]]
 name = "examples"
-version = "0.4.1"
+version = "0.5.0"
 source = { virtual = "." }
 dependencies = [
     { name = "pydantic" },
@@ -489,7 +489,7 @@ wheels = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.4.1"
+version = "0.5.0"
 source = { editable = "../crates/simple-agents-py" }
 dependencies = [
     { name = "pydantic" },
