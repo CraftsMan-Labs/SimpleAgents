@@ -9,6 +9,8 @@ use super::types::{
     YamlWorkflowRunOutput, YamlWorkflowTraceTenantContext,
 };
 
+const MAX_SPAN_PAYLOAD_CHARS: usize = 32 * 1024;
+
 static TRACE_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 pub(crate) fn should_sample_trace(trace_id: &str, sample_rate: f32) -> bool {
@@ -375,7 +377,7 @@ pub(crate) fn apply_langfuse_observation_usage_attributes(
 
 pub(crate) fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -> String {
     match mode {
-        YamlWorkflowPayloadMode::FullPayload => payload.to_string(),
+        YamlWorkflowPayloadMode::FullPayload => truncate_span_payload(payload.to_string()),
         YamlWorkflowPayloadMode::RedactedPayload => json!({
             "redacted": true,
             "value_type": match payload {
@@ -389,6 +391,21 @@ pub(crate) fn payload_for_span(mode: YamlWorkflowPayloadMode, payload: &Value) -
         })
         .to_string(),
     }
+}
+
+fn truncate_span_payload(payload: String) -> String {
+    if payload.len() <= MAX_SPAN_PAYLOAD_CHARS {
+        return payload;
+    }
+
+    let total_len = payload.len();
+    let mut truncated = payload;
+    let mut truncate_at = MAX_SPAN_PAYLOAD_CHARS;
+    while !truncated.is_char_boundary(truncate_at) {
+        truncate_at -= 1;
+    }
+    truncated.truncate(truncate_at);
+    format!("{truncated}...[truncated, {total_len} bytes total]")
 }
 
 pub(crate) fn payload_for_tool_trace(mode: YamlToolTraceMode, payload: &Value) -> Value {
