@@ -30,7 +30,7 @@
     "pretest:contract": "npm run build:debug",
     "pretest:live": "npm run build:debug",
     "test": "npm run test:unit && npm run test:contract",
-    "test:unit": "node --env-file-if-exists=../../.env --test test/unit.test.js test/workflow_event.test.js test/custom_worker.test.js",
+    "test:unit": "node --test test/unit.test.js test/workflow_event.test.js test/custom_worker.test.js test/wrapper.test.js",
     "test:contract": "node --env-file-if-exists=../../.env --test test/contract.test.js",
     "test:live": "node --env-file-if-exists=../../.env --test test/live.test.js",
     "prepublishOnly": "npm run build"

@@ -25,6 +25,7 @@ use simple_agents_healing::{
     CoercionEngine, JsonishParser,
 };
 use simple_agents_providers::openai::OpenAiCompatProvider;
+use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::yaml_runner::{
     validate_custom_worker_executor_for_file, workflow_execution, YamlWorkflowCustomWorkerExecutor,
     YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
@@ -939,6 +940,37 @@ pub struct RunWorkflowTask {
     record_events: bool,
 }
 
+pub struct EvalSuiteTask {
+    runtime: Arc<Runtime>,
+    client: Arc<SimpleAgentsClient>,
+    suite_path: String,
+    custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
+}
+
+impl Task for EvalSuiteTask {
+    type Output = JsonValue;
+    type JsValue = napi::JsUnknown;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        let request = EvalSuiteRunRequest {
+            suite_path: Path::new(self.suite_path.as_str()),
+            executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
+            custom_worker: self.custom_worker.as_deref(),
+        };
+        let report = self
+            .runtime
+            .block_on(run_eval_suite(request))
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        serde_json::to_value(report).map_err(|error| {
+            Error::from_reason(format!("failed to serialize eval report: {error}"))
+        })
+    }
+
+    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
+        env.to_js_value(&output)
+    }
+}
+
 impl Task for RunWorkflowTask {
     type Output = JsonValue;
     type JsValue = napi::JsUnknown;
@@ -1359,7 +1391,7 @@ impl Client {
 
     #[napi(
         js_name = "streamWorkflow",
-        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (err: unknown, eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_args_type = "workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
         ts_return_type = "Promise<Record<string, unknown>>"
     )]
     pub fn stream_workflow(
@@ -1411,6 +1443,49 @@ impl Client {
         };
 
         Ok(AsyncTask::new(task))
+    }
+
+    #[napi(
+        js_name = "runEvalSuite",
+        ts_args_type = "request: EvalSuiteRequest, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown",
+        ts_return_type = "Promise<EvalReport>"
+    )]
+    pub fn run_eval_suite(
+        &self,
+        request: JsonValue,
+        custom_worker_dispatch: Option<JsFunction>,
+    ) -> Result<AsyncTask<EvalSuiteTask>> {
+        let object = request.as_object().ok_or_else(|| {
+            Error::from_reason("eval suite request must be an object".to_string())
+        })?;
+        for key in object.keys() {
+            if key != "suitePath" && key != "suite_path" {
+                return Err(Error::from_reason(format!(
+                    "invalid eval suite request: unknown key '{}'",
+                    key
+                )));
+            }
+        }
+        let suite_path = object
+            .get("suitePath")
+            .or_else(|| object.get("suite_path"))
+            .and_then(JsonValue::as_str)
+            .ok_or_else(|| Error::from_reason("suitePath is required".to_string()))?
+            .to_string();
+        if suite_path.trim().is_empty() {
+            return Err(Error::from_reason("suitePath cannot be empty".to_string()));
+        }
+        let custom_worker = match custom_worker_dispatch {
+            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
+            None => None,
+        };
+
+        Ok(AsyncTask::new(EvalSuiteTask {
+            runtime: self.runtime.clone(),
+            client: self.client.clone(),
+            suite_path,
+            custom_worker,
+        }))
     }
 
     /// Resume a workflow from a checkpoint.

@@ -25,11 +25,45 @@ function withWrappedCustomWorker(opts) {
   };
 }
 
+function camelizeEvalResult(report) {
+  if (!report || typeof report !== "object") {
+    return report;
+  }
+  const summary = report.summary && typeof report.summary === "object"
+    ? {
+        totalCases: report.summary.total_cases,
+        passedCases: report.summary.passed_cases,
+        failedCases: report.summary.failed_cases,
+        errorCases: report.summary.error_cases,
+        passRate: report.summary.pass_rate,
+      }
+    : report.summary;
+  const cases = Array.isArray(report.cases)
+    ? report.cases.map((caseResult) => ({
+        caseId: caseResult.case_id,
+        status: caseResult.status,
+        firstFailedNode: caseResult.first_failed_node,
+        firstFailedPath: caseResult.first_failed_path,
+        expected: caseResult.expected,
+        actual: caseResult.actual,
+        workflowOutput: caseResult.workflow_output,
+        error: caseResult.error,
+      }))
+    : report.cases;
+  return {
+    suiteId: report.suite_id,
+    status: report.status,
+    summary,
+    cases,
+  };
+}
+
 const clientProto = native.Client && native.Client.prototype;
 if (clientProto) {
   const nativeResume = clientProto.resume;
   const nativeRunWorkflow = clientProto.runWorkflow;
   const nativeStreamWorkflow = clientProto.streamWorkflow;
+  const nativeRunEvalSuite = clientProto.runEvalSuite;
 
   clientProto.resume = function resume(checkpoint, opts) {
     return nativeResume.call(this, checkpoint, withWrappedCustomWorker(opts));
@@ -69,6 +103,80 @@ if (clientProto) {
       workflowExecution,
       wrapCustomWorkerDispatch(customWorkerDispatch),
     );
+  };
+
+  clientProto.runEvalSuite = function runEvalSuite(
+    request,
+    customWorkerDispatch,
+  ) {
+    return Promise.resolve(
+      nativeRunEvalSuite.call(
+        this,
+        request,
+        wrapCustomWorkerDispatch(customWorkerDispatch),
+      ),
+    ).then(camelizeEvalResult);
+  };
+
+  clientProto.runWorkflowYaml = function runWorkflowYaml(
+    workflowPath,
+    workflowInput,
+    workflowOptions,
+    workflowExecution,
+    customWorkerDispatch,
+  ) {
+    return this.runWorkflow(
+      workflowPath,
+      workflowInput,
+      workflowOptions,
+      workflowExecution,
+      customWorkerDispatch,
+    );
+  };
+
+  clientProto.runWorkflowYamlWithEvents = function runWorkflowYamlWithEvents(
+    workflowPath,
+    workflowInput,
+    workflowOptions,
+    workflowExecution,
+    customWorkerDispatch,
+  ) {
+    return this.runWorkflow(
+      workflowPath,
+      workflowInput,
+      { ...(workflowOptions ?? {}), include_events: true },
+      workflowExecution,
+      customWorkerDispatch,
+    );
+  };
+
+  clientProto.runWorkflowYamlStream = function runWorkflowYamlStream(
+    workflowPath,
+    workflowInput,
+    onEvent,
+    workflowOptions,
+    workflowExecution,
+    customWorkerDispatch,
+  ) {
+    return this.streamWorkflow(
+      workflowPath,
+      workflowInput,
+      onEvent,
+      workflowOptions,
+      workflowExecution,
+      customWorkerDispatch,
+    );
+  };
+
+  clientProto.executeWorkflowYaml = function executeWorkflowYaml(request) {
+    return this.run(request);
+  };
+
+  clientProto.executeWorkflowYamlStream = function executeWorkflowYamlStream(
+    request,
+    onEvent,
+  ) {
+    return this.stream(request, onEvent);
   };
 
   /**
