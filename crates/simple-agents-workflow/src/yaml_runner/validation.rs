@@ -49,7 +49,19 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
         });
     }
 
+    let mut seen_edge_sources = HashSet::new();
     for edge in &workflow.edges {
+        if !seen_edge_sources.insert(edge.from.as_str()) {
+            diagnostics.push(YamlWorkflowDiagnostic {
+                node_id: Some(edge.from.clone()),
+                code: "duplicate_edge_from".to_string(),
+                severity: YamlWorkflowDiagnosticSeverity::Error,
+                message: format!(
+                    "multiple outgoing edges from '{}' are not supported; use a switch node for branching",
+                    edge.from
+                ),
+            });
+        }
         if !known_ids.contains_key(edge.from.as_str()) {
             diagnostics.push(YamlWorkflowDiagnostic {
                 node_id: Some(edge.from.clone()),
