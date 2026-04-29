@@ -135,6 +135,7 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 | `test-py-simple-agents-invoice-image-jaegar.py` | Image input + Jaeger OTLP |
 | `fastapi_workflow_stream.py` | FastAPI SSE streaming endpoint |
 | `handlers.py` | Custom worker handler (`get_seller_name`) |
+| `test-py-simple-agents-eval.py` | Output-shaped eval dataset for `friendly.yaml` |
 
 **TypeScript** (`examples/napi-test-simpleAgents/`):
 
@@ -146,6 +147,7 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 | `test-simple-agents-streaming-langfuse.ts` | Streaming + Langfuse OTLP |
 | `test-simple-agents-invoice-image-jaegar.ts` | Image input + Jaeger OTLP |
 | `handlers.ts` | Custom worker dispatch (`getSellerName`) |
+| `test-simple-agents-eval.ts` | Output-shaped eval dataset for `friendly.yaml` |
 
 **YAML workflows** (`examples/python-test-simpleAgents/` and `examples/napi-test-simpleAgents/`):
 
@@ -153,6 +155,7 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 |---|---|
 | `test.yaml` | Email hierarchical classification with finance enrichment and custom worker |
 | `friendly.yaml` | Minimal single-node chat bot |
+| `friendly-eval.yaml` | Eval suite comparing expected output-shaped records |
 
 ### Running the Examples
 
@@ -178,6 +181,9 @@ uv run python test-py-simple-agents-streaming-langfuse.py
 # Image + Jaeger
 uv run python test-py-simple-agents-invoice-image-jaegar.py
 
+# Output-shaped eval
+uv run python test-py-simple-agents-eval.py
+
 # FastAPI server
 uv run uvicorn fastapi_workflow_stream:app --reload
 ```
@@ -202,7 +208,20 @@ bun run test-simple-agents-streaming-langfuse.ts
 
 # Image + Jaeger
 bun run test-simple-agents-invoice-image-jaegar.ts
+
+# Output-shaped eval
+bun run test-simple-agents-eval.ts
 ```
+
+## Workflow Evals
+
+Eval datasets are JSONL golden records. Each row includes workflow `input` and an `expected_output` object shaped like the normal workflow run output.
+
+```json
+{"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
+```
+
+Use `comparison.mode: exact` to compare the full output object, or `comparison.mode: paths` to compare stable paths such as `$.terminal_node`, `$.trace`, and `$.outputs.chat_reply.output`.
 
 Or use the package.json scripts:
 

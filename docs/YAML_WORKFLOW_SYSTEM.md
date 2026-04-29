@@ -71,6 +71,20 @@ The simplest pattern to reuse is:
 2. `switch` router
 3. action node
 
+## Workflow Evals
+
+Workflow eval datasets are output-shaped golden records. Each JSONL row stores the workflow `input` and an `expected_output` object shaped like `YamlWorkflowRunOutput`.
+
+Example row:
+
+```json
+{"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
+```
+
+The eval runner executes the workflow, serializes the actual `YamlWorkflowRunOutput`, then compares it to `expected_output`. Use `comparison.mode: exact` for full 1:1 output comparison, or `comparison.mode: paths` to compare stable fields such as `$.terminal_node`, `$.trace`, and `$.outputs.<node_id>.output`.
+
+When a mismatch is under `$.outputs.<node_id>.output`, the report sets `first_failed_node` to that node id.
+
 ## Supported Node Types
 
 - `llm_call`: structured LLM generation with optional tools and streaming flags
