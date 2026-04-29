@@ -112,6 +112,9 @@ export interface ClientConfig {
   apiKey: string;
   fetchImpl?: typeof fetch;
   headers?: Record<string, string>;
+  timeoutSeconds?: number;
+  retryAttempts?: number;
+  retryStrategy?: "none" | "fixed" | "exponential";
 }
 
 /** Matches Rust `YamlWorkflowTelemetryConfig` JSON (snake_case). */
