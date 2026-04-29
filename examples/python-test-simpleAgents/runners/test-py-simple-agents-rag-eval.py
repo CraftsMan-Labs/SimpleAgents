@@ -14,12 +14,20 @@ def rag_chunks_match(case: EvalCase) -> EvalResult:
         .get("retrieve_chunks", {})
         .get("output", [])
     )
-    actual_ids = {
-        chunk.get("source_id")
-        for chunk in chunks
-        if isinstance(chunk, dict) and chunk.get("source_id")
-    }
-    expected_ids = set(case.record.custom.get("expected_sources", []))
+    actual_ids: set[str] = set()
+    for chunk in chunks:
+        if not isinstance(chunk, dict):
+            continue
+        sid = chunk.get("source_id")
+        if isinstance(sid, str) and sid:
+            actual_ids.add(sid)
+    custom = case.record.custom or {}
+    raw_expected = custom.get("expected_sources", [])
+    expected_ids: set[str] = set()
+    if isinstance(raw_expected, list):
+        for item in raw_expected:
+            if isinstance(item, str) and item:
+                expected_ids.add(item)
     matched = actual_ids.intersection(expected_ids)
     score = len(matched) / len(expected_ids) if expected_ids else 1.0
     if score >= 0.8:
