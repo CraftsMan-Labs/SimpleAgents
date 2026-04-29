@@ -205,6 +205,48 @@ pub(crate) fn resolve_structured_json_candidate(raw: &str) -> Option<&str> {
     extract_last_fenced_json_block(raw).or_else(|| extract_first_parsable_object(raw))
 }
 
+/// When models stream `{"a":1}, "b": "c"` the first parsable object omits `b`; merge before the heal path.
+fn try_merge_leading_object_comma_continuation(raw: &str, candidate: &str) -> Option<String> {
+    let inner = candidate.strip_prefix('{')?.strip_suffix('}')?;
+    let start = raw.find(candidate)?;
+    let after_candidate = raw.get(start + candidate.len()..)?;
+    let after = after_candidate.trim_start().strip_prefix(',')?.trim_start();
+    if after.is_empty() {
+        return None;
+    }
+    let merged = format!("{{{inner}, {after}}}");
+    serde_json::from_str::<Value>(&merged).ok()?;
+    Some(merged)
+}
+
+fn heal_and_coerce_stream_payload(
+    text: &str,
+    schema: Option<&Value>,
+) -> Result<StreamedPayloadResolution, String> {
+    let parser = JsonishParser::new();
+    let healed = parser
+        .parse(text)
+        .map_err(|error| format!("failed to heal streamed structured completion JSON: {error}"))?;
+
+    let mut payload = healed.value;
+    let mut coerced_confidence = None;
+    if let Some(schema_value) = schema {
+        let schema = convert_json_schema_to_healing_schema(schema_value)?;
+        let engine = CoercionEngine::new();
+        let coerced = engine.coerce(&payload, &schema).map_err(|error| {
+            format!("failed to coerce streamed structured completion JSON: {error}")
+        })?;
+        payload = coerced.value;
+        coerced_confidence = Some(coerced.confidence);
+    }
+
+    Ok(StreamedPayloadResolution {
+        payload,
+        heal_confidence: Some(healed.confidence),
+        coerced_confidence,
+    })
+}
+
 pub(crate) fn parse_streamed_structured_payload(
     raw: &str,
     heal: bool,
@@ -235,29 +277,27 @@ pub(crate) fn parse_streamed_structured_payload(
         });
     }
 
-    let candidate = resolve_structured_json_candidate(raw).unwrap_or(raw);
-    let parser = JsonishParser::new();
-    let healed = parser
-        .parse(candidate)
-        .map_err(|error| format!("failed to heal streamed structured completion JSON: {error}"))?;
-
-    let mut payload = healed.value;
-    let mut coerced_confidence = None;
-    if let Some(schema_value) = schema {
-        let schema = convert_json_schema_to_healing_schema(schema_value)?;
-        let engine = CoercionEngine::new();
-        let coerced = engine.coerce(&payload, &schema).map_err(|error| {
-            format!("failed to coerce streamed structured completion JSON: {error}")
-        })?;
-        payload = coerced.value;
-        coerced_confidence = Some(coerced.confidence);
+    let resolved = resolve_structured_json_candidate(raw);
+    if let Some(candidate) = resolved {
+        if let Some(ref merged) = try_merge_leading_object_comma_continuation(raw, candidate) {
+            if let Ok(resolution) = heal_and_coerce_stream_payload(merged.as_str(), schema) {
+                return Ok(resolution);
+            }
+        }
     }
 
-    Ok(StreamedPayloadResolution {
-        payload,
-        heal_confidence: Some(healed.confidence),
-        coerced_confidence,
-    })
+    let primary = resolved.unwrap_or(raw);
+    match heal_and_coerce_stream_payload(primary, schema) {
+        Ok(resolution) => Ok(resolution),
+        Err(primary_err) => match resolved {
+            Some(candidate) if candidate != raw => {
+                heal_and_coerce_stream_payload(raw, schema).map_err(|raw_err| {
+                    format!("{primary_err}; full-text retry: {raw_err}")
+                })
+            }
+            _ => Err(primary_err),
+        },
+    }
 }
 
 pub(crate) fn convert_json_schema_to_healing_schema(schema: &Value) -> Result<Schema, String> {
@@ -327,6 +367,25 @@ fn convert_typed_schema(schema: &Value, type_str: &str) -> Result<Schema, String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streamed_payload_heal_full_raw_when_first_object_omits_trailing_required() {
+        let raw = r#"{"state":"capabilities_query"}, "reason": "short""#;
+        let schema = serde_json::json!({
+            "type": "object",
+            "required": ["state", "reason"],
+            "properties": {
+                "state": { "type": "string" },
+                "reason": { "type": "string" }
+            }
+        });
+        let result = parse_streamed_structured_payload(raw, true, Some(&schema)).expect("full retry");
+        assert_eq!(
+            result.payload.get("state").and_then(Value::as_str),
+            Some("capabilities_query")
+        );
+        assert_eq!(result.payload.get("reason").and_then(Value::as_str), Some("short"));
+    }
 
     #[test]
     fn streamed_payload_parser_extracts_first_json_object() {
