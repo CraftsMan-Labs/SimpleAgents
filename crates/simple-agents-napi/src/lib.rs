@@ -228,9 +228,9 @@ pub struct ParsedWorkflowYamlExecutionRequest {
 pub struct WorkflowYamlRunRequest {
     pub workflow_path: String,
     pub messages: Vec<MessageInput>,
-    pub healing: bool,
-    pub workflow_streaming: bool,
-    pub node_llm_streaming: bool,
+    pub healing: Option<bool>,
+    pub workflow_streaming: Option<bool>,
+    pub node_llm_streaming: Option<bool>,
     pub split_stream_deltas: Option<bool>,
     #[napi(ts_type = "Record<string, unknown>")]
     pub extra_workflow_input: Option<JsonValue>,
@@ -345,32 +345,6 @@ pub struct StreamChunk {
     pub is_complete: Option<bool>,
     pub error: Option<String>,
     pub raw: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamDelta {
-    pub id: String,
-    pub model: String,
-    pub index: u32,
-    pub role: Option<String>,
-    pub content: Option<String>,
-    pub finish_reason: Option<String>,
-    pub raw: Option<String>,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamErrorEvent {
-    pub message: String,
-}
-
-#[napi(object)]
-#[derive(Serialize)]
-pub struct StreamEvent {
-    pub event_type: String,
-    pub delta: Option<StreamDelta>,
-    pub error: Option<StreamErrorEvent>,
 }
 
 // ---------------------------------------------------------------------------
@@ -492,7 +466,10 @@ pub(crate) fn parse_message(input: MessageInput) -> SaResult<Message> {
                 tool_calls: None,
             };
             if let Some(calls_in) = tool_calls {
-                let calls = calls_in.into_iter().map(ToolCall::from).collect::<Vec<_>>();
+                let calls = calls_in
+                    .into_iter()
+                    .map(tool_call_from_js)
+                    .collect::<SaResult<Vec<_>>>()?;
                 if !calls.is_empty() {
                     msg = msg.with_tool_calls(calls);
                 }
@@ -592,17 +569,23 @@ impl From<ToolCall> for ToolCallResult {
     }
 }
 
-impl From<JsToolCall> for ToolCall {
-    fn from(value: JsToolCall) -> Self {
-        ToolCall {
-            id: value.id,
-            tool_type: ToolType::Function,
-            function: simple_agent_type::tool::ToolCallFunction {
-                name: value.function.name,
-                arguments: value.function.arguments,
-            },
+fn tool_call_from_js(value: JsToolCall) -> SaResult<ToolCall> {
+    let tool_type = match value.tool_type.as_str() {
+        "function" => ToolType::Function,
+        other => {
+            return Err(SimpleAgentsError::Config(format!(
+                "tool_call.tool_type must be 'function', got '{other}'"
+            )));
         }
-    }
+    };
+    Ok(ToolCall {
+        id: value.id,
+        tool_type,
+        function: simple_agent_type::tool::ToolCallFunction {
+            name: value.function.name,
+            arguments: value.function.arguments,
+        },
+    })
 }
 
 impl From<Usage> for CompletionUsage {
@@ -1058,7 +1041,7 @@ impl YamlWorkflowEventSink for NodeWorkflowEventSink {
             Err(_) => return,
         };
         self.callback
-            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
+            .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }
 
@@ -1100,7 +1083,7 @@ impl YamlWorkflowEventSink for NodeCombinedWorkflowEventSink {
             Err(_) => return,
         };
         self.callback
-            .call(Ok(payload), ThreadsafeFunctionCallMode::Blocking);
+            .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
     }
 }
 

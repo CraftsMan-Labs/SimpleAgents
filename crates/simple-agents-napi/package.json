@@ -23,8 +23,8 @@
     }
   },
   "scripts": {
-    "build": "napi build --release",
-    "build:debug": "napi build",
+    "build": "napi build --release && node scripts/patch-dts.js",
+    "build:debug": "napi build && node scripts/patch-dts.js",
     "pretest": "npm run build:debug",
     "pretest:unit": "npm run build:debug",
     "pretest:contract": "npm run build:debug",

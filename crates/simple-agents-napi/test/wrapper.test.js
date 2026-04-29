@@ -97,3 +97,27 @@ test('wrapper installs workflow YAML compatibility aliases', () => {
     assert.strictEqual(typeof binding.Client.prototype[alias], 'function');
   }
 });
+
+test('typed workflow request wrappers reject unknown keys', () => {
+  class Client {
+    runWorkflow() {}
+    streamWorkflow() {}
+  }
+
+  const binding = loadWrapperWithNative({
+    Client,
+    parseWorkflowYamlExecutionRequest() {
+      throw new Error('parser should not be reached');
+    },
+  });
+
+  const client = new binding.Client();
+  assert.throws(
+    () => client.run({ workflowPath: 'workflow.yaml', messages: [], typo: true }),
+    /unknown key "typo"/,
+  );
+  assert.throws(
+    () => client.stream({ workflowPath: 'workflow.yaml', messages: [], typo: true }, () => {}),
+    /unknown key "typo"/,
+  );
+});

@@ -25,6 +25,14 @@ function withWrappedCustomWorker(opts) {
   };
 }
 
+function assertKnownKeys(object, allowedKeys, label) {
+  for (const key of Object.keys(object)) {
+    if (!allowedKeys.has(key)) {
+      throw new TypeError(`${label} contains unknown key "${key}"`);
+    }
+  }
+}
+
 function camelizeEvalResult(report) {
   if (!report || typeof report !== "object") {
     return report;
@@ -186,6 +194,28 @@ if (clientProto) {
     if (!request || typeof request !== "object") {
       throw new TypeError("request must be an object");
     }
+    assertKnownKeys(
+      request,
+      new Set([
+        "workflowPath",
+        "workflow_path",
+        "messages",
+        "healing",
+        "workflowStreaming",
+        "workflow_streaming",
+        "nodeLlmStreaming",
+        "node_llm_streaming",
+        "splitStreamDeltas",
+        "split_stream_deltas",
+        "extraWorkflowInput",
+        "extra_workflow_input",
+        "workflowOptions",
+        "workflow_options",
+        "customWorkerDispatch",
+        "custom_worker_dispatch",
+      ]),
+      "request",
+    );
     const workflowPath = request.workflowPath ?? request.workflow_path;
     if (typeof workflowPath !== "string" || !workflowPath.trim()) {
       throw new TypeError("request.workflowPath must be a non-empty string");
@@ -196,8 +226,8 @@ if (clientProto) {
     }
     const flags = {
       healing: Boolean(request.healing),
-      workflowStreaming: Boolean(request.workflowStreaming),
-      nodeLlmStreaming: Boolean(request.nodeLlmStreaming),
+      workflowStreaming: Boolean(request.workflowStreaming ?? request.workflow_streaming),
+      nodeLlmStreaming: Boolean(request.nodeLlmStreaming ?? request.node_llm_streaming),
     };
     const parsed = native.parseWorkflowYamlExecutionRequest(
       workflowPath,
@@ -234,6 +264,28 @@ if (clientProto) {
     if (!request || typeof request !== "object") {
       throw new TypeError("request must be an object");
     }
+    assertKnownKeys(
+      request,
+      new Set([
+        "workflowPath",
+        "workflow_path",
+        "messages",
+        "healing",
+        "workflowStreaming",
+        "workflow_streaming",
+        "nodeLlmStreaming",
+        "node_llm_streaming",
+        "splitStreamDeltas",
+        "split_stream_deltas",
+        "extraWorkflowInput",
+        "extra_workflow_input",
+        "workflowOptions",
+        "workflow_options",
+        "customWorkerDispatch",
+        "custom_worker_dispatch",
+      ]),
+      "request",
+    );
     const workflowPath = request.workflowPath ?? request.workflow_path;
     if (typeof workflowPath !== "string" || !workflowPath.trim()) {
       throw new TypeError("request.workflowPath must be a non-empty string");
@@ -244,8 +296,8 @@ if (clientProto) {
     }
     const flags = {
       healing: Boolean(request.healing),
-      workflowStreaming: Boolean(request.workflowStreaming),
-      nodeLlmStreaming: Boolean(request.nodeLlmStreaming),
+      workflowStreaming: Boolean(request.workflowStreaming ?? request.workflow_streaming),
+      nodeLlmStreaming: Boolean(request.nodeLlmStreaming ?? request.node_llm_streaming),
     };
     const parsed = native.parseWorkflowYamlExecutionRequest(
       workflowPath,
