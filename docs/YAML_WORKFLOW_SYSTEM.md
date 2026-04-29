@@ -73,7 +73,7 @@ The simplest pattern to reuse is:
 
 ## Workflow Evals
 
-Workflow eval datasets are output-shaped golden records. Each JSONL row stores the workflow `input` and an `expected_output` object shaped like `YamlWorkflowRunOutput`.
+Workflow eval datasets are output-shaped golden records. Each JSONL row stores the workflow `input` and an `expected_output` object shaped like the meaningful parts of `YamlWorkflowRunOutput`.
 
 Example row:
 
@@ -81,9 +81,29 @@ Example row:
 {"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
 ```
 
-The eval runner executes the workflow, serializes the actual `YamlWorkflowRunOutput`, then compares it to `expected_output`. Use `comparison.mode: exact` for full 1:1 output comparison, or `comparison.mode: paths` to compare stable fields such as `$.terminal_node`, `$.trace`, and `$.outputs.<node_id>.output`.
+The public eval helpers take the workflow path, dataset path, and an evaluator callback in code. The callback receives the input, expected output, actual workflow output, and full dataset record, then returns pass/fail/score/reason. This avoids suite-level path lists, which do not scale when different inputs route through different nodes.
 
-When a mismatch is under `$.outputs.<node_id>.output`, the report sets `first_failed_node` to that node id.
+Python:
+
+```python
+report = run_eval_suite(
+    client,
+    workflow_path="workflows/friendly/friendly.yaml",
+    dataset_path="evals/friendly/friendly-eval.dataset.jsonl",
+    evaluator=output_subset,
+)
+```
+
+TypeScript:
+
+```ts
+const report = await client.runEvalSuite({
+  workflowPath: "workflows/friendly/friendly.yaml",
+  datasetPath: "evals/friendly/friendly-eval.dataset.jsonl",
+  evaluator: ({ expectedOutput, actualOutput }) =>
+    expectedOutput.terminal_node === actualOutput.terminal_node,
+});
+```
 
 ## Supported Node Types
 

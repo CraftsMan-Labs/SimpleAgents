@@ -169,20 +169,22 @@ streamed = client.stream_workflow(request, on_event=on_event)
 
 ### Workflow evals
 
-Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output` shaped like `YamlWorkflowRunOutput`. The runner compares actual output to expected output and reports the first mismatched path/node.
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output`. The runner executes the workflow and passes each case to your evaluator callback.
 
 ```python
-from simple_agents_py import Client, EvalSuiteRequest, run_eval_suite
+from simple_agents_py import Client, output_subset, run_eval_suite
 
 client = Client("openai")
-request = EvalSuiteRequest(suite_path="friendly-eval.yaml")
-report = run_eval_suite(client, request)
+report = run_eval_suite(
+    client,
+    workflow_path="workflows/friendly/friendly.yaml",
+    dataset_path="evals/friendly/friendly-eval.dataset.jsonl",
+    evaluator=output_subset,
+)
 
 print(report.status)
-print(report.cases[0].first_failed_path)
+print(report.cases[0].evaluations[0].reason)
 ```
-
-For low-level integrations, `client.run_eval_suite(request.to_client_payload())` remains available and returns the same typed report shape.
 
 ### Python-level workflow helpers (`simple_agents_py.workflow_stream`)
 

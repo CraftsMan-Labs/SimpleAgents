@@ -131,18 +131,21 @@ Use `extraWorkflowInput` for additional keys merged into runner input (for examp
 
 ### Workflow evals
 
-Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output` shaped like `YamlWorkflowRunOutput`. The runner compares actual output to expected output and reports the first mismatched path/node.
+Eval datasets are output-shaped golden records. Each row stores workflow `input` and `expected_output`. The runner executes the workflow and passes each case to your evaluator callback.
 
 ```ts
 import { Client, type EvalReport } from "simple-agents-node";
 
 const client = new Client(process.env.WORKFLOW_API_KEY!, process.env.WORKFLOW_API_BASE);
 const report: EvalReport = await client.runEvalSuite({
-  suitePath: "friendly-eval.yaml",
+  workflowPath: "workflows/friendly/friendly.yaml",
+  datasetPath: "evals/friendly/friendly-eval.dataset.jsonl",
+  evaluator: ({ expectedOutput, actualOutput }) =>
+    expectedOutput.terminal_node === actualOutput.terminal_node,
 });
 
 console.log(report.status);
-console.log(report.cases[0]?.firstFailedPath);
+console.log(report.cases[0]?.evaluations?.[0]?.reason);
 ```
 
 ### Legacy path helpers

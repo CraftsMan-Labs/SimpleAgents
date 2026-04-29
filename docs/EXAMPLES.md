@@ -166,11 +166,12 @@ All workflow examples live under `examples/`. Each has a Python and TypeScript v
 
 | Location | Notes |
 |---|---|
-| `python-test-simpleAgents/evals/friendly/` | Friendly-chat golden eval (`friendly-eval.yaml`). |
+| `python-test-simpleAgents/evals/friendly/` | Friendly-chat golden dataset (`friendly-eval.dataset.jsonl`). |
 | `python-test-simpleAgents/evals/invoice/` | Invoice regression suites (paths vs terminal-only). |
 | `python-test-simpleAgents/evals/rag/` | Mocked `rag-eval` workflow + scorer. |
 | `napi-test-simpleAgents/evals/friendly/` | Friendly eval referencing Python sibling workflows/datasets (`../../../python-test-simpleAgents/…`). |
-| `napi-test-simpleAgents/evals/rag/` | NAPI-local rag eval (`rag-eval.yaml`) pointing at `workflows/rag/rag-eval-workflow.yaml`. |
+| `napi-test-simpleAgents/evals/rag/` | NAPI-local rag golden dataset; runner supplies the workflow path and evaluator callback. |
+| `napi-test-simpleAgents/evals/invoice/` | Invoice multimodal path evals (parity with Python; JSONL generated beside YAML). |
 
 ### Running the Examples
 
@@ -237,6 +238,11 @@ bun run invoice-image:jaeger
 # or
 bun run runners/test-simple-agents-invoice-image-jaeger.ts
 
+# Invoice multimodal workflow evals (regenerates JSONL, then runs suites)
+bun run invoice-image:evals
+# or
+bun run runners/test-simple-agents-invoice-image-evals.ts
+
 # Output-shaped eval
 bun run runners/test-simple-agents-eval.ts
 ```
@@ -249,7 +255,7 @@ Eval datasets are JSONL golden records. Each row includes workflow `input` and a
 {"id":"hello-basic","input":{"messages":[{"role":"user","content":"Reply with exactly: hello"}]},"expected_output":{"terminal_node":"chat_reply","trace":["chat_reply"],"outputs":{"chat_reply":{"output":"hello"}}}}
 ```
 
-Use `comparison.mode: exact` to compare the full output object, or `comparison.mode: paths` to compare stable paths such as `$.terminal_node`, `$.trace`, and `$.outputs.chat_reply.output`. For multi-node workflows, prefer path comparisons against stable enum/string fields; `evals/invoice/invoice-image-node-eval.yaml` compares the route and key node outputs, while `evals/invoice/invoice-image-terminal-eval.yaml` checks only the terminal node. Invoice multimodal suites use **`evals/invoice/generated/*.dataset.jsonl`**: runner `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-evals.py` embeds **`assets/test-invoice.jpeg`** (same text + vision parts as `invoice_eval_multimodal.py` shares with `test-py-simple-agents-invoice-image-jaegar.py`).
+Eval YAML suites are no longer needed. The runners pass `workflow_path` / `dataset_path` in code and provide an evaluator callback that receives `{input, expected_output, actual_output, record}` (Python) or `{ input, expectedOutput, actualOutput, record }` (TypeScript). Use built-ins such as Python `output_subset` / `terminal_node_exact`, or write a small function for workflow-specific checks. Invoice multimodal evals use **`evals/invoice/generated/*.dataset.jsonl`**: Python runner `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-evals.py` runs two invoice goldens that must **pass** plus two deliberate mismatch datasets that must **fail** when routing is correct. The NAPI runner `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image-evals.ts` runs the two golden datasets only.
 
 Or use the package.json scripts:
 
@@ -358,6 +364,7 @@ for step in output.step_timings {
 | TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image.ts` | Image input |
 | TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-streaming-langfuse.ts` | Langfuse tracing |
 | TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image-jaeger.ts` | Jaeger tracing |
+| TypeScript | `examples/napi-test-simpleAgents/runners/test-simple-agents-invoice-image-evals.ts` | Invoice multimodal eval suites |
 | Rust | `examples/full_api_example.rs` | Full Rust client API |
 | Rust | `examples/python_client.py` | Python client API (completions, streaming, healing, tools) |
 | Rust | `examples/node_client.js` | Node client API (completions, streaming) |
