@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
+use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
@@ -38,6 +38,31 @@ pub enum EvalError {
     InvalidDataset { message: String },
 }
 
+impl Serialize for EvalError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut state = serializer.serialize_struct("EvalError", 3)?;
+        let (code, path) = match self {
+            EvalError::ReadSuite { path, .. } => ("read_suite_failed", Some(path)),
+            EvalError::ParseSuite { path, .. } => ("parse_suite_failed", Some(path)),
+            EvalError::ReadDataset { path, .. } => ("read_dataset_failed", Some(path)),
+            EvalError::ParseDatasetLine { path, .. } => {
+                ("parse_dataset_line_failed", Some(path))
+            }
+            EvalError::InvalidSuite { .. } => ("invalid_suite", None),
+            EvalError::InvalidDataset { .. } => ("invalid_dataset", None),
+        };
+        state.serialize_field("code", code)?;
+        state.serialize_field("message", &self.to_string())?;
+        if let Some(path) = path {
+            state.serialize_field("path", path)?;
+        }
+        state.end()
+    }
+}
+
 pub struct EvalSuiteRunRequest<'a> {
     pub suite_path: &'a Path,
     pub executor: YamlWorkflowExecutorBinding<'a>,
@@ -56,6 +81,12 @@ pub struct EvalSuite {
     pub workflow_options: Option<YamlWorkflowRunOptions>,
     #[serde(default)]
     pub comparison: EvalComparisonConfig,
+    #[serde(default = "default_eval_max_concurrency")]
+    pub max_concurrency: usize,
+}
+
+fn default_eval_max_concurrency() -> usize {
+    1
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

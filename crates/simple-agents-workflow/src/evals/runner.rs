@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use futures::stream::{self, StreamExt};
 use serde_json::Value;
 
 use crate::yaml_runner::{
@@ -29,35 +30,49 @@ pub async fn run_eval_suite(request: EvalSuiteRunRequest<'_>) -> Result<EvalRepo
         .execution
         .unwrap_or_else(YamlWorkflowExecutionFlags::default);
 
-    let mut cases = Vec::with_capacity(records.len());
-    for record in &records {
-        let execution_request = YamlWorkflowExecutionRequest {
-            source: YamlWorkflowSource::File(workflow_path.as_path()),
-            workflow_input: &record.input,
-            executor: request.executor,
-            custom_worker: request.custom_worker,
-            options: &options,
-            flags,
-        };
+    let max_concurrency = suite.max_concurrency.max(1);
+    let mut indexed_cases = stream::iter(records.iter().enumerate())
+        .map(|(index, record)| {
+            let workflow_path = &workflow_path;
+            let options = &options;
+            let comparison = &suite.comparison;
+            async move {
+            let execution_request = YamlWorkflowExecutionRequest {
+                source: YamlWorkflowSource::File(workflow_path.as_path()),
+                workflow_input: &record.input,
+                executor: request.executor,
+                custom_worker: request.custom_worker,
+                options,
+                flags,
+            };
 
-        let case = match workflow_execution::run(execution_request).await {
-            Ok(output) => compare_record(record, output, &suite.comparison),
-            Err(error) => EvalCaseResult {
-                case_id: record.id.clone(),
-                status: EvalRunStatus::Error,
-                first_failed_node: None,
-                first_failed_path: None,
-                expected: None,
-                actual: None,
-                workflow_output: None,
-                error: Some(EvalErrorInfo {
-                    code: "workflow_run_failed".to_string(),
-                    message: error.to_string(),
-                }),
-            },
-        };
-        cases.push(case);
-    }
+            let case = match workflow_execution::run(execution_request).await {
+                Ok(output) => compare_record(record, output, comparison),
+                Err(error) => EvalCaseResult {
+                    case_id: record.id.clone(),
+                    status: EvalRunStatus::Error,
+                    first_failed_node: None,
+                    first_failed_path: None,
+                    expected: None,
+                    actual: None,
+                    workflow_output: None,
+                    error: Some(EvalErrorInfo {
+                        code: "workflow_run_failed".to_string(),
+                        message: error.to_string(),
+                    }),
+                },
+            };
+            (index, case)
+            }
+        })
+        .buffered(max_concurrency)
+        .collect::<Vec<_>>()
+        .await;
+    indexed_cases.sort_by_key(|(index, _)| *index);
+    let cases = indexed_cases
+        .into_iter()
+        .map(|(_, case)| case)
+        .collect::<Vec<_>>();
 
     Ok(build_report(suite.id, cases))
 }
@@ -218,15 +233,54 @@ fn select_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     if path == "$" {
         return Some(root);
     }
-    let path = path.strip_prefix("$.")?;
+    let path = path.strip_prefix("$.").or_else(|| path.strip_prefix('$'))?;
     let mut current = root;
-    for segment in path.split('.') {
-        if segment.is_empty() {
-            return None;
-        }
-        current = current.get(segment)?;
+    for segment in parse_path_segments(path)? {
+        current = match segment {
+            PathSegment::Key(key) => current.get(key.as_str())?,
+            PathSegment::Index(index) => current.get(index)?,
+        };
     }
     Some(current)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PathSegment {
+    Key(String),
+    Index(usize),
+}
+
+fn parse_path_segments(path: &str) -> Option<Vec<PathSegment>> {
+    let mut segments = Vec::new();
+    let mut key = String::new();
+    let mut chars = path.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '.' => {
+                if !key.is_empty() {
+                    segments.push(PathSegment::Key(std::mem::take(&mut key)));
+                }
+            }
+            '[' => {
+                if !key.is_empty() {
+                    segments.push(PathSegment::Key(std::mem::take(&mut key)));
+                }
+                let mut index = String::new();
+                for inner in chars.by_ref() {
+                    if inner == ']' {
+                        break;
+                    }
+                    index.push(inner);
+                }
+                segments.push(PathSegment::Index(index.parse().ok()?));
+            }
+            _ => key.push(ch),
+        }
+    }
+    if !key.is_empty() {
+        segments.push(PathSegment::Key(key));
+    }
+    Some(segments)
 }
 
 fn node_id_from_output_path(path: &str) -> Option<String> {

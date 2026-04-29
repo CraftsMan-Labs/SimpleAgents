@@ -49,7 +49,8 @@ use simple_agent_type::message::Message;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClient};
 
 use crate::yaml_runner::{
-    workflow_execution, WorkflowCheckpoint, WorkflowEventSink, WorkflowRunOutput,
+    workflow_execution, RunMetadata, StepTiming, WorkflowCheckpoint, WorkflowEventSink,
+    WorkflowRunOutput,
     YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
     YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
@@ -316,6 +317,32 @@ fn tool_name_from_event(event: &crate::yaml_runner::YamlWorkflowEvent) -> Option
 fn yaml_output_to_workflow_output(
     output: crate::yaml_runner::YamlWorkflowRunOutput,
 ) -> WorkflowRunOutput {
+    let metadata = Some(RunMetadata {
+        total_elapsed_ms: output.total_elapsed_ms,
+        ttft_ms: output.ttft_ms,
+        total_input_tokens: output.total_input_tokens,
+        total_output_tokens: output.total_output_tokens,
+        total_tokens: output.total_tokens,
+        total_reasoning_tokens: output.total_reasoning_tokens,
+        tokens_per_second: output.tokens_per_second,
+        step_details: output
+            .step_timings
+            .iter()
+            .map(|step| StepTiming {
+                node_id: step.node_id.clone(),
+                node_type: step.node_kind.clone(),
+                model: step.model_name.clone(),
+                elapsed_ms: step.elapsed_ms,
+                input_tokens: step.prompt_tokens.map(u64::from),
+                output_tokens: step.completion_tokens.map(u64::from),
+                total_tokens: step.total_tokens.map(u64::from),
+                reasoning_tokens: step.reasoning_tokens.map(u64::from),
+                ttft_ms: None,
+            })
+            .collect(),
+        trace_id: output.trace_id.clone(),
+    });
+
     WorkflowRunOutput {
         workflow_id: output.workflow_id,
         entry_node: output.entry_node,
@@ -323,7 +350,7 @@ fn yaml_output_to_workflow_output(
         outputs: output.outputs,
         terminal_node: output.terminal_node,
         terminal_output: output.terminal_output,
-        metadata: None,
+        metadata,
         events: None,
     }
 }

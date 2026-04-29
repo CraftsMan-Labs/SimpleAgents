@@ -260,28 +260,15 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
         if let Some(config) = node.config.as_ref() {
             if let Some(update_globals) = config.update_globals.as_ref() {
                 for (key, update) in update_globals {
-                    let is_valid_op =
-                        matches!(update.op.as_str(), "set" | "append" | "increment" | "merge");
-                    if !is_valid_op {
-                        diagnostics.push(YamlWorkflowDiagnostic {
-                            node_id: Some(node.id.clone()),
-                            code: "unknown_update_op".to_string(),
-                            severity: YamlWorkflowDiagnosticSeverity::Error,
-                            message: format!(
-                                "update_globals key '{}' has unknown op '{}'; expected set|append|increment|merge",
-                                key, update.op
-                            ),
-                        });
-                    }
-
-                    if update.op != "increment" && update.from.is_none() {
+                    if update.op.as_str() != "increment" && update.from.is_none() {
                         diagnostics.push(YamlWorkflowDiagnostic {
                             node_id: Some(node.id.clone()),
                             code: "missing_update_from".to_string(),
                             severity: YamlWorkflowDiagnosticSeverity::Error,
                             message: format!(
                                 "update_globals key '{}' with op '{}' requires 'from'",
-                                key, update.op
+                                key,
+                                update.op.as_str()
                             ),
                         });
                     }
