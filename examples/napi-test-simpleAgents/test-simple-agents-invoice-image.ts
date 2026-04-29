@@ -6,7 +6,7 @@
  * Env: `WORKFLOW_API_KEY` (required), `WORKFLOW_API_BASE` (optional).
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { MessageInput } from "simple-agents-node";
@@ -26,6 +26,11 @@ function requireEnv(name: string): string {
 async function main(): Promise<void> {
   const apiKey = requireEnv("WORKFLOW_API_KEY");
   const baseUrl = process.env.WORKFLOW_API_BASE || undefined;
+  if (!existsSync(imagePath)) {
+    throw new Error(
+      `Required example asset is missing: ${imagePath}. Add a small invoice JPEG at that path before running this example.`,
+    );
+  }
   const b64 = readFileSync(imagePath).toString("base64");
 
   const messages: MessageInput[] = [

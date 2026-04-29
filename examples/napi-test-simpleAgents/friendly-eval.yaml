@@ -1,0 +1,14 @@
+id: friendly-chat-output-golden
+workflow_path: ../python-test-simpleAgents/friendly.yaml
+dataset_path: ../python-test-simpleAgents/friendly-eval.dataset.jsonl
+execution:
+  node_llm_streaming: false
+workflow_options:
+  telemetry:
+    enabled: false
+comparison:
+  mode: paths
+  paths:
+    - $.terminal_node
+    - $.trace
+    - $.outputs.chat_reply.output
