@@ -34,14 +34,16 @@ async fn run_workflow_yaml(
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         workflow,
-        workflow_input,
-        executor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -57,14 +59,16 @@ async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         workflow,
-        workflow_input,
-        executor,
-        custom_worker,
-        event_sink,
-        options,
-        flags,
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker,
+            event_sink,
+            options,
+            execution_flags: flags,
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -78,17 +82,17 @@ async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
     options: &YamlWorkflowRunOptions,
     flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    dispatch_yaml_workflow_execution(
+    dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
         workflow,
         workflow_input,
-        YamlWorkflowExecutorBinding::Client(client),
+        executor: YamlWorkflowExecutorBinding::Client(client),
         custom_worker,
-        None,
-        None,
+        resume: None,
+        human_response: None,
         event_sink,
         options,
         flags,
-    )
+    })
     .await
 }
 
@@ -100,14 +104,16 @@ async fn run_workflow_yaml_file(
     let (_path, workflow) = load_workflow_yaml_file(path)?;
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        workflow_input,
-        executor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -2596,14 +2602,16 @@ edges:
 
     let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({"messages": [{"role": "user", "content": "start"}]}),
-        &MockExecutor,
-        Some(&worker),
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: Some(&worker),
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
     .expect("workflow should pause");
@@ -2614,14 +2622,16 @@ edges:
 
     let resumed = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({"messages": [{"role": "user", "content": "start"}]}),
-        &MockExecutor,
-        Some(&worker),
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        Some(&paused),
-        Some(&json!("yes")),
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: Some(&worker),
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!("yes")),
+        },
     )
     .await
     .expect("workflow should resume");
@@ -2663,34 +2673,38 @@ nodes:
 
     let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({
-            "messages": [{"role": "user", "content": "start"}],
-            "extracted": {"company": "Acme", "amount": 100.0}
-        }),
-        &MockExecutor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({
+                "messages": [{"role": "user", "content": "start"}],
+                "extracted": {"company": "Acme", "amount": 100.0}
+            }),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
     .expect("workflow should pause");
 
     let resumed = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({
-            "messages": [{"role": "user", "content": "start"}],
-            "extracted": {"company": "Acme", "amount": 100.0}
-        }),
-        &MockExecutor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        Some(&paused),
-        Some(&json!({"company": "Acme, Inc.", "amount": 100.0})),
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({
+                "messages": [{"role": "user", "content": "start"}],
+                "extracted": {"company": "Acme", "amount": 100.0}
+            }),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!({"company": "Acme, Inc.", "amount": 100.0})),
+        },
     )
     .await
     .expect("workflow should resume");
@@ -2721,28 +2735,32 @@ nodes:
 
     let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({"messages": [{"role": "user", "content": "start"}]}),
-        &MockExecutor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        None,
-        None,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
     .expect("workflow should pause");
 
     let err = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        &json!({"messages": [{"role": "user", "content": "start"}]}),
-        &MockExecutor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
-        Some(&paused),
-        Some(&json!({"not": "string"})),
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!({"not": "string"})),
+        },
     )
     .await
     .expect_err("non-string text response must fail");

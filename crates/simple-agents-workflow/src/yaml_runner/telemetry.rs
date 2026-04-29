@@ -4,12 +4,12 @@ use crate::observability::tracing::{TraceContext, WorkflowSpan};
 
 use super::context::json_type_name;
 use super::contracts::YamlLlmExecutionRequest;
+#[cfg(test)]
+use super::types::YamlWorkflowRunStatus;
 use super::types::{
     YamlLlmTokenUsage, YamlToolTraceMode, YamlWorkflowPayloadMode, YamlWorkflowRunOptions,
     YamlWorkflowRunOutput, YamlWorkflowTraceTenantContext,
 };
-#[cfg(test)]
-use super::types::YamlWorkflowRunStatus;
 
 const MAX_SPAN_PAYLOAD_CHARS: usize = 32 * 1024;
 

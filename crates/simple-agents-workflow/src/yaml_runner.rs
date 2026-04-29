@@ -40,8 +40,8 @@ pub use contracts::{
     YamlHumanInputOption, YamlHumanInputType, YamlLlmCall, YamlLlmExecutionRequest, YamlNode,
     YamlNodeConfig, YamlNodeType, YamlOpenAiToolDeclaration, YamlOpenAiToolFunction,
     YamlResolvedTool, YamlSimplifiedToolDeclaration, YamlSwitch, YamlSwitchBranch,
-    YamlTemplateBinding, YamlToIrError, YamlToolChoiceConfig, YamlToolDeclaration,
-    YamlToolFormat, YamlWorkflow, YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic,
+    YamlTemplateBinding, YamlToIrError, YamlToolChoiceConfig, YamlToolDeclaration, YamlToolFormat,
+    YamlWorkflow, YamlWorkflowCustomWorkerExecutor, YamlWorkflowDiagnostic,
     YamlWorkflowDiagnosticSeverity, YamlWorkflowEvent, YamlWorkflowEventSink,
     YamlWorkflowLlmExecutor, YamlWorkflowRunError, YamlWorkflowStreamFilterSink,
     YamlWorkflowTokenKind,
@@ -89,28 +89,34 @@ pub fn validate_custom_worker_executor_for_file(
 mod tests;
 
 pub(super) async fn dispatch_yaml_workflow_execution<'a>(
-    workflow: &'a YamlWorkflow,
-    workflow_input: &'a Value,
-    executor: YamlWorkflowExecutorBinding<'a>,
-    custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
-    resume: Option<&'a YamlWorkflowRunOutput>,
-    human_response: Option<&'a Value>,
-    event_sink: Option<&'a dyn YamlWorkflowEventSink>,
-    options: &'a YamlWorkflowRunOptions,
-    flags: YamlWorkflowExecutionFlags,
+    request: YamlWorkflowExecutionDispatchRequest<'a>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let YamlWorkflowExecutionDispatchRequest {
+        workflow,
+        workflow_input,
+        executor,
+        custom_worker,
+        resume,
+        human_response,
+        event_sink,
+        options,
+        flags,
+    } = request;
+
     match executor {
         YamlWorkflowExecutorBinding::Llm(ex) => {
             execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
                 workflow,
-                workflow_input,
-                ex,
-                custom_worker,
-                event_sink,
-                options,
-                flags,
-                resume,
-                human_response,
+                execute::YamlWorkflowRunDispatchRequest {
+                    workflow_input,
+                    executor: ex,
+                    custom_worker,
+                    event_sink,
+                    options,
+                    execution_flags: flags,
+                    resume,
+                    human_response,
+                },
             )
             .await
         }
@@ -122,16 +128,30 @@ pub(super) async fn dispatch_yaml_workflow_execution<'a>(
             };
             execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
                 workflow,
-                workflow_input,
-                &client_executor,
-                custom_worker,
-                event_sink,
-                options,
-                flags,
-                resume,
-                human_response,
+                execute::YamlWorkflowRunDispatchRequest {
+                    workflow_input,
+                    executor: &client_executor,
+                    custom_worker,
+                    event_sink,
+                    options,
+                    execution_flags: flags,
+                    resume,
+                    human_response,
+                },
             )
             .await
         }
     }
+}
+
+pub(super) struct YamlWorkflowExecutionDispatchRequest<'a> {
+    pub workflow: &'a YamlWorkflow,
+    pub workflow_input: &'a Value,
+    pub executor: YamlWorkflowExecutorBinding<'a>,
+    pub custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    pub resume: Option<&'a YamlWorkflowRunOutput>,
+    pub human_response: Option<&'a Value>,
+    pub event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    pub options: &'a YamlWorkflowRunOptions,
+    pub flags: YamlWorkflowExecutionFlags,
 }

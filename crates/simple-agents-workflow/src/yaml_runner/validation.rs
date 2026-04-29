@@ -273,13 +273,17 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
                     }
                 }
                 YamlHumanInputType::Text => {
-                    if human.options.as_ref().is_some_and(|items| !items.is_empty()) {
+                    if human
+                        .options
+                        .as_ref()
+                        .is_some_and(|items| !items.is_empty())
+                    {
                         diagnostics.push(YamlWorkflowDiagnostic {
                             node_id: Some(node.id.clone()),
                             code: "human_text_options_ignored".to_string(),
                             severity: YamlWorkflowDiagnosticSeverity::Warning,
-                            message:
-                                "human_input.options are ignored for input_type=text".to_string(),
+                            message: "human_input.options are ignored for input_type=text"
+                                .to_string(),
                         });
                     }
                 }
@@ -289,8 +293,7 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
                             node_id: Some(node.id.clone()),
                             code: "missing_human_form_schema".to_string(),
                             severity: YamlWorkflowDiagnosticSeverity::Error,
-                            message: "human_input.input_type=form requires form_schema"
-                                .to_string(),
+                            message: "human_input.input_type=form requires form_schema".to_string(),
                         });
                         continue;
                     };

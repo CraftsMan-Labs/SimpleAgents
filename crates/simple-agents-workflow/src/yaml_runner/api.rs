@@ -1,7 +1,8 @@
 pub mod workflow_execution {
     use super::super::{
         dispatch_yaml_workflow_execution, load_workflow_yaml_file,
-        validate_yaml_workflow_execution, YamlWorkflowEventSink, YamlWorkflowExecutionRequest,
+        validate_yaml_workflow_execution, YamlWorkflowEventSink,
+        YamlWorkflowExecutionDispatchRequest, YamlWorkflowExecutionRequest,
         YamlWorkflowExecutionSurface, YamlWorkflowRunError, YamlWorkflowRunOutput,
         YamlWorkflowSource, YamlWorkflowStreamFilterSink,
     };
@@ -16,17 +17,17 @@ pub mod workflow_execution {
                     request.flags,
                     YamlWorkflowExecutionSurface::Run,
                 )?;
-                dispatch_yaml_workflow_execution(
+                dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
                     workflow,
-                    request.workflow_input,
-                    request.executor,
-                    request.custom_worker,
-                    request.resume,
-                    request.human_response,
-                    None,
-                    request.options,
-                    request.flags,
-                )
+                    workflow_input: request.workflow_input,
+                    executor: request.executor,
+                    custom_worker: request.custom_worker,
+                    resume: request.resume,
+                    human_response: request.human_response,
+                    event_sink: None,
+                    options: request.options,
+                    flags: request.flags,
+                })
                 .await
             }
             YamlWorkflowSource::File(path) => {
@@ -36,17 +37,17 @@ pub mod workflow_execution {
                     request.flags,
                     YamlWorkflowExecutionSurface::Run,
                 )?;
-                dispatch_yaml_workflow_execution(
-                    &workflow,
-                    request.workflow_input,
-                    request.executor,
-                    request.custom_worker,
-                    request.resume,
-                    request.human_response,
-                    None,
-                    request.options,
-                    request.flags,
-                )
+                dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
+                    workflow: &workflow,
+                    workflow_input: request.workflow_input,
+                    executor: request.executor,
+                    custom_worker: request.custom_worker,
+                    resume: request.resume,
+                    human_response: request.human_response,
+                    event_sink: None,
+                    options: request.options,
+                    flags: request.flags,
+                })
                 .await
             }
         }
@@ -64,17 +65,17 @@ pub mod workflow_execution {
                     request.flags,
                     YamlWorkflowExecutionSurface::Stream,
                 )?;
-                dispatch_yaml_workflow_execution(
+                dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
                     workflow,
-                    request.workflow_input,
-                    request.executor,
-                    request.custom_worker,
-                    request.resume,
-                    request.human_response,
-                    Some(&filter),
-                    request.options,
-                    request.flags,
-                )
+                    workflow_input: request.workflow_input,
+                    executor: request.executor,
+                    custom_worker: request.custom_worker,
+                    resume: request.resume,
+                    human_response: request.human_response,
+                    event_sink: Some(&filter),
+                    options: request.options,
+                    flags: request.flags,
+                })
                 .await
             }
             YamlWorkflowSource::File(path) => {
@@ -84,17 +85,17 @@ pub mod workflow_execution {
                     request.flags,
                     YamlWorkflowExecutionSurface::Stream,
                 )?;
-                dispatch_yaml_workflow_execution(
-                    &workflow,
-                    request.workflow_input,
-                    request.executor,
-                    request.custom_worker,
-                    request.resume,
-                    request.human_response,
-                    Some(&filter),
-                    request.options,
-                    request.flags,
-                )
+                dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
+                    workflow: &workflow,
+                    workflow_input: request.workflow_input,
+                    executor: request.executor,
+                    custom_worker: request.custom_worker,
+                    resume: request.resume,
+                    human_response: request.human_response,
+                    event_sink: Some(&filter),
+                    options: request.options,
+                    flags: request.flags,
+                })
                 .await
             }
         }

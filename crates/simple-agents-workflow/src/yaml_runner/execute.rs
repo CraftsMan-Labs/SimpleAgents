@@ -5,17 +5,32 @@ use super::node_execution::{
 use super::spans::{finish_node_span, finish_workflow_span, start_node_span, start_workflow_span};
 use super::*;
 
+pub(super) struct YamlWorkflowRunDispatchRequest<'a> {
+    pub workflow_input: &'a Value,
+    pub executor: &'a dyn YamlWorkflowLlmExecutor,
+    pub custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    pub event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    pub options: &'a YamlWorkflowRunOptions,
+    pub execution_flags: YamlWorkflowExecutionFlags,
+    pub resume: Option<&'a YamlWorkflowRunOutput>,
+    pub human_response: Option<&'a Value>,
+}
+
 pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
     workflow: &YamlWorkflow,
-    workflow_input: &Value,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-    execution_flags: YamlWorkflowExecutionFlags,
-    resume: Option<&YamlWorkflowRunOutput>,
-    human_response: Option<&Value>,
+    request: YamlWorkflowRunDispatchRequest<'_>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let YamlWorkflowRunDispatchRequest {
+        workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+        options,
+        execution_flags,
+        resume,
+        human_response,
+    } = request;
+
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
             message: "workflow input must be a JSON object".to_string(),
@@ -76,7 +91,8 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
             });
         }
         if let (Some(resume_output), Some(response)) = (resume, human_response) {
-            if let (Some(sink), Some(request)) = (event_sink, resume_output.human_request.as_ref()) {
+            if let (Some(sink), Some(request)) = (event_sink, resume_output.human_request.as_ref())
+            {
                 sink.emit(&YamlWorkflowEvent {
                     event_type: "human_input_received".to_string(),
                     node_id: Some(request.node_id.clone()),
@@ -349,13 +365,12 @@ fn prepare_run_context<'a>(
                 message: "resume.status must be 'awaiting_human_input'".to_string(),
             });
         }
-        let request = resume_output
-            .human_request
-            .as_ref()
-            .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+        let request = resume_output.human_request.as_ref().ok_or_else(|| {
+            YamlWorkflowRunError::InvalidInput {
                 message: "resume.human_request is required when status=awaiting_human_input"
                     .to_string(),
-            })?;
+            }
+        })?;
         let response = human_response.ok_or_else(|| YamlWorkflowRunError::InvalidInput {
             message: "human_response is required when resume is provided".to_string(),
         })?;
@@ -421,20 +436,21 @@ fn apply_human_response_for_resume(
     request: &HumanRequest,
     human_response: &Value,
 ) -> Result<Option<String>, YamlWorkflowRunError> {
-    let node =
-        *node_map
-            .get(request.node_id.as_str())
-            .ok_or_else(|| YamlWorkflowRunError::MissingNode {
-                node_id: request.node_id.clone(),
-            })?;
-    let human = node.node_type.human_input.as_ref().ok_or_else(|| {
-        YamlWorkflowRunError::InvalidInput {
-            message: format!(
-                "resume.human_request.node_id '{}' is not a human_input node",
-                request.node_id
-            ),
+    let node = *node_map.get(request.node_id.as_str()).ok_or_else(|| {
+        YamlWorkflowRunError::MissingNode {
+            node_id: request.node_id.clone(),
         }
     })?;
+    let human =
+        node.node_type
+            .human_input
+            .as_ref()
+            .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                message: format!(
+                    "resume.human_request.node_id '{}' is not a human_input node",
+                    request.node_id
+                ),
+            })?;
     validate_human_response(request, human_response)?;
 
     let pending_human_context = state
@@ -454,7 +470,11 @@ fn apply_human_response_for_resume(
         ),
     );
 
-    if !state.trace.iter().any(|node_id| node_id == request.node_id.as_str()) {
+    if !state
+        .trace
+        .iter()
+        .any(|node_id| node_id == request.node_id.as_str())
+    {
         state.trace.push(request.node_id.clone());
     }
 
@@ -472,23 +492,25 @@ fn validate_human_response(
 ) -> Result<(), YamlWorkflowRunError> {
     match request.input_type {
         YamlHumanInputType::Choice => {
-            let selected = human_response
-                .as_str()
-                .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
-                    message: format!(
-                        "human_response for choice node '{}' must be a string",
-                        request.node_id
-                    ),
-                })?;
-            let options = request
-                .options
-                .as_ref()
-                .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
-                    message: format!(
-                        "human_request for choice node '{}' is missing options",
-                        request.node_id
-                    ),
-                })?;
+            let selected =
+                human_response
+                    .as_str()
+                    .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                        message: format!(
+                            "human_response for choice node '{}' must be a string",
+                            request.node_id
+                        ),
+                    })?;
+            let options =
+                request
+                    .options
+                    .as_ref()
+                    .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                        message: format!(
+                            "human_request for choice node '{}' is missing options",
+                            request.node_id
+                        ),
+                    })?;
             if !options.iter().any(|option| option.value == selected) {
                 return Err(YamlWorkflowRunError::InvalidInput {
                     message: format!(
@@ -511,14 +533,12 @@ fn validate_human_response(
         YamlHumanInputType::Form => {
             if let Some(schema) = request.form_schema.as_ref() {
                 super::validation::validate_schema_instance(schema, human_response).map_err(
-                    |message| {
-                    YamlWorkflowRunError::InvalidInput {
+                    |message| YamlWorkflowRunError::InvalidInput {
                         message: format!(
                             "human_response for form node '{}' failed schema validation: {}",
                             request.node_id, message
                         ),
-                    }
-                },
+                    },
                 )?;
             }
         }

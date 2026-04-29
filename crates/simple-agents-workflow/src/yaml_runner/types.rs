@@ -4,9 +4,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{
-    YamlHumanInputOption, YamlHumanInputType, YamlWorkflow, YamlWorkflowRunError,
-};
+use super::{YamlHumanInputOption, YamlHumanInputType, YamlWorkflow, YamlWorkflowRunError};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlStepTiming {
