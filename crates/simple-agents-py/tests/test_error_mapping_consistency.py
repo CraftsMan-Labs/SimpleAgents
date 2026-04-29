@@ -27,6 +27,37 @@ def test_client_accepts_timeout_and_retry_options() -> None:
     assert client is not None
 
 
+def test_client_accepts_typed_request_mapping() -> None:
+    import simple_agents_py
+
+    client = simple_agents_py.Client(
+        {
+            "provider": "openai",
+            "api_key": "test-key-00000000000000",
+            "api_base": "http://localhost:1/v1",
+            "timeout_seconds": 60,
+            "retry_attempts": 2,
+            "retry_strategy": "exponential",
+        }
+    )
+    assert client is not None
+
+
+def test_client_rejects_unknown_request_fields() -> None:
+    import simple_agents_py
+
+    with pytest.raises(ValueError) as excinfo:
+        simple_agents_py.Client(
+            {
+                "provider": "openai",
+                "api_key": "test-key-00000000000000",
+                "api_base": "http://localhost:1/v1",
+                "unexpected": True,
+            }
+        )
+    assert "unknown field" in str(excinfo.value)
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [

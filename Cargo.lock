@@ -2439,6 +2439,7 @@ dependencies = [
  "futures-util",
  "pyo3",
  "pythonize",
+ "serde",
  "serde_json",
  "simple-agent-type",
  "simple-agents-core",

@@ -7,6 +7,7 @@ from typing import (
     Literal,
     Mapping,
     Sequence,
+    TypedDict,
     overload,
     Never,
 )
@@ -191,7 +192,26 @@ class ClientBuilder:
 # Main Client
 # ---------------------------------------------------------------------------
 
+class ClientCreateRequest(TypedDict, total=False):
+    provider: str
+    api_key: str | None
+    api_base: str | None
+    base_url: str | None
+    model: str | None
+    api_format: str | None
+    timeout_seconds: float | None
+    retry_attempts: int | None
+    retry_strategy: str | None
+
+
 class Client:
+    @overload
+    def __init__(
+        self,
+        request: ClientCreateRequest | Mapping[str, object],
+    ) -> None: ...
+
+    @overload
     def __init__(
         self,
         provider: str,

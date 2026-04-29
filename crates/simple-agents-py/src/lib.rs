@@ -105,6 +105,80 @@ fn parse_retry_config(
     Ok(retry)
 }
 
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ClientCreateRequest {
+    provider: String,
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    api_base: Option<String>,
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    api_format: Option<String>,
+    #[serde(default)]
+    timeout_seconds: Option<f64>,
+    #[serde(default)]
+    retry_attempts: Option<u32>,
+    #[serde(default)]
+    retry_strategy: Option<String>,
+}
+
+fn py_client_config_error(error: impl std::fmt::Display) -> PyErr {
+    PyValueError::new_err(format!("invalid Client request: {error}"))
+}
+
+fn depythonize_client_request_mapping(
+    value: &Bound<'_, PyAny>,
+) -> PyResult<serde_json::Map<String, serde_json::Value>> {
+    let value: serde_json::Value = pythonize::depythonize(value).map_err(py_client_config_error)?;
+    match value {
+        serde_json::Value::Object(map) => Ok(map),
+        _ => Err(PyValueError::new_err(
+            "Client request must be a mapping or provider string",
+        )),
+    }
+}
+
+fn parse_client_create_request(
+    request: Option<&Bound<'_, PyAny>>,
+    kwargs: Option<&Bound<'_, PyDict>>,
+) -> PyResult<ClientCreateRequest> {
+    let mut raw = match request {
+        Some(request) => {
+            if let Ok(provider) = request.extract::<String>() {
+                let mut raw = serde_json::Map::new();
+                raw.insert("provider".to_string(), serde_json::Value::String(provider));
+                raw
+            } else {
+                if kwargs.is_some_and(|kwargs| !kwargs.is_empty()) {
+                    return Err(PyValueError::new_err(
+                        "Client request mapping cannot be combined with keyword options",
+                    ));
+                }
+                depythonize_client_request_mapping(request)?
+            }
+        }
+        None => serde_json::Map::new(),
+    };
+
+    if let Some(kwargs) = kwargs {
+        let keyword_options = depythonize_client_request_mapping(kwargs.as_any())?;
+        for (key, value) in keyword_options {
+            if raw.insert(key.clone(), value).is_some() {
+                return Err(PyValueError::new_err(format!(
+                    "Client request field '{key}' was provided more than once"
+                )));
+            }
+        }
+    }
+
+    serde_json::from_value(serde_json::Value::Object(raw)).map_err(py_client_config_error)
+}
+
 fn healed_json_response_to_py(
     py: Python<'_>,
     healed: HealedJsonResponse,
@@ -562,33 +636,46 @@ impl Client {
     /// otherwise the `OPENAI_API_KEY` environment variable is read.
     /// `api_base` and `base_url` are synonymous base-URL overrides.
     #[new]
-    #[pyo3(signature = (provider, *, api_key=None, api_base=None, base_url=None, model=None, api_format=None, timeout_seconds=None, retry_attempts=None, retry_strategy=None))]
+    #[pyo3(signature = (request=None, **kwargs))]
     fn new(
-        provider: &str,
-        api_key: Option<&str>,
-        api_base: Option<&str>,
-        base_url: Option<&str>,
-        model: Option<&str>,
-        api_format: Option<&str>,
-        timeout_seconds: Option<f64>,
-        retry_attempts: Option<u32>,
-        retry_strategy: Option<&str>,
+        request: Option<&Bound<'_, PyAny>>,
+        kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
-        if model.is_some() {
+        let request = parse_client_create_request(request, kwargs)?;
+        if request.model.is_some() {
             return Err(PyValueError::new_err(
                 "Client(model=...) is not supported yet; pass the model per request via completion model or workflow execution.model",
             ));
         }
+        let ClientCreateRequest {
+            provider,
+            api_key,
+            api_base,
+            base_url,
+            model: _,
+            api_format,
+            timeout_seconds,
+            retry_attempts,
+            retry_strategy,
+        } = request;
         let timeout = parse_timeout_seconds(timeout_seconds)?;
-        let retry = parse_retry_config(retry_attempts, retry_strategy)?;
+        let retry = parse_retry_config(retry_attempts, retry_strategy.as_deref())?;
         let effective_base = api_base.or(base_url);
-        let prov = build_provider_from_name(provider, api_key, effective_base, api_format, timeout)
-            .map_err(py_err)?;
-        let mut config = ClientConfig::default();
-        config.provider = provider.to_string();
-        config.api_key = api_key.unwrap_or_default().to_string();
-        config.base_url = effective_base.map(str::to_string);
-        config.default_retry = retry;
+        let prov = build_provider_from_name(
+            provider.as_str(),
+            api_key.as_deref(),
+            effective_base.as_deref(),
+            api_format.as_deref(),
+            timeout,
+        )
+        .map_err(py_err)?;
+        let config = ClientConfig {
+            provider,
+            api_key: api_key.unwrap_or_default(),
+            base_url: effective_base,
+            default_retry: retry,
+            ..Default::default()
+        };
         let client = SimpleAgentsClient::from_config(prov, config);
         let runtime = Runtime::new().map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
         Ok(Self {
