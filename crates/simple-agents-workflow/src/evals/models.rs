@@ -89,17 +89,12 @@ fn default_eval_max_concurrency() -> usize {
     1
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalComparisonMode {
+    #[default]
     Exact,
     Paths,
-}
-
-impl Default for EvalComparisonMode {
-    fn default() -> Self {
-        Self::Exact
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]

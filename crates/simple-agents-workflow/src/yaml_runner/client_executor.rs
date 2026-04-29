@@ -972,9 +972,9 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     // "thinking" and never reaches `structured_segment`. For `heal: true`, parse
                     // from the full streamed text so `resolve_structured_json_candidate` can recover
                     // the complete object from `aggregated`.
-                    let parse_source: &str = if request.heal && !aggregated.is_empty() {
-                        aggregated.as_str()
-                    } else if structured_segment.is_empty() {
+                    let should_parse_aggregated =
+                        structured_segment.is_empty() || (request.heal && !aggregated.is_empty());
+                    let parse_source: &str = if should_parse_aggregated {
                         aggregated.as_str()
                     } else {
                         structured_segment.as_str()
