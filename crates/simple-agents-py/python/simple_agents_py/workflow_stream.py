@@ -34,20 +34,13 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Callable, Literal, Mapping, Protocol
+from typing import Any, Callable, Literal, Mapping
 
 from .workflow_payload import workflow_execution_request_to_mapping
 
 StreamDisplayMode = Literal["off", "merged", "split"]
 
 WorkflowStreamEvent = Mapping[str, Any]
-
-# Explicit event_type values used when ``execution.split_stream_deltas`` is True vs False.
-STREAM_EVENT_TYPES_SPLIT_DELTAS: frozenset[str] = frozenset(
-    ("node_stream_thinking_delta", "node_stream_output_delta")
-)
-STREAM_EVENT_TYPES_MERGED_DELTA: frozenset[str] = frozenset(("node_stream_delta",))
-
 
 def _node_stream_snapshot_log_line(event: WorkflowStreamEvent) -> str:
     """Build one stderr log line for a ``node_stream_snapshot`` event."""
@@ -152,14 +145,6 @@ def default_on_event(event: WorkflowStreamEvent) -> None:
     ) and isinstance(delta, str):
         print(delta, end="", flush=True)
         return
-
-
-class WorkflowStreamHooks(Protocol):
-    """Structural hook surface: implement any subset of ``on_*`` methods or only ``on_event``."""
-
-    pass
-
-
 def make_terminal_stream_printer(
     mode: Literal["merged", "split"],
 ) -> Callable[[WorkflowStreamEvent], None]:

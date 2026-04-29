@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TypeAlias
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 
@@ -55,10 +55,12 @@ class WorkflowMessage(BaseModel):
         ])
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     role: WorkflowRole | str
     content: str | list[dict[str, Any]]
+    name: str | None = None
+    tool_call_id: str | None = None
 
     @model_validator(mode="after")
     def _content_not_empty_list(self) -> "WorkflowMessage":
@@ -73,6 +75,8 @@ class WorkflowExecutionFlags(BaseModel):
     Booleans match Rust ``YamlWorkflowExecutionFlags``. ``model`` is a binding convenience:
     when set, it is merged into ``workflow_options.model`` (same as :class:`WorkflowRunOptions`).
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     model: str | None = Field(
         default=None,
@@ -154,16 +158,14 @@ class WorkflowRunOptions(BaseModel):
     trace: WorkflowTraceConfig | None = None
 
 
-class WorkflowInput(BaseModel):
-    """Arbitrary workflow input fields (e.g. ``email_text``). Use keyword args, not a dict."""
-
-    model_config = ConfigDict(extra="allow")
+WorkflowInput: TypeAlias = dict[str, Any]
+"""Explicit arbitrary workflow payload map, e.g. ``WorkflowInput(email_text="hello")``."""
 
 
 class WorkflowExecutionRequest(BaseModel):
     """Messages-first workflow request; aligns with ``WorkflowExecutionRequest`` in the ``.pyi``."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     workflow_path: WorkflowPath
     messages: list[WorkflowMessage]
@@ -186,3 +188,18 @@ class WorkflowExecutionRequest(BaseModel):
 
             data["execution"] = merge_workflow_execution(data["execution"])
         return data
+
+
+__all__ = [
+    "WorkflowExecutionFlags",
+    "WorkflowExecutionRequest",
+    "WorkflowInput",
+    "WorkflowMessage",
+    "WorkflowPath",
+    "WorkflowRole",
+    "WorkflowRunOptions",
+    "WorkflowTelemetryConfig",
+    "WorkflowTraceConfig",
+    "WorkflowTraceContext",
+    "WorkflowTraceTenant",
+]
