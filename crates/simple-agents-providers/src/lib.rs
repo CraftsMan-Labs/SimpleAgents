@@ -44,10 +44,10 @@ mod utils;
 pub use openai::OpenAiCompatProvider;
 
 // Re-export common utilities
-pub use common::{HttpClient, ProviderError, RetryableError};
+pub use common::{HttpClient, RetryableError, TransportError};
 
 // Re-export Provider trait and types from simple-agent-type
 pub use simple_agent_type::prelude::{Provider, ProviderRequest, ProviderResponse};
 
 /// Result type for provider operations.
-pub type Result<T> = std::result::Result<T, ProviderError>;
+pub type Result<T> = std::result::Result<T, TransportError>;
