@@ -7,6 +7,11 @@ import unittest.mock
 import pytest
 
 from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionFlags,
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+)
 from simple_agents_py.workflow_stream import (
     default_workflow_execution_bools,
     merge_workflow_execution,
@@ -14,9 +19,10 @@ from simple_agents_py.workflow_stream import (
 )
 
 
-def test_mapping_passthrough() -> None:
+def test_plain_dict_mapping_rejected() -> None:
     d = {"workflow_path": "w.yaml", "messages": [{"role": "user", "content": "hi"}]}
-    assert workflow_execution_request_to_mapping(d) == d
+    with pytest.raises(TypeError, match="WorkflowExecutionRequest"):
+        workflow_execution_request_to_mapping(d)
 
 
 def test_model_dump_object() -> None:
@@ -30,16 +36,20 @@ def test_model_dump_object() -> None:
 
 
 def test_invalid_request_type_raises() -> None:
-    with pytest.raises(TypeError, match="workflow request"):
+    with pytest.raises(TypeError, match="workflow_execution_request_to_mapping expects"):
         workflow_execution_request_to_mapping(42)
 
 
 def test_stream_workflow_rejects_hooks_and_on_event() -> None:
     client = unittest.mock.Mock()
+    req = WorkflowExecutionRequest(
+        workflow_path="w",
+        messages=[WorkflowMessage(role="user", content="c")],
+    )
     with pytest.raises(ValueError, match="only one"):
         stream_workflow(
             client,
-            {"workflow_path": "w", "messages": [{"role": "u", "content": "c"}]},
+            req,
             object(),
             on_event=lambda e: None,
         )
@@ -64,13 +74,14 @@ def test_stream_workflow_merges_partial_execution() -> None:
     client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
-        {
-            "workflow_path": "w.yaml",
-            "messages": [{"role": "user", "content": "hi"}],
-            "execution": {"split_stream_deltas": True},
-        },
+        WorkflowExecutionRequest(
+            workflow_path="w.yaml",
+            messages=[WorkflowMessage(role="user", content="hi")],
+            execution=WorkflowExecutionFlags(split_stream_deltas=True),
+        ),
     )
-    ex = captured["payload"]["execution"]
+    dumped = workflow_execution_request_to_mapping(captured["payload"])
+    ex = dumped["execution"]
     assert ex["split_stream_deltas"] is True
     assert ex["node_llm_streaming"] is True
     assert ex["healing"] is False
@@ -148,10 +159,14 @@ def test_pydantic_workflow_execution_request_roundtrip() -> None:
 
 def test_stream_workflow_stream_display_incompatible_with_hooks() -> None:
     client = unittest.mock.Mock()
+    req = WorkflowExecutionRequest(
+        workflow_path="w",
+        messages=[WorkflowMessage(role="user", content="c")],
+    )
     with pytest.raises(ValueError, match="stream_display"):
         stream_workflow(
             client,
-            {"workflow_path": "w", "messages": [{"role": "user", "content": "c"}]},
+            req,
             object(),
             stream_display="merged",
         )
@@ -168,9 +183,13 @@ def test_stream_workflow_split_sets_split_stream_deltas() -> None:
     client.stream_workflow.side_effect = capture_stream
     stream_workflow(
         client,
-        {"workflow_path": "w.yaml", "messages": [{"role": "user", "content": "hi"}]},
+        WorkflowExecutionRequest(
+            workflow_path="w.yaml",
+            messages=[WorkflowMessage(role="user", content="hi")],
+        ),
         stream_display="split",
     )
-    ex = captured["payload"]["execution"]
+    dumped = workflow_execution_request_to_mapping(captured["payload"])
+    ex = dumped["execution"]
     assert ex["split_stream_deltas"] is True
     assert ex["node_llm_streaming"] is True

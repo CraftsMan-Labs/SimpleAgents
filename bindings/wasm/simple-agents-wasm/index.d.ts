@@ -201,9 +201,10 @@ export interface WorkflowRunEvent {
 }
 
 export interface WorkflowRunResult {
-  status: "ok";
+  status: "ok" | "completed" | "awaiting_human_input";
   context: Record<string, unknown>;
   output?: unknown;
+  human_request?: Record<string, unknown>;
   events: WorkflowRunEvent[];
 }
 
@@ -218,10 +219,12 @@ export interface WorkflowExecutionFlags {
 
 export interface WorkflowExecutionRequest {
   workflow_yaml: string;
-  messages: MessageInput[];
+  messages?: MessageInput[];
   context?: Record<string, unknown>;
   media?: Record<string, unknown>;
   input?: WorkflowInputFields;
+  resume?: Record<string, unknown>;
+  human_response?: unknown;
   execution?: WorkflowExecutionFlags;
   workflow_options?: WorkflowRunOptions;
 }

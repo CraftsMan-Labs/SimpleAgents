@@ -196,7 +196,6 @@ import json, os
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
 )
@@ -214,7 +213,7 @@ req = WorkflowExecutionRequest(
     messages=[WorkflowMessage(role=WorkflowRole.USER, content="your input here")],
 )
 
-result = client.run_workflow(workflow_execution_request_to_mapping(req))
+result = client.run_workflow(req)
 print(json.dumps(result, indent=2))
 ```
 
@@ -225,7 +224,6 @@ import json, os
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionFlags, WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
 )
@@ -248,7 +246,7 @@ req = WorkflowExecutionRequest(
 )
 
 result = client.stream_workflow(
-    workflow_execution_request_to_mapping(req),
+    req,
     on_event=lambda event: print(event),
 )
 print(json.dumps(result, indent=2))
@@ -261,7 +259,6 @@ import json, os, base64
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
 )
@@ -289,7 +286,7 @@ req = WorkflowExecutionRequest(
     ],
 )
 
-result = client.run_workflow(workflow_execution_request_to_mapping(req))
+result = client.run_workflow(req)
 print(json.dumps(result, indent=2))
 ```
 
@@ -300,7 +297,6 @@ import json, os, base64
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionFlags, WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
     WorkflowRunOptions, WorkflowTelemetryConfig,
@@ -334,7 +330,7 @@ req = WorkflowExecutionRequest(
 )
 
 result = client.stream_workflow(
-    workflow_execution_request_to_mapping(req),
+    req,
     on_event=lambda event: print(event),
 )
 print(json.dumps(result, indent=2))
@@ -347,7 +343,6 @@ import json, os
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
     WorkflowRunOptions, WorkflowTelemetryConfig,
@@ -374,7 +369,7 @@ req = WorkflowExecutionRequest(
     ),
 )
 
-result = client.run_workflow(workflow_execution_request_to_mapping(req))
+result = client.run_workflow(req)
 print(json.dumps(result, indent=2))
 ```
 
@@ -727,7 +722,6 @@ import json, os
 from pathlib import Path
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest, WorkflowMessage, WorkflowRole,
 )
@@ -750,7 +744,7 @@ req = WorkflowExecutionRequest(
     ],
 )
 
-result = client.run_workflow(workflow_execution_request_to_mapping(req))
+result = client.run_workflow(req)
 print(json.dumps(result, indent=2))
 ```
 

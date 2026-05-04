@@ -337,6 +337,33 @@ pub struct YamlCustomWorker {
     pub handler_file: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlHumanInputType {
+    Choice,
+    Text,
+    Form,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YamlHumanInputOption {
+    pub value: String,
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct YamlHumanInput {
+    pub input_type: YamlHumanInputType,
+    pub prompt: Option<String>,
+    pub options: Option<Vec<YamlHumanInputOption>>,
+    pub form_schema: Option<Value>,
+    pub form_prefill: Option<String>,
+    pub timeout_seconds: Option<u64>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct YamlSwitchBranch {
@@ -435,6 +462,7 @@ pub struct YamlNodeType {
     pub llm_call: Option<YamlLlmCall>,
     pub switch: Option<YamlSwitch>,
     pub custom_worker: Option<YamlCustomWorker>,
+    pub human_input: Option<YamlHumanInput>,
     pub end: Option<Value>,
 }
 
@@ -456,6 +484,8 @@ impl YamlNode {
             "switch"
         } else if self.node_type.custom_worker.is_some() {
             "custom_worker"
+        } else if self.node_type.human_input.is_some() {
+            "human_input"
         } else if self.node_type.end.is_some() {
             "end"
         } else {

@@ -5,15 +5,32 @@ use super::node_execution::{
 use super::spans::{finish_node_span, finish_workflow_span, start_node_span, start_workflow_span};
 use super::*;
 
+pub(super) struct YamlWorkflowRunDispatchRequest<'a> {
+    pub workflow_input: &'a Value,
+    pub executor: &'a dyn YamlWorkflowLlmExecutor,
+    pub custom_worker: Option<&'a dyn YamlWorkflowCustomWorkerExecutor>,
+    pub event_sink: Option<&'a dyn YamlWorkflowEventSink>,
+    pub options: &'a YamlWorkflowRunOptions,
+    pub execution_flags: YamlWorkflowExecutionFlags,
+    pub resume: Option<&'a YamlWorkflowRunOutput>,
+    pub human_response: Option<&'a Value>,
+}
+
 pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
     workflow: &YamlWorkflow,
-    workflow_input: &Value,
-    executor: &dyn YamlWorkflowLlmExecutor,
-    custom_worker: Option<&dyn YamlWorkflowCustomWorkerExecutor>,
-    event_sink: Option<&dyn YamlWorkflowEventSink>,
-    options: &YamlWorkflowRunOptions,
-    execution_flags: YamlWorkflowExecutionFlags,
+    request: YamlWorkflowRunDispatchRequest<'_>,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
+    let YamlWorkflowRunDispatchRequest {
+        workflow_input,
+        executor,
+        custom_worker,
+        event_sink,
+        options,
+        execution_flags,
+        resume,
+        human_response,
+    } = request;
+
     if !workflow_input.is_object() {
         return Err(YamlWorkflowRunError::InvalidInput {
             message: "workflow input must be a JSON object".to_string(),
@@ -49,7 +66,8 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
     );
 
     let run_result = async {
-        let mut run_context = prepare_run_context(workflow)?;
+        let mut run_context =
+            prepare_run_context(workflow, workflow_input, resume, human_response)?;
 
         if let Some(sink) = event_sink {
             sink.emit(&YamlWorkflowEvent {
@@ -72,46 +90,104 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
                 message: workflow_event_sink_cancelled_message().to_string(),
             });
         }
-
-        loop {
-            if event_sink_is_cancelled(event_sink) {
-                return Err(YamlWorkflowRunError::EventSinkCancelled {
-                    message: workflow_event_sink_cancelled_message().to_string(),
+        if let (Some(resume_output), Some(response)) = (resume, human_response) {
+            if let (Some(sink), Some(request)) = (event_sink, resume_output.human_request.as_ref())
+            {
+                sink.emit(&YamlWorkflowEvent {
+                    event_type: "human_input_received".to_string(),
+                    node_id: Some(request.node_id.clone()),
+                    step_id: Some(request.node_id.clone()),
+                    node_kind: Some("human_input".to_string()),
+                    streamable: None,
+                    message: None,
+                    delta: None,
+                    snapshot: None,
+                    token_kind: None,
+                    is_terminal_node_token: None,
+                    elapsed_ms: Some(run_context.state.elapsed_before_resume_ms),
+                    metadata: Some(response.clone()),
                 });
             }
+        }
 
-            let next = execute_single_node_step(
-                workflow_input,
-                executor,
-                custom_worker,
-                event_sink,
-                options,
-                execution_flags,
-                tracer,
-                &telemetry_context,
-                workflow_span_context.as_ref(),
-                &run_context.node_map,
-                &run_context.edge_map,
-                &mut run_context.state,
-            )
-            .await?;
+        if !run_context.skip_execution_loop {
+            loop {
+                if event_sink_is_cancelled(event_sink) {
+                    return Err(YamlWorkflowRunError::EventSinkCancelled {
+                        message: workflow_event_sink_cancelled_message().to_string(),
+                    });
+                }
 
-            if let Some(next) = next {
-                run_context.state.current = next;
-                continue;
+                let step_outcome = execute_single_node_step(
+                    workflow_input,
+                    executor,
+                    custom_worker,
+                    event_sink,
+                    options,
+                    execution_flags,
+                    tracer,
+                    &telemetry_context,
+                    workflow_span_context.as_ref(),
+                    &run_context.node_map,
+                    &run_context.edge_map,
+                    &mut run_context.state,
+                )
+                .await?;
+
+                match step_outcome {
+                    NodeStepOutcome::Next(next) => {
+                        run_context.state.current = next;
+                    }
+                    NodeStepOutcome::Terminated => break,
+                    NodeStepOutcome::Paused(request) => {
+                        let WorkflowRunState {
+                            trace,
+                            outputs,
+                            globals,
+                            step_timings,
+                            llm_node_metrics,
+                            llm_node_models,
+                            token_totals,
+                            workflow_ttft_ms,
+                            started,
+                            elapsed_before_resume_ms,
+                            ..
+                        } = run_context.state;
+
+                        return finalize_workflow_output(
+                            workflow,
+                            options,
+                            event_sink,
+                            &telemetry_context,
+                            started,
+                            elapsed_before_resume_ms,
+                            trace,
+                            outputs,
+                            globals,
+                            YamlWorkflowRunStatus::AwaitingHumanInput,
+                            Some(request),
+                            step_timings,
+                            llm_node_metrics,
+                            llm_node_models,
+                            token_totals,
+                            workflow_ttft_ms,
+                        );
+                    }
+                }
             }
-            break;
         }
 
         let WorkflowRunState {
             trace,
             outputs,
+            globals,
             step_timings,
             llm_node_metrics,
             llm_node_models,
             token_totals,
             workflow_ttft_ms,
             started,
+            elapsed_before_resume_ms,
             ..
         } = run_context.state;
 
@@ -121,8 +197,12 @@ pub(super) async fn run_workflow_yaml_with_custom_worker_and_events_and_options_
             event_sink,
             &telemetry_context,
             started,
+            elapsed_before_resume_ms,
             trace,
             outputs,
+            globals,
+            YamlWorkflowRunStatus::Completed,
+            None,
             step_timings,
             llm_node_metrics,
             llm_node_models,
@@ -210,6 +290,7 @@ struct PreparedRunContext<'a> {
     node_map: HashMap<&'a str, &'a YamlNode>,
     edge_map: HashMap<&'a str, &'a str>,
     state: WorkflowRunState,
+    skip_execution_loop: bool,
 }
 
 struct WorkflowRunState {
@@ -223,11 +304,15 @@ struct WorkflowRunState {
     token_totals: YamlTokenTotals,
     workflow_ttft_ms: Option<u128>,
     started: Instant,
+    elapsed_before_resume_ms: u128,
 }
 
-fn prepare_run_context(
-    workflow: &YamlWorkflow,
-) -> Result<PreparedRunContext<'_>, YamlWorkflowRunError> {
+fn prepare_run_context<'a>(
+    workflow: &'a YamlWorkflow,
+    workflow_input: &Value,
+    resume: Option<&YamlWorkflowRunOutput>,
+    human_response: Option<&Value>,
+) -> Result<PreparedRunContext<'a>, YamlWorkflowRunError> {
     if workflow.nodes.is_empty() {
         return Err(YamlWorkflowRunError::EmptyNodes {
             workflow_id: workflow.id.clone(),
@@ -251,21 +336,258 @@ fn prepare_run_context(
         .map(|edge| (edge.from.as_str(), edge.to.as_str()))
         .collect();
 
+    let mut state = WorkflowRunState {
+        current: workflow.entry_node.clone(),
+        trace: Vec::new(),
+        outputs: BTreeMap::new(),
+        globals: serde_json::Map::new(),
+        step_timings: Vec::new(),
+        llm_node_metrics: BTreeMap::new(),
+        llm_node_models: BTreeMap::new(),
+        token_totals: YamlTokenTotals::default(),
+        workflow_ttft_ms: None,
+        started: Instant::now(),
+        elapsed_before_resume_ms: 0,
+    };
+    let mut skip_execution_loop = false;
+
+    if let Some(resume_output) = resume {
+        if resume_output.workflow_id != workflow.id {
+            return Err(YamlWorkflowRunError::InvalidInput {
+                message: format!(
+                    "resume.workflow_id '{}' does not match requested workflow '{}'",
+                    resume_output.workflow_id, workflow.id
+                ),
+            });
+        }
+        if resume_output.status != YamlWorkflowRunStatus::AwaitingHumanInput {
+            return Err(YamlWorkflowRunError::InvalidInput {
+                message: "resume.status must be 'awaiting_human_input'".to_string(),
+            });
+        }
+        let request = resume_output.human_request.as_ref().ok_or_else(|| {
+            YamlWorkflowRunError::InvalidInput {
+                message: "resume.human_request is required when status=awaiting_human_input"
+                    .to_string(),
+            }
+        })?;
+        let response = human_response.ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+            message: "human_response is required when resume is provided".to_string(),
+        })?;
+
+        state.trace = resume_output.trace.clone();
+        state.outputs = resume_output.outputs.clone();
+        state.globals = resume_output
+            .globals
+            .clone()
+            .into_iter()
+            .collect::<serde_json::Map<String, Value>>();
+        state.step_timings = resume_output.step_timings.clone();
+        state.llm_node_metrics = resume_output.llm_node_metrics.clone();
+        state.llm_node_models = resume_output.llm_node_models.clone();
+        state.token_totals = YamlTokenTotals {
+            input_tokens: resume_output.total_input_tokens,
+            output_tokens: resume_output.total_output_tokens,
+            total_tokens: resume_output.total_tokens,
+            reasoning_tokens: resume_output.total_reasoning_tokens,
+        };
+        state.workflow_ttft_ms = resume_output.ttft_ms;
+        state.started = Instant::now();
+        state.elapsed_before_resume_ms = resume_output.total_elapsed_ms;
+
+        let next_after_human = apply_human_response_for_resume(
+            workflow_input,
+            &node_map,
+            &edge_map,
+            &mut state,
+            request,
+            response,
+        )?;
+        match next_after_human {
+            Some(next) => state.current = next,
+            None => skip_execution_loop = true,
+        }
+    } else if human_response.is_some() {
+        return Err(YamlWorkflowRunError::InvalidInput {
+            message: "human_response cannot be provided without resume".to_string(),
+        });
+    }
+
     Ok(PreparedRunContext {
         node_map,
         edge_map,
-        state: WorkflowRunState {
-            current: workflow.entry_node.clone(),
-            trace: Vec::new(),
-            outputs: BTreeMap::new(),
-            globals: serde_json::Map::new(),
-            step_timings: Vec::new(),
-            llm_node_metrics: BTreeMap::new(),
-            llm_node_models: BTreeMap::new(),
-            token_totals: YamlTokenTotals::default(),
-            workflow_ttft_ms: None,
-            started: Instant::now(),
+        state,
+        skip_execution_loop,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum NodeStepOutcome {
+    Next(String),
+    Terminated,
+    Paused(HumanRequest),
+}
+
+fn apply_human_response_for_resume(
+    workflow_input: &Value,
+    node_map: &HashMap<&str, &YamlNode>,
+    edge_map: &HashMap<&str, &str>,
+    state: &mut WorkflowRunState,
+    request: &HumanRequest,
+    human_response: &Value,
+) -> Result<Option<String>, YamlWorkflowRunError> {
+    let node = *node_map.get(request.node_id.as_str()).ok_or_else(|| {
+        YamlWorkflowRunError::MissingNode {
+            node_id: request.node_id.clone(),
+        }
+    })?;
+    let human =
+        node.node_type
+            .human_input
+            .as_ref()
+            .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                message: format!(
+                    "resume.human_request.node_id '{}' is not a human_input node",
+                    request.node_id
+                ),
+            })?;
+    validate_human_response(request, human_response)?;
+
+    let pending_human_context = state
+        .outputs
+        .get(request.node_id.as_str())
+        .and_then(|value| value.get("human_input_metadata"))
+        .cloned()
+        .unwrap_or_else(|| build_human_pending_metadata(request));
+
+    state.outputs.insert(
+        request.node_id.clone(),
+        build_human_completed_output(
+            request,
+            pending_human_context,
+            human_response.clone(),
+            human.input_type == YamlHumanInputType::Form,
+        ),
+    );
+
+    if !state
+        .trace
+        .iter()
+        .any(|node_id| node_id == request.node_id.as_str())
+    {
+        state.trace.push(request.node_id.clone());
+    }
+
+    apply_set_globals(node, &state.outputs, workflow_input, &mut state.globals);
+    apply_update_globals(node, &state.outputs, workflow_input, &mut state.globals);
+
+    Ok(edge_map
+        .get(request.node_id.as_str())
+        .map(|value| value.to_string()))
+}
+
+fn validate_human_response(
+    request: &HumanRequest,
+    human_response: &Value,
+) -> Result<(), YamlWorkflowRunError> {
+    match request.input_type {
+        YamlHumanInputType::Choice => {
+            let selected =
+                human_response
+                    .as_str()
+                    .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                        message: format!(
+                            "human_response for choice node '{}' must be a string",
+                            request.node_id
+                        ),
+                    })?;
+            let options =
+                request
+                    .options
+                    .as_ref()
+                    .ok_or_else(|| YamlWorkflowRunError::InvalidInput {
+                        message: format!(
+                            "human_request for choice node '{}' is missing options",
+                            request.node_id
+                        ),
+                    })?;
+            if !options.iter().any(|option| option.value == selected) {
+                return Err(YamlWorkflowRunError::InvalidInput {
+                    message: format!(
+                        "human_response '{selected}' is not a valid option for node '{}'",
+                        request.node_id
+                    ),
+                });
+            }
+        }
+        YamlHumanInputType::Text => {
+            if !human_response.is_string() {
+                return Err(YamlWorkflowRunError::InvalidInput {
+                    message: format!(
+                        "human_response for text node '{}' must be a string",
+                        request.node_id
+                    ),
+                });
+            }
+        }
+        YamlHumanInputType::Form => {
+            if let Some(schema) = request.form_schema.as_ref() {
+                super::validation::validate_schema_instance(schema, human_response).map_err(
+                    |message| YamlWorkflowRunError::InvalidInput {
+                        message: format!(
+                            "human_response for form node '{}' failed schema validation: {}",
+                            request.node_id, message
+                        ),
+                    },
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn build_human_pending_metadata(request: &HumanRequest) -> Value {
+    json!({
+        "input_type": request.input_type,
+        "prompt_shown": request.prompt,
+        "input_to_human": {
+            "options": request.options,
+            "form_schema": request.form_schema,
+            "form_data": request.form_data,
         },
+        "human_response": Value::Null,
+        "modified": false,
+        "modifications_diff": Value::Null,
+    })
+}
+
+fn build_human_completed_output(
+    request: &HumanRequest,
+    mut pending_metadata: Value,
+    human_response: Value,
+    is_form: bool,
+) -> Value {
+    let before_form = request.form_data.clone().unwrap_or(Value::Null);
+    let modified = is_form && before_form != human_response;
+    let modifications_diff = if modified {
+        json!({
+            "before": before_form,
+            "after": human_response.clone(),
+        })
+    } else {
+        Value::Null
+    };
+
+    if let Some(object) = pending_metadata.as_object_mut() {
+        object.insert("human_response".to_string(), human_response.clone());
+        object.insert("modified".to_string(), Value::Bool(modified));
+        object.insert("modifications_diff".to_string(), modifications_diff);
+    }
+
+    json!({
+        "output": human_response,
+        "human_input_metadata": pending_metadata,
     })
 }
 
@@ -283,7 +605,7 @@ async fn execute_single_node_step(
     node_map: &HashMap<&str, &YamlNode>,
     edge_map: &HashMap<&str, &str>,
     state: &mut WorkflowRunState,
-) -> Result<Option<String>, YamlWorkflowRunError> {
+) -> Result<NodeStepOutcome, YamlWorkflowRunError> {
     let node =
         *node_map
             .get(state.current.as_str())
@@ -337,7 +659,7 @@ async fn execute_single_node_step(
     let mut node_usage: Option<YamlLlmTokenUsage> = None;
     let mut node_model_name: Option<String> = None;
     let is_terminal_node = !edge_map.contains_key(node.id.as_str());
-    let node_result: Result<Option<String>, YamlWorkflowRunError> =
+    let node_result: Result<NodeStepOutcome, YamlWorkflowRunError> =
         if let Some(llm) = &node.node_type.llm_call {
             execute_llm_node(
                 LlmNodeEnv {
@@ -368,11 +690,14 @@ async fn execute_single_node_step(
             .map(|outcome| {
                 node_usage = outcome.node_usage;
                 node_model_name = outcome.node_model_name;
-                outcome.next
+                match outcome.next {
+                    Some(next) => NodeStepOutcome::Next(next),
+                    None => NodeStepOutcome::Terminated,
+                }
             })
         } else if let Some(switch) = &node.node_type.switch {
             let context = build_execution_context(workflow_input, &state.outputs, &state.globals);
-            resolve_switch_target(node.id.as_str(), switch, &context).map(Some)
+            resolve_switch_target(node.id.as_str(), switch, &context).map(NodeStepOutcome::Next)
         } else if let Some(custom) = &node.node_type.custom_worker {
             execute_custom_worker_node(
                 CustomWorkerEnv {
@@ -394,6 +719,55 @@ async fn execute_single_node_step(
                 },
             )
             .await
+            .map(|next| match next {
+                Some(next) => NodeStepOutcome::Next(next),
+                None => NodeStepOutcome::Terminated,
+            })
+        } else if let Some(human) = &node.node_type.human_input {
+            let context = build_execution_context(workflow_input, &state.outputs, &state.globals);
+            let request = build_human_request(node, human, &context)?;
+            if let Some(span) = node_span.as_mut() {
+                let human_input_type = match request.input_type {
+                    YamlHumanInputType::Choice => "choice",
+                    YamlHumanInputType::Text => "text",
+                    YamlHumanInputType::Form => "form",
+                };
+                span.set_attribute("human_input.type", human_input_type);
+                if let Some(prompt) = request.prompt.as_deref() {
+                    span.set_attribute("human_input.prompt", prompt);
+                }
+                if request.input_type == YamlHumanInputType::Form {
+                    span.set_attribute(
+                        "human_input.has_form_schema",
+                        request.form_schema.is_some().to_string().as_str(),
+                    );
+                }
+            }
+            let pending_metadata = build_human_pending_metadata(&request);
+            state.outputs.insert(
+                node.id.clone(),
+                json!({
+                    "status": "awaiting_human_input",
+                    "human_input_metadata": pending_metadata,
+                }),
+            );
+            if let Some(sink) = event_sink {
+                sink.emit(&YamlWorkflowEvent {
+                    event_type: "human_input_requested".to_string(),
+                    node_id: Some(node.id.clone()),
+                    step_id: Some(node.id.clone()),
+                    node_kind: Some(node.kind_name().to_string()),
+                    streamable: None,
+                    message: None,
+                    delta: None,
+                    snapshot: state.outputs.get(node.id.as_str()).cloned(),
+                    token_kind: None,
+                    is_terminal_node_token: None,
+                    elapsed_ms: Some(workflow_elapsed_before_node_ms),
+                    metadata: Some(serde_json::to_value(&request).unwrap_or(Value::Null)),
+                });
+            }
+            Ok(NodeStepOutcome::Paused(request))
         } else {
             Err(YamlWorkflowRunError::UnsupportedNodeType {
                 node_id: node.id.clone(),
@@ -408,7 +782,7 @@ async fn execute_single_node_step(
         elapsed_ms,
     );
 
-    let next = node_result?;
+    let step_outcome = node_result?;
 
     record_node_timing_and_metrics(
         node,
@@ -441,7 +815,46 @@ async fn execute_single_node_step(
         });
     }
 
-    Ok(next)
+    Ok(step_outcome)
+}
+
+fn build_human_request(
+    node: &YamlNode,
+    human: &YamlHumanInput,
+    context: &Value,
+) -> Result<HumanRequest, YamlWorkflowRunError> {
+    let prompt = human
+        .prompt
+        .as_deref()
+        .map(|value| interpolate_template(value, context));
+    let form_data = human
+        .form_prefill
+        .as_deref()
+        .map(|value| resolve_human_form_data(value, context));
+
+    Ok(HumanRequest {
+        node_id: node.id.clone(),
+        input_type: human.input_type,
+        prompt,
+        options: human.options.clone(),
+        form_schema: human.form_schema.clone(),
+        form_data,
+    })
+}
+
+fn resolve_human_form_data(form_prefill: &str, context: &Value) -> Value {
+    let trimmed = form_prefill.trim();
+    if let Some(expr) = trimmed
+        .strip_prefix("{{")
+        .and_then(|value| value.strip_suffix("}}"))
+    {
+        let source_path = expr.trim().trim_start_matches("$.");
+        if let Some(value) = resolve_path(context, source_path) {
+            return value.clone();
+        }
+        return Value::Null;
+    }
+    Value::String(interpolate_template(trimmed, context))
 }
 
 fn record_node_timing_and_metrics(
@@ -490,8 +903,12 @@ fn finalize_workflow_output(
     event_sink: Option<&dyn YamlWorkflowEventSink>,
     telemetry_context: &ResolvedTelemetryContext,
     started: Instant,
+    elapsed_before_resume_ms: u128,
     trace: Vec<String>,
     outputs: BTreeMap<String, Value>,
+    globals: serde_json::Map<String, Value>,
+    status: YamlWorkflowRunStatus,
+    human_request: Option<HumanRequest>,
     step_timings: Vec<YamlStepTiming>,
     llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
     llm_node_models: BTreeMap<String, String>,
@@ -510,14 +927,17 @@ fn finalize_workflow_output(
         .and_then(|value| value.get("output"))
         .cloned();
 
-    let total_elapsed_ms = started.elapsed().as_millis();
+    let total_elapsed_ms = elapsed_before_resume_ms + started.elapsed().as_millis();
     let output = YamlWorkflowRunOutput {
         workflow_id: workflow.id.clone(),
         entry_node: workflow.entry_node.clone(),
         trace,
         outputs,
+        globals: globals.into_iter().collect(),
         terminal_node,
         terminal_output,
+        status,
+        human_request,
         step_timings,
         llm_node_metrics,
         llm_node_models,
@@ -548,8 +968,12 @@ fn finalize_workflow_output(
     };
 
     if let Some(sink) = event_sink {
+        let event_type = match output.status {
+            YamlWorkflowRunStatus::Completed => "workflow_completed",
+            YamlWorkflowRunStatus::AwaitingHumanInput => "workflow_paused_for_human_input",
+        };
         sink.emit(&YamlWorkflowEvent {
-            event_type: "workflow_completed".to_string(),
+            event_type: event_type.to_string(),
             node_id: Some(output.terminal_node.clone()),
             step_id: None,
             node_kind: None,

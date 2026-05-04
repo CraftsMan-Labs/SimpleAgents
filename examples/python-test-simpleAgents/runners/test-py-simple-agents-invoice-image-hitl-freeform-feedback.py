@@ -1,8 +1,4 @@
-"""Run a YAML workflow with a multimodal invoice image message.
-
-From ``examples/``: ``uv sync`` (workspace member; ``simple-agents-py`` comes from
-``examples/pyproject.toml`` → ``../crates/simple-agents-py``).
-"""
+"""Invoice image HITL: free-form feedback saved by custom worker."""
 
 from __future__ import annotations
 
@@ -13,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from example_env import require_env
-from example_paths import asset, workflows
+from example_env import require_env  # type: ignore[import-not-found]  # noqa: E402
+from example_paths import asset, workflows  # type: ignore[import-not-found]  # noqa: E402
 from simple_agents_py import Client as SimpleAgentsClient
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest,
@@ -22,8 +18,11 @@ from simple_agents_py.workflow_request import (
     WorkflowRole,
 )
 
-workflow_file = workflows("email-classification", "test.yaml")
+workflow_file = workflows("invoice-hitl", "freeform-feedback.yaml")
 image_file = asset("test-invoice.jpeg")
+feedback_store = workflows(
+    "invoice-hitl", "reviewer-feedback-log.jsonl"
+).resolve()
 
 
 def require_file(path: Path) -> Path:
@@ -43,28 +42,47 @@ def main() -> None:
     )
 
     b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
+    request_input = {"feedback_store_path": str(feedback_store)}
 
-    req = WorkflowExecutionRequest(
+    initial_request = WorkflowExecutionRequest(
         workflow_path=str(workflow_file),
+        input=request_input,
         messages=[
             WorkflowMessage(
                 role=WorkflowRole.USER,
                 content=[
                     {
                         "type": "text",
-                        "text": "Invoice image. Classify and route this per workflow.",
+                        "text": "Extract invoice fields from this image.",
                     },
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
                     },
                 ],
-            ),
+            )
         ],
     )
 
-    result = client.run_workflow(req)
-    print(json.dumps(result, indent=2))
+    paused = client.run_workflow(initial_request)
+    print("Paused output:")
+    print(json.dumps(paused, indent=2))
+
+    if paused.get("status") != "awaiting_human_input":
+        raise SystemExit("Expected workflow to pause for human text feedback.")
+
+    feedback = input("Reviewer feedback: ").strip()
+    resumed = client.run_workflow(
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_file),
+            input=request_input,
+            resume=paused,
+            human_response=feedback,
+        )
+    )
+    print("Final output:")
+    print(json.dumps(resumed, indent=2))
+    print(f"Feedback persisted to: {feedback_store}")
 
 
 if __name__ == "__main__":

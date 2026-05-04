@@ -163,19 +163,30 @@ class WorkflowExecutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     workflow_path: WorkflowPath
-    messages: list[WorkflowMessage]
+    messages: list[WorkflowMessage] = Field(default_factory=list)
     context: dict[str, Any] | None = None
     media: dict[str, Any] | None = None
     input: WorkflowInput | None = None
+    resume: dict[str, Any] | None = None
+    human_response: Any | None = None
     execution: WorkflowExecutionFlags | None = None
     workflow_options: WorkflowRunOptions | None = None
 
+    @model_validator(mode="after")
+    def _messages_or_resume(self) -> "WorkflowExecutionRequest":
+        if len(self.messages) == 0 and self.resume is None:
+            raise ValueError("messages must contain at least one message unless resume is provided")
+        return self
+
     def to_client_payload(self, *, merge_execution_defaults: bool = False) -> dict[str, Any]:
-        """Same mapping as :func:`workflow_payload.workflow_execution_request_to_mapping`.
+        """Serialise this request to a JSON-safe dict (e.g. for logging or caching).
 
         When *merge_execution_defaults* is True, ``execution`` is merged with
         :func:`simple_agents_py.workflow_stream.merge_workflow_execution` so every
-        boolean flag is explicit on the wire.
+        boolean flag is explicit in the output dict.
+
+        Note: pass the :class:`WorkflowExecutionRequest` directly to
+        ``Client.run_workflow`` / ``Client.stream_workflow`` — no conversion needed.
         """
         data = self.model_dump(mode="json", exclude_none=True)
         if merge_execution_defaults and isinstance(data.get("execution"), dict):

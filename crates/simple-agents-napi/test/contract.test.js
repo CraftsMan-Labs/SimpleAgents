@@ -73,13 +73,16 @@ test('runWorkflow and streamWorkflow declarations include optional customWorkerD
   );
 });
 
-test('resume declaration includes optional customWorker', () => {
+test('declaration does not expose legacy resume API', () => {
   const declarationPath = path.resolve(__dirname, '../index.d.ts');
   const declaration = fs.readFileSync(declarationPath, 'utf8');
-  assert.ok(declaration.includes('resume('), 'declaration should include resume(');
   assert.ok(
-    declaration.includes('customWorker?:'),
-    'resume should accept optional customWorker on opts',
+    !declaration.includes('resume('),
+    'declaration should not expose removed resume(',
+  );
+  assert.ok(
+    !declaration.includes('customWorker?:'),
+    'declaration should not expose removed customWorker option',
   );
 });
 

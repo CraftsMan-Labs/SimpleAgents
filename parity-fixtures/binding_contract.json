@@ -49,8 +49,6 @@
       "export interface StreamChunk",
       "runWorkflow(",
       "streamWorkflow(",
-      "resume(",
-      "customWorker?:",
       "customWorkerDispatch?:"
     ],
     "required_runtime_exports": [
@@ -71,8 +69,7 @@
       "class Client:",
       "def complete(",
       "def run_workflow(",
-      "def stream_workflow(",
-      "def resume("
+      "def stream_workflow("
     ]
   }
 }

@@ -2332,7 +2332,7 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "simple-agent-type"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2345,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-examples"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2375,7 +2375,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "criterion",
  "proptest",
@@ -2390,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2409,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2432,7 +2432,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "criterion",

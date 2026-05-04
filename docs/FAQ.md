@@ -273,14 +273,13 @@ nodes:
 ```python
 from simple_agents_py import Client
 from simple_agents_py.workflow_request import WorkflowExecutionRequest, WorkflowMessage, WorkflowRole
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 
 client = Client("openai")
 req = WorkflowExecutionRequest(
     workflow_path="workflow.yaml",
     messages=[WorkflowMessage(role=WorkflowRole.USER, content="What is 2+2?")]
 )
-result = client.run_workflow(workflow_execution_request_to_mapping(req))
+result = client.run_workflow(req)
 print(result)
 ```
 
@@ -573,7 +572,7 @@ req = WorkflowExecutionRequest(
 )
 
 result = client.stream_workflow(
-    workflow_execution_request_to_mapping(req),
+    req,
     on_event=lambda event: print(event),
 )
 ```
@@ -773,7 +772,7 @@ async def classify_email(text: str):
         workflow_path="classifier.yaml",
         messages=[WorkflowMessage(role=WorkflowRole.USER, content=text)]
     )
-    return client.run_workflow(workflow_execution_request_to_mapping(req))
+    return client.run_workflow(req)
 ```
 
 ### Q: How do I handle rate limits?

@@ -40,7 +40,7 @@ use provider_helpers::build_provider_from_name;
 use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
-    attach_workflow_events, build_workflow_input_from_execution_request,
+    attach_workflow_events, build_workflow_input_from_execution_request, parse_resume_output,
     parse_workflow_execution_request, workflow_execution_flags, workflow_execution_options,
     workflow_root_path, CombinedWorkflowEventSink, PythonCustomWorkerExecutor,
     PythonWorkflowEventSink, RecordingWorkflowEventSink,
@@ -949,6 +949,8 @@ impl Client {
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
         let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
+        let resume_output = parse_resume_output(request.resume.as_ref())?;
+        let human_response_value = request.human_response.clone();
         let flags = workflow_execution_flags(&request.execution);
         let options = workflow_execution_options(&request);
 
@@ -962,6 +964,8 @@ impl Client {
             workflow_input: &workflow_input_value,
             executor: YamlWorkflowExecutorBinding::Client(&self.client),
             custom_worker: Some(&custom_executor),
+            resume: resume_output.as_ref(),
+            human_response: human_response_value.as_ref(),
             options: &options,
             flags,
         };
@@ -1085,6 +1089,8 @@ impl Client {
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
         let workflow_input_value = build_workflow_input_from_execution_request(&request)?;
+        let resume_output = parse_resume_output(request.resume.as_ref())?;
+        let human_response_value = request.human_response.clone();
         let mut flags = workflow_execution_flags(&request.execution);
         let options = workflow_execution_options(&request);
         let runtime = self
@@ -1102,6 +1108,8 @@ impl Client {
                     workflow_input: &workflow_input_value,
                     executor: YamlWorkflowExecutorBinding::Client(&self.client),
                     custom_worker: Some(&custom_executor),
+                    resume: resume_output.as_ref(),
+                    human_response: human_response_value.as_ref(),
                     options: &options,
                     flags,
                 };
@@ -1125,6 +1133,8 @@ impl Client {
                     workflow_input: &workflow_input_value,
                     executor: YamlWorkflowExecutorBinding::Client(&self.client),
                     custom_worker: Some(&custom_executor),
+                    resume: resume_output.as_ref(),
+                    human_response: human_response_value.as_ref(),
                     options: &options,
                     flags,
                 };
@@ -1148,6 +1158,8 @@ impl Client {
             workflow_input: &workflow_input_value,
             executor: YamlWorkflowExecutorBinding::Client(&self.client),
             custom_worker: Some(&custom_executor),
+            resume: resume_output.as_ref(),
+            human_response: human_response_value.as_ref(),
             options: &options,
             flags,
         };
@@ -1164,86 +1176,6 @@ impl Client {
         attach_workflow_events(&mut value, &recording_sink)?;
         let py_value = pythonize::pythonize(py, &value)
             .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
-    }
-
-    /// Resume a workflow from a checkpoint dict.
-    #[pyo3(signature = (checkpoint, *, options=None))]
-    fn resume(
-        &self,
-        py: Python<'_>,
-        checkpoint: &Bound<'_, PyAny>,
-        options: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<PyObject> {
-        // Extract workflow_path and messages from the checkpoint dict, then delegate to run()
-        let checkpoint_val: serde_json::Value = pythonize::depythonize(checkpoint)
-            .map_err(|e| PyRuntimeError::new_err(format!("invalid checkpoint: {e}")))?;
-        let workflow_path = checkpoint_val
-            .get("workflow_path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| PyRuntimeError::new_err("checkpoint must have workflow_path"))?
-            .to_string();
-
-        let messages_val = checkpoint_val
-            .get("original_messages")
-            .cloned()
-            .unwrap_or(serde_json::json!([]));
-
-        let workflow_input = serde_json::json!({ "messages": messages_val });
-        let workflow_path_buf = std::path::PathBuf::from(&workflow_path);
-        let workflow_root = workflow_root_path(workflow_path_buf.as_path());
-        let run_options = if let Some(options) = options {
-            let value: serde_json::Value = pythonize::depythonize(options)
-                .map_err(|e| PyRuntimeError::new_err(format!("invalid resume options: {e}")))?;
-            let object = value
-                .as_object()
-                .ok_or_else(|| PyRuntimeError::new_err("resume options must be a dict/object"))?;
-            for key in object.keys() {
-                if key != "workflow_options" && key != "workflowOptions" {
-                    return Err(PyRuntimeError::new_err(format!(
-                        "resume options only supports workflow_options/workflowOptions; unknown key '{key}'"
-                    )));
-                }
-            }
-            let workflow_options = object
-                .get("workflow_options")
-                .or_else(|| object.get("workflowOptions"))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null);
-            if workflow_options.is_null() {
-                YamlWorkflowRunOptions::default()
-            } else {
-                serde_json::from_value::<YamlWorkflowRunOptions>(workflow_options).map_err(|e| {
-                    PyRuntimeError::new_err(format!("invalid workflow_options: {e}"))
-                })?
-            }
-        } else {
-            YamlWorkflowRunOptions::default()
-        };
-        let flags = simple_agents_workflow::yaml_runner::YamlWorkflowExecutionFlags::default();
-        let custom_executor = PythonCustomWorkerExecutor { workflow_root };
-        let runtime = self
-            .runtime
-            .lock()
-            .map_err(|_| PyRuntimeError::new_err("runtime lock poisoned"))?;
-
-        let execution_request = YamlWorkflowExecutionRequest {
-            source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
-            workflow_input: &workflow_input,
-            executor: YamlWorkflowExecutorBinding::Client(&self.client),
-            custom_worker: Some(&custom_executor),
-            options: &run_options,
-            flags,
-        };
-
-        let output = py
-            .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
-            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-
-        let value = serde_json::to_value(output)
-            .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|e| PyRuntimeError::new_err(format!("pythonize failed: {e}")))?;
         Ok(py_value.into_py(py))
     }
 }

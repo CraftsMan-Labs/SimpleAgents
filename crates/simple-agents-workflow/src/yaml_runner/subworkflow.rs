@@ -102,6 +102,8 @@ pub(crate) async fn execute_subworkflow_tool_call(
         workflow_input: &Value::Object(subworkflow_input),
         executor: YamlWorkflowExecutorBinding::Client(client),
         custom_worker,
+        resume: None,
+        human_response: None,
         options: &subworkflow_options,
         flags: YamlWorkflowExecutionFlags::default(),
     };

@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field
 WorkflowMessageRole: TypeAlias = Literal["system", "user", "assistant", "tool"]
 WorkflowPayloadMode: TypeAlias = Literal["full_payload", "redacted_payload"]
 WorkflowToolTraceMode: TypeAlias = Literal["full", "redacted", "off"]
+WorkflowRunStatus: TypeAlias = Literal["completed", "awaiting_human_input"]
 
 # Known event_type strings emitted by the Rust YAML workflow runner (wire format).
 # Source of truth: crates/simple-agents-workflow/src/yaml_runner/ (execute.rs,
@@ -122,11 +123,19 @@ class WorkflowExecutionRequest(TypedDict, total=False):
     context: Mapping[str, JSONValue]
     media: Mapping[str, JSONValue]
     input: Mapping[str, JSONValue]
+    resume: "WorkflowRunOutput"
+    human_response: JSONValue
     execution: WorkflowExecutionFlags
     workflow_options: WorkflowRunOptions
 
 
-WorkflowNodeKind: TypeAlias = Literal["llm_call", "switch", "custom_worker", "unknown"]
+WorkflowNodeKind: TypeAlias = Literal[
+    "llm_call",
+    "switch",
+    "custom_worker",
+    "human_input",
+    "unknown",
+]
 
 
 class WorkflowNodeOutputRecord(TypedDict):
@@ -171,13 +180,25 @@ class WorkflowEvent(TypedDict, total=False):
     metadata: JSONValue
 
 
+class HumanRequest(TypedDict, total=False):
+    node_id: str
+    input_type: Literal["choice", "text", "form"]
+    prompt: str
+    options: list[dict[str, JSONValue]]
+    form_schema: JSONValue
+    form_data: JSONValue
+
+
 class WorkflowRunOutput(TypedDict, total=False):
     workflow_id: str
     entry_node: str
     trace: list[str]
     outputs: dict[str, JSONValue]
+    globals: dict[str, JSONValue]
     terminal_node: str
     terminal_output: JSONValue
+    status: WorkflowRunStatus
+    human_request: HumanRequest
     step_timings: list[WorkflowStepTiming]
     llm_node_metrics: dict[str, WorkflowLlmNodeMetrics]
     llm_node_models: dict[str, str]
@@ -226,8 +247,11 @@ class WorkflowRunOutputModel(BaseModel):
     entry_node: str | None = None
     trace: list[str] | None = None
     outputs: dict[str, Any] | None = None
+    globals: dict[str, Any] | None = None
     terminal_node: str | None = None
     terminal_output: Any | None = None
+    status: WorkflowRunStatus | None = None
+    human_request: dict[str, Any] | None = None
     step_timings: list[dict[str, Any]] | None = None
     llm_node_metrics: dict[str, dict[str, Any]] | None = None
     llm_node_models: dict[str, str] | None = None
@@ -283,11 +307,13 @@ __all__ = [
     "WorkflowRunOptions",
     "WorkflowExecutionFlags",
     "WorkflowExecutionRequest",
+    "WorkflowRunStatus",
     "WorkflowNodeKind",
     "WorkflowNodeOutputRecord",
     "WorkflowStepTiming",
     "WorkflowLlmNodeMetrics",
     "WorkflowEvent",
+    "HumanRequest",
     "WorkflowRunOutput",
     "WorkflowStreamEventModel",
     "WorkflowRunOutputModel",

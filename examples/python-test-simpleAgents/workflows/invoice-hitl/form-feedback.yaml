@@ -1,0 +1,77 @@
+id: invoice-hitl-form-feedback
+version: 1.0.0
+entry_node: extract_invoice
+
+nodes:
+  - id: extract_invoice
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          vendor_name:
+            type: string
+          invoice_number:
+            type: string
+          total_amount:
+            type: number
+          currency:
+            type: string
+          due_date:
+            type: string
+        required: [vendor_name, invoice_number, total_amount, currency, due_date]
+        additionalProperties: false
+      prompt: |
+        Extract invoice fields from the latest user-provided content.
+        Return JSON only:
+        {
+          "vendor_name": "string",
+          "invoice_number": "string",
+          "total_amount": 0,
+          "currency": "string",
+          "due_date": "YYYY-MM-DD or unknown"
+        }
+
+  - id: review_invoice_form
+    node_type:
+      human_input:
+        input_type: form
+        prompt: Review and edit extracted invoice fields before final save.
+        form_schema:
+          type: object
+          properties:
+            vendor_name:
+              type: string
+            invoice_number:
+              type: string
+            total_amount:
+              type: number
+            currency:
+              type: string
+            due_date:
+              type: string
+          required: [vendor_name, invoice_number, total_amount, currency, due_date]
+          additionalProperties: false
+        form_prefill: "{{ nodes.extract_invoice.output }}"
+
+  - id: persist_reviewed_form
+    node_type:
+      custom_worker:
+        handler: save_reviewed_form
+        handler_file: handlers.py
+    config:
+      payload:
+        original_extraction: "{{ nodes.extract_invoice.output }}"
+        reviewed_extraction: "{{ nodes.review_invoice_form.output }}"
+        form_store_path: "{{ input.form_store_path }}"
+
+edges:
+  - from: extract_invoice
+    to: review_invoice_form
+  - from: review_invoice_form
+    to: persist_reviewed_form

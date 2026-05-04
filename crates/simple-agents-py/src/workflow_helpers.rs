@@ -1,4 +1,4 @@
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use serde_json::Map;
 use serde_json::Value;
@@ -162,6 +162,8 @@ pub(crate) struct PythonWorkflowExecutionRequest {
     pub context: Option<Value>,
     pub media: Option<Value>,
     pub input: Option<Value>,
+    pub resume: Option<Value>,
+    pub human_response: Option<Value>,
     pub execution: PythonWorkflowExecutionOptions,
     pub workflow_options: Option<YamlWorkflowRunOptions>,
 }
@@ -183,11 +185,24 @@ const fn default_true() -> bool {
 pub(crate) fn parse_workflow_execution_request(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<PythonWorkflowExecutionRequest> {
-    let raw: Value = pythonize::depythonize(value).map_err(|error| {
-        PyRuntimeError::new_err(format!(
-            "invalid workflow execution request: {error}. expected keys: workflow_path, messages, context?, media?, input?, execution?, workflow_options?"
-        ))
-    })?;
+    if !value.hasattr("model_dump")? {
+        return Err(PyTypeError::new_err(
+            "run_workflow / stream_workflow only accept WorkflowExecutionRequest \
+             (simple_agents_py.workflow_request.WorkflowExecutionRequest). \
+             Plain dicts are no longer accepted.",
+        ));
+    }
+    let raw: Value = {
+        let kwargs = pyo3::types::PyDict::new_bound(value.py());
+        kwargs.set_item("mode", "json")?;
+        kwargs.set_item("exclude_none", true)?;
+        let dumped = value.call_method("model_dump", (), Some(&kwargs))?;
+        pythonize::depythonize(&dumped).map_err(|error| {
+            PyRuntimeError::new_err(format!(
+                "invalid workflow execution request: {error}. expected keys: workflow_path, messages, context?, media?, input?, resume?, human_response?, execution?, workflow_options?"
+            ))
+        })?
+    };
     let object = raw.as_object().ok_or_else(|| {
         PyRuntimeError::new_err("workflow execution request must be a dict/object".to_string())
     })?;
@@ -197,13 +212,15 @@ pub(crate) fn parse_workflow_execution_request(
         "context",
         "media",
         "input",
+        "resume",
+        "human_response",
         "execution",
         "workflow_options",
     ];
     for key in object.keys() {
         if !allowed_keys.contains(&key.as_str()) {
             return Err(PyRuntimeError::new_err(format!(
-                "unknown workflow execution request key '{key}'; expected keys: workflow_path, messages, context?, media?, input?, execution?, workflow_options?"
+                "unknown workflow execution request key '{key}'; expected keys: workflow_path, messages, context?, media?, input?, resume?, human_response?, execution?, workflow_options?"
             )));
         }
     }
@@ -215,11 +232,13 @@ pub(crate) fn parse_workflow_execution_request(
     let messages = object
         .get("messages")
         .and_then(Value::as_array)
-        .ok_or_else(|| PyRuntimeError::new_err("messages is required".to_string()))?
-        .clone();
+        .cloned()
+        .unwrap_or_default();
     let context = object.get("context").cloned();
     let media = object.get("media").cloned();
     let input = object.get("input").cloned();
+    let resume = object.get("resume").cloned();
+    let human_response = object.get("human_response").cloned();
     let workflow_options = object
         .get("workflow_options")
         .map(|options| {
@@ -291,6 +310,8 @@ pub(crate) fn parse_workflow_execution_request(
         context,
         media,
         input,
+        resume,
+        human_response,
         execution,
         workflow_options,
     };
@@ -299,7 +320,7 @@ pub(crate) fn parse_workflow_execution_request(
             "workflow_path cannot be empty".to_string(),
         ));
     }
-    if request.messages.is_empty() {
+    if request.messages.is_empty() && request.resume.is_none() {
         return Err(PyRuntimeError::new_err(
             "messages must contain at least one message".to_string(),
         ));
@@ -344,10 +365,12 @@ pub(crate) fn build_workflow_input_from_execution_request(
         object.insert(key, value);
     }
 
-    object.insert(
-        "messages".to_string(),
-        Value::Array(request.messages.clone()),
-    );
+    if !request.messages.is_empty() {
+        object.insert(
+            "messages".to_string(),
+            Value::Array(request.messages.clone()),
+        );
+    }
     if let Some(context) = request.context.clone() {
         object.insert("context".to_string(), context);
     }
@@ -356,6 +379,19 @@ pub(crate) fn build_workflow_input_from_execution_request(
     }
 
     Ok(Value::Object(object))
+}
+
+pub(crate) fn parse_resume_output(
+    resume: Option<&Value>,
+) -> PyResult<Option<simple_agents_workflow::yaml_runner::YamlWorkflowRunOutput>> {
+    resume
+        .map(|value| {
+            serde_json::from_value::<simple_agents_workflow::yaml_runner::YamlWorkflowRunOutput>(
+                value.clone(),
+            )
+            .map_err(|error| PyRuntimeError::new_err(format!("invalid resume output: {error}")))
+        })
+        .transpose()
 }
 
 pub(crate) struct PythonWorkflowEventSink {

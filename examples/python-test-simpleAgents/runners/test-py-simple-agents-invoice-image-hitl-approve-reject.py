@@ -1,8 +1,4 @@
-"""Run a YAML workflow with a multimodal invoice image message.
-
-From ``examples/``: ``uv sync`` (workspace member; ``simple-agents-py`` comes from
-``examples/pyproject.toml`` → ``../crates/simple-agents-py``).
-"""
+"""Invoice image HITL example: human approves or rejects extraction."""
 
 from __future__ import annotations
 
@@ -13,8 +9,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from example_env import require_env
-from example_paths import asset, workflows
+from example_env import require_env  # type: ignore[import-not-found]  # noqa: E402
+from example_paths import asset, workflows  # type: ignore[import-not-found]  # noqa: E402
 from simple_agents_py import Client as SimpleAgentsClient
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest,
@@ -22,7 +18,7 @@ from simple_agents_py.workflow_request import (
     WorkflowRole,
 )
 
-workflow_file = workflows("email-classification", "test.yaml")
+workflow_file = workflows("invoice-hitl", "approve-reject.yaml")
 image_file = asset("test-invoice.jpeg")
 
 
@@ -35,6 +31,14 @@ def require_file(path: Path) -> Path:
     return path
 
 
+def ask_choice() -> str:
+    while True:
+        raw = input("Approve extraction? [approve/reject]: ").strip().lower()
+        if raw in {"approve", "reject"}:
+            return raw
+        print("Please type 'approve' or 'reject'.")
+
+
 def main() -> None:
     client = SimpleAgentsClient(
         require_env("WORKFLOW_PROVIDER"),
@@ -44,7 +48,7 @@ def main() -> None:
 
     b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
 
-    req = WorkflowExecutionRequest(
+    initial_request = WorkflowExecutionRequest(
         workflow_path=str(workflow_file),
         messages=[
             WorkflowMessage(
@@ -52,19 +56,34 @@ def main() -> None:
                 content=[
                     {
                         "type": "text",
-                        "text": "Invoice image. Classify and route this per workflow.",
+                        "text": "Extract structured fields from this invoice image.",
                     },
                     {
                         "type": "image_url",
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
                     },
                 ],
-            ),
+            )
         ],
     )
 
-    result = client.run_workflow(req)
-    print(json.dumps(result, indent=2))
+    paused = client.run_workflow(initial_request)
+    print("Paused output:")
+    print(json.dumps(paused, indent=2))
+
+    if paused.get("status") != "awaiting_human_input":
+        raise SystemExit("Expected workflow to pause for human input.")
+
+    decision = ask_choice()
+    resumed = client.run_workflow(
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_file),
+            resume=paused,
+            human_response=decision,
+        )
+    )
+    print("Final output:")
+    print(json.dumps(resumed, indent=2))
 
 
 if __name__ == "__main__":

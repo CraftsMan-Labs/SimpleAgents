@@ -34,12 +34,16 @@ async fn run_workflow_yaml(
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         workflow,
-        workflow_input,
-        executor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -55,12 +59,16 @@ async fn run_workflow_yaml_with_custom_worker_and_events_and_options(
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         workflow,
-        workflow_input,
-        executor,
-        custom_worker,
-        event_sink,
-        options,
-        flags,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker,
+            event_sink,
+            options,
+            execution_flags: flags,
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -74,15 +82,17 @@ async fn run_workflow_yaml_with_client_and_custom_worker_and_events_and_options(
     options: &YamlWorkflowRunOptions,
     flags: YamlWorkflowExecutionFlags,
 ) -> Result<YamlWorkflowRunOutput, YamlWorkflowRunError> {
-    dispatch_yaml_workflow_execution(
+    dispatch_yaml_workflow_execution(YamlWorkflowExecutionDispatchRequest {
         workflow,
         workflow_input,
-        YamlWorkflowExecutorBinding::Client(client),
+        executor: YamlWorkflowExecutorBinding::Client(client),
         custom_worker,
+        resume: None,
+        human_response: None,
         event_sink,
         options,
         flags,
-    )
+    })
     .await
 }
 
@@ -94,12 +104,16 @@ async fn run_workflow_yaml_file(
     let (_path, workflow) = load_workflow_yaml_file(path)?;
     execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
         &workflow,
-        workflow_input,
-        executor,
-        None,
-        None,
-        &YamlWorkflowRunOptions::default(),
-        YamlWorkflowExecutionFlags::default(),
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input,
+            executor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
     )
     .await
 }
@@ -2552,6 +2566,206 @@ async fn stream_heal_emits_node_stream_snapshot_events_with_metadata() {
     let metadata = first.metadata.as_ref().expect("snapshot metadata");
     assert!(metadata.get("confidence").is_some());
     assert!(metadata.get("is_complete").is_some());
+}
+
+#[tokio::test]
+async fn human_choice_node_pauses_and_resumes_in_same_run_api() {
+    let yaml = r#"
+id: human-choice
+entry_node: review
+nodes:
+  - id: review
+    node_type:
+      human_input:
+        input_type: choice
+        prompt: "Approve ticket?"
+        options:
+          - value: "yes"
+            label: "Approve"
+          - value: "no"
+            label: "Reject"
+  - id: finalize
+    node_type:
+      custom_worker:
+        handler: finalize
+    config:
+      payload:
+        decision: "{{ nodes.review.output }}"
+edges:
+  - from: review
+    to: finalize
+    "#;
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let worker = FixedToolWorker {
+        payload: json!({"ok": true}),
+    };
+
+    let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: Some(&worker),
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
+    )
+    .await
+    .expect("workflow should pause");
+
+    assert_eq!(paused.status, YamlWorkflowRunStatus::AwaitingHumanInput);
+    assert_eq!(paused.terminal_node, "review");
+    assert!(paused.human_request.is_some());
+
+    let resumed = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: Some(&worker),
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!("yes")),
+        },
+    )
+    .await
+    .expect("workflow should resume");
+
+    assert_eq!(resumed.status, YamlWorkflowRunStatus::Completed);
+    assert_eq!(resumed.terminal_node, "finalize");
+    assert_eq!(
+        resumed
+            .outputs
+            .get("review")
+            .and_then(|v| v.get("output"))
+            .and_then(Value::as_str),
+        Some("yes")
+    );
+}
+
+#[tokio::test]
+async fn human_form_tracks_modified_diff_on_resume() {
+    let yaml = r#"
+id: human-form
+entry_node: review_form
+nodes:
+  - id: review_form
+    node_type:
+      human_input:
+        input_type: form
+        prompt: "Review extracted fields"
+        form_schema:
+          type: object
+          properties:
+            company:
+              type: string
+            amount:
+              type: number
+          required: [company, amount]
+        form_prefill: "{{ input.extracted }}"
+    "#;
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+
+    let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({
+                "messages": [{"role": "user", "content": "start"}],
+                "extracted": {"company": "Acme", "amount": 100.0}
+            }),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
+    )
+    .await
+    .expect("workflow should pause");
+
+    let resumed = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({
+                "messages": [{"role": "user", "content": "start"}],
+                "extracted": {"company": "Acme", "amount": 100.0}
+            }),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!({"company": "Acme, Inc.", "amount": 100.0})),
+        },
+    )
+    .await
+    .expect("workflow should resume");
+
+    let modified = resumed
+        .outputs
+        .get("review_form")
+        .and_then(|v| v.get("human_input_metadata"))
+        .and_then(|m| m.get("modified"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    assert!(modified);
+}
+
+#[tokio::test]
+async fn human_text_requires_string_response() {
+    let yaml = r#"
+id: human-text
+entry_node: ask_text
+nodes:
+  - id: ask_text
+    node_type:
+      human_input:
+        input_type: text
+        prompt: "Provide reason"
+    "#;
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+
+    let paused = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: None,
+            human_response: None,
+        },
+    )
+    .await
+    .expect("workflow should pause");
+
+    let err = execute::run_workflow_yaml_with_custom_worker_and_events_and_options_impl(
+        &workflow,
+        execute::YamlWorkflowRunDispatchRequest {
+            workflow_input: &json!({"messages": [{"role": "user", "content": "start"}]}),
+            executor: &MockExecutor,
+            custom_worker: None,
+            event_sink: None,
+            options: &YamlWorkflowRunOptions::default(),
+            execution_flags: YamlWorkflowExecutionFlags::default(),
+            resume: Some(&paused),
+            human_response: Some(&json!({"not": "string"})),
+        },
+    )
+    .await
+    .expect_err("non-string text response must fail");
+
+    assert!(err.to_string().contains("must be a string"));
 }
 
 #[cfg(test)]

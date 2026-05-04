@@ -342,21 +342,14 @@ class Client:
 
     # --- Workflow APIs ---
 
-    def resume(
-        self,
-        checkpoint: Mapping[str, Any],
-        *,
-        options: Mapping[str, Any] | None = None,
-    ) -> WorkflowRunOutput: ...
-
     def run_workflow(
         self,
-        request: WorkflowExecutionRequest | Mapping[str, JSONValue],
+        request: WorkflowExecutionRequest,
     ) -> WorkflowRunOutput: ...
 
     def stream_workflow(
         self,
-        request: WorkflowExecutionRequest | Mapping[str, JSONValue],
+        request: WorkflowExecutionRequest,
         on_event: Callable[[WorkflowEvent], object] | None = None,
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...

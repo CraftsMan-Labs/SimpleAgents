@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{YamlWorkflow, YamlWorkflowRunError};
+use super::{YamlHumanInputOption, YamlHumanInputType, YamlWorkflow, YamlWorkflowRunError};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlStepTiming {
@@ -36,14 +36,42 @@ pub struct YamlLlmNodeMetrics {
     pub tokens_per_second: f64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum YamlWorkflowRunStatus {
+    #[default]
+    Completed,
+    AwaitingHumanInput,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HumanRequest {
+    pub node_id: String,
+    pub input_type: YamlHumanInputType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<YamlHumanInputOption>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_schema: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub form_data: Option<Value>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct YamlWorkflowRunOutput {
     pub workflow_id: String,
     pub entry_node: String,
     pub trace: Vec<String>,
     pub outputs: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub globals: BTreeMap<String, Value>,
     pub terminal_node: String,
     pub terminal_output: Option<Value>,
+    #[serde(default)]
+    pub status: YamlWorkflowRunStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub human_request: Option<HumanRequest>,
     pub step_timings: Vec<YamlStepTiming>,
     pub llm_node_metrics: BTreeMap<String, YamlLlmNodeMetrics>,
     pub llm_node_models: BTreeMap<String, String>,
@@ -211,6 +239,8 @@ pub struct YamlWorkflowExecutionRequest<'a> {
     pub workflow_input: &'a Value,
     pub executor: YamlWorkflowExecutorBinding<'a>,
     pub custom_worker: Option<&'a dyn super::YamlWorkflowCustomWorkerExecutor>,
+    pub resume: Option<&'a YamlWorkflowRunOutput>,
+    pub human_response: Option<&'a Value>,
     pub options: &'a YamlWorkflowRunOptions,
     pub flags: YamlWorkflowExecutionFlags,
 }

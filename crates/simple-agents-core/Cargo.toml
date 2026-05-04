@@ -18,7 +18,7 @@ futures-core = "0.3"
 tokio.workspace = true
 
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.4.0" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.0" }
 
 [dev-dependencies]
 async-trait.workspace = true

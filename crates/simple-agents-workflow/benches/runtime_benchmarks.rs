@@ -142,6 +142,8 @@ async fn run_inline(
         workflow_input: input,
         executor: YamlWorkflowExecutorBinding::Llm(executor),
         custom_worker: None,
+        resume: None,
+        human_response: None,
         options,
         flags: YamlWorkflowExecutionFlags::default(),
     })

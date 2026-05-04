@@ -23,7 +23,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from simple_agents_py import Client
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionFlags,
     WorkflowExecutionRequest,
@@ -105,7 +104,7 @@ def main() -> None:
     )
 
     result = client.stream_workflow(
-        workflow_execution_request_to_mapping(req),
+        req,
         on_event=default_on_event,
     )
 

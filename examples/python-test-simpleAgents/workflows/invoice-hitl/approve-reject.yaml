@@ -1,0 +1,95 @@
+id: invoice-hitl-approve-reject
+version: 1.0.0
+entry_node: extract_invoice
+
+nodes:
+  - id: extract_invoice
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          vendor_name:
+            type: string
+          invoice_number:
+            type: string
+          total_amount:
+            type: number
+          currency:
+            type: string
+          due_date:
+            type: string
+        required: [vendor_name, invoice_number, total_amount, currency, due_date]
+        additionalProperties: false
+      prompt: |
+        Extract invoice fields from the latest user-provided content.
+        Return JSON only:
+        {
+          "vendor_name": "string",
+          "invoice_number": "string",
+          "total_amount": 0,
+          "currency": "string",
+          "due_date": "YYYY-MM-DD or unknown"
+        }
+
+        Rules:
+        - Do not invent values.
+        - Use "unknown" for missing string fields.
+        - Use 0 for missing numeric amount.
+
+  - id: review_extraction
+    node_type:
+      human_input:
+        input_type: choice
+        prompt: |
+          Review extracted invoice:
+          vendor={{ nodes.extract_invoice.output.vendor_name }},
+          invoice={{ nodes.extract_invoice.output.invoice_number }},
+          total={{ nodes.extract_invoice.output.total_amount }} {{ nodes.extract_invoice.output.currency }}.
+          Approve or reject this extraction?
+        options:
+          - value: approve
+            label: Approve
+          - value: reject
+            label: Reject
+
+  - id: route_review
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.review_extraction.output == "approve"'
+            target: save_approved_review
+        default: save_rejected_review
+
+  - id: save_approved_review
+    node_type:
+      custom_worker:
+        handler: save_invoice_review
+        handler_file: handlers.py
+    config:
+      payload:
+        review_status: approved
+        reviewer_decision: "{{ nodes.review_extraction.output }}"
+        extracted_invoice: "{{ nodes.extract_invoice.output }}"
+
+  - id: save_rejected_review
+    node_type:
+      custom_worker:
+        handler: save_invoice_review
+        handler_file: handlers.py
+    config:
+      payload:
+        review_status: rejected
+        reviewer_decision: "{{ nodes.review_extraction.output }}"
+        extracted_invoice: "{{ nodes.extract_invoice.output }}"
+
+edges:
+  - from: extract_invoice
+    to: review_extraction
+  - from: review_extraction
+    to: route_review
