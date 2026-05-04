@@ -53,6 +53,13 @@ pub enum CoercionFlag {
 
     /// Removed BOM (byte order mark)
     RemovedBom,
+
+    /// A required field was defaulted to null due to truncated JSON (lenient mode).
+    /// In strict mode this would be an error instead.
+    RequiredFieldDefaultedToNull {
+        /// Field name that was set to null
+        field: String,
+    },
 }
 
 impl CoercionFlag {
@@ -90,6 +97,12 @@ impl CoercionFlag {
             Self::FixedUnquotedKeys => "Fixed unquoted object keys".to_string(),
             Self::FixedControlCharacters => "Fixed control characters".to_string(),
             Self::RemovedBom => "Removed byte order mark (BOM)".to_string(),
+            Self::RequiredFieldDefaultedToNull { field } => {
+                format!(
+                    "Required field '{}' defaulted to null due to truncated JSON",
+                    field
+                )
+            }
         }
     }
 
@@ -101,6 +114,7 @@ impl CoercionFlag {
                 | Self::UsedDefaultValue { .. }
                 | Self::TruncatedJson
                 | Self::FuzzyFieldMatch { .. }
+                | Self::RequiredFieldDefaultedToNull { .. }
         )
     }
 }

@@ -24,17 +24,18 @@ pub enum SimpleAgentsError {
     #[error("Configuration error: {0}")]
     Config(String),
 
+    /// Healing is disabled for this client.
+    ///
+    /// Returned when a caller requests `HealedJson` or `CoercedSchema` mode
+    /// but the [`SimpleAgentsClient`] was constructed with healing turned off.
+    /// Callers can match on this variant to distinguish "healing disabled"
+    /// from other [`Config`](Self::Config) issues.
+    #[error("Healing is disabled for this client")]
+    HealingDisabled,
+
     /// Validation error
     #[error("Validation error: {0}")]
     Validation(#[from] ValidationError),
-
-    /// Cache error
-    #[error("Cache error: {0}")]
-    Cache(String),
-
-    /// Routing error
-    #[error("Routing error: {0}")]
-    Routing(String),
 
     /// Serialization error
     #[error("Serialization error: {0}")]
@@ -182,6 +183,13 @@ pub enum HealingError {
     NoMatchingVariant {
         /// Value that didn't match any variant
         value: serde_json::Value,
+    },
+
+    /// Required field missing due to truncated JSON (strict mode)
+    #[error("Truncated JSON is missing required field '{field_name}' — refusing to inject null in strict mode")]
+    TruncatedRequiredField {
+        /// Name of the required field that would have been defaulted to null
+        field_name: String,
     },
 }
 
