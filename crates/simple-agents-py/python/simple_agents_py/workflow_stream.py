@@ -21,8 +21,8 @@ supported:
   ``node_stream_delta``; when ``False``, rely on merged ``node_stream_delta`` only.
 
 **Requests:** Pass a :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`
-(needs ``pip install simple-agents-py[pydantic]``) or any ``mapping``; see
-:func:`workflow_payload.workflow_execution_request_to_mapping`.
+(needs ``pip install simple-agents-py[pydantic]``) directly to
+``Client.run_workflow`` / ``Client.stream_workflow`` — plain dicts are rejected.
 
 **Explicit defaults (DX):** Use :func:`default_workflow_execution_bools` or
 :func:`merge_workflow_execution` so ``execution`` always contains every flag value that
@@ -36,7 +36,7 @@ import json
 import sys
 from typing import Any, Callable, Literal, Mapping
 
-from .workflow_payload import workflow_execution_request_to_mapping
+from .workflow_request import WorkflowExecutionFlags, WorkflowExecutionRequest
 
 StreamDisplayMode = Literal["off", "merged", "split"]
 
@@ -246,7 +246,7 @@ def workflow_event_callback(hooks: Any) -> Callable[[WorkflowStreamEvent], Any]:
 
 def stream_workflow(
     client: Any,
-    request: Any,
+    request: WorkflowExecutionRequest,
     hooks: Any | None = None,
     *,
     on_event: Callable[[WorkflowStreamEvent], Any] | None = None,
@@ -255,8 +255,7 @@ def stream_workflow(
 ) -> Any:
     """Stream a workflow with optional structured *hooks*, *on_event*, or terminal *stream_display*.
 
-    *request* may be a mapping or a Pydantic
-    :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`.
+    *request* must be a :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`.
 
     Pass **only one** of *hooks*, *on_event*, or a non-off *stream_display*. If all are
     omitted (or *stream_display* is ``\"off\"``), uses ``Client.stream_workflow`` without a
@@ -271,7 +270,6 @@ def stream_workflow(
     :func:`default_workflow_execution_bools` so every flag is present in the wire
     mapping (better logs and no “silent” defaults).
     """
-    payload = workflow_execution_request_to_mapping(request)
     display = stream_display or "off"
     if display not in ("off", "merged", "split"):
         raise ValueError('stream_display must be "off", "merged", or "split"')
@@ -283,17 +281,21 @@ def stream_workflow(
             )
 
     if merge_execution_defaults:
-        ex = payload.get("execution")
-        if isinstance(ex, Mapping):
-            payload["execution"] = merge_workflow_execution(ex)
+        current_exec = request.execution
+        if current_exec is not None:
+            exec_dict = current_exec.model_dump(mode="json", exclude_none=True)
+            merged = merge_workflow_execution(exec_dict)
+            if display == "split":
+                merged["split_stream_deltas"] = True
+            request = request.model_copy(
+                update={"execution": WorkflowExecutionFlags(**merged)}
+            )
         elif display == "split":
-            payload["execution"] = merge_workflow_execution(None)
-
-    if display == "split" and merge_execution_defaults:
-        ex2 = payload.get("execution")
-        if isinstance(ex2, dict):
-            ex2["split_stream_deltas"] = True
-            payload["execution"] = ex2
+            merged = merge_workflow_execution(None)
+            merged["split_stream_deltas"] = True
+            request = request.model_copy(
+                update={"execution": WorkflowExecutionFlags(**merged)}
+            )
 
     if hooks is not None and on_event is not None:
         raise ValueError("pass only one of hooks or on_event")
@@ -308,5 +310,5 @@ def stream_workflow(
         cb = make_terminal_stream_printer("split")
     else:
         cb = None
-    return client.stream_workflow(payload, on_event=cb)
+    return client.stream_workflow(request, on_event=cb)
 

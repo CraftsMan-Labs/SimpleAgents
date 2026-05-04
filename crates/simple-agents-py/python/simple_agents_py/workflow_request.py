@@ -179,11 +179,14 @@ class WorkflowExecutionRequest(BaseModel):
         return self
 
     def to_client_payload(self, *, merge_execution_defaults: bool = False) -> dict[str, Any]:
-        """Same mapping as :func:`workflow_payload.workflow_execution_request_to_mapping`.
+        """Serialise this request to a JSON-safe dict (e.g. for logging or caching).
 
         When *merge_execution_defaults* is True, ``execution`` is merged with
         :func:`simple_agents_py.workflow_stream.merge_workflow_execution` so every
-        boolean flag is explicit on the wire.
+        boolean flag is explicit in the output dict.
+
+        Note: pass the :class:`WorkflowExecutionRequest` directly to
+        ``Client.run_workflow`` / ``Client.stream_workflow`` — no conversion needed.
         """
         data = self.model_dump(mode="json", exclude_none=True)
         if merge_execution_defaults and isinstance(data.get("execution"), dict):

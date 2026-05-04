@@ -344,12 +344,12 @@ class Client:
 
     def run_workflow(
         self,
-        request: WorkflowExecutionRequest | Mapping[str, JSONValue],
+        request: WorkflowExecutionRequest,
     ) -> WorkflowRunOutput: ...
 
     def stream_workflow(
         self,
-        request: WorkflowExecutionRequest | Mapping[str, JSONValue],
+        request: WorkflowExecutionRequest,
         on_event: Callable[[WorkflowEvent], object] | None = None,
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...

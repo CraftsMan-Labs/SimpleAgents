@@ -6,6 +6,13 @@ from typing import TYPE_CHECKING, Tuple
 
 import pytest  # type: ignore[reportMissingImports]
 from simple_agents_py import ResponseWithMetadata
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+    WorkflowRunOptions,
+    WorkflowTelemetryConfig,
+)
 
 from repo_dotenv import load_root_dotenv_into
 
@@ -143,11 +150,13 @@ nodes:
         events.append(event)
 
     result = client.stream_workflow(
-        {
-            "workflow_path": str(workflow_path),
-            "messages": [{"role": "user", "content": "Hi"}],
-            "workflow_options": {"telemetry": {"nerdstats": True}},
-        },
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_path),
+            messages=[WorkflowMessage(role=WorkflowRole.USER, content="Hi")],
+            workflow_options=WorkflowRunOptions(
+                telemetry=WorkflowTelemetryConfig(nerdstats=True),
+            ),
+        ),
         on_event=on_event,
     )
 

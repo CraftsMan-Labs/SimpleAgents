@@ -1,4 +1,4 @@
-use pyo3::exceptions::PyRuntimeError;
+use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use serde_json::Map;
 use serde_json::Value;
@@ -185,18 +185,19 @@ const fn default_true() -> bool {
 pub(crate) fn parse_workflow_execution_request(
     value: &Bound<'_, PyAny>,
 ) -> PyResult<PythonWorkflowExecutionRequest> {
-    let raw: Value = if value.hasattr("model_dump")? {
+    if !value.hasattr("model_dump")? {
+        return Err(PyTypeError::new_err(
+            "run_workflow / stream_workflow only accept WorkflowExecutionRequest \
+             (simple_agents_py.workflow_request.WorkflowExecutionRequest). \
+             Plain dicts are no longer accepted.",
+        ));
+    }
+    let raw: Value = {
         let kwargs = pyo3::types::PyDict::new_bound(value.py());
         kwargs.set_item("mode", "json")?;
         kwargs.set_item("exclude_none", true)?;
         let dumped = value.call_method("model_dump", (), Some(&kwargs))?;
         pythonize::depythonize(&dumped).map_err(|error| {
-            PyRuntimeError::new_err(format!(
-                "invalid workflow execution request: {error}. expected keys: workflow_path, messages, context?, media?, input?, resume?, human_response?, execution?, workflow_options?"
-            ))
-        })?
-    } else {
-        pythonize::depythonize(value).map_err(|error| {
             PyRuntimeError::new_err(format!(
                 "invalid workflow execution request: {error}. expected keys: workflow_path, messages, context?, media?, input?, resume?, human_response?, execution?, workflow_options?"
             ))
