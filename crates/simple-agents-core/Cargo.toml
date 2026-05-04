@@ -16,6 +16,7 @@ serde_json.workspace = true
 tracing = "0.1"
 futures-core = "0.3"
 tokio.workspace = true
+rand.workspace = true
 
 simple-agent-type = { workspace = true }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.0" }
