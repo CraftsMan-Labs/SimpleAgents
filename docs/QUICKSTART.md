@@ -30,13 +30,13 @@ export OPENAI_API_KEY="sk-your-key-here"
 ```rust
 use simple_agent_type::prelude::*;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClientBuilder};
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::OpenAiCompatProvider;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let api_key = ApiKey::new(std::env::var("OPENAI_API_KEY")?)?;
-    let provider = Arc::new(OpenAIProvider::new(api_key)?);
+    let provider = Arc::new(OpenAiCompatProvider::new(api_key)?);
 
     let client = SimpleAgentsClientBuilder::new()
         .with_provider(provider)

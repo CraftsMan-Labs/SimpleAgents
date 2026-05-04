@@ -28,13 +28,13 @@ Minimum completion flow:
 ```rust
 use simple_agent_type::prelude::*;
 use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClientBuilder};
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::OpenAiCompatProvider;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let api_key = ApiKey::new(std::env::var("OPENAI_API_KEY")?)?;
-    let provider = Arc::new(OpenAIProvider::new(api_key)?);
+    let provider = Arc::new(OpenAiCompatProvider::new(api_key)?);
 
     let client = SimpleAgentsClientBuilder::new()
         .with_provider(provider)
@@ -63,14 +63,17 @@ Use multiple providers with an explicit routing strategy:
 ```rust
 use simple_agent_type::prelude::*;
 use simple_agents_core::{RoutingMode, SimpleAgentsClientBuilder};
-use simple_agents_providers::{anthropic::AnthropicProvider, openai::OpenAIProvider};
+use simple_agents_providers::OpenAiCompatProvider;
 use std::sync::Arc;
 
-let openai = Arc::new(OpenAIProvider::new(ApiKey::new("sk-...")?)?);
-let anthropic = Arc::new(AnthropicProvider::new(ApiKey::new("sk-...")?)?);
+let openai = Arc::new(OpenAiCompatProvider::new(ApiKey::new("sk-...")?)?);
+let azure = Arc::new(OpenAiCompatProvider::with_base_url(
+    ApiKey::new("sk-...")?,
+    "https://my-azure.openai.azure.com/v1",
+)?);
 
 let client = SimpleAgentsClientBuilder::new()
-    .with_providers(vec![openai, anthropic])
+    .with_providers(vec![openai, azure])
     .with_routing_mode(RoutingMode::RoundRobin)
     .build()?;
 ```
@@ -163,9 +166,9 @@ Use provider-specific execution only when you intentionally bypass unified-clien
 
 ```rust
 use simple_agent_type::prelude::*;
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::OpenAiCompatProvider;
 
-let provider = OpenAIProvider::new(ApiKey::new("sk-...")?)?;
+let provider = OpenAiCompatProvider::new(ApiKey::new("sk-...")?)?;
 let request = CompletionRequest::builder()
     .model("gpt-4")
     .message(Message::user("Hello"))
