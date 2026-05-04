@@ -19,7 +19,7 @@ use simple_agents_providers::schema_converter;
 use simple_agents_workflow::yaml_runner::workflow_execution;
 use simple_agents_workflow::yaml_runner::{
     YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest, YamlWorkflowExecutorBinding,
-    YamlWorkflowSource,
+    YamlWorkflowRunOutput as RustWorkflowRunOutput, YamlWorkflowSource,
 };
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -40,7 +40,7 @@ use provider_helpers::build_provider_from_name;
 use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::YamlWorkflowRunOptions;
 use workflow_helpers::{
-    attach_workflow_events, build_workflow_input_from_execution_request, parse_resume_output,
+    build_workflow_input_from_execution_request, parse_resume_output,
     parse_workflow_execution_request, workflow_execution_flags, workflow_execution_options,
     workflow_root_path, CombinedWorkflowEventSink, PythonCustomWorkerExecutor,
     PythonWorkflowEventSink, RecordingWorkflowEventSink,
@@ -479,13 +479,17 @@ impl PyStructuredStreamIterator {
                 Err(_) => (serde_json::Value::String(slf.buffer.clone()), 0.0, false),
             }
         };
-        let coerced_value = if let Some(schema) = slf.schema.as_ref() {
-            CoercionEngine::new()
-                .coerce(&json_val, schema)
-                .ok()
-                .map(|coerced| coerced.value)
+        let (coerced_value, coercion_flags) = if let Some(schema) = slf.schema.as_ref() {
+            match CoercionEngine::new().coerce(&json_val, schema) {
+                Ok(coerced) => {
+                    let flags: Vec<String> =
+                        coerced.flags.iter().map(|f| f.description()).collect();
+                    (Some(coerced.value), flags)
+                }
+                Err(_) => (None, Vec::new()),
+            }
         } else {
-            None
+            (None, Vec::new())
         };
         let py_value = serde_json_to_py(py, &json_val)?;
         let py_coerced_value = match coerced_value.as_ref() {
@@ -505,7 +509,7 @@ impl PyStructuredStreamIterator {
             } else {
                 None
             },
-            coercion_flags: Vec::new(),
+            coercion_flags,
         };
         Ok(Some(Py::new(py, event)?.into_py(py)))
     }
@@ -615,6 +619,12 @@ impl ResponseWithMetadata {
     }
 }
 
+/// Python-facing LLM client wrapping [`SimpleAgentsClient`].
+///
+/// All async work is serialized through a single Tokio runtime behind a
+/// [`Mutex`]. This means concurrent calls from Python threads will block on
+/// the mutex and execute one at a time. For true concurrent workloads,
+/// create multiple `Client` instances (each owns its own runtime).
 #[pyclass]
 pub(crate) struct Client {
     runtime: Arc<Mutex<Runtime>>,
@@ -944,7 +954,7 @@ impl Client {
 
     /// Run a YAML workflow (blocking).
     #[pyo3(signature = (request))]
-    fn run_workflow(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    fn run_workflow(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyWorkflowRunOutput> {
         let request = parse_workflow_execution_request(request)?;
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
@@ -974,21 +984,26 @@ impl Client {
             .allow_threads(|| runtime.block_on(workflow_execution::run(execution_request)))
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
 
-        let value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
+        Ok(PyWorkflowRunOutput::from_rust(output, None))
     }
 
     /// Run an output-shaped eval dataset against a YAML workflow using native subset matching.
     #[pyo3(signature = (request))]
     fn run_eval_suite(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let raw: serde_json::Value = pythonize::depythonize(request).map_err(|error| {
-            PyRuntimeError::new_err(format!(
-                "invalid eval suite request: {error}. expected keys: workflow_path, dataset_path"
-            ))
-        })?;
+        let depythonize_target = if request.hasattr("model_dump")? {
+            let kwargs = pyo3::types::PyDict::new_bound(py);
+            kwargs.set_item("mode", "json")?;
+            kwargs.set_item("exclude_none", true)?;
+            request.call_method("model_dump", (), Some(&kwargs))?
+        } else {
+            request.clone()
+        };
+        let raw: serde_json::Value =
+            pythonize::depythonize(&depythonize_target).map_err(|error| {
+                PyRuntimeError::new_err(format!(
+                    "invalid eval suite request: {error}. expected keys: workflow_path, dataset_path"
+                ))
+            })?;
         let object = raw.as_object().ok_or_else(|| {
             PyRuntimeError::new_err("eval suite request must be a dict/object".to_string())
         })?;
@@ -1084,7 +1099,7 @@ impl Client {
         request: &Bound<'_, PyAny>,
         on_event: Option<Py<PyAny>>,
         include_events_in_output: bool,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<PyWorkflowRunOutput> {
         let request = parse_workflow_execution_request(request)?;
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
@@ -1101,7 +1116,7 @@ impl Client {
 
         if let Some(callback) = on_event {
             flags.workflow_streaming = true;
-            let output = if include_events_in_output {
+            if include_events_in_output {
                 let event_sink = CombinedWorkflowEventSink::new(true, Some(callback));
                 let execution_request = YamlWorkflowExecutionRequest {
                     source: YamlWorkflowSource::File(workflow_path_buf.as_path()),
@@ -1118,11 +1133,8 @@ impl Client {
                         runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
                     })
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                let mut value = serde_json::to_value(output).map_err(|error| {
-                    PyRuntimeError::new_err(format!("serialization failed: {error}"))
-                })?;
-                event_sink.attach_to_output(&mut value)?;
-                value
+                let events_value = event_sink.events_value()?;
+                return Ok(PyWorkflowRunOutput::from_rust(output, Some(events_value)));
             } else {
                 let event_sink = PythonWorkflowEventSink {
                     callback: Some(callback),
@@ -1143,13 +1155,8 @@ impl Client {
                         runtime.block_on(workflow_execution::stream(execution_request, &event_sink))
                     })
                     .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-                serde_json::to_value(output).map_err(|error| {
-                    PyRuntimeError::new_err(format!("serialization failed: {error}"))
-                })?
-            };
-            let py_value = pythonize::pythonize(py, &output)
-                .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-            return Ok(py_value.into_py(py));
+                return Ok(PyWorkflowRunOutput::from_rust(output, None));
+            }
         }
 
         let recording_sink = RecordingWorkflowEventSink::new();
@@ -1171,12 +1178,8 @@ impl Client {
                 ))
             })
             .map_err(|error| PyRuntimeError::new_err(error.to_string()))?;
-        let mut value = serde_json::to_value(output)
-            .map_err(|error| PyRuntimeError::new_err(format!("serialization failed: {error}")))?;
-        attach_workflow_events(&mut value, &recording_sink)?;
-        let py_value = pythonize::pythonize(py, &value)
-            .map_err(|error| PyRuntimeError::new_err(format!("pythonize failed: {error}")))?;
-        Ok(py_value.into_py(py))
+        let events_value = recording_sink.events_value()?;
+        Ok(PyWorkflowRunOutput::from_rust(output, Some(events_value)))
     }
 }
 
@@ -1365,6 +1368,284 @@ impl PyStructuredEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Typed WorkflowRunOutput
+// ---------------------------------------------------------------------------
+
+/// Workflow run status enum constants.
+#[pyclass(frozen)]
+#[derive(Clone)]
+pub struct WorkflowRunStatus;
+
+#[pymethods]
+impl WorkflowRunStatus {
+    #[classattr]
+    const COMPLETED: &'static str = "completed";
+    #[classattr]
+    const AWAITING_HUMAN_INPUT: &'static str = "awaiting_human_input";
+
+    fn __repr__(&self) -> &'static str {
+        "WorkflowRunStatus"
+    }
+}
+
+/// Typed human input request from a workflow.
+#[pyclass(frozen)]
+#[derive(Clone)]
+pub struct PyHumanRequest {
+    inner: simple_agents_workflow::yaml_runner::HumanRequest,
+}
+
+#[pymethods]
+impl PyHumanRequest {
+    #[getter]
+    fn node_id(&self) -> &str {
+        &self.inner.node_id
+    }
+
+    #[getter]
+    fn input_type(&self) -> &str {
+        match self.inner.input_type {
+            simple_agents_workflow::yaml_runner::YamlHumanInputType::Choice => "choice",
+            simple_agents_workflow::yaml_runner::YamlHumanInputType::Text => "text",
+            simple_agents_workflow::yaml_runner::YamlHumanInputType::Form => "form",
+        }
+    }
+
+    #[getter]
+    fn prompt(&self) -> Option<&str> {
+        self.inner.prompt.as_deref()
+    }
+
+    #[getter]
+    fn options(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.options {
+            Some(opts) => {
+                let value = serde_json::to_value(opts)
+                    .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+                serde_json_to_py(py, &value)
+            }
+            None => Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn form_schema(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.form_schema {
+            Some(schema) => serde_json_to_py(py, schema),
+            None => Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn form_data(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.form_data {
+            Some(data) => serde_json_to_py(py, data),
+            None => Ok(py.None()),
+        }
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "HumanRequest(node_id={:?}, input_type={:?})",
+            self.inner.node_id,
+            self.input_type()
+        )
+    }
+}
+
+/// Typed workflow run output with enum status and structured fields.
+#[pyclass(frozen)]
+#[derive(Clone)]
+pub struct PyWorkflowRunOutput {
+    inner: RustWorkflowRunOutput,
+    events: Option<serde_json::Value>,
+}
+
+#[pymethods]
+impl PyWorkflowRunOutput {
+    #[getter]
+    fn status(&self) -> &str {
+        match self.inner.status {
+            simple_agents_workflow::yaml_runner::YamlWorkflowRunStatus::Completed => "completed",
+            simple_agents_workflow::yaml_runner::YamlWorkflowRunStatus::AwaitingHumanInput => {
+                "awaiting_human_input"
+            }
+        }
+    }
+
+    #[getter]
+    fn human_request(&self) -> Option<PyHumanRequest> {
+        self.inner
+            .human_request
+            .as_ref()
+            .map(|hr| PyHumanRequest { inner: hr.clone() })
+    }
+
+    #[getter]
+    fn workflow_id(&self) -> &str {
+        &self.inner.workflow_id
+    }
+
+    #[getter]
+    fn entry_node(&self) -> &str {
+        &self.inner.entry_node
+    }
+
+    #[getter]
+    fn trace(&self) -> Vec<String> {
+        self.inner.trace.clone()
+    }
+
+    #[getter]
+    fn outputs(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.outputs)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn node_outputs(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.outputs)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn globals(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.globals)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn terminal_node(&self) -> &str {
+        &self.inner.terminal_node
+    }
+
+    #[getter]
+    fn terminal_output(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.terminal_output {
+            Some(output) => serde_json_to_py(py, output),
+            None => Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn output(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.terminal_output {
+            Some(output) => serde_json_to_py(py, output),
+            None => Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn step_timings(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.step_timings)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn llm_node_metrics(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.llm_node_metrics)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn llm_node_models(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let value = serde_json::to_value(&self.inner.llm_node_models)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        serde_json_to_py(py, &value)
+    }
+
+    #[getter]
+    fn total_elapsed_ms(&self) -> u128 {
+        self.inner.total_elapsed_ms
+    }
+
+    #[getter]
+    fn ttft_ms(&self) -> Option<u128> {
+        self.inner.ttft_ms
+    }
+
+    #[getter]
+    fn total_input_tokens(&self) -> u64 {
+        self.inner.total_input_tokens
+    }
+
+    #[getter]
+    fn total_output_tokens(&self) -> u64 {
+        self.inner.total_output_tokens
+    }
+
+    #[getter]
+    fn total_tokens(&self) -> u64 {
+        self.inner.total_tokens
+    }
+
+    #[getter]
+    fn total_reasoning_tokens(&self) -> Option<u64> {
+        self.inner.total_reasoning_tokens
+    }
+
+    #[getter]
+    fn tokens_per_second(&self) -> f64 {
+        self.inner.tokens_per_second
+    }
+
+    #[getter]
+    fn trace_id(&self) -> Option<&str> {
+        self.inner.trace_id.as_deref()
+    }
+
+    #[getter]
+    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.inner.metadata {
+            Some(meta) => serde_json_to_py(py, meta),
+            None => Ok(py.None()),
+        }
+    }
+
+    #[getter]
+    fn events(&self, py: Python<'_>) -> PyResult<PyObject> {
+        match &self.events {
+            Some(events) => serde_json_to_py(py, events),
+            None => Ok(py.None()),
+        }
+    }
+
+    fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
+        let mut value = serde_json::to_value(&self.inner)
+            .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
+        if let (Some(events), serde_json::Value::Object(ref mut map)) =
+            (&self.events, &mut value)
+        {
+            map.insert("events".to_string(), events.clone());
+        }
+        serde_json_to_py(py, &value)
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "WorkflowRunOutput(status={:?}, workflow_id={:?}, terminal_node={:?})",
+            self.status(),
+            self.inner.workflow_id,
+            self.inner.terminal_node,
+        )
+    }
+}
+
+impl PyWorkflowRunOutput {
+    fn from_rust(output: RustWorkflowRunOutput, events: Option<serde_json::Value>) -> Self {
+        Self {
+            inner: output,
+            events,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // StreamingParser
 // ---------------------------------------------------------------------------
 
@@ -1549,6 +1830,12 @@ fn simple_agents_py(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<(
     module.add_class::<HealedJsonResult>()?;
     module.add_class::<PyStructuredEvent>()?;
     module.add_class::<PyStreamingParser>()?;
+    // Workflow output types
+    module.add_class::<WorkflowRunStatus>()?;
+    module.add_class::<PyHumanRequest>()?;
+    module.add_class::<PyWorkflowRunOutput>()?;
+    module.add("HumanRequest", module.getattr("PyHumanRequest")?)?;
+    module.add("WorkflowRunOutput", module.getattr("PyWorkflowRunOutput")?)?;
     // Healing functions
     module.add_function(wrap_pyfunction!(heal_json, module)?)?;
     module.add_function(wrap_pyfunction!(coerce_to_schema, module)?)?;
