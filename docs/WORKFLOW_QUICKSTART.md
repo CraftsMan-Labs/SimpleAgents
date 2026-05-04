@@ -88,7 +88,12 @@ req = WorkflowExecutionRequest(
 )
 
 result = client.run_workflow(req)
-print(json.dumps(result, indent=2))
+
+# result is a typed WorkflowRunOutput with .status enum
+if result.status == "completed":
+    print(json.dumps(result.output, indent=2))
+elif result.status == "awaiting_human_input":
+    print("Workflow paused:", result.human_request)
 ```
 
 ### Python -- Streaming
@@ -185,7 +190,14 @@ const result = await client.runWorkflow(
   { messages: [{ role: "user", content: "What is 2+2?" }] },
 );
 
-console.log(JSON.stringify(result, null, 2));
+// result is a typed WorkflowRunOutput with a .status enum
+import { WorkflowRunStatus } from "simple-agents-node";
+
+if (result.status === WorkflowRunStatus.Completed) {
+  console.log(JSON.stringify(result.output, null, 2));
+} else if (result.status === WorkflowRunStatus.AwaitingHumanInput) {
+  console.log("Workflow paused:", result.humanRequest);
+}
 ```
 
 ### TypeScript / Bun -- Streaming
