@@ -531,12 +531,25 @@ impl OpenAiCompatProvider {
             ))
         })?;
 
-        // Extract the content from the response
-        let content = resp.body["choices"][0]["message"]["content"]
+        let choices = resp.body["choices"]
+            .as_array()
+            .ok_or_else(|| {
+                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                    "Response missing 'choices' array".to_string(),
+                ))
+            })?;
+
+        let first_choice = choices.first().ok_or_else(|| {
+            SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                "Response 'choices' array is empty".to_string(),
+            ))
+        })?;
+
+        let content = first_choice["message"]["content"]
             .as_str()
             .ok_or_else(|| {
                 SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No content field in response".to_string(),
+                    "No content field in response choices[0]".to_string(),
                 ))
             })?;
 
@@ -613,9 +626,12 @@ impl OpenAiCompatProvider {
         &self,
         mut req: ProviderRequest,
     ) -> Result<Box<dyn futures_core::Stream<Item = Result<CompletionChunk>> + Send + Unpin>> {
+        // Intentionally discard the healing schema: streaming and healing are
+        // mutually exclusive by design. Healing requires the complete response
+        // to validate against the schema, which is unavailable during streaming
+        // where chunks arrive incrementally.
         let _ = Self::take_healing_schema(&mut req.body);
 
-        // Build headers
         let headers = crate::utils::build_headers(req.headers)
             .map_err(|e| SimpleAgentsError::Config(format!("Invalid headers: {}", e)))?;
 
