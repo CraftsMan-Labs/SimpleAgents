@@ -16,6 +16,36 @@ function wrapCustomWorkerDispatch(dispatch) {
   };
 }
 
+/** Args after workflowExecution / stream's execution slot: canonical [resume, humanResponse?, customWorkerDispatch]; legacy [customWorkerDispatch] when a single fn. */
+function parseWorkflowContinuationTail(tail) {
+  let resume;
+  let humanResponse;
+  let customWorkerDispatch;
+  const n = tail.length;
+  if (n === 0) {
+    // leave undefined
+  } else if (n === 1) {
+    if (typeof tail[0] === "function") {
+      customWorkerDispatch = tail[0];
+    } else {
+      resume = tail[0];
+    }
+  } else if (n === 2) {
+    if (typeof tail[1] === "function") {
+      resume = tail[0];
+      customWorkerDispatch = tail[1];
+    } else {
+      resume = tail[0];
+      humanResponse = tail[1];
+    }
+  } else {
+    resume = tail[0];
+    humanResponse = tail[1];
+    customWorkerDispatch = tail[2];
+  }
+  return { resume, humanResponse, customWorkerDispatch };
+}
+
 function withWrappedCustomWorker(opts) {
   if (!opts || typeof opts !== "object" || typeof opts.customWorker !== "function") {
     return opts;
@@ -130,31 +160,26 @@ if (clientProto) {
     return nativeResume.call(this, checkpoint, withWrappedCustomWorker(opts));
   };
 
-  clientProto.runWorkflow = function runWorkflow(
-    workflowPath,
-    workflowInput,
-    workflowOptions,
-    workflowExecution,
-    customWorkerDispatch,
-  ) {
+  clientProto.runWorkflow = function runWorkflow(workflowPath, workflowInput, workflowOptions, workflowExecution) {
+    const { resume, humanResponse, customWorkerDispatch } = parseWorkflowContinuationTail(
+      Array.prototype.slice.call(arguments, 4),
+    );
     return nativeRunWorkflow.call(
       this,
       workflowPath,
       workflowInput,
       workflowOptions,
       workflowExecution,
+      resume,
+      humanResponse,
       wrapCustomWorkerDispatch(customWorkerDispatch),
     );
   };
 
-  clientProto.streamWorkflow = function streamWorkflow(
-    workflowPath,
-    workflowInput,
-    onEvent,
-    workflowOptions,
-    workflowExecution,
-    customWorkerDispatch,
-  ) {
+  clientProto.streamWorkflow = function streamWorkflow(workflowPath, workflowInput, onEvent, workflowOptions, workflowExecution) {
+    const { resume, humanResponse, customWorkerDispatch } = parseWorkflowContinuationTail(
+      Array.prototype.slice.call(arguments, 5),
+    );
     return nativeStreamWorkflow.call(
       this,
       workflowPath,
@@ -162,6 +187,8 @@ if (clientProto) {
       onEvent,
       workflowOptions,
       workflowExecution,
+      resume,
+      humanResponse,
       wrapCustomWorkerDispatch(customWorkerDispatch),
     );
   };
