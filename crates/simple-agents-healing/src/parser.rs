@@ -48,6 +48,12 @@ pub struct ParserConfig {
     pub allow_lenient_parsing: bool,
     /// Minimum confidence threshold (0.0-1.0)
     pub min_confidence: f32,
+    /// Maximum input size in bytes. Inputs exceeding this limit are rejected
+    /// before any parsing occurs. Default: 10 MiB.
+    pub max_input_bytes: usize,
+    /// Maximum nesting depth for objects/arrays. Protects against stack
+    /// overflow from deeply-nested payloads. Default: 64.
+    pub max_depth: usize,
 }
 
 impl Default for ParserConfig {
@@ -61,6 +67,8 @@ impl Default for ParserConfig {
             remove_bom: true,
             allow_lenient_parsing: true,
             min_confidence: 0.5,
+            max_input_bytes: 10_485_760, // 10 MiB
+            max_depth: 64,
         }
     }
 }
@@ -131,6 +139,18 @@ impl JsonishParser {
     /// assert!(!result.flags.is_empty());
     /// ```
     pub fn parse(&self, input: &str) -> Result<ParserResult> {
+        if input.len() > self.config.max_input_bytes {
+            return Err(HealingError::ParseFailed {
+                error_message: format!(
+                    "Input size {} bytes exceeds maximum allowed {} bytes",
+                    input.len(),
+                    self.config.max_input_bytes
+                ),
+                input: input.chars().take(200).collect(),
+            }
+            .into());
+        }
+
         trace!("Starting JSON parse: {} bytes", input.len());
 
         let mut flags = Vec::new();
@@ -305,6 +325,11 @@ struct LenientParserState {
     current_key: Option<String>,
     /// Whether we're escaping the next character
     is_escaped: bool,
+    /// State saved before entering a comment block so we can restore it
+    /// when the comment ends (prevents comments from corrupting parse state).
+    pre_comment_state: Option<ParseState>,
+    /// Maximum nesting depth (from config)
+    max_depth: usize,
 }
 
 /// Parser state for the state machine.
@@ -360,7 +385,7 @@ enum CollectionState {
 }
 
 impl LenientParserState {
-    fn new() -> Self {
+    fn new(max_depth: usize) -> Self {
         Self {
             stack: Vec::new(),
             state: ParseState::ExpectValue,
@@ -370,7 +395,42 @@ impl LenientParserState {
             current_number: String::new(),
             current_key: None,
             is_escaped: false,
+            pre_comment_state: None,
+            max_depth,
         }
+    }
+
+    /// Transition into a comment state, saving the current state so it can be
+    /// restored when the comment ends. If we are already inside a string, this
+    /// should never be called (the caller must check first).
+    fn enter_comment(&mut self, comment_kind: ParseState) {
+        self.pre_comment_state = Some(self.state.clone());
+        self.state = comment_kind;
+    }
+
+    /// Restore the parse state saved before the comment began.
+    fn exit_comment(&mut self) {
+        if let Some(saved) = self.pre_comment_state.take() {
+            self.state = saved;
+        } else {
+            self.state = ParseState::ExpectValue;
+        }
+    }
+
+    /// Check whether pushing a new collection would exceed the depth limit.
+    fn check_depth(&self) -> Result<()> {
+        if self.stack.len() >= self.max_depth {
+            return Err(HealingError::ParseFailed {
+                error_message: format!(
+                    "Nesting depth {} exceeds maximum allowed depth {}",
+                    self.stack.len() + 1,
+                    self.max_depth
+                ),
+                input: String::new(),
+            }
+            .into());
+        }
+        Ok(())
     }
 
     /// Process a single character.
@@ -409,6 +469,7 @@ impl LenientParserState {
 
             // Start object
             '{' => {
+                self.check_depth()?;
                 self.stack.push(CollectionState::Object {
                     keys: Vec::new(),
                     values: Vec::new(),
@@ -419,6 +480,7 @@ impl LenientParserState {
 
             // Start array
             '[' => {
+                self.check_depth()?;
                 self.stack
                     .push(CollectionState::Array { values: Vec::new() });
                 Ok(1)
@@ -455,11 +517,11 @@ impl LenientParserState {
 
             // Comments
             '/' if next == Some('/') => {
-                self.state = ParseState::InLineComment;
+                self.enter_comment(ParseState::InLineComment);
                 Ok(2)
             }
             '/' if next == Some('*') => {
-                self.state = ParseState::InBlockComment;
+                self.enter_comment(ParseState::InBlockComment);
                 Ok(2)
             }
 
@@ -632,11 +694,11 @@ impl LenientParserState {
 
             // Comments
             '/' if next == Some('/') => {
-                self.state = ParseState::InLineComment;
+                self.enter_comment(ParseState::InLineComment);
                 Ok(2)
             }
             '/' if next == Some('*') => {
-                self.state = ParseState::InBlockComment;
+                self.enter_comment(ParseState::InBlockComment);
                 Ok(2)
             }
 
@@ -696,11 +758,11 @@ impl LenientParserState {
                 Ok(1)
             }
             '/' if next == Some('/') => {
-                self.state = ParseState::InLineComment;
+                self.enter_comment(ParseState::InLineComment);
                 Ok(2)
             }
             '/' if next == Some('*') => {
-                self.state = ParseState::InBlockComment;
+                self.enter_comment(ParseState::InBlockComment);
                 Ok(2)
             }
             _ => {
@@ -722,11 +784,11 @@ impl LenientParserState {
                 Ok(1)
             }
             '/' if next == Some('/') => {
-                self.state = ParseState::InLineComment;
+                self.enter_comment(ParseState::InLineComment);
                 Ok(2)
             }
             '/' if next == Some('*') => {
-                self.state = ParseState::InBlockComment;
+                self.enter_comment(ParseState::InBlockComment);
                 Ok(2)
             }
             _ => {
@@ -738,16 +800,14 @@ impl LenientParserState {
 
     fn handle_line_comment(&mut self, ch: char) -> Result<usize> {
         if ch == '\n' {
-            // End of line comment - return to previous state
-            self.state = ParseState::ExpectValue;
+            self.exit_comment();
         }
         Ok(1)
     }
 
     fn handle_block_comment(&mut self, ch: char, next: Option<char>) -> Result<usize> {
         if ch == '*' && next == Some('/') {
-            // End of block comment
-            self.state = ParseState::ExpectValue;
+            self.exit_comment();
             Ok(2)
         } else {
             Ok(1)
@@ -889,7 +949,7 @@ impl JsonishParser {
         flags: &mut Vec<CoercionFlag>,
         confidence: &mut f32,
     ) -> Result<Value> {
-        let mut state = LenientParserState::new();
+        let mut state = LenientParserState::new(self.config.max_depth);
         let chars: Vec<char> = input.chars().collect();
         let mut i = 0;
 

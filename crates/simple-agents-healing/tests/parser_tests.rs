@@ -372,6 +372,8 @@ fn test_parser_config_customization() {
         remove_bom: false,
         allow_lenient_parsing: false,
         min_confidence: 0.0,
+        max_input_bytes: 10_485_760,
+        max_depth: 64,
     };
     let parser = JsonishParser::with_config(config);
 
