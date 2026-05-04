@@ -5,7 +5,7 @@ import json
 import os
 import queue
 import threading
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +15,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from simple_agents_py import Client
 from simple_agents_py.models import WorkflowRunOutputModel
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionFlags,
     WorkflowExecutionRequest,
@@ -58,18 +57,20 @@ async def _workflow_sse(message: str) -> AsyncIterator[bytes]:
             split_stream_deltas=True,
         ),
     )
-    payload = workflow_execution_request_to_mapping(req)
-    execution = payload.get("execution")
-    if isinstance(execution, Mapping):
-        payload["execution"] = merge_workflow_execution(execution)
+    current_exec = req.execution
+    if current_exec is not None:
+        merged = merge_workflow_execution(
+            current_exec.model_dump(mode="json", exclude_none=True)
+        )
+        req = req.model_copy(update={"execution": WorkflowExecutionFlags(**merged)})
     q: queue.Queue[tuple[str, Any]] = queue.Queue()
 
-    def on_event(event: Mapping[str, Any]) -> None:
+    def on_event(event: dict[str, Any]) -> None:
         q.put(("event", event))
 
     def worker() -> None:
         try:
-            q.put(("result", _client().stream_workflow(payload, on_event=on_event)))
+            q.put(("result", _client().stream_workflow(req, on_event=on_event)))
         except Exception as e:
             q.put(("error", e))
 
@@ -112,11 +113,9 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
 @app.post("/chat", response_model=WorkflowRunOutputModel)
 async def chat(body: ChatBody) -> WorkflowRunOutputModel:
     raw = _client().run_workflow(
-        workflow_execution_request_to_mapping(
-            WorkflowExecutionRequest(
-                workflow_path=str(WORKFLOW_FILE),
-                messages=[WorkflowMessage(role=WorkflowRole.USER, content=body.message)],
-            )
+        WorkflowExecutionRequest(
+            workflow_path=str(WORKFLOW_FILE),
+            messages=[WorkflowMessage(role=WorkflowRole.USER, content=body.message)],
         )
     )
     return WorkflowRunOutputModel.model_validate(raw)

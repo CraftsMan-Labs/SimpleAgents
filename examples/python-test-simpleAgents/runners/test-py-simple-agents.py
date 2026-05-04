@@ -17,7 +17,6 @@ import json
 from example_env import require_env
 from example_paths import workflows
 from simple_agents_py import Client as SimpleAgentsClient
-from simple_agents_py.workflow_payload import workflow_execution_request_to_mapping
 from simple_agents_py.workflow_request import (
     WorkflowExecutionRequest,
     WorkflowMessage,
@@ -43,7 +42,7 @@ def main() -> None:
         ],
     )
 
-    result = client.run_workflow(workflow_execution_request_to_mapping(req))
+    result = client.run_workflow(req)
     print(json.dumps(result, indent=2))
 
 

@@ -12,6 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from example_env import require_env  # type: ignore[import-not-found]  # noqa: E402
 from example_paths import asset, workflows  # type: ignore[import-not-found]  # noqa: E402
 from simple_agents_py import Client as SimpleAgentsClient
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+)
 
 workflow_file = workflows("invoice-hitl", "freeform-feedback.yaml")
 image_file = asset("test-invoice.jpeg")
@@ -39,13 +44,13 @@ def main() -> None:
     b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
     request_input = {"feedback_store_path": str(feedback_store)}
 
-    initial_request = {
-        "workflow_path": str(workflow_file),
-        "input": request_input,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
+    initial_request = WorkflowExecutionRequest(
+        workflow_path=str(workflow_file),
+        input=request_input,
+        messages=[
+            WorkflowMessage(
+                role=WorkflowRole.USER,
+                content=[
                     {
                         "type": "text",
                         "text": "Extract invoice fields from this image.",
@@ -55,9 +60,9 @@ def main() -> None:
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
                     },
                 ],
-            }
+            )
         ],
-    }
+    )
 
     paused = client.run_workflow(initial_request)
     print("Paused output:")
@@ -68,12 +73,12 @@ def main() -> None:
 
     feedback = input("Reviewer feedback: ").strip()
     resumed = client.run_workflow(
-        {
-            "workflow_path": str(workflow_file),
-            "input": request_input,
-            "resume": paused,
-            "human_response": feedback,
-        }
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_file),
+            input=request_input,
+            resume=paused,
+            human_response=feedback,
+        )
     )
     print("Final output:")
     print(json.dumps(resumed, indent=2))

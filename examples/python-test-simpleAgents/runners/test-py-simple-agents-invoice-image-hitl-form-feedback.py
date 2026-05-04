@@ -1,4 +1,4 @@
-"""Invoice image HITL: review and edit extracted fields."""
+"""Invoice image HITL example: review/edit extracted fields in a form-like loop."""
 
 from __future__ import annotations
 
@@ -10,9 +10,14 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from example_env import require_env  # type: ignore[import-not-found]  # noqa: E402
-from example_paths import asset, workflows  # type: ignore[import-not-found]  # noqa: E402
+from example_env import require_env
+from example_paths import asset, workflows
 from simple_agents_py import Client as SimpleAgentsClient
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+)
 
 workflow_file = workflows("invoice-hitl", "form-feedback.yaml")
 image_file = asset("test-invoice.jpeg")
@@ -39,9 +44,7 @@ def edit_form_data(current: dict[str, Any]) -> dict[str, Any]:
     if vendor_name:
         edited["vendor_name"] = vendor_name
 
-    invoice_number = _prompt_with_default(
-        "invoice_number", edited.get("invoice_number")
-    )
+    invoice_number = _prompt_with_default("invoice_number", edited.get("invoice_number"))
     if invoice_number:
         edited["invoice_number"] = invoice_number
 
@@ -50,9 +53,7 @@ def edit_form_data(current: dict[str, Any]) -> dict[str, Any]:
         try:
             edited["total_amount"] = float(total_amount)
         except ValueError as error:
-            raise SystemExit(
-                f"Invalid total_amount '{total_amount}': {error}"
-            ) from error
+            raise SystemExit(f"Invalid total_amount '{total_amount}': {error}") from error
 
     currency = _prompt_with_default("currency", edited.get("currency"))
     if currency:
@@ -75,13 +76,13 @@ def main() -> None:
     b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
     request_input = {"form_store_path": str(form_store)}
 
-    initial_request = {
-        "workflow_path": str(workflow_file),
-        "input": request_input,
-        "messages": [
-            {
-                "role": "user",
-                "content": [
+    initial_request = WorkflowExecutionRequest(
+        workflow_path=str(workflow_file),
+        input=request_input,
+        messages=[
+            WorkflowMessage(
+                role=WorkflowRole.USER,
+                content=[
                     {
                         "type": "text",
                         "text": "Extract invoice fields from this image.",
@@ -91,9 +92,9 @@ def main() -> None:
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
                     },
                 ],
-            }
+            )
         ],
-    }
+    )
 
     paused = client.run_workflow(initial_request)
     print("Paused output:")
@@ -110,22 +111,19 @@ def main() -> None:
     print("\nEdit fields. Press Enter to keep the current value.")
     edited_form = edit_form_data(form_data)
     resumed = client.run_workflow(
-        {
-            "workflow_path": str(workflow_file),
-            "input": request_input,
-            "resume": paused,
-            "human_response": edited_form,
-        }
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_file),
+            input=request_input,
+            resume=paused,
+            human_response=edited_form,
+        )
     )
 
-    outputs = resumed.get("outputs")
-    metadata: dict[str, Any] = {}
-    if isinstance(outputs, dict):
-        review_node = outputs.get("review_invoice_form")
-        if isinstance(review_node, dict):
-            raw_metadata = review_node.get("human_input_metadata")
-            if isinstance(raw_metadata, dict):
-                metadata = raw_metadata
+    metadata = (
+        resumed.get("outputs", {})
+        .get("review_invoice_form", {})
+        .get("human_input_metadata", {})
+    )
     print("Final output:")
     print(json.dumps(resumed, indent=2))
     print("Form metadata:")

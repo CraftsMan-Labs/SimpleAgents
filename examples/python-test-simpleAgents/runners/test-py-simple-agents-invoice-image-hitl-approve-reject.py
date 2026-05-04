@@ -12,6 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from example_env import require_env  # type: ignore[import-not-found]  # noqa: E402
 from example_paths import asset, workflows  # type: ignore[import-not-found]  # noqa: E402
 from simple_agents_py import Client as SimpleAgentsClient
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+)
 
 workflow_file = workflows("invoice-hitl", "approve-reject.yaml")
 image_file = asset("test-invoice.jpeg")
@@ -43,12 +48,12 @@ def main() -> None:
 
     b64 = base64.b64encode(require_file(image_file).read_bytes()).decode("ascii")
 
-    initial_request = {
-        "workflow_path": str(workflow_file),
-        "messages": [
-            {
-                "role": "user",
-                "content": [
+    initial_request = WorkflowExecutionRequest(
+        workflow_path=str(workflow_file),
+        messages=[
+            WorkflowMessage(
+                role=WorkflowRole.USER,
+                content=[
                     {
                         "type": "text",
                         "text": "Extract structured fields from this invoice image.",
@@ -58,9 +63,9 @@ def main() -> None:
                         "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
                     },
                 ],
-            }
+            )
         ],
-    }
+    )
 
     paused = client.run_workflow(initial_request)
     print("Paused output:")
@@ -71,11 +76,11 @@ def main() -> None:
 
     decision = ask_choice()
     resumed = client.run_workflow(
-        {
-            "workflow_path": str(workflow_file),
-            "resume": paused,
-            "human_response": decision,
-        }
+        WorkflowExecutionRequest(
+            workflow_path=str(workflow_file),
+            resume=paused,
+            human_response=decision,
+        )
     )
     print("Final output:")
     print(json.dumps(resumed, indent=2))
