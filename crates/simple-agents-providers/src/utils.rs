@@ -119,9 +119,22 @@ pub async fn ensure_success_response(
 }
 
 /// Map reqwest transport errors to unified provider errors.
+///
+/// When a timeout is detected the configured duration is embedded in the error
+/// so callers can tell which limit was hit. Falls back to [`DEFAULT_TIMEOUT`]
+/// when the caller doesn't supply one.
 pub fn map_transport_error(error: reqwest::Error) -> SimpleAgentsError {
+    map_transport_error_with_timeout(error, DEFAULT_TIMEOUT)
+}
+
+/// Like [`map_transport_error`] but with an explicit configured timeout so the
+/// error message reflects the actual duration used by the HTTP client.
+pub fn map_transport_error_with_timeout(
+    error: reqwest::Error,
+    configured_timeout: Duration,
+) -> SimpleAgentsError {
     if error.is_timeout() {
-        SimpleAgentsError::Provider(ProviderError::Timeout(DEFAULT_TIMEOUT))
+        SimpleAgentsError::Provider(ProviderError::Timeout(configured_timeout))
     } else {
         SimpleAgentsError::Network(format!("Network error: {}", error))
     }
