@@ -1,7 +1,6 @@
-//! Python `ClientBuilder` — configures providers and routing for [`crate::Client`].
+//! Python `ClientBuilder` — configures providers and healing for [`crate::Client`].
 //!
-//! Multi-provider routing is recorded for diagnostics; the built [`crate::Client`] uses the
-//! first provider (OpenAI-compatible HTTP), matching demo/test expectations.
+//! The built [`crate::Client`] uses the first provider (OpenAI-compatible HTTP).
 
 use crate::completion_helpers::py_err;
 use crate::provider_helpers::build_provider_from_name;
@@ -73,15 +72,7 @@ impl ProviderConfig {
 #[pyclass]
 pub struct ClientBuilder {
     providers: Vec<(String, Option<String>, Option<String>)>,
-    routing: Option<String>,
-    cache_ttl: Option<u64>,
     healing: Option<PyObject>,
-    #[allow(dead_code)]
-    latency_cfg: Option<PyObject>,
-    #[allow(dead_code)]
-    fallback_cfg: Option<PyObject>,
-    #[allow(dead_code)]
-    cost_cfg: Option<PyObject>,
 }
 
 #[pymethods]
@@ -90,12 +81,7 @@ impl ClientBuilder {
     fn new() -> Self {
         Self {
             providers: Vec::new(),
-            routing: None,
-            cache_ttl: None,
             healing: None,
-            latency_cfg: None,
-            fallback_cfg: None,
-            cost_cfg: None,
         }
     }
 
@@ -128,73 +114,6 @@ impl ClientBuilder {
         Ok(slf)
     }
 
-    fn with_routing<'a>(mut slf: PyRefMut<'a, Self>, mode: &str) -> PyResult<PyRefMut<'a, Self>> {
-        let valid = ["direct", "round_robin", "latency", "cost", "fallback"];
-        if !valid.contains(&mode) {
-            return Err(PyRuntimeError::new_err(format!(
-                "Unknown routing mode: {mode}"
-            )));
-        }
-        slf.routing = Some(mode.to_string());
-        Ok(slf)
-    }
-
-    fn with_latency_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        py: Python<'_>,
-        config: &Bound<'_, PyAny>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let d = config.downcast::<PyDict>()?;
-        if let Some(a) = d.get_item("alpha")? {
-            let alpha: f64 = a.extract()?;
-            if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
-                return Err(PyRuntimeError::new_err("alpha must be between 0.0 and 1.0"));
-            }
-        }
-        slf.routing = Some("latency".to_string());
-        slf.latency_cfg = Some(config.clone().into_py(py));
-        Ok(slf)
-    }
-
-    fn with_cost_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        py: Python<'_>,
-        config: &Bound<'_, PyAny>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        let d = config.downcast::<PyDict>()?;
-        let pc = d
-            .get_item("provider_costs")?
-            .ok_or_else(|| PyRuntimeError::new_err("provider_costs is required"))?;
-        let pc = pc.downcast::<PyDict>()?;
-        for v in pc.values() {
-            let cost: f64 = v.extract()?;
-            if !cost.is_finite() || cost < 0.0 {
-                return Err(PyRuntimeError::new_err("Invalid cost"));
-            }
-        }
-        slf.routing = Some("cost".to_string());
-        slf.cost_cfg = Some(config.clone().into_py(py));
-        Ok(slf)
-    }
-
-    fn with_fallback_routing<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        py: Python<'_>,
-        config: &Bound<'_, PyAny>,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.routing = Some("fallback".to_string());
-        slf.fallback_cfg = Some(config.clone().into_py(py));
-        Ok(slf)
-    }
-
-    fn with_cache<'a>(
-        mut slf: PyRefMut<'a, Self>,
-        ttl_seconds: u64,
-    ) -> PyResult<PyRefMut<'a, Self>> {
-        slf.cache_ttl = Some(ttl_seconds);
-        Ok(slf)
-    }
-
     fn with_healing_config<'a>(
         mut slf: PyRefMut<'a, Self>,
         config: PyObject,
@@ -223,11 +142,6 @@ impl ClientBuilder {
     }
 
     fn __repr__(&self) -> String {
-        format!(
-            "ClientBuilder(providers={}, routing={:?}, cache_ttl={:?})",
-            self.providers.len(),
-            self.routing,
-            self.cache_ttl
-        )
+        format!("ClientBuilder(providers={})", self.providers.len())
     }
 }
