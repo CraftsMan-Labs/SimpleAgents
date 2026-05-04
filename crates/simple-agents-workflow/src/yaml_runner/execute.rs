@@ -274,7 +274,7 @@ pub(crate) fn validate_custom_worker_handler_files(
     Ok(())
 }
 
-fn build_execution_context(
+pub(super) fn build_execution_context(
     workflow_input: &Value,
     outputs: &BTreeMap<String, Value>,
     globals: &serde_json::Map<String, Value>,
@@ -768,6 +768,15 @@ async fn execute_single_node_step(
                 });
             }
             Ok(NodeStepOutcome::Paused(request))
+        } else if node.node_type.end.is_some() {
+            apply_set_globals(node, &state.outputs, workflow_input, &mut state.globals);
+            apply_update_globals(node, &state.outputs, workflow_input, &mut state.globals);
+            if let Some(end_config) = node.node_type.end.as_ref() {
+                if end_config.is_object() && !end_config.as_object().unwrap().is_empty() {
+                    state.outputs.insert(node.id.clone(), json!({ "output": end_config }));
+                }
+            }
+            Ok(NodeStepOutcome::Terminated)
         } else {
             Err(YamlWorkflowRunError::UnsupportedNodeType {
                 node_id: node.id.clone(),
