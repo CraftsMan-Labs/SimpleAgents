@@ -6,8 +6,7 @@ This crate provides concrete implementations of LLM providers that integrate wit
 
 ## Supported Providers
 
-- **OpenAI**: GPT-4, GPT-3.5-Turbo, and other OpenAI models
-- **Anthropic**: Claude 3 Opus, Sonnet, and Haiku
+- **OpenAI-compatible**: Any provider that exposes the OpenAI chat-completions API (OpenAI, Azure OpenAI, OpenRouter, Requesty, local proxies, etc.) via `OpenAiCompatProvider`
 
 ## Features
 
@@ -20,13 +19,13 @@ This crate provides concrete implementations of LLM providers that integrate wit
 ## Usage
 
 ```rust
-use simple_agents_providers::openai::OpenAIProvider;
+use simple_agents_providers::OpenAiCompatProvider;
 use simple_agent_type::prelude::*;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key = ApiKey::new("sk-...")?;
-    let provider = OpenAIProvider::new(api_key)?;
+    let provider = OpenAiCompatProvider::new(api_key)?;
 
     let request = CompletionRequest::builder()
         .model("gpt-4")
@@ -95,10 +94,9 @@ See `tests/README.md` for detailed documentation.
 
 ### Real API Tests (Optional)
 
-For testing against real OpenAI/Anthropic APIs:
+For testing against real OpenAI-compatible APIs:
 ```bash
 export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
 cargo test -p simple-agents-providers -- --ignored
 ```
 
