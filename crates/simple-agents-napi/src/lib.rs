@@ -26,7 +26,6 @@ use simple_agents_healing::{
     CoercionEngine, JsonishParser,
 };
 use simple_agents_providers::openai::OpenAiCompatProvider;
-use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
 use simple_agents_workflow::yaml_runner::{
     validate_custom_worker_executor_for_file, workflow_execution, YamlWorkflowCustomWorkerExecutor,
     YamlWorkflowEvent, YamlWorkflowEventSink, YamlWorkflowExecutionFlags,
@@ -836,6 +835,19 @@ impl Task for CompleteTask {
     }
 }
 
+/// Runs an LLM streaming completion off the JS main thread and delivers
+/// chunks back to JavaScript via a [`ThreadsafeFunction`] (TSFN).
+///
+/// # TSFN call mode
+///
+/// Chunks are sent with [`ThreadsafeFunctionCallMode::NonBlocking`]. This
+/// means that if the Node.js event loop is saturated (e.g. GC pause, heavy
+/// synchronous work), individual chunk deliveries may be dropped. This is
+/// acceptable for progress-style streaming chunks where occasional loss does
+/// not affect correctness — the final aggregated result is always returned
+/// from the `Task::compute` method. If guaranteed delivery of every chunk
+/// is required, switch to [`ThreadsafeFunctionCallMode::Blocking`], but note
+/// this risks deadlock if the JS callback synchronously awaits Rust work.
 pub struct StreamTask {
     runtime: Arc<Runtime>,
     client: Arc<SimpleAgentsClient>,
@@ -995,6 +1007,17 @@ impl Task for StreamTask {
     }
 }
 
+/// Runs a YAML workflow off the JS main thread and streams events to
+/// JavaScript via a [`ThreadsafeFunction`] (TSFN).
+///
+/// # TSFN call mode
+///
+/// Events are dispatched with [`ThreadsafeFunctionCallMode::NonBlocking`].
+/// Under heavy JS event-loop pressure individual events may be dropped —
+/// this is acceptable for streaming progress/delta events. The authoritative
+/// workflow output is the return value of `Task::compute`. For terminal
+/// events where delivery is critical, callers should check the returned
+/// output object rather than relying solely on the stream callback.
 pub struct WorkflowStreamTask {
     runtime: Arc<Runtime>,
     client: Arc<SimpleAgentsClient>,
@@ -1023,47 +1046,6 @@ pub struct RunWorkflowTask {
     custom_worker: Arc<dyn YamlWorkflowCustomWorkerExecutor>,
     /// When true, matches legacy `runWorkflow` with `include_events: true` (record + attach).
     record_events: bool,
-}
-
-pub struct EvalSuiteTask {
-    runtime: Arc<Runtime>,
-    client: Arc<SimpleAgentsClient>,
-    suite_id: Option<String>,
-    workflow_path: String,
-    dataset_path: String,
-    workflow_options: YamlWorkflowRunOptions,
-    workflow_flags: YamlWorkflowExecutionFlags,
-    max_concurrency: usize,
-    custom_worker: Option<Arc<dyn YamlWorkflowCustomWorkerExecutor>>,
-}
-
-impl Task for EvalSuiteTask {
-    type Output = JsonValue;
-    type JsValue = napi::JsUnknown;
-
-    fn compute(&mut self) -> Result<Self::Output> {
-        let request = EvalSuiteRunRequest {
-            suite_id: self.suite_id.as_deref(),
-            workflow_path: Path::new(self.workflow_path.as_str()),
-            dataset_path: Path::new(self.dataset_path.as_str()),
-            executor: YamlWorkflowExecutorBinding::Client(self.client.as_ref()),
-            custom_worker: self.custom_worker.as_deref(),
-            execution: self.workflow_flags,
-            workflow_options: self.workflow_options.clone(),
-            max_concurrency: self.max_concurrency,
-        };
-        let report = self
-            .runtime
-            .block_on(run_eval_suite(request))
-            .map_err(|error| Error::from_reason(error.to_string()))?;
-        serde_json::to_value(report).map_err(|error| {
-            Error::from_reason(format!("failed to serialize eval report: {error}"))
-        })
-    }
-
-    fn resolve(&mut self, env: Env, output: Self::Output) -> Result<Self::JsValue> {
-        env.to_js_value(&output)
-    }
 }
 
 impl Task for RunWorkflowTask {
@@ -1154,7 +1136,13 @@ impl YamlWorkflowEventSink for NodeWorkflowEventSink {
     fn emit(&self, event: &YamlWorkflowEvent) {
         let payload = match serde_json::to_string(event) {
             Ok(value) => value,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "Failed to serialize workflow event for JS callback; event dropped"
+                );
+                return;
+            }
         };
         self.callback
             .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
@@ -1196,7 +1184,13 @@ impl YamlWorkflowEventSink for NodeCombinedWorkflowEventSink {
         }
         let payload = match serde_json::to_string(event) {
             Ok(value) => value,
-            Err(_) => return,
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "Failed to serialize workflow event for JS callback; event dropped"
+                );
+                return;
+            }
         };
         self.callback
             .call(Ok(payload), ThreadsafeFunctionCallMode::NonBlocking);
@@ -1581,108 +1575,6 @@ impl Client {
         Ok(AsyncTask::new(task))
     }
 
-    #[napi(
-        js_name = "runEvalSuite",
-        ts_args_type = "request: EvalSuiteRequest",
-        ts_return_type = "Promise<EvalReport>"
-    )]
-    pub fn run_eval_suite(
-        &self,
-        request: JsonValue,
-        custom_worker_dispatch: Option<JsFunction>,
-    ) -> Result<AsyncTask<EvalSuiteTask>> {
-        let object = request.as_object().ok_or_else(|| {
-            Error::from_reason("eval suite request must be an object".to_string())
-        })?;
-        for key in object.keys() {
-            if !matches!(
-                key.as_str(),
-                "workflowPath"
-                    | "workflow_path"
-                    | "datasetPath"
-                    | "dataset_path"
-                    | "suiteId"
-                    | "suite_id"
-                    | "workflowOptions"
-                    | "workflow_options"
-                    | "execution"
-                    | "maxConcurrency"
-                    | "max_concurrency"
-            ) {
-                return Err(Error::from_reason(format!(
-                    "invalid eval suite request: unknown key '{}'",
-                    key
-                )));
-            }
-        }
-        let workflow_path = object
-            .get("workflowPath")
-            .or_else(|| object.get("workflow_path"))
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| Error::from_reason("workflowPath is required".to_string()))?
-            .to_string();
-        let dataset_path = object
-            .get("datasetPath")
-            .or_else(|| object.get("dataset_path"))
-            .and_then(JsonValue::as_str)
-            .ok_or_else(|| Error::from_reason("datasetPath is required".to_string()))?
-            .to_string();
-        if workflow_path.trim().is_empty() {
-            return Err(Error::from_reason(
-                "workflowPath cannot be empty".to_string(),
-            ));
-        }
-        if dataset_path.trim().is_empty() {
-            return Err(Error::from_reason(
-                "datasetPath cannot be empty".to_string(),
-            ));
-        }
-        let suite_id = object
-            .get("suiteId")
-            .or_else(|| object.get("suite_id"))
-            .and_then(JsonValue::as_str)
-            .map(str::to_string);
-        let workflow_options = object
-            .get("workflowOptions")
-            .or_else(|| object.get("workflow_options"))
-            .map(|value| {
-                serde_json::from_value::<YamlWorkflowRunOptions>(value.clone()).map_err(|error| {
-                    Error::from_reason(format!("invalid workflowOptions: {error}"))
-                })
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let workflow_flags = object
-            .get("execution")
-            .map(|value| {
-                serde_json::from_value::<YamlWorkflowExecutionFlags>(value.clone())
-                    .map_err(|error| Error::from_reason(format!("invalid execution: {error}")))
-            })
-            .transpose()?
-            .unwrap_or_default();
-        let max_concurrency = object
-            .get("maxConcurrency")
-            .or_else(|| object.get("max_concurrency"))
-            .and_then(JsonValue::as_u64)
-            .map(|value| value as usize)
-            .unwrap_or(1);
-        let custom_worker = match custom_worker_dispatch {
-            Some(f) => Some(workflow_custom_worker::build_executor(&f)?),
-            None => None,
-        };
-
-        Ok(AsyncTask::new(EvalSuiteTask {
-            runtime: self.runtime.clone(),
-            client: self.client.clone(),
-            suite_id,
-            workflow_path,
-            dataset_path,
-            workflow_options,
-            workflow_flags,
-            max_concurrency,
-            custom_worker,
-        }))
-    }
 }
 
 /// Copies OTLP-related variables into the Rust process environment (`std::env`).
