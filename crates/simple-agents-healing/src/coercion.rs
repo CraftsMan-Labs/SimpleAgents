@@ -48,6 +48,9 @@ pub struct CoercionConfig {
     pub inject_defaults: bool,
     /// Minimum confidence threshold (coercion fails if below this)
     pub min_confidence: f32,
+    /// When true, truncated JSON with missing required fields returns an error
+    /// instead of silently injecting null. Critical for clinical/financial data.
+    pub strict_required: bool,
 }
 
 impl Default for CoercionConfig {
@@ -59,6 +62,28 @@ impl Default for CoercionConfig {
             allow_float_to_int: true,
             inject_defaults: true,
             min_confidence: 0.0,
+            strict_required: false,
+        }
+    }
+}
+
+impl CoercionConfig {
+    /// Create a strict configuration suitable for clinical/financial data.
+    ///
+    /// Strict mode rejects truncated JSON with missing required fields rather than
+    /// silently injecting null values.
+    pub fn strict() -> Self {
+        Self {
+            strict_required: true,
+            ..Default::default()
+        }
+    }
+
+    /// Create a lenient configuration that allows null injection for missing fields.
+    pub fn lenient() -> Self {
+        Self {
+            strict_required: false,
+            ..Default::default()
         }
     }
 }
@@ -432,9 +457,13 @@ impl CoercionEngine {
         confidence: &mut f32,
     ) -> Result<Value, HealingError> {
         let mut result = serde_json::Map::new();
+        let mut matched_input_keys: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
 
         for field in &obj_schema.fields {
             if let Some(value) = self.find_field_value(map, field, flags, confidence) {
+                // Track which input key was consumed (exact or fuzzy)
+                matched_input_keys.insert(self.resolve_input_key(map, field));
                 // Recursively coerce the field value
                 let coerced = self.coerce_recursive(value, &field.schema, flags, confidence)?;
                 result.insert(field.name.clone(), coerced);
@@ -447,11 +476,15 @@ impl CoercionEngine {
                     *confidence *= 0.9;
                     result.insert(field.name.clone(), default.clone());
                 } else if flags.contains(&CoercionFlag::TruncatedJson) {
-                    // If response was truncated, allow missing required fields by injecting null
-                    flags.push(CoercionFlag::UsedDefaultValue {
+                    if self.config.strict_required {
+                        return Err(HealingError::TruncatedRequiredField {
+                            field_name: field.name.clone(),
+                        });
+                    }
+                    flags.push(CoercionFlag::RequiredFieldDefaultedToNull {
                         field: field.name.clone(),
                     });
-                    *confidence *= 0.7; // Lower confidence for missing required field
+                    *confidence *= 0.7;
                     result.insert(field.name.clone(), Value::Null);
                 } else {
                     return Err(HealingError::MissingField {
@@ -464,13 +497,69 @@ impl CoercionEngine {
                     flags.push(CoercionFlag::UsedDefaultValue {
                         field: field.name.clone(),
                     });
-                    *confidence *= 0.95; // Smaller penalty for optional field defaults
+                    *confidence *= 0.95;
                     result.insert(field.name.clone(), default.clone());
                 }
             }
         }
 
+        // Preserve additional fields not in the schema when allowed
+        if obj_schema.allow_additional_fields {
+            for (key, value) in map.iter() {
+                if !matched_input_keys.contains(key) {
+                    result.insert(key.clone(), value.clone());
+                }
+            }
+        }
+
         Ok(Value::Object(result))
+    }
+
+    /// Resolve which input key was actually matched for a given schema field.
+    fn resolve_input_key(
+        &self,
+        map: &serde_json::Map<String, Value>,
+        field: &Field,
+    ) -> String {
+        // Exact match
+        if map.contains_key(&field.name) {
+            return field.name.clone();
+        }
+        // Aliases
+        for alias in &field.aliases {
+            if map.contains_key(alias) {
+                return alias.clone();
+            }
+        }
+        // Case-insensitive
+        for key in map.keys() {
+            if key.eq_ignore_ascii_case(&field.name) {
+                return key.clone();
+            }
+        }
+        // snake/camel conversion
+        let snake = to_snake_case(&field.name);
+        let camel = to_camel_case(&field.name);
+        for key in map.keys() {
+            if key == &snake
+                || key == &camel
+                || key.eq_ignore_ascii_case(&snake)
+                || key.eq_ignore_ascii_case(&camel)
+            {
+                return key.clone();
+            }
+        }
+        // Fuzzy match fallback
+        let mut best: Option<(String, f64)> = None;
+        for key in map.keys() {
+            let sim = jaro_winkler(&field.name, key);
+            if sim >= self.config.fuzzy_match_threshold {
+                if best.as_ref().map_or(true, |(_, s)| sim > *s) {
+                    best = Some((key.clone(), sim));
+                }
+            }
+        }
+        best.map(|(k, _)| k).unwrap_or_default()
     }
 
     /// Find a field value in an object using fuzzy matching.
@@ -863,5 +952,160 @@ mod tests {
 
         let result = engine.coerce(&input, &schema);
         assert!(result.is_err());
+    }
+
+    // --- Task 2B: allow_additional_fields tests ---
+
+    #[test]
+    fn test_additional_fields_preserved_when_allowed() {
+        let engine = CoercionEngine::new();
+
+        let input = json!({
+            "name": "Alice",
+            "age": 30,
+            "extra_field": "bonus",
+            "score": 99
+        });
+
+        let schema = Schema::Object(ObjectSchema {
+            fields: vec![
+                Field::required("name", Schema::String),
+                Field::required("age", Schema::Int),
+            ],
+            allow_additional_fields: true,
+        });
+
+        let result = engine.coerce(&input, &schema).unwrap();
+        assert_eq!(result.value["name"], "Alice");
+        assert_eq!(result.value["age"], 30);
+        assert_eq!(result.value["extra_field"], "bonus");
+        assert_eq!(result.value["score"], 99);
+    }
+
+    #[test]
+    fn test_additional_fields_dropped_when_not_allowed() {
+        let engine = CoercionEngine::new();
+
+        let input = json!({
+            "name": "Alice",
+            "age": 30,
+            "extra_field": "bonus"
+        });
+
+        let schema = Schema::Object(ObjectSchema {
+            fields: vec![
+                Field::required("name", Schema::String),
+                Field::required("age", Schema::Int),
+            ],
+            allow_additional_fields: false,
+        });
+
+        let result = engine.coerce(&input, &schema).unwrap();
+        assert_eq!(result.value["name"], "Alice");
+        assert_eq!(result.value["age"], 30);
+        assert!(result.value.get("extra_field").is_none());
+    }
+
+    #[test]
+    fn test_additional_fields_nested_objects() {
+        let engine = CoercionEngine::new();
+
+        let inner_schema = Schema::Object(ObjectSchema {
+            fields: vec![Field::required("id", Schema::Int)],
+            allow_additional_fields: true,
+        });
+
+        let schema = Schema::Object(ObjectSchema {
+            fields: vec![Field::required("data", inner_schema)],
+            allow_additional_fields: true,
+        });
+
+        let input = json!({
+            "data": {"id": 1, "nested_extra": "hello"},
+            "top_extra": true
+        });
+
+        let result = engine.coerce(&input, &schema).unwrap();
+        assert_eq!(result.value["data"]["id"], 1);
+        assert_eq!(result.value["data"]["nested_extra"], "hello");
+        assert_eq!(result.value["top_extra"], true);
+    }
+
+    // --- Task 2C: strict_required mode tests ---
+
+    #[test]
+    fn test_strict_required_rejects_truncated_null() {
+        let config = CoercionConfig::strict();
+        let engine = CoercionEngine::with_config(config);
+
+        let input = json!({
+            "name": "Alice"
+        });
+
+        let schema = Schema::Object(ObjectSchema {
+            fields: vec![
+                Field::required("name", Schema::String),
+                Field::required("diagnosis", Schema::String),
+            ],
+            allow_additional_fields: false,
+        });
+
+        // Simulate truncated JSON by pre-setting the flag
+        let mut flags = vec![CoercionFlag::TruncatedJson];
+        let mut confidence = 1.0f32;
+        let result = engine.coerce_recursive(
+            &input,
+            &schema,
+            &mut flags,
+            &mut confidence,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, HealingError::TruncatedRequiredField { ref field_name } if field_name == "diagnosis"),
+            "Expected TruncatedRequiredField error, got: {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_lenient_required_injects_null_with_flag() {
+        let config = CoercionConfig::lenient();
+        let engine = CoercionEngine::with_config(config);
+
+        let input = json!({
+            "name": "Alice"
+        });
+
+        let schema = Schema::Object(ObjectSchema {
+            fields: vec![
+                Field::required("name", Schema::String),
+                Field::required("diagnosis", Schema::String),
+            ],
+            allow_additional_fields: false,
+        });
+
+        let mut flags = vec![CoercionFlag::TruncatedJson];
+        let mut confidence = 1.0f32;
+        let result = engine
+            .coerce_recursive(&input, &schema, &mut flags, &mut confidence)
+            .unwrap();
+
+        assert_eq!(result["name"], "Alice");
+        assert_eq!(result["diagnosis"], Value::Null);
+        assert!(flags.iter().any(|f| matches!(
+            f,
+            CoercionFlag::RequiredFieldDefaultedToNull { field } if field == "diagnosis"
+        )));
+        assert!(confidence < 1.0);
+    }
+
+    #[test]
+    fn test_strict_config_constructor() {
+        let config = CoercionConfig::strict();
+        assert!(config.strict_required);
+
+        let config = CoercionConfig::lenient();
+        assert!(!config.strict_required);
     }
 }
