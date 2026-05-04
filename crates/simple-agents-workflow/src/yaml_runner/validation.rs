@@ -81,6 +81,46 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
     }
 
     for node in &workflow.nodes {
+        let mut active_types: Vec<&str> = Vec::new();
+        if node.node_type.llm_call.is_some() {
+            active_types.push("llm_call");
+        }
+        if node.node_type.switch.is_some() {
+            active_types.push("switch");
+        }
+        if node.node_type.custom_worker.is_some() {
+            active_types.push("custom_worker");
+        }
+        if node.node_type.human_input.is_some() {
+            active_types.push("human_input");
+        }
+        if node.node_type.end.is_some() {
+            active_types.push("end");
+        }
+        if active_types.is_empty() {
+            diagnostics.push(YamlWorkflowDiagnostic {
+                node_id: Some(node.id.clone()),
+                code: "missing_node_type".to_string(),
+                severity: YamlWorkflowDiagnosticSeverity::Error,
+                message: format!(
+                    "node '{}' has no node_type variant set; expected exactly one of: llm_call, switch, custom_worker, human_input, end",
+                    node.id
+                ),
+            });
+        } else if active_types.len() > 1 {
+            diagnostics.push(YamlWorkflowDiagnostic {
+                node_id: Some(node.id.clone()),
+                code: "ambiguous_node_type".to_string(),
+                severity: YamlWorkflowDiagnosticSeverity::Error,
+                message: format!(
+                    "node '{}' has {} node_type variants set ({}); expected exactly one",
+                    node.id,
+                    active_types.len(),
+                    active_types.join(", ")
+                ),
+            });
+        }
+
         if let Some(llm) = &node.node_type.llm_call {
             if llm.model.trim().is_empty() {
                 diagnostics.push(YamlWorkflowDiagnostic {
