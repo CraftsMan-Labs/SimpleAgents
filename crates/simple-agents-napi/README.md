@@ -95,7 +95,7 @@ async function main() {
   console.log('parsed JSON value:', healed.healed?.value);
 
   // Workflow YAML (sync) — messages-first request (see docs/WORKFLOW_API_MIGRATION.md)
-  const workflowOutput = client.executeWorkflowYaml({
+  const workflowOutput = client.run({
     workflowPath: 'workflow.yaml',
     messages: [
       { role: 'user', content: 'Classify this email about an invoice from Google.' },
@@ -108,7 +108,7 @@ async function main() {
   console.log('terminal output:', workflowOutput.terminal_output);
 
   // Workflow YAML (async + live events)
-  const asyncOutput = await client.executeWorkflowYamlStream(
+  const asyncOutput = await client.stream(
     {
       workflowPath: 'workflow.yaml',
       messages: [
@@ -138,7 +138,7 @@ main().catch((err) => {
 
 ## Notes
 
-- `client.executeWorkflowYaml` / `executeWorkflowYamlStream` are the canonical workflow APIs (messages-first `WorkflowYamlRunRequest`). `runWorkflowYaml` / `runWorkflowYamlStream` remain for compatibility. Typed `workflowOptions` use `WorkflowRunOptionsNapi` (`model`, `telemetry`, `trace`, `includeEvents`). For stream events, `require('simple-agents-node/workflow_event').parseWorkflowEvent(eventJson)` parses the JSON string into a typed object.
+- Use `client.run` / `client.stream` for messages-first workflow requests (`WorkflowYamlRunRequest`), or `client.runWorkflow` / `client.streamWorkflow` when you already have normalized workflow input. Typed `workflowOptions` use `WorkflowRunOptionsNapi` (`model`, `telemetry`, `trace`, `includeEvents`). For stream events, `require('simple-agents-node/workflow_event').parseWorkflowEvent(eventJson)` parses the JSON string into a typed object.
 - Canonical env contract for examples/tests is: `PROVIDER`, `CUSTOM_API_KEY`, `CUSTOM_API_BASE` (optional), `CUSTOM_API_MODEL` (also referenced as `CUSTOM_API_*` in places).
 - For OpenAI provider compatibility, map `CUSTOM_API_*` to `OPENAI_API_*` when needed (`OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_MODEL`).
 - `max_tokens`, `temperature`, and `top_p` are optional. Use `mode: "healed_json"` for parsed JSON or `mode: "schema"` with a schema object to coerce/validate.

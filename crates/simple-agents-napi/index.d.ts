@@ -171,76 +171,9 @@ export class Client {
   static fromEnv(options?: ClientOptions | undefined | null): Client
   complete(model: string, promptOrMessages: string | MessageInput[], options?: CompleteOptions): Promise<CompletionResult>
   streamComplete(model: string, promptOrMessages: string | MessageInput[], onChunk: (chunk: StreamChunk) => void, options?: CompleteOptions): Promise<CompletionResult>
-  runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: WorkflowRunOutput | Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): WorkflowRunOutput | Promise<WorkflowRunOutput>
-  streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: WorkflowRunOutput | Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<WorkflowRunOutput>
-  runEvalSuite(request: EvalSuiteRequest): Promise<EvalReport>
+  runWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
+  streamWorkflow(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, resume?: Record<string, unknown>, humanResponse?: unknown, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<Record<string, unknown>>
 }
-
-// --- Typed WorkflowRunOutput ---
-
-export enum WorkflowRunStatus {
-  Completed = 'completed',
-  AwaitingHumanInput = 'awaiting_human_input',
-}
-
-export interface HumanRequestOutput {
-  nodeId: string
-  inputType: 'choice' | 'text' | 'form'
-  prompt?: string
-  options?: Array<{ value: string; label?: string }>
-  formSchema?: unknown
-  formData?: unknown
-}
-
-export interface StepTimingOutput {
-  nodeId: string
-  nodeKind: string
-  modelName?: string
-  elapsedMs: number
-  promptTokens?: number
-  completionTokens?: number
-  totalTokens?: number
-  reasoningTokens?: number
-  tokensPerSecond?: number
-}
-
-export interface LlmNodeMetricsOutput {
-  elapsedMs: number
-  promptTokens: number
-  completionTokens: number
-  totalTokens: number
-  reasoningTokens?: number
-  tokensPerSecond: number
-}
-
-export interface WorkflowRunOutput {
-  status: WorkflowRunStatus
-  workflowId: string
-  entryNode: string
-  trace: string[]
-  outputs: Record<string, unknown>
-  globals: Record<string, unknown>
-  terminalNode: string
-  terminalOutput?: unknown
-  humanRequest?: HumanRequestOutput
-  stepTimings: StepTimingOutput[]
-  llmNodeMetrics: Record<string, LlmNodeMetricsOutput>
-  llmNodeModels: Record<string, string>
-  totalElapsedMs: number
-  ttftMs?: number
-  totalInputTokens: number
-  totalOutputTokens: number
-  totalTokens: number
-  totalReasoningTokens?: number
-  tokensPerSecond: number
-  traceId?: string
-  metadata?: unknown
-  events?: unknown[]
-}
-
-export type WorkflowResult =
-  | (WorkflowRunOutput & { status: WorkflowRunStatus.Completed })
-  | (WorkflowRunOutput & { status: WorkflowRunStatus.AwaitingHumanInput; humanRequest: HumanRequestOutput })
 
 // --- simple-agents wrapper API additions ---
 
@@ -315,13 +248,11 @@ export interface EvalReport {
 }
 
 export interface WorkflowYamlRunRequest {
-  resume?: WorkflowRunOutput | Record<string, unknown>
-  humanResponse?: unknown
   customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown
 }
 
 export interface Client {
   runEvalSuite(request: EvalSuiteRequest): Promise<EvalReport>
-  run(request: WorkflowYamlRunRequest): WorkflowRunOutput | Promise<WorkflowRunOutput>
-  stream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<WorkflowRunOutput>
+  run(request: WorkflowYamlRunRequest): Record<string, unknown> | Promise<Record<string, unknown>>
+  stream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<Record<string, unknown>>
 }

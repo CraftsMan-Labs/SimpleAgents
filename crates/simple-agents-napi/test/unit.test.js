@@ -15,20 +15,16 @@ test('Client prototype includes workflow parity methods', () => {
     'run',
     'stream',
     'resume',
-    'runWorkflowYaml',
-    'runWorkflowYamlWithEvents',
-    'runWorkflowYamlStream',
-    'executeWorkflowYaml',
-    'executeWorkflowYamlStream',
   ];
   for (const method of methods) {
     assert.strictEqual(typeof binding.Client.prototype[method], 'function');
   }
 });
 
-test('package self-reference exposes workflow YAML compatibility aliases', () => {
+test('package self-reference exposes canonical typed workflow methods', () => {
   const packageBinding = require('simple-agents-node');
-  assert.strictEqual(typeof packageBinding.Client.prototype.executeWorkflowYaml, 'function');
+  assert.strictEqual(typeof packageBinding.Client.prototype.run, 'function');
+  assert.strictEqual(typeof packageBinding.Client.prototype.stream, 'function');
 });
 
 test('parseWorkflowYamlExecutionRequest accepts workflowOptions.includeEvents', () => {
