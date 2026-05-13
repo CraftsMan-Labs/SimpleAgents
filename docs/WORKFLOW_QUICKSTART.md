@@ -357,29 +357,35 @@ For running your own code inside the workflow graph:
 **handlers.py** (Python -- placed next to the YAML):
 
 ```python
-def my_handler_function(context, payload):
+def my_handler_function(*, context: dict, payload: dict):
     company = payload.get("company_name", "")
     return {"result": f"Looked up {company}"}
 ```
 
-**handlers.ts** (TypeScript -- pass as `customWorkerDispatch`):
+**handlers.ts** (TypeScript -- pass as `customWorkerDispatch`; return a JSON-serializable object):
 
 ```typescript
 export function customWorkerDispatch(req: {
   handler: string;
   payload: unknown;
   context: unknown;
-}): string {
+}): Record<string, unknown> {
   if (req.handler === "my_handler_function") {
     const payload = req.payload as Record<string, unknown>;
-    return JSON.stringify({ result: `Looked up ${payload.company_name}` });
+    return { result: `Looked up ${String(payload.company_name ?? "")}` };
   }
   throw new Error(`unknown handler: ${req.handler}`);
 }
 
-// Pass to runWorkflow / streamWorkflow as the last argument
-const result = await client.runWorkflow(path, input, undefined, undefined, customWorkerDispatch);
+// Prefer messages-first client.run (see Node.js binding)
+const result = await client.run({
+  workflowPath: path,
+  messages: input.messages,
+  customWorkerDispatch,
+});
 ```
+
+For TypeScript / Node pause-and-resume APIs, see [Human in the loop (HITL)](/BINDINGS_NODE#human-in-the-loop-hitl) in the Node.js binding.
 
 ### Human In The Loop (HITL)
 

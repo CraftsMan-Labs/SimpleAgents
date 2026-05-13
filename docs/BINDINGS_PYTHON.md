@@ -156,6 +156,8 @@ Optional top-level keys:
 - `execution` — `healing`, `workflow_streaming`, `node_llm_streaming`, `split_stream_deltas`, optional `model`.
 - `workflow_options` — `telemetry`, `trace`, `model` (matches Rust `YamlWorkflowRunOptions`).
 
+When a workflow reaches a `human_input` node, the first `run_workflow` result has `status == "awaiting_human_input"`. Call `run_workflow` again with the same `workflow_path`, pass the full paused dict as `resume`, and set `human_response` to the choice value, free-text string, or form object (see [YAML Workflow System](YAML_WORKFLOW_SYSTEM.md#human_input)). The same fields exist on `WorkflowExecutionRequest` in `simple_agents_py.workflow_request`. Runnable examples: `examples/python-test-simpleAgents/runners/test-py-simple-agents-invoice-image-hitl-*.py` and [Workflow Quickstart](WORKFLOW_QUICKSTART.md#human-in-the-loop-hitl).
+
 **Validation:** `execution.healing` and `execution.node_llm_streaming` cannot both be `true`. Per-node YAML `heal` / `stream` still apply independently.
 
 **Streaming with `stream_workflow`**
