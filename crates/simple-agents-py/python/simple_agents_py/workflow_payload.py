@@ -20,7 +20,10 @@ def workflow_execution_request_to_mapping(request: Any) -> dict[str, Any]:
     """
     dump = getattr(request, "model_dump", None)
     if callable(dump):
-        return dump(mode="json", exclude_none=True)
+        raw = dump(mode="json", exclude_none=True)
+        if isinstance(raw, dict):
+            return raw
+        raise TypeError("model_dump(mode='json') must return a dict for WorkflowExecutionRequest")
     raise TypeError(
         "workflow_execution_request_to_mapping expects a WorkflowExecutionRequest "
         "(simple_agents_py.workflow_request.WorkflowExecutionRequest). "

@@ -10,6 +10,7 @@ or directly to ``Client.run_workflow`` / ``Client.stream_workflow`` without hand
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import Enum
 from typing import Annotated, Any, TypeAlias
 
@@ -156,9 +157,15 @@ class WorkflowRunOptions(BaseModel):
 WorkflowInput: TypeAlias = dict[str, Any]
 """Explicit arbitrary workflow payload map, e.g. ``WorkflowInput(email_text="hello")``."""
 
+WorkflowResumePayload: TypeAlias = Mapping[str, Any]
+"""Prior run state mapping (JSON wire shape matches :class:`~simple_agents_py.models.WorkflowRunOutputWire`).
+
+Obtain this from :meth:`~simple_agents_py.simple_agents_py.WorkflowRunOutput.to_dict`.
+"""
+
 
 class WorkflowExecutionRequest(BaseModel):
-    """Messages-first workflow request; aligns with ``WorkflowExecutionRequest`` in the ``.pyi``."""
+    """Messages-first workflow request (the only accepted shape for ``Client.run_workflow``)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -167,7 +174,10 @@ class WorkflowExecutionRequest(BaseModel):
     context: dict[str, Any] | None = None
     media: dict[str, Any] | None = None
     input: WorkflowInput | None = None
-    resume: dict[str, Any] | None = None
+    resume: WorkflowResumePayload | None = Field(
+        default=None,
+        description="Prior run state from WorkflowRunOutput.to_dict() (WorkflowRunOutputWire-shaped).",
+    )
     human_response: Any | None = None
     execution: WorkflowExecutionFlags | None = None
     workflow_options: WorkflowRunOptions | None = None
@@ -199,6 +209,7 @@ class WorkflowExecutionRequest(BaseModel):
 __all__ = [
     "WorkflowExecutionFlags",
     "WorkflowExecutionRequest",
+    "WorkflowResumePayload",
     "WorkflowInput",
     "WorkflowMessage",
     "WorkflowPath",

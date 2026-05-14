@@ -1,8 +1,17 @@
-"""Runtime workflow contract types (``TypedDict``) and optional Pydantic mirrors.
+"""Workflow wire shapes (``TypedDict``) and optional Pydantic helpers.
 
-Native :class:`simple_agents_py.simple_agents_py.Client` workflow methods return plain
-dicts; their shapes match the ``TypedDict`` definitions here. Pydantic models are for
-validation, OpenAPI, and FastAPI responses.
+Naming (avoid mixing these at type-check time):
+
+- **Requests (Python API):** :class:`~simple_agents_py.workflow_request.WorkflowExecutionRequest`
+  (Pydantic) — the only input type for ``Client.run_workflow`` / ``stream_workflow``.
+
+- **Results (native):** ``simple_agents_py.WorkflowRunOutput`` (Rust pyclass) — use
+  :meth:`~simple_agents_py.simple_agents_py.WorkflowRunOutput.to_dict()` to obtain a
+  :class:`WorkflowRunOutputWire`.
+
+- **JSON / OpenAPI docs:** ``*Wire`` :class:`~typing.TypedDict` types below describe the
+  normalized keys on the wire; they overlap structurally but are distinct nominal types
+  from Pydantic models and pyclasses.
 """
 
 from __future__ import annotations
@@ -117,13 +126,13 @@ class WorkflowExecutionFlags(TypedDict, total=False):
     debug_stream_parse: bool
 
 
-class WorkflowExecutionRequest(TypedDict, total=False):
+class WorkflowExecutionRequestWire(TypedDict, total=False):
     workflow_path: str
     messages: list[WorkflowMessage]
     context: Mapping[str, JSONValue]
     media: Mapping[str, JSONValue]
     input: Mapping[str, JSONValue]
-    resume: "WorkflowRunOutput"
+    resume: "WorkflowRunOutputWire"
     human_response: JSONValue
     execution: WorkflowExecutionFlags
     workflow_options: WorkflowRunOptions
@@ -165,7 +174,7 @@ class WorkflowLlmNodeMetrics(TypedDict, total=False):
     tokens_per_second: float
 
 
-class WorkflowEvent(TypedDict, total=False):
+class WorkflowEventWire(TypedDict, total=False):
     event_type: WorkflowRunnerEventType | str
     node_id: str
     step_id: str
@@ -180,7 +189,7 @@ class WorkflowEvent(TypedDict, total=False):
     metadata: JSONValue
 
 
-class HumanRequest(TypedDict, total=False):
+class HumanRequestWire(TypedDict, total=False):
     node_id: str
     input_type: Literal["choice", "text", "form"]
     prompt: str
@@ -189,7 +198,7 @@ class HumanRequest(TypedDict, total=False):
     form_data: JSONValue
 
 
-class WorkflowRunOutput(TypedDict, total=False):
+class WorkflowRunOutputWire(TypedDict, total=False):
     workflow_id: str
     entry_node: str
     trace: list[str]
@@ -198,7 +207,7 @@ class WorkflowRunOutput(TypedDict, total=False):
     terminal_node: str
     terminal_output: JSONValue
     status: WorkflowRunStatus
-    human_request: HumanRequest
+    human_request: HumanRequestWire
     step_timings: list[WorkflowStepTiming]
     llm_node_metrics: dict[str, WorkflowLlmNodeMetrics]
     llm_node_models: dict[str, str]
@@ -211,7 +220,7 @@ class WorkflowRunOutput(TypedDict, total=False):
     tokens_per_second: float
     trace_id: str
     metadata: JSONValue
-    events: list[WorkflowEvent]
+    events: list[WorkflowEventWire]
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +229,7 @@ class WorkflowRunOutput(TypedDict, total=False):
 
 
 class WorkflowStreamEventModel(BaseModel):
-    """One workflow runner event (parity with :class:`WorkflowEvent`)."""
+    """One workflow runner event (parity with :class:`WorkflowEventWire`)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -239,7 +248,7 @@ class WorkflowStreamEventModel(BaseModel):
 
 
 class WorkflowRunOutputModel(BaseModel):
-    """Workflow run result (parity with :class:`WorkflowRunOutput`)."""
+    """Workflow run result (parity with :class:`WorkflowRunOutputWire`)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -306,15 +315,15 @@ __all__ = [
     "WorkflowTraceOptions",
     "WorkflowRunOptions",
     "WorkflowExecutionFlags",
-    "WorkflowExecutionRequest",
+    "WorkflowExecutionRequestWire",
     "WorkflowRunStatus",
     "WorkflowNodeKind",
     "WorkflowNodeOutputRecord",
     "WorkflowStepTiming",
     "WorkflowLlmNodeMetrics",
-    "WorkflowEvent",
-    "HumanRequest",
-    "WorkflowRunOutput",
+    "WorkflowEventWire",
+    "HumanRequestWire",
+    "WorkflowRunOutputWire",
     "WorkflowStreamEventModel",
     "WorkflowRunOutputModel",
     "SseWorkflowEventEnvelope",

@@ -111,7 +111,7 @@ def main() -> None:
     )
 
     print("\n")
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result.to_dict(), indent=2))
 
 
 if __name__ == "__main__":
