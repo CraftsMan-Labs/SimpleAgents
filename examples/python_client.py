@@ -247,8 +247,6 @@ def example_client_builder(api_base: str, api_key: str, model: str) -> None:
     builder = (
         ClientBuilder()
         .add_provider("openai", api_key=api_key, api_base=api_base)
-        .with_routing("direct")
-        .with_cache(ttl_seconds=60)
         .with_healing_config({"enabled": True, "min_confidence": 0.7})
     )
     client = builder.build()
