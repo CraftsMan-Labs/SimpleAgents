@@ -43,5 +43,8 @@
   "engines": {
     "node": ">=18"
   },
+  "simpleagentsDependencyPolicy": {
+    "minimumReleaseAge": "182 days"
+  },
   "license": "MIT OR Apache-2.0"
 }
