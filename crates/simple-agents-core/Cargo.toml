@@ -10,11 +10,14 @@ homepage.workspace = true
 documentation.workspace = true
 description = "Core SimpleAgents client API integrating providers and healing"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
-tracing = "0.1"
-futures-core = "0.3"
+tracing = "=0.1.44"
+futures-core = "=0.3.32"
 tokio.workspace = true
 rand.workspace = true
 

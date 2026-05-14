@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [lib]
 name = "simple_agents_py"
 crate-type = ["cdylib"]
@@ -11,14 +14,14 @@ test = false
 doctest = false
 
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module", "abi3-py312"] }
-pythonize = "0.22"
+pyo3 = { version = "=0.22.6", features = ["extension-module", "abi3-py312"] }
+pythonize = "=0.22.0"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-futures-util = "0.3"
-async-trait = "0.1"
-tracing = "0.1"
+futures-util = "=0.3.32"
+async-trait = "=0.1.89"
+tracing = "=0.1.44"
 
 simple-agents-core = { path = "../simple-agents-core", version = "0.5.1" }
 simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.1" }

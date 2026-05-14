@@ -10,28 +10,31 @@ homepage.workspace = true
 documentation.workspace = true
 description = "Workflow IR and validation for SimpleAgents"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [dependencies]
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9"
+serde_yaml = "=0.9.34"
 simple-agent-type.workspace = true
 simple-agents-healing.workspace = true
 simple-agents-core = { path = "../simple-agents-core", version = "0.5.1" }
 thiserror.workspace = true
 tokio.workspace = true
-opentelemetry = { version = "0.24", features = ["trace"] }
-opentelemetry_sdk = { version = "0.24", features = ["rt-tokio", "trace"] }
-opentelemetry-otlp = { version = "0.17", features = ["grpc-tonic", "http-proto", "reqwest-client"] }
+opentelemetry = { version = "=0.24.0", features = ["trace"] }
+opentelemetry_sdk = { version = "=0.24.1", features = ["rt-tokio", "trace"] }
+opentelemetry-otlp = { version = "=0.17.0", features = ["grpc-tonic", "http-proto", "reqwest-client"] }
 tonic.workspace = true
-jsonschema = "0.18"
+jsonschema = "=0.18.3"
 
 [dev-dependencies]
 async-trait.workspace = true
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "=0.5.1", features = ["html_reports"] }
 futures.workspace = true
-proptest = "1.6"
+proptest = "=1.11.0"
 
 [[bench]]
 name = "runtime_benchmarks"
