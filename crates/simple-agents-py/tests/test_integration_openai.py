@@ -160,8 +160,11 @@ nodes:
         on_event=on_event,
     )
 
-    assert isinstance(result, dict)
-    assert isinstance(result.get("terminal_node"), str)
+    assert isinstance(result.status, str)
+    assert result.status in ("completed", "awaiting_human_input")
+    assert isinstance(result.workflow_id, str)
+    assert isinstance(result.terminal_node, str)
+    assert isinstance(result.outputs, dict)
 
     completed_events = [
         event for event in events if event.get("event_type") == "workflow_completed"

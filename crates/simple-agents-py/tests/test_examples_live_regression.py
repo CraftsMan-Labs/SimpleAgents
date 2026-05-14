@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-import json
+import base64
 import os
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest  # type: ignore[reportMissingImports]
+from simple_agents_py import Client as SimpleAgentsClient
+from simple_agents_py.workflow_request import (
+    WorkflowExecutionFlags,
+    WorkflowExecutionRequest,
+    WorkflowMessage,
+    WorkflowRole,
+)
 
 from repo_dotenv import load_root_dotenv_into
 
@@ -46,8 +51,6 @@ def _resolved_live_env() -> dict[str, str]:
         missing.append("WORKFLOW_API_KEY (or CUSTOM_API_KEY)")
     if missing:
         pytest.skip(f"Missing live workflow env vars: {', '.join(missing)}")
-    if shutil.which("uv") is None:
-        pytest.skip("uv binary not available")
     assert api_base is not None
     assert api_key is not None
     return {
@@ -65,111 +68,148 @@ def _examples_dir() -> Path:
     return _repo_root() / "examples" / "python-test-simpleAgents"
 
 
-def _runners_dir() -> Path:
-    return _examples_dir() / "runners"
+def _workflow_path() -> Path:
+    return _examples_dir() / "workflows" / "email-classification" / "test.yaml"
 
 
-def _run_example(script_name: str, stdin_text: str | None = None) -> str:
+def _client() -> SimpleAgentsClient:
     live_env = _resolved_live_env()
-    script_path = _runners_dir() / script_name
-    if not script_path.exists():
-        pytest.fail(f"Example script not found: {script_path}")
-
-    env = os.environ.copy()
-    load_root_dotenv_into(env, override=False)
-    env.update(live_env)
-
-    result = subprocess.run(
-        [
-            "uv",
-            "run",
-            "--directory",
-            str(_examples_dir()),
-            "python",
-            str(Path("runners") / script_name),
-        ],
-        cwd=str(_repo_root()),
-        input=stdin_text,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=180,
-        env=env,
+    return SimpleAgentsClient(
+        live_env["WORKFLOW_PROVIDER"],
+        api_base=live_env["WORKFLOW_API_BASE"],
+        api_key=live_env["WORKFLOW_API_KEY"],
     )
-    if result.returncode != 0:
-        combined = f"{result.stdout}\n{result.stderr}"
-        if "Invalid model name passed in model=" in combined:
+
+
+def _run_workflow(req: WorkflowExecutionRequest) -> Any:
+    client = _client()
+    try:
+        return client.run_workflow(req)
+    except Exception as error:
+        if "Invalid model name passed in model=" in str(error):
             pytest.skip(
                 "Live provider does not support models hardcoded in example workflow YAML"
             )
-        pytest.fail(
-            f"{script_name} failed with exit code {result.returncode}\n"
-            f"stdout:\n{result.stdout}\n"
-            f"stderr:\n{result.stderr}"
-        )
-    return result.stdout
+        raise
 
 
-def _extract_trailing_json_block(stdout: str) -> tuple[int, dict[str, Any]]:
-    starts = [idx for idx, ch in enumerate(stdout) if ch == "{"]
-    for start in reversed(starts):
-        candidate = stdout[start:].strip()
-        try:
-            value = json.loads(candidate)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            return start, value
-    pytest.fail(f"Could not parse trailing JSON object from output tail:\n{stdout[-1500:]}")
-    raise AssertionError("unreachable")
+def _stream_workflow(
+    req: WorkflowExecutionRequest,
+    *,
+    on_event: Any,
+) -> Any:
+    client = _client()
+    try:
+        return client.stream_workflow(req, on_event=on_event)
+    except Exception as error:
+        if "Invalid model name passed in model=" in str(error):
+            pytest.skip(
+                "Live provider does not support models hardcoded in example workflow YAML"
+            )
+        raise
 
 
-def _assert_workflow_result_shape(result: dict[str, Any]) -> None:
-    assert isinstance(result.get("terminal_node"), str)
-    assert isinstance(result.get("terminal_output"), (dict, str, list))
-    assert isinstance(result.get("outputs"), dict)
-    assert isinstance(result.get("step_timings"), list)
-    assert isinstance(result.get("trace"), list)
-    assert isinstance(result.get("total_elapsed_ms"), int)
-    assert isinstance(result.get("workflow_id"), str)
+def _assert_output_schema_contract(terminal_output: Any) -> None:
+    assert isinstance(terminal_output, dict)
+    assert isinstance(terminal_output.get("top_level_category"), str)
+    assert isinstance(terminal_output.get("subtype"), str)
+    assert isinstance(terminal_output.get("label"), str)
+    assert isinstance(terminal_output.get("reason"), str)
+
+    top_level_category = terminal_output["top_level_category"]
+    subtype = terminal_output["subtype"]
+    label = terminal_output["label"]
+
+    if top_level_category == "hr":
+        assert subtype == "general"
+        assert label == "hr/general"
+        return
+    if top_level_category == "education":
+        assert subtype == "general"
+        assert label == "education/general"
+        return
+    if top_level_category == "finance":
+        assert label.startswith("finance/")
+        if subtype == "invoice":
+            assert label == "finance/invoice"
+            assert isinstance(terminal_output.get("company_name"), str)
+            assert isinstance(terminal_output.get("stakeholder_name"), str)
+        return
+
+    pytest.fail(f"Unexpected top_level_category value: {top_level_category!r}")
+
+
+def _assert_workflow_result_shape(result: Any) -> None:
+    assert isinstance(result.status, str)
+    assert result.status in ("completed", "awaiting_human_input")
+    assert isinstance(result.terminal_node, str)
+    assert isinstance(result.terminal_output, dict)
+    assert isinstance(result.outputs, dict)
+    assert isinstance(result.step_timings, list)
+    assert isinstance(result.trace, list)
+    assert isinstance(result.total_elapsed_ms, int)
+    assert isinstance(result.workflow_id, str)
+    _assert_output_schema_contract(result.terminal_output)
 
 
 def test_example_blocking_output_shape() -> None:
-    stdout = _run_example("test-py-simple-agents.py", stdin_text=f"{_INVOICE_INPUT_TEXT}\n")
-    _, result = _extract_trailing_json_block(stdout)
+    req = WorkflowExecutionRequest(
+        workflow_path=str(_workflow_path()),
+        messages=[WorkflowMessage(role=WorkflowRole.USER, content=_INVOICE_INPUT_TEXT)],
+    )
+    result = _run_workflow(req)
     _assert_workflow_result_shape(result)
 
 
 def test_example_streaming_emits_chunks_and_output_shape() -> None:
-    stdout = _run_example(
-        "test-py-simple-agents-streaming.py",
-        stdin_text=f"{_INVOICE_INPUT_TEXT}\n",
+    events: list[dict[str, object]] = []
+
+    def on_event(event: dict[str, object]) -> None:
+        events.append(event)
+
+    req = WorkflowExecutionRequest(
+        workflow_path=str(_workflow_path()),
+        messages=[WorkflowMessage(role=WorkflowRole.USER, content=_INVOICE_INPUT_TEXT)],
+        execution=WorkflowExecutionFlags(
+            node_llm_streaming=True,
+            split_stream_deltas=False,
+        ),
     )
-    json_start, result = _extract_trailing_json_block(stdout)
+
+    result = _stream_workflow(req, on_event=on_event)
     _assert_workflow_result_shape(result)
 
-    event_positions = {
-        event_type: stdout.find(event_type) for event_type in _STREAM_EVENT_TYPES
-    }
-    found = [event_type for event_type, idx in event_positions.items() if idx != -1]
+    event_types = {str(event.get("event_type")) for event in events}
+    found = [event_type for event_type in _STREAM_EVENT_TYPES if event_type in event_types]
     assert found, (
-        "Expected streamed chunk events in output; found none of "
+        "Expected streamed chunk events; found none of "
         f"{', '.join(_STREAM_EVENT_TYPES)}"
-    )
-
-    first_event_idx = min(event_positions[event_type] for event_type in found)
-    assert first_event_idx < json_start, (
-        "Expected at least one streaming chunk event before final JSON result. "
-        f"events={found}"
     )
 
 
 def test_example_invoice_image_output_shape() -> None:
-    # Match ``example_paths.asset("test-invoice.jpeg")`` used by the runner script.
     image_path = _examples_dir() / "assets" / "test-invoice.jpeg"
     if not image_path.exists():
         pytest.skip(f"Missing invoice fixture image: {image_path}")
 
-    stdout = _run_example("test-py-simple-agents-invoice-image.py")
-    _, result = _extract_trailing_json_block(stdout)
+    b64 = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    req = WorkflowExecutionRequest(
+        workflow_path=str(_workflow_path()),
+        messages=[
+            WorkflowMessage(
+                role=WorkflowRole.USER,
+                content=[
+                    {
+                        "type": "text",
+                        "text": "Invoice image. Classify and route this per workflow.",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                ],
+            )
+        ],
+    )
+    result = _run_workflow(req)
     _assert_workflow_result_shape(result)
