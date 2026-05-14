@@ -51,7 +51,8 @@ use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClien
 use crate::yaml_runner::{
     workflow_execution, RunMetadata, StepTiming, WorkflowEventSink, WorkflowRunOutput,
     YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
-    YamlWorkflowExecutorBinding, YamlWorkflowRunOptions, YamlWorkflowSource,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunError, YamlWorkflowRunOptions,
+    YamlWorkflowSource,
 };
 
 use simple_agent_type::prelude::SimpleAgentsError;
@@ -59,8 +60,8 @@ use simple_agent_type::prelude::SimpleAgentsError;
 /// Error type for workflow operations.
 #[derive(Debug)]
 pub enum WorkflowError {
-    /// Workflow-level run error.
-    Workflow(String),
+    /// Workflow-level run error (preserves the structured error variant).
+    Workflow(YamlWorkflowRunError),
     /// Core LLM error.
     Core(SimpleAgentsError),
 }
@@ -68,7 +69,7 @@ pub enum WorkflowError {
 impl std::fmt::Display for WorkflowError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            WorkflowError::Workflow(msg) => write!(f, "workflow error: {msg}"),
+            WorkflowError::Workflow(err) => write!(f, "workflow error: {err}"),
             WorkflowError::Core(err) => write!(f, "core error: {err}"),
         }
     }
@@ -79,6 +80,12 @@ impl std::error::Error for WorkflowError {}
 impl From<SimpleAgentsError> for WorkflowError {
     fn from(e: SimpleAgentsError) -> Self {
         WorkflowError::Core(e)
+    }
+}
+
+impl From<YamlWorkflowRunError> for WorkflowError {
+    fn from(e: YamlWorkflowRunError) -> Self {
+        WorkflowError::Workflow(e)
     }
 }
 
@@ -138,9 +145,7 @@ impl WorkflowClient {
             flags: options.execution_flags,
         };
 
-        let output = workflow_execution::run(request)
-            .await
-            .map_err(|e| WorkflowError::Workflow(e.to_string()))?;
+        let output = workflow_execution::run(request).await?;
 
         // Map YamlWorkflowRunOutput to the clean WorkflowRunOutput
         Ok(yaml_output_to_workflow_output(output))
@@ -173,9 +178,7 @@ impl WorkflowClient {
 
         // Bridge the typed WorkflowEventSink to YamlWorkflowEventSink
         let bridge = EventSinkBridge { inner: sink };
-        let output = workflow_execution::stream(request, &bridge)
-            .await
-            .map_err(|e| WorkflowError::Workflow(e.to_string()))?;
+        let output = workflow_execution::stream(request, &bridge).await?;
 
         Ok(yaml_output_to_workflow_output(output))
     }
@@ -199,7 +202,13 @@ impl WorkflowClient {
 fn messages_to_value(messages: Vec<Message>) -> Value {
     let msgs: Vec<Value> = messages
         .into_iter()
-        .map(|m| serde_json::to_value(&m).unwrap_or(Value::Null))
+        .map(|m| match serde_json::to_value(&m) {
+            Ok(v) => v,
+            Err(err) => {
+                eprintln!("[simple-agents-workflow] WARN: failed to serialize message: {err}");
+                Value::Null
+            }
+        })
         .collect();
     serde_json::json!({ "messages": msgs })
 }

@@ -193,6 +193,8 @@ if (clientProto) {
     );
   };
 
+  // Eval orchestration is intentionally JS-only: the evaluator is a user-supplied JS function
+  // that cannot cross the napi FFI boundary, so the loop runs here rather than in Rust.
   clientProto.runEvalSuite = async function runEvalSuite(request) {
     if (!request || typeof request !== "object") {
       throw new TypeError("runEvalSuite request must be an object");
@@ -268,67 +270,6 @@ if (clientProto) {
     return buildEvalReport(request.suiteId || datasetPath.split(/[\\/]/u).pop().replace(/\.[^.]+$/u, ""), cases);
   };
 
-  clientProto.runWorkflowYaml = function runWorkflowYaml(
-    workflowPath,
-    workflowInput,
-    workflowOptions,
-    workflowExecution,
-    customWorkerDispatch,
-  ) {
-    return this.runWorkflow(
-      workflowPath,
-      workflowInput,
-      workflowOptions,
-      workflowExecution,
-      customWorkerDispatch,
-    );
-  };
-
-  clientProto.runWorkflowYamlWithEvents = function runWorkflowYamlWithEvents(
-    workflowPath,
-    workflowInput,
-    workflowOptions,
-    workflowExecution,
-    customWorkerDispatch,
-  ) {
-    return this.runWorkflow(
-      workflowPath,
-      workflowInput,
-      { ...(workflowOptions ?? {}), include_events: true },
-      workflowExecution,
-      customWorkerDispatch,
-    );
-  };
-
-  clientProto.runWorkflowYamlStream = function runWorkflowYamlStream(
-    workflowPath,
-    workflowInput,
-    onEvent,
-    workflowOptions,
-    workflowExecution,
-    customWorkerDispatch,
-  ) {
-    return this.streamWorkflow(
-      workflowPath,
-      workflowInput,
-      onEvent,
-      workflowOptions,
-      workflowExecution,
-      customWorkerDispatch,
-    );
-  };
-
-  clientProto.executeWorkflowYaml = function executeWorkflowYaml(request) {
-    return this.run(request);
-  };
-
-  clientProto.executeWorkflowYamlStream = function executeWorkflowYamlStream(
-    request,
-    onEvent,
-  ) {
-    return this.stream(request, onEvent);
-  };
-
   /**
    * Typed workflow run (messages-first request). Delegates to {@link runWorkflow}.
    */
@@ -357,6 +298,9 @@ if (clientProto) {
         "workflow_options",
         "customWorkerDispatch",
         "custom_worker_dispatch",
+        "resume",
+        "humanResponse",
+        "human_response",
       ]),
       "request",
     );
@@ -391,11 +335,14 @@ if (clientProto) {
     };
     const dispatch =
       request.customWorkerDispatch ?? request.custom_worker_dispatch;
+    const humanResp = request.humanResponse ?? request.human_response;
     return this.runWorkflow(
       parsed.workflowPath,
       parsed.workflowInput,
       parsed.workflowOptions,
       workflowExecution,
+      request.resume,
+      humanResp,
       dispatch,
     );
   };
@@ -431,6 +378,9 @@ if (clientProto) {
         "workflow_options",
         "customWorkerDispatch",
         "custom_worker_dispatch",
+        "resume",
+        "humanResponse",
+        "human_response",
       ]),
       "request",
     );
@@ -465,16 +415,25 @@ if (clientProto) {
     };
     const dispatch =
       request.customWorkerDispatch ?? request.custom_worker_dispatch;
+    const humanResp = request.humanResponse ?? request.human_response;
     return this.streamWorkflow(
       parsed.workflowPath,
       parsed.workflowInput,
       onEvent,
       parsed.workflowOptions,
       workflowExecution,
+      request.resume,
+      humanResp,
       dispatch,
     );
   };
 }
 
+const WorkflowRunStatus = Object.freeze({
+  Completed: 'completed',
+  AwaitingHumanInput: 'awaiting_human_input',
+});
+
 module.exports = native;
 module.exports.default = native;
+module.exports.WorkflowRunStatus = WorkflowRunStatus;

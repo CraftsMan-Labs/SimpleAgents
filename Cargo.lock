@@ -2350,6 +2350,7 @@ dependencies = [
  "async-trait",
  "futures-core",
  "futures-util",
+ "rand 0.8.6",
  "serde",
  "serde_json",
  "simple-agent-type",
@@ -2405,6 +2406,7 @@ dependencies = [
  "simple-agents-providers",
  "simple-agents-workflow",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2446,6 +2448,7 @@ dependencies = [
  "simple-agents-providers",
  "simple-agents-workflow",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

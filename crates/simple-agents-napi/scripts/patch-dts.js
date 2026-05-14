@@ -88,11 +88,6 @@ export interface Client {
   runEvalSuite(request: EvalSuiteRequest): Promise<EvalReport>
   run(request: WorkflowYamlRunRequest): Record<string, unknown> | Promise<Record<string, unknown>>
   stream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<Record<string, unknown>>
-  runWorkflowYaml(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
-  runWorkflowYamlWithEvents(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Record<string, unknown> | Promise<Record<string, unknown>>
-  runWorkflowYamlStream(workflowPath: string, workflowInput: { messages?: MessageInput[]; [key: string]: unknown }, onEvent: (eventJson: string) => void, workflowOptions?: { telemetry?: Record<string, unknown>; trace?: Record<string, unknown>; include_events?: boolean }, workflowExecution?: { healing?: boolean; workflowStreaming?: boolean; nodeLlmStreaming?: boolean; splitStreamDeltas?: boolean; debugStreamParse?: boolean }, customWorkerDispatch?: (req: { handler: string; handlerFile?: string; payload: unknown; context: unknown }) => unknown): Promise<Record<string, unknown>>
-  executeWorkflowYaml(request: WorkflowYamlRunRequest): Record<string, unknown> | Promise<Record<string, unknown>>
-  executeWorkflowYamlStream(request: WorkflowYamlRunRequest, onEvent: (eventJson: string) => void): Promise<Record<string, unknown>>
 }
 `;
 

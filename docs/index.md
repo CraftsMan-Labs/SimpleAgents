@@ -44,6 +44,8 @@ SimpleAgents lets you define that workflow as a YAML config and run it with a si
 - **I want Python API details** -> [Python Binding](/BINDINGS_PYTHON)
 - **I want TypeScript / Node API details** -> [Node.js Binding](/BINDINGS_NODE)
 - **I want to understand YAML routing and workers** -> [YAML Workflow System](/YAML_WORKFLOW_SYSTEM)
+- **I want workflow evals (golden outputs + judge in code)** -> [Workflow evals](/YAML_WORKFLOW_SYSTEM#workflow-evals) and language bindings ([Python](/BINDINGS_PYTHON), [Node](/BINDINGS_NODE))
+- **I want human-in-the-loop steps** -> [`human_input` in YAML](/YAML_WORKFLOW_SYSTEM#human_input), [Workflow Quickstart](/WORKFLOW_QUICKSTART) (Python), [Node.js Binding](/BINDINGS_NODE) (TypeScript)
 - **I want tracing with Langfuse / Jaeger** -> [Tracing & Observability](/TRACING_ARCHITECTURE)
 - **I want to use Rust directly** -> [Rust Quick Start](/QUICKSTART)
 - **I want to contribute** -> [Development Guide](/DEVELOPMENT)

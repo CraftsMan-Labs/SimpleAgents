@@ -105,6 +105,8 @@ const report = await client.runEvalSuite({
 });
 ```
 
+Bindings use an OpenAI-compatible HTTP client; construct `Client` with an API key and optional base URL (see [Node.js Binding](BINDINGS_NODE.md#creating-a-client)).
+
 ## Supported Node Types
 
 - `llm_call`: structured LLM generation with optional tools and streaming flags
@@ -235,6 +237,8 @@ resumed = client.run_workflow({
     "human_response": {"vendor_name": "Acme, Inc.", "total_amount": 120.0},
 })
 ```
+
+TypeScript / Node: use `client.run` with the same `resume` payload plus `humanResponse` (or `human_response`); see [Node.js Binding](BINDINGS_NODE.md#human-in-the-loop-hitl).
 
 ## A Good First Multi-Node Pattern
 

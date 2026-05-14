@@ -6,18 +6,19 @@
 use std::time::Duration;
 use thiserror::Error;
 
-/// Provider-specific errors for LLM API interactions.
+/// Transport-level errors for HTTP interactions with LLM APIs.
 ///
-/// Maps HTTP status codes and provider responses to actionable error types.
-/// Implements retry detection via the `RetryableError` trait.
+/// Distinct from `simple_agent_type::ProviderError` which is the canonical,
+/// public-facing provider error type. `TransportError` captures lower-level
+/// HTTP transport concerns (connection, serialization, timeouts).
 ///
 /// # Examples
 ///
 /// ```
-/// use simple_agents_providers::common::{ProviderError, RetryableError};
+/// use simple_agents_providers::common::{TransportError, RetryableError};
 /// use std::time::Duration;
 ///
-/// let err = ProviderError::RateLimit {
+/// let err = TransportError::RateLimit {
 ///     retry_after: Some(Duration::from_secs(5)),
 /// };
 ///
@@ -25,7 +26,7 @@ use thiserror::Error;
 /// assert_eq!(err.retry_after(), Some(Duration::from_secs(5)));
 /// ```
 #[derive(Error, Debug, Clone)]
-pub enum ProviderError {
+pub enum TransportError {
     /// Invalid API key (401)
     #[error("Invalid API key")]
     InvalidApiKey,
@@ -79,42 +80,42 @@ pub trait RetryableError {
     fn retry_after(&self) -> Option<Duration>;
 }
 
-impl RetryableError for ProviderError {
+impl RetryableError for TransportError {
     fn is_retryable(&self) -> bool {
         matches!(
             self,
-            ProviderError::Timeout(_)
-                | ProviderError::RateLimit { .. }
-                | ProviderError::ServerError(_)
-                | ProviderError::NetworkError(_)
+            TransportError::Timeout(_)
+                | TransportError::RateLimit { .. }
+                | TransportError::ServerError(_)
+                | TransportError::NetworkError(_)
         )
     }
 
     fn retry_after(&self) -> Option<Duration> {
         match self {
-            ProviderError::RateLimit { retry_after } => *retry_after,
+            TransportError::RateLimit { retry_after } => *retry_after,
             _ => None,
         }
     }
 }
 
-/// Convert reqwest errors to ProviderError.
-impl From<reqwest::Error> for ProviderError {
+/// Convert reqwest errors to TransportError.
+impl From<reqwest::Error> for TransportError {
     fn from(err: reqwest::Error) -> Self {
         if err.is_timeout() {
-            ProviderError::Timeout(Duration::from_secs(30))
+            TransportError::Timeout(Duration::from_secs(30))
         } else if err.is_connect() {
-            ProviderError::NetworkError(format!("Connection failed: {}", err))
+            TransportError::NetworkError(format!("Connection failed: {}", err))
         } else {
-            ProviderError::NetworkError(err.to_string())
+            TransportError::NetworkError(err.to_string())
         }
     }
 }
 
-/// Convert serde_json errors to ProviderError.
-impl From<serde_json::Error> for ProviderError {
+/// Convert serde_json errors to TransportError.
+impl From<serde_json::Error> for TransportError {
     fn from(err: serde_json::Error) -> Self {
-        ProviderError::SerializationError(err.to_string())
+        TransportError::SerializationError(err.to_string())
     }
 }
 
@@ -124,38 +125,38 @@ mod tests {
 
     #[test]
     fn test_retryable_errors() {
-        let timeout = ProviderError::Timeout(Duration::from_secs(30));
+        let timeout = TransportError::Timeout(Duration::from_secs(30));
         assert!(timeout.is_retryable());
         assert_eq!(timeout.retry_after(), None);
 
-        let rate_limit = ProviderError::RateLimit {
+        let rate_limit = TransportError::RateLimit {
             retry_after: Some(Duration::from_secs(5)),
         };
         assert!(rate_limit.is_retryable());
         assert_eq!(rate_limit.retry_after(), Some(Duration::from_secs(5)));
 
-        let server_error = ProviderError::ServerError("Internal error".to_string());
+        let server_error = TransportError::ServerError("Internal error".to_string());
         assert!(server_error.is_retryable());
 
-        let network_error = ProviderError::NetworkError("Connection reset".to_string());
+        let network_error = TransportError::NetworkError("Connection reset".to_string());
         assert!(network_error.is_retryable());
     }
 
     #[test]
     fn test_non_retryable_errors() {
-        let invalid_key = ProviderError::InvalidApiKey;
+        let invalid_key = TransportError::InvalidApiKey;
         assert!(!invalid_key.is_retryable());
 
-        let model_not_found = ProviderError::ModelNotFound("gpt-5".to_string());
+        let model_not_found = TransportError::ModelNotFound("gpt-5".to_string());
         assert!(!model_not_found.is_retryable());
 
-        let invalid_request = ProviderError::InvalidRequest("Missing model".to_string());
+        let invalid_request = TransportError::InvalidRequest("Missing model".to_string());
         assert!(!invalid_request.is_retryable());
     }
 
     #[test]
     fn test_error_display() {
-        let err = ProviderError::RateLimit {
+        let err = TransportError::RateLimit {
             retry_after: Some(Duration::from_secs(10)),
         };
         let msg = format!("{}", err);
@@ -165,12 +166,12 @@ mod tests {
 
     #[test]
     fn test_retry_after_extraction() {
-        let err = ProviderError::RateLimit {
+        let err = TransportError::RateLimit {
             retry_after: Some(Duration::from_secs(15)),
         };
         assert_eq!(err.retry_after(), Some(Duration::from_secs(15)));
 
-        let err2 = ProviderError::Timeout(Duration::from_secs(30));
+        let err2 = TransportError::Timeout(Duration::from_secs(30));
         assert_eq!(err2.retry_after(), None);
     }
 }

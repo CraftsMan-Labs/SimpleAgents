@@ -21,6 +21,18 @@ pub(crate) struct PythonCustomWorkerExecutor {
 
 #[async_trait::async_trait]
 impl YamlWorkflowCustomWorkerExecutor for PythonCustomWorkerExecutor {
+    /// Execute a custom worker handler defined in a Python file.
+    ///
+    /// # GIL behavior
+    ///
+    /// This method acquires the Python GIL via `Python::with_gil` for the
+    /// entire duration of the handler call. Because this is an `async fn`
+    /// dispatched on a Tokio worker thread, the GIL hold **blocks the Tokio
+    /// thread** until the Python callback returns. This is intentional —
+    /// Python callbacks must run on a GIL-holding thread and cannot be
+    /// awaited asynchronously. Keep handlers short to avoid starving the
+    /// Tokio runtime; for CPU-heavy work, consider offloading to a Python
+    /// thread pool inside the handler.
     async fn execute(
         &self,
         handler: &str,
@@ -140,21 +152,6 @@ impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
     }
 }
 
-pub(crate) fn attach_workflow_events(
-    value: &mut Value,
-    event_sink: &RecordingWorkflowEventSink,
-) -> PyResult<()> {
-    let events_value = event_sink.events_value()?;
-    match value {
-        Value::Object(object) => {
-            object.insert("events".to_string(), events_value);
-            Ok(())
-        }
-        _ => Err(PyRuntimeError::new_err(
-            "workflow output must be an object when include_events=true".to_string(),
-        )),
-    }
-}
 
 pub(crate) struct PythonWorkflowExecutionRequest {
     pub workflow_path: String,
@@ -404,10 +401,20 @@ unsafe impl Sync for PythonWorkflowEventSink {}
 
 impl YamlWorkflowEventSink for PythonWorkflowEventSink {
     fn is_cancelled(&self) -> bool {
-        self.callback_error
-            .lock()
-            .map(|error| error.is_some())
-            .unwrap_or(true)
+        match self.callback_error.lock() {
+            Ok(guard) => guard.is_some(),
+            Err(poisoned) => {
+                // Mutex was poisoned by a panic in another thread. Treat as
+                // cancelled to stop further work, but log so operators know
+                // this is a poison (not a normal cancel).
+                tracing::warn!(
+                    "[simple-agents-py] callback_error mutex poisoned — treating as cancelled \
+                     (inner value: {:?})",
+                    *poisoned.into_inner()
+                );
+                true
+            }
+        }
     }
 
     fn emit(&self, event: &YamlWorkflowEvent) {
@@ -422,16 +429,24 @@ impl YamlWorkflowEventSink for PythonWorkflowEventSink {
             let event_value = match serde_json::to_value(event) {
                 Ok(value) => value,
                 Err(error) => {
-                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
+                    tracing::warn!(
+                        "[simple-agents-py] failed to serialize workflow event: {error}"
+                    );
+                    if let Ok(mut cb_err) = self.callback_error.lock() {
+                        *cb_err = Some(format!("event serialization failed: {error}"));
+                    }
                     return;
                 }
             };
             let py_event = match pythonize::pythonize(py, &event_value) {
                 Ok(value) => value,
                 Err(error) => {
-                    eprintln!(
+                    tracing::warn!(
                         "[simple-agents-py] failed to convert workflow event for callback: {error}"
                     );
+                    if let Ok(mut cb_err) = self.callback_error.lock() {
+                        *cb_err = Some(format!("event pythonize failed: {error}"));
+                    }
                     return;
                 }
             };
@@ -464,9 +479,9 @@ impl CombinedWorkflowEventSink {
         }
     }
 
-    pub(crate) fn attach_to_output(&self, value: &mut Value) -> PyResult<()> {
+    pub(crate) fn events_value(&self) -> PyResult<Value> {
         if !self.record {
-            return Ok(());
+            return Ok(Value::Array(Vec::new()));
         }
         let events = match self.events.lock() {
             Ok(guard) => guard.clone(),
@@ -477,27 +492,26 @@ impl CombinedWorkflowEventSink {
                 poisoned.into_inner().clone()
             }
         };
-        let events_value = serde_json::to_value(events).map_err(|error| {
+        serde_json::to_value(events).map_err(|error| {
             PyRuntimeError::new_err(format!("event serialization failed: {error}"))
-        })?;
-        match value {
-            Value::Object(object) => {
-                object.insert("events".to_string(), events_value);
-                Ok(())
-            }
-            _ => Err(PyRuntimeError::new_err(
-                "workflow output must be an object when include_events=true".to_string(),
-            )),
-        }
+        })
     }
+
 }
 
 impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
     fn is_cancelled(&self) -> bool {
-        self.callback_error
-            .lock()
-            .map(|error| error.is_some())
-            .unwrap_or(true)
+        match self.callback_error.lock() {
+            Ok(guard) => guard.is_some(),
+            Err(poisoned) => {
+                tracing::warn!(
+                    "[simple-agents-py] callback_error mutex poisoned — treating as cancelled \
+                     (inner value: {:?})",
+                    *poisoned.into_inner()
+                );
+                true
+            }
+        }
     }
 
     fn emit(&self, event: &YamlWorkflowEvent) {
@@ -508,7 +522,7 @@ impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
             match self.events.lock() {
                 Ok(mut events) => events.push(event.clone()),
                 Err(poisoned) => {
-                    eprintln!(
+                    tracing::warn!(
                         "[simple-agents-py] event sink lock poisoned while recording event; recovering"
                     );
                     let mut events = poisoned.into_inner();
@@ -525,16 +539,24 @@ impl YamlWorkflowEventSink for CombinedWorkflowEventSink {
             let event_value = match serde_json::to_value(event) {
                 Ok(value) => value,
                 Err(error) => {
-                    eprintln!("[simple-agents-py] failed to serialize workflow event: {error}");
+                    tracing::warn!(
+                        "[simple-agents-py] failed to serialize workflow event: {error}"
+                    );
+                    if let Ok(mut cb_err) = self.callback_error.lock() {
+                        *cb_err = Some(format!("event serialization failed: {error}"));
+                    }
                     return;
                 }
             };
             let py_event = match pythonize::pythonize(py, &event_value) {
                 Ok(value) => value,
                 Err(error) => {
-                    eprintln!(
+                    tracing::warn!(
                         "[simple-agents-py] failed to convert workflow event for callback: {error}"
                     );
+                    if let Ok(mut cb_err) = self.callback_error.lock() {
+                        *cb_err = Some(format!("event pythonize failed: {error}"));
+                    }
                     return;
                 }
             };

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Parse a workflow stream event JSON line from `Client.executeWorkflowYamlStream`.
+ * Parse a workflow stream event JSON line from `Client.stream` or `Client.streamWorkflow`.
  * @param {string} eventJson
  * @returns {import('./workflow_event').WorkflowRunnerEvent}
  */

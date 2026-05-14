@@ -3,7 +3,7 @@
 //! Provides automatic fallback to healing when native structured outputs fail.
 
 use serde_json::Value;
-use simple_agent_type::error::{HealingError, SimpleAgentsError, ValidationError};
+use simple_agent_type::error::{HealingError, SimpleAgentsError};
 use simple_agent_type::response::HealingMetadata;
 use simple_agents_healing::coercion::{CoercionConfig, CoercionEngine};
 use simple_agents_healing::parser::{JsonishParser, ParserConfig};
@@ -53,6 +53,7 @@ impl HealingConfig {
                 allow_float_to_int: false,
                 inject_defaults: true,
                 min_confidence: 0.9,
+                strict_required: true,
             },
         }
     }
@@ -70,6 +71,7 @@ impl HealingConfig {
                 allow_float_to_int: true,
                 inject_defaults: true,
                 min_confidence: 0.5,
+                strict_required: false,
             },
         }
     }
@@ -167,9 +169,9 @@ impl HealingIntegration {
         original_error: &str,
     ) -> Result<HealedResponse, SimpleAgentsError> {
         if !self.config.enabled {
-            return Err(SimpleAgentsError::Validation(ValidationError::Custom(
-                "Healing is disabled".to_string(),
-            )));
+            return Err(SimpleAgentsError::Config(
+                "Healing is disabled by configuration".to_string(),
+            ));
         }
 
         // Step 1: Convert JSON Schema to healing Schema
@@ -263,7 +265,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            SimpleAgentsError::Validation(ValidationError::Custom(_))
+            SimpleAgentsError::Config(msg) if msg.contains("disabled")
         ));
     }
 

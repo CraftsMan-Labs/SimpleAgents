@@ -56,7 +56,7 @@ pub async fn example_streaming_healing(
 
                         streaming_parser.feed(content);
 
-                        if let Some(parse_result) = streaming_parser.try_parse() {
+                        if let Some(parse_result) = streaming_parser.try_parse().ok().flatten() {
                             if !parse_result.flags.is_empty() {
                                 heal_count = parse_result.flags.len();
                             }
@@ -180,7 +180,7 @@ pub async fn example_streaming_structured(
 
                         streaming_parser.feed(content);
 
-                        if let Some(parse_result) = streaming_parser.try_parse() {
+                        if let Some(parse_result) = streaming_parser.try_parse().ok().flatten() {
                             partial_count += 1;
 
                             let current_items =
@@ -314,7 +314,7 @@ pub async fn example_streaming_graph(
 
                         streaming_parser.feed(content);
 
-                        if let Some(parse_result) = streaming_parser.try_parse() {
+                        if let Some(parse_result) = streaming_parser.try_parse().ok().flatten() {
                             partial_count += 1;
 
                             let nodes = parse_result

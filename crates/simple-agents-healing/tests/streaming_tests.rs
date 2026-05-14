@@ -208,13 +208,13 @@ fn test_streaming_recover_from_reset() {
     let mut parser = StreamingParser::new();
 
     parser.feed(r#"{"name": "Alice"}"#);
-    let result1 = parser.try_parse().unwrap();
+    let result1 = parser.try_parse().unwrap().unwrap();
     assert_eq!(result1.value["name"], "Alice");
 
     // Clear and parse new data
     parser.clear();
     parser.feed(r#"{"id": 42}"#);
-    let result2 = parser.try_parse().unwrap();
+    let result2 = parser.try_parse().unwrap().unwrap();
     assert_eq!(result2.value["id"], 42);
 }
 

@@ -1,14 +1,15 @@
-//! Core types and traits for SimpleAgents.
+//! Core type definitions, async provider traits, and configuration types for
+//! SimpleAgents.
 //!
-//! This crate provides all foundational types, traits, and error definitions
-//! shared across the SimpleAgents project. It is a pure types crate with no
-//! runtime, HTTP, or I/O dependencies.
+//! No HTTP client or networking code — but includes `async-trait` for provider
+//! interfaces and config types that read from the environment
+//! (e.g. [`TelemetryConfig::from_env`]).
 //!
 //! # Architecture
 //!
 //! SimpleAgents follows a trait-based architecture:
 //!
-//! - **Provider**: Trait for LLM provider implementations
+//! - **Provider**: Async trait for LLM provider implementations
 //!
 //! # Main Types
 //!

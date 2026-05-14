@@ -605,14 +605,14 @@ Error: unknown custom worker handler: lookup_company
    );
    ```
 
-2. **Use executeWorkflowYaml (recommended):**
+2. **Use typed `run` request API (recommended):**
    ```typescript
    import { Client } from "simple-agents-node";
    
    const client = new Client("openai");
    
    // This signature is cleaner
-   const result = client.executeWorkflowYaml({
+   const result = client.run({
      workflowPath: "workflow.yaml",
      messages: [...],
      customWorkerDispatch: myDispatch,  // Built into request object

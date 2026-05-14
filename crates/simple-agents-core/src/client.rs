@@ -10,6 +10,7 @@ use simple_agent_type::telemetry::{ApiFormat, TelemetryConfig, TraceContext};
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
+use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;
@@ -19,11 +20,19 @@ use tracing::debug;
 // ---------------------------------------------------------------------------
 
 /// Top-level configuration for a [`SimpleAgentsClient`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The [`api_key`](Self::api_key) field is excluded from serialization and
+/// redacted in `Debug` output to prevent accidental leakage into logs or
+/// JSON responses.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ClientConfig {
     /// Provider identifier (e.g. `"openai"`, `"anthropic"`).
     pub provider: String,
     /// API key used for authentication with the provider.
+    ///
+    /// Excluded from serialization output and redacted in `Debug` to prevent
+    /// accidental leakage into logs, traces, or API responses.
+    #[serde(skip_serializing)]
     pub api_key: String,
     /// Optional custom base URL for the provider API.
     pub base_url: Option<String>,
@@ -35,6 +44,26 @@ pub struct ClientConfig {
     pub telemetry: Option<TelemetryConfig>,
     /// Default retry policy applied to all requests.
     pub default_retry: RetryConfig,
+}
+
+impl std::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = if self.api_key.is_empty() {
+            "<empty>"
+        } else {
+            "[REDACTED]"
+        };
+
+        f.debug_struct("ClientConfig")
+            .field("provider", &self.provider)
+            .field("api_key", &redacted)
+            .field("base_url", &self.base_url)
+            .field("api_format", &self.api_format)
+            .field("extra_headers", &self.extra_headers)
+            .field("telemetry", &self.telemetry)
+            .field("default_retry", &self.default_retry)
+            .finish()
+    }
 }
 
 impl Default for ClientConfig {
@@ -183,6 +212,16 @@ impl SimpleAgentsClient {
         options: CompletionOptions,
     ) -> Result<CompletionOutcome> {
         if request.stream.unwrap_or(false) {
+            if matches!(
+                options.mode,
+                CompletionMode::HealedJson | CompletionMode::CoercedSchema(_)
+            ) {
+                return Err(SimpleAgentsError::Config(
+                    "streaming is incompatible with HealedJson/CoercedSchema modes; \
+                     use Raw mode for streaming or disable streaming for structured output"
+                        .to_string(),
+                ));
+            }
             let stream = self.stream(request).await?;
             return Ok(CompletionOutcome::Stream(stream));
         }
@@ -220,6 +259,11 @@ impl SimpleAgentsClient {
         let mut attempt = 1;
 
         loop {
+            // Clone required because `Provider::execute` consumes the request body.
+            // For large multimodal payloads (images, audio) this duplication is
+            // non-trivial. If retries on big requests are common, prefer using
+            // multiple `SimpleAgentsClient` instances rather than relying on the
+            // retry loop.
             match self.provider.execute(provider_request.clone()).await {
                 Ok(response) => return Ok(response),
                 Err(error) => {
@@ -294,9 +338,7 @@ impl SimpleAgentsClient {
         if self.healing.enabled {
             Ok(())
         } else {
-            Err(SimpleAgentsError::Config(
-                "healing is disabled for this client".to_string(),
-            ))
+            Err(SimpleAgentsError::HealingDisabled)
         }
     }
 }
@@ -328,7 +370,14 @@ fn retry_delay(retry: &RetryConfig, failed_attempt: u32, error: &SimpleAgentsErr
         .max(1.0)
         .powi(failed_attempt.saturating_sub(1).min(31) as i32);
     let delay = retry.initial_backoff.mul_f32(factor);
-    delay.min(retry.max_backoff.max(retry.initial_backoff))
+    let delay = delay.min(retry.max_backoff.max(retry.initial_backoff));
+
+    if retry.jitter {
+        let jitter_factor = rand::thread_rng().gen_range(0.5..=1.5);
+        delay.mul_f64(jitter_factor)
+    } else {
+        delay
+    }
 }
 
 #[cfg(test)]
@@ -574,6 +623,42 @@ mod tests {
         assert_eq!(retry_delay(&fixed, 2, &error).as_millis(), 100);
         assert_eq!(retry_delay(&exponential, 1, &error).as_millis(), 100);
         assert_eq!(retry_delay(&exponential, 4, &error).as_millis(), 800);
+    }
+
+    #[test]
+    fn retry_delay_with_jitter_stays_within_expected_range() {
+        let error =
+            SimpleAgentsError::Provider(ProviderError::ServerError("temporary".to_string()));
+        let config = RetryConfig {
+            max_attempts: 3,
+            initial_backoff: Duration::from_millis(1_000),
+            max_backoff: Duration::from_millis(10_000),
+            backoff_multiplier: 1.0,
+            jitter: true,
+        };
+
+        let base_ms = 1_000u128;
+        let min_expected = base_ms / 2; // 0.5x
+        let max_expected = base_ms * 3 / 2; // 1.5x
+
+        for _ in 0..50 {
+            let delay = retry_delay(&config, 1, &error);
+            let ms = delay.as_millis();
+            assert!(
+                ms >= min_expected && ms <= max_expected,
+                "jittered delay {ms}ms outside expected range [{min_expected}, {max_expected}]",
+            );
+        }
+
+        let mut delays = std::collections::HashSet::new();
+        for _ in 0..20 {
+            delays.insert(retry_delay(&config, 1, &error).as_nanos());
+        }
+        assert!(
+            delays.len() > 1,
+            "expected jitter to produce varying delays, but got {} distinct value(s)",
+            delays.len(),
+        );
     }
 
     struct StreamingProvider {

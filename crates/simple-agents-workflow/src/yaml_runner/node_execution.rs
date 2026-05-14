@@ -351,14 +351,4 @@ fn apply_node_output_span_attributes(
     }
 }
 
-fn build_execution_context(
-    workflow_input: &Value,
-    outputs: &BTreeMap<String, Value>,
-    globals: &serde_json::Map<String, Value>,
-) -> Value {
-    json!({
-        "input": workflow_input,
-        "nodes": outputs,
-        "globals": Value::Object(globals.clone())
-    })
-}
+use super::execute::build_execution_context;

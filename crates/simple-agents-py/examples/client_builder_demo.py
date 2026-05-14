@@ -1,4 +1,4 @@
-"""Demo of ClientBuilder for multi-provider support."""
+"""Demo of ClientBuilder with currently supported configuration."""
 
 from simple_agents_py import ClientBuilder
 
@@ -7,7 +7,9 @@ def demo_basic_builder():
     """Basic builder usage with single provider."""
     print("=== Basic Builder Usage ===\n")
 
-    client = ClientBuilder().add_provider("openai", api_key="sk-test-key").build()
+    client = (
+        ClientBuilder().add_provider("openai", api_key="sk-test-key").build()
+    )
 
     print("Client created successfully with single provider")
     print(f"Client type: {type(client).__name__}\n")
@@ -30,100 +32,6 @@ def demo_multi_provider():
     print("  - Anthropic (for Claude models)")
     print("  - OpenRouter (for multi-model access)")
     print(f"Client type: {type(client).__name__}\n")
-
-
-def demo_round_robin_routing():
-    """Round-robin routing across providers."""
-    print("=== Round-Robin Routing ===\n")
-
-    client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-1")
-        .add_provider("anthropic", api_key="sk-2")
-        .with_routing("round_robin")
-        .build()
-    )
-
-    print("Client configured with round-robin routing:")
-    print("  - Request 1 -> OpenAI")
-    print("  - Request 2 -> Anthropic")
-    print("  - Request 3 -> OpenAI")
-    print("  - (and so on...)")
-    print(f"\nClient type: {type(client).__name__}\n")
-
-
-def demo_fallback_routing():
-    """Fallback routing configuration."""
-    print("=== Fallback Routing ===\n")
-
-    client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-primary")
-        .add_provider("anthropic", api_key="sk-backup")
-        .with_routing("fallback")
-        .build()
-    )
-
-    print("Client configured with fallback routing:")
-    print("  - Primary: OpenAI")
-    print("  - Backup: Anthropic (used if OpenAI fails)")
-    print(f"\nClient type: {type(client).__name__}\n")
-
-
-def demo_latency_routing():
-    """Latency-based routing configuration."""
-    print("=== Latency-Based Routing ===\n")
-
-    client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-1")
-        .add_provider("anthropic", api_key="sk-2")
-        .with_routing("latency")
-        .build()
-    )
-
-    print("Client configured with latency-based routing:")
-    print("  - Routes requests to the fastest provider")
-    print("  - Automatically tracks response times")
-    print("  - Adapts to changing conditions")
-    print(f"\nClient type: {type(client).__name__}\n")
-
-
-def demo_cost_routing():
-    """Cost-based routing configuration."""
-    print("=== Cost-Based Routing ===\n")
-
-    client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-1")
-        .add_provider("anthropic", api_key="sk-2")
-        .with_routing("cost")
-        .build()
-    )
-
-    print("Client configured with cost-based routing:")
-    print("  - Routes requests to the cheapest provider")
-    print("  - Considers per-token costs")
-    print("  - Optimizes for cost efficiency")
-    print(f"\nClient type: {type(client).__name__}\n")
-
-
-def demo_with_cache():
-    """Cache configuration."""
-    print("=== Cache Configuration ===\n")
-
-    client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-test")
-        .with_cache(ttl_seconds=300)
-        .build()
-    )
-
-    print("Client configured with cache:")
-    print("  - Cache TTL: 300 seconds (5 minutes)")
-    print("  - Identical requests within TTL return cached responses")
-    print("  - Reduces API costs and improves latency")
-    print(f"\nClient type: {type(client).__name__}\n")
 
 
 def demo_healing_config():
@@ -174,7 +82,7 @@ def demo_disable_healing():
 
 
 def demo_full_configuration():
-    """Full configuration example."""
+    """Full configuration example using supported methods."""
     print("=== Full Configuration Example ===\n")
 
     healing_config = {
@@ -187,8 +95,6 @@ def demo_full_configuration():
         ClientBuilder()
         .add_provider("openai", api_key="sk-openai")
         .add_provider("anthropic", api_key="sk-ant")
-        .with_routing("round_robin")
-        .with_cache(ttl_seconds=600)
         .with_healing_config(healing_config)
         .build()
     )
@@ -197,8 +103,7 @@ def demo_full_configuration():
     print("  Providers:")
     print("    - OpenAI")
     print("    - Anthropic")
-    print("  Routing: Round-robin")
-    print("  Cache: 600 seconds (10 minutes)")
+    print("  Build behavior: uses first configured provider")
     print("  Healing:")
     print("    - Enabled: Yes")
     print("    - Min confidence: 0.8")
@@ -235,8 +140,6 @@ def demo_builder_repr():
         ClientBuilder()
         .add_provider("openai", api_key="sk-test")
         .add_provider("anthropic", api_key="sk-ant")
-        .with_routing("round_robin")
-        .with_cache(ttl_seconds=300)
     )
 
     print("Builder representation:")
@@ -252,10 +155,7 @@ def demo_comparison():
 
     # New way (multi-provider with configuration)
     new_client = (
-        ClientBuilder()
-        .add_provider("openai", api_key="sk-test")
-        .with_routing("direct")
-        .build()
+        ClientBuilder().add_provider("openai", api_key="sk-test").build()
     )
 
     print("Old Client class:")
@@ -264,8 +164,6 @@ def demo_comparison():
     print()
     print("New ClientBuilder:")
     print("  - Multiple providers supported")
-    print("  - Advanced routing (round-robin, latency, cost, fallback)")
-    print("  - Built-in caching")
     print("  - Configurable healing")
     print("  - Custom API base URLs")
     print()
@@ -277,11 +175,6 @@ def main():
     """Run all demos."""
     demo_basic_builder()
     demo_multi_provider()
-    demo_round_robin_routing()
-    demo_fallback_routing()
-    demo_latency_routing()
-    demo_cost_routing()
-    demo_with_cache()
     demo_healing_config()
     demo_disable_healing()
     demo_full_configuration()

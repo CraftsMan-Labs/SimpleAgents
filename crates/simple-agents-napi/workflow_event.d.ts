@@ -37,7 +37,7 @@ export interface WorkflowRunnerEvent {
 }
 
 /**
- * Parse `eventJson` from the `executeWorkflowYamlStream` callback (same shape as Rust serde JSON).
+ * Parse `eventJson` from `stream` / `streamWorkflow` callbacks (same shape as Rust serde JSON).
  */
 export function parseWorkflowEvent(eventJson: string): WorkflowRunnerEvent
 

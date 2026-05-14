@@ -64,7 +64,9 @@ pub fn parse_responses_response(body: Value) -> Result<CompletionResponse, Strin
                 }
             })
         })
-        .unwrap_or_default();
+        .ok_or_else(|| {
+            "No assistant output in Responses API response".to_string()
+        })?;
 
     let usage = body.get("usage").map(|u| Usage {
         prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
@@ -89,10 +91,13 @@ pub fn parse_responses_response(body: Value) -> Result<CompletionResponse, Strin
     })
 }
 
-/// Parse a Responses API SSE event into a [`CompletionChunk`] (placeholder).
-pub fn parse_responses_stream_event(_event_type: &str, _data: &str) -> Option<CompletionChunk> {
-    // TODO: implement Responses API SSE event parsing
-    None
+/// Parse a Responses API SSE event into a [`CompletionChunk`].
+///
+/// # Errors
+///
+/// Always returns an error — Responses API streaming is not yet implemented.
+pub fn parse_responses_stream_event(_event_type: &str, _data: &str) -> Result<CompletionChunk, String> {
+    Err("Responses API streaming is not yet supported".to_string())
 }
 
 #[cfg(test)]
@@ -142,8 +147,8 @@ mod tests {
             "model": "gpt-4o",
             "output": []
         });
-        let resp = parse_responses_response(body).unwrap();
-        assert_eq!(resp.content(), Some(""));
+        let err = parse_responses_response(body).unwrap_err();
+        assert!(err.contains("No assistant output"));
     }
 
     #[test]
@@ -164,7 +169,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_responses_stream_event_placeholder() {
-        assert!(parse_responses_stream_event("response.done", "{}").is_none());
+    fn test_parse_responses_stream_event_returns_unsupported_error() {
+        let err = parse_responses_stream_event("response.done", "{}").unwrap_err();
+        assert!(err.contains("not yet supported"));
     }
 }

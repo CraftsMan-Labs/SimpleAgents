@@ -201,34 +201,33 @@ response = client.complete("gpt-4o-mini", messages, tools=tools)
 print(response.tool_calls)
 ```
 
-### ClientBuilder (Routing, Cache, Healing, Middleware)
+### ClientBuilder (Providers + Healing)
 
 ```python
-from simple_agents_py import (
-    CacheConfig,
-    ClientBuilder,
-    HealingConfig,
-    ProviderConfig,
-    RoutingPolicy,
-)
-
-class TimingMiddleware:
-    def before_request(self, request):
-        print("sending", request.model)
+from simple_agents_py import ClientBuilder, ProviderConfig
 
 builder = (
     ClientBuilder()
     .add_provider_config(ProviderConfig("openai", api_key="sk-..."))
-    .with_routing_policy(RoutingPolicy.direct())
-    .with_cache_config(CacheConfig(ttl_seconds=60))
-    .with_healing(HealingConfig(enabled=True, min_confidence=0.7))
-    .add_middleware(TimingMiddleware())
+    .add_provider("anthropic", api_key="sk-ant-...")
+    .with_healing_config(
+        {
+            "enabled": True,
+            "min_confidence": 0.7,
+            "fuzzy_match_threshold": 0.85,
+        }
+    )
 )
 client = builder.build()
 print(client.complete("gpt-4o-mini", "Give me one idea.").content)
 ```
 
-The existing dict/string APIs remain supported (`add_provider`, `with_routing`, `with_cache`, `with_healing_config`) for backward compatibility.
+`ClientBuilder` currently supports:
+
+- `add_provider(...)`
+- `add_provider_config(...)`
+- `with_healing_config({...})`
+- `build()`
 
 ## Examples
 

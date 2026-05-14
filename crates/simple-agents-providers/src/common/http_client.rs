@@ -32,6 +32,9 @@ use crate::utils::DEFAULT_TIMEOUT;
 #[derive(Clone, Debug)]
 pub struct HttpClient {
     inner: Client,
+    /// The timeout configured for this client, retained so error messages can
+    /// report the actual configured duration rather than a generic constant.
+    configured_timeout: Duration,
 }
 
 impl HttpClient {
@@ -89,7 +92,10 @@ impl HttpClient {
             .pool_idle_timeout(Duration::from_secs(90));
         let inner = if no_proxy { inner.no_proxy() } else { inner }.build()?;
 
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            configured_timeout: timeout,
+        })
     }
 
     /// Gets a reference to the underlying reqwest client.
@@ -97,6 +103,11 @@ impl HttpClient {
     /// Useful for making custom requests while maintaining connection pooling.
     pub fn inner(&self) -> &Client {
         &self.inner
+    }
+
+    /// Returns the timeout duration configured for this client.
+    pub fn configured_timeout(&self) -> Duration {
+        self.configured_timeout
     }
 }
 
@@ -120,7 +131,10 @@ impl HttpClient {
                 );
                 let fallback = Client::builder().timeout(DEFAULT_TIMEOUT).build();
                 match fallback {
-                    Ok(inner) => Self { inner },
+                    Ok(inner) => Self {
+                        inner,
+                        configured_timeout: DEFAULT_TIMEOUT,
+                    },
                     Err(fallback_error) => {
                         tracing::warn!(
                             ?fallback_error,
@@ -128,6 +142,7 @@ impl HttpClient {
                         );
                         Self {
                             inner: Client::new(),
+                            configured_timeout: DEFAULT_TIMEOUT,
                         }
                     }
                 }

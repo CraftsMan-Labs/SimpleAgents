@@ -3,13 +3,15 @@
 from . import models
 from . import eval_request
 from . import workflow_request
-from .simple_agents_py import *  # noqa: F403
 from .eval_request import *  # noqa: F403
 from . import evals
 from .evals import *  # noqa: F403
 from .workflow_stream import default_on_event as default_on_event  # noqa: F401
 from .models import *  # noqa: F403
 from .workflow_request import *  # noqa: F403
+# Native module imported last so typed pyclasses (WorkflowRunOutput, HumanRequest,
+# WorkflowRunStatus) take precedence over pure-Python TypedDict definitions.
+from .simple_agents_py import *  # noqa: F403
 
 __doc__ = simple_agents_py.__doc__  # noqa: F405
 _native_all = getattr(simple_agents_py, "__all__", None)

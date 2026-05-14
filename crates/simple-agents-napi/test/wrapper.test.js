@@ -73,7 +73,7 @@ test('runEvalSuite runs dataset records through evaluator callback', async () =>
   fs.rmSync(datasetPath);
 });
 
-test('wrapper installs workflow YAML compatibility aliases', () => {
+test('wrapper keeps canonical typed workflow methods', () => {
   class Client {
     runWorkflow() {}
     streamWorkflow() {}
@@ -82,16 +82,15 @@ test('wrapper installs workflow YAML compatibility aliases', () => {
   }
 
   const binding = loadWrapperWithNative({ Client });
-  const aliases = [
-    'runWorkflowYaml',
-    'runWorkflowYamlWithEvents',
-    'runWorkflowYamlStream',
-    'executeWorkflowYaml',
-    'executeWorkflowYamlStream',
+  const methods = [
+    'run',
+    'stream',
+    'runWorkflow',
+    'streamWorkflow',
   ];
 
-  for (const alias of aliases) {
-    assert.strictEqual(typeof binding.Client.prototype[alias], 'function');
+  for (const method of methods) {
+    assert.strictEqual(typeof binding.Client.prototype[method], 'function');
   }
 });
 

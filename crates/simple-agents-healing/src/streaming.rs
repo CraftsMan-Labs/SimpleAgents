@@ -29,13 +29,29 @@ use simple_agent_type::coercion::CoercionResult;
 use simple_agent_type::error::HealingError;
 use std::collections::VecDeque;
 
+/// Returns `true` for errors that indicate a hard limit violation (input too
+/// large, nesting too deep) as opposed to "not enough data yet" parse failures.
+fn is_hard_parse_error(error: &simple_agent_type::SimpleAgentsError) -> bool {
+    match error {
+        simple_agent_type::SimpleAgentsError::Healing(HealingError::ParseFailed {
+            error_message,
+            ..
+        }) => {
+            error_message.contains("exceeds maximum allowed")
+        }
+        _ => false,
+    }
+}
+
 /// Parser state for tracking incomplete JSON structures.
-///
-/// Currently simplified - will be expanded when implementing advanced streaming features.
 #[derive(Debug, Clone, PartialEq)]
 enum ParseState {
-    /// Not inside any structure
+    /// Not inside any structure yet
     Outside,
+    /// Inside a top-level array (streaming elements)
+    InArray,
+    /// Inside a top-level object (wait for completion)
+    InObject,
 }
 
 /// Streaming JSON parser for incremental parsing.
@@ -121,15 +137,28 @@ impl StreamingParser {
 
     /// Try to parse the current buffer as a complete JSON value.
     ///
-    /// Returns `Some(value)` if the buffer contains a complete, parseable value.
-    /// Returns `None` if more data is needed or if the JSON is incomplete.
-    pub fn try_parse(&self) -> Option<CoercionResult<Value>> {
+    /// Returns `Ok(Some(value))` if the buffer contains a complete, parseable value.
+    /// Returns `Ok(None)` if more data is needed (buffer empty or incomplete).
+    /// Returns `Err(...)` if the buffer contains data that is definitively invalid
+    /// (e.g. exceeds input size limits or nesting depth).
+    pub fn try_parse(
+        &self,
+    ) -> std::result::Result<Option<CoercionResult<Value>>, simple_agent_type::SimpleAgentsError>
+    {
         if self.buffer.trim().is_empty() {
-            return None;
+            return Ok(None);
         }
 
-        // Try to parse the entire buffer
-        self.parser.parse(&self.buffer).ok()
+        match self.parser.parse(&self.buffer) {
+            Ok(result) => Ok(Some(result)),
+            Err(e) => {
+                if is_hard_parse_error(&e) {
+                    Err(e)
+                } else {
+                    Ok(None)
+                }
+            }
+        }
     }
 
     /// Finalize the stream and get the complete parsed value.
@@ -188,22 +217,137 @@ impl StreamingParser {
 
     /// Extract completed values from the buffer.
     ///
-    /// For arrays, this extracts complete array elements.
+    /// For arrays, this extracts complete array elements as they become available.
     /// For objects, this waits until the entire object is complete.
     fn extract_completed_values(&mut self) -> Vec<Value> {
         let mut result = Vec::new();
 
-        // For now, we use a simple heuristic:
-        // Try to extract complete JSON values that end with } or ]
-        // This is a simplified implementation - a full implementation would
-        // use a proper state machine to track nesting depth
-
-        // Drain any previously extracted values
+        // Drain any previously extracted values first
         while let Some(value) = self.extracted_values.pop_front() {
             result.push(value);
         }
 
+        // Determine top-level structure if we haven't yet
+        if self.state == ParseState::Outside {
+            let trimmed_start = self.buffer[self.parsed_index..].trim_start();
+            if trimmed_start.starts_with('[') {
+                self.state = ParseState::InArray;
+                // Advance parsed_index past the opening bracket
+                let offset = self.buffer.len() - trimmed_start.len();
+                self.parsed_index = offset + 1; // skip '['
+            } else if trimmed_start.starts_with('{') {
+                self.state = ParseState::InObject;
+            } else {
+                return result;
+            }
+        }
+
+        if self.state == ParseState::InArray {
+            self.extract_array_elements(&mut result);
+        }
+
         result
+    }
+
+    /// Extract complete array elements from the buffer using depth/string tracking.
+    ///
+    /// Scans from `parsed_index` forward, tracking brace/bracket depth and string
+    /// state. When depth returns to 0 after a value and we encounter a comma or `]`,
+    /// we have a complete element to extract.
+    fn extract_array_elements(&mut self, output: &mut Vec<Value>) {
+        let bytes = self.buffer.as_bytes();
+        let len = bytes.len();
+
+        let mut depth: i32 = 0;
+        let mut in_string = false;
+        let mut escaped = false;
+        let mut element_start: Option<usize> = None;
+        let mut i = self.parsed_index;
+
+        while i < len {
+            let b = bytes[i];
+
+            if escaped {
+                escaped = false;
+                i += 1;
+                continue;
+            }
+
+            if in_string {
+                match b {
+                    b'\\' => escaped = true,
+                    b'"' => in_string = false,
+                    _ => {}
+                }
+                i += 1;
+                continue;
+            }
+
+            match b {
+                b'"' => {
+                    in_string = true;
+                    if element_start.is_none() {
+                        element_start = Some(i);
+                    }
+                }
+                b'{' | b'[' => {
+                    if element_start.is_none() {
+                        element_start = Some(i);
+                    }
+                    depth += 1;
+                }
+                b'}' | b']' if depth > 0 => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // End of a nested structure at depth-0 in the array
+                        // The element runs from element_start to i (inclusive)
+                        if let Some(start) = element_start {
+                            let element_str = &self.buffer[start..=i];
+                            if let Ok(value) = serde_json::from_str::<Value>(element_str) {
+                                output.push(value);
+                            }
+                            element_start = None;
+                            self.parsed_index = i + 1;
+                        }
+                    }
+                }
+                b']' if depth == 0 => {
+                    // Closing bracket of the top-level array
+                    // If there's a pending element (primitive), flush it
+                    if let Some(start) = element_start {
+                        let element_str = self.buffer[start..i].trim();
+                        if !element_str.is_empty() {
+                            if let Ok(value) = serde_json::from_str::<Value>(element_str) {
+                                output.push(value);
+                            }
+                        }
+                    }
+                    self.parsed_index = i + 1;
+                    return;
+                }
+                b',' if depth == 0 => {
+                    // Comma at top-level array depth → end of a primitive element
+                    if let Some(start) = element_start {
+                        let element_str = self.buffer[start..i].trim();
+                        if !element_str.is_empty() {
+                            if let Ok(value) = serde_json::from_str::<Value>(element_str) {
+                                output.push(value);
+                            }
+                        }
+                        element_start = None;
+                        self.parsed_index = i + 1;
+                    } else {
+                        self.parsed_index = i + 1;
+                    }
+                }
+                b if !b.is_ascii_whitespace() && element_start.is_none() && depth == 0 => {
+                    element_start = Some(i);
+                }
+                _ => {}
+            }
+
+            i += 1;
+        }
     }
 }
 
@@ -284,7 +428,7 @@ mod tests {
 
         // Lenient parser may parse incomplete JSON, auto-closing structures
         // This is expected behavior for streaming
-        let result = parser.try_parse();
+        let result = parser.try_parse().unwrap();
         if let Some(parsed) = result {
             // If it parses, it should have at least the name field
             assert_eq!(parsed.value["name"], "Alice");
@@ -297,7 +441,7 @@ mod tests {
         parser.feed(r#"{"name": "Alice", "age": 30}"#);
 
         // Should successfully parse
-        let result = parser.try_parse().unwrap();
+        let result = parser.try_parse().unwrap().unwrap();
         assert_eq!(result.value["name"], "Alice");
         assert_eq!(result.value["age"], 30);
     }
@@ -387,5 +531,87 @@ mod tests {
         assert_eq!(result.value["name"], "Alice");
         assert!(result.confidence < 1.0);
         assert!(!result.flags.is_empty());
+    }
+
+    // --- Task 2A: Incremental array extraction tests ---
+
+    #[test]
+    fn test_feed_incremental_chunked_array() {
+        let mut parser = StreamingParser::new();
+
+        let values1 = parser.feed(r#"[{"a":1},"#);
+        assert_eq!(values1.len(), 1);
+        assert_eq!(values1[0]["a"], 1);
+
+        let values2 = parser.feed(r#"{"b":2}]"#);
+        assert_eq!(values2.len(), 1);
+        assert_eq!(values2[0]["b"], 2);
+    }
+
+    #[test]
+    fn test_feed_incremental_nested_objects() {
+        let mut parser = StreamingParser::new();
+
+        let values = parser.feed(r#"[{"outer":{"inner":1}},{"outer":{"inner":2}}]"#);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["outer"]["inner"], 1);
+        assert_eq!(values[1]["outer"]["inner"], 2);
+    }
+
+    #[test]
+    fn test_feed_incremental_strings_with_commas() {
+        let mut parser = StreamingParser::new();
+
+        // Strings containing commas/brackets should NOT cause premature splits
+        let values = parser.feed(r#"[{"msg":"hello, world"},{"msg":"a[b]c"}]"#);
+        assert_eq!(values.len(), 2);
+        assert_eq!(values[0]["msg"], "hello, world");
+        assert_eq!(values[1]["msg"], "a[b]c");
+    }
+
+    #[test]
+    fn test_feed_incremental_empty_array() {
+        let mut parser = StreamingParser::new();
+
+        let values = parser.feed(r#"[]"#);
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn test_feed_incremental_single_element_array() {
+        let mut parser = StreamingParser::new();
+
+        let values = parser.feed(r#"[{"id":42}]"#);
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0]["id"], 42);
+    }
+
+    #[test]
+    fn test_feed_incremental_primitives() {
+        let mut parser = StreamingParser::new();
+
+        let values1 = parser.feed(r#"[1, 2,"#);
+        assert_eq!(values1.len(), 2);
+        assert_eq!(values1[0], 1);
+        assert_eq!(values1[1], 2);
+
+        let values2 = parser.feed(r#" 3]"#);
+        assert_eq!(values2.len(), 1);
+        assert_eq!(values2[0], 3);
+    }
+
+    #[test]
+    fn test_feed_incremental_partial_element() {
+        let mut parser = StreamingParser::new();
+
+        // First chunk has incomplete element
+        let values1 = parser.feed(r#"[{"name":"Al"#);
+        assert!(values1.is_empty());
+
+        // Complete the element
+        let values2 = parser.feed(r#"ice"},{"name":"Bob"}]"#);
+        assert_eq!(values2.len(), 2);
+        assert_eq!(values2[0]["name"], "Alice");
+        assert_eq!(values2[1]["name"], "Bob");
     }
 }

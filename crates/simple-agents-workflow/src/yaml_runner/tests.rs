@@ -2921,3 +2921,146 @@ nodes:
         assert_eq!(seen.as_slice(), &["node_stream_delta".to_string()]);
     }
 }
+
+#[tokio::test]
+async fn end_node_terminates_workflow_cleanly() {
+    let yaml = r#"
+id: end-node-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      output_schema:
+        type: object
+        properties:
+          category: { type: string }
+        required: [category]
+  - id: router
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify.output.category == "termination"'
+            target: done
+        default: done
+  - id: done
+    node_type:
+      end: {}
+edges:
+  - from: classify
+    to: router
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({"email_text": "You are terminated."}),
+        &MockExecutor,
+        None,
+        None,
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect("workflow with end node should execute");
+
+    assert_eq!(output.workflow_id, "end-node-test");
+    assert_eq!(output.terminal_node, "done");
+    assert_eq!(output.status, YamlWorkflowRunStatus::Completed);
+}
+
+#[tokio::test]
+async fn end_node_applies_set_globals() {
+    let yaml = r#"
+id: end-globals
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      output_schema:
+        type: object
+        properties:
+          category: { type: string }
+        required: [category]
+  - id: done
+    node_type:
+      end: {}
+    config:
+      set_globals:
+        final_category: "nodes.classify.output.category"
+edges:
+  - from: classify
+    to: done
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({"email_text": "You are terminated."}),
+        &MockExecutor,
+        None,
+        None,
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect("workflow with end node should execute");
+
+    assert_eq!(output.terminal_node, "done");
+    assert_eq!(
+        output.globals.get("final_category").and_then(Value::as_str),
+        Some("termination")
+    );
+}
+
+#[test]
+fn validates_ambiguous_node_type() {
+    let yaml = r#"
+id: ambiguous
+entry_node: broken
+nodes:
+  - id: broken
+    node_type:
+      llm_call:
+        model: gpt-4.1
+      end: {}
+    config:
+      prompt: "hello"
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let diagnostics = verify_yaml_workflow(&workflow);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "ambiguous_node_type"),
+        "expected ambiguous_node_type diagnostic, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn validates_missing_node_type() {
+    let yaml = r#"
+id: empty-type
+entry_node: broken
+nodes:
+  - id: broken
+    node_type: {}
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let diagnostics = verify_yaml_workflow(&workflow);
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == "missing_node_type"),
+        "expected missing_node_type diagnostic, got: {diagnostics:?}"
+    );
+}
