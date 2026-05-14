@@ -51,8 +51,7 @@ use simple_agents_core::{CompletionOptions, CompletionOutcome, SimpleAgentsClien
 use crate::yaml_runner::{
     workflow_execution, RunMetadata, StepTiming, WorkflowEventSink, WorkflowRunOutput,
     YamlWorkflowEventSink, YamlWorkflowExecutionFlags, YamlWorkflowExecutionRequest,
-    YamlWorkflowExecutorBinding, YamlWorkflowRunError, YamlWorkflowRunOptions,
-    YamlWorkflowSource,
+    YamlWorkflowExecutorBinding, YamlWorkflowRunError, YamlWorkflowRunOptions, YamlWorkflowSource,
 };
 
 use simple_agent_type::prelude::SimpleAgentsError;

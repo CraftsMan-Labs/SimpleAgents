@@ -1,6 +1,7 @@
 //! SimpleAgents client implementation.
 
 use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::{
     CompletionChunk, CompletionRequest, CompletionResponse, Provider, Result, SimpleAgentsError,
@@ -10,7 +11,6 @@ use simple_agent_type::telemetry::{ApiFormat, TelemetryConfig, TraceContext};
 use simple_agents_healing::coercion::CoercionEngine;
 use simple_agents_healing::parser::JsonishParser;
 use simple_agents_healing::schema::Schema;
-use rand::Rng;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::debug;

@@ -531,13 +531,11 @@ impl OpenAiCompatProvider {
             ))
         })?;
 
-        let choices = resp.body["choices"]
-            .as_array()
-            .ok_or_else(|| {
-                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "Response missing 'choices' array".to_string(),
-                ))
-            })?;
+        let choices = resp.body["choices"].as_array().ok_or_else(|| {
+            SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                "Response missing 'choices' array".to_string(),
+            ))
+        })?;
 
         let first_choice = choices.first().ok_or_else(|| {
             SimpleAgentsError::Provider(ProviderError::InvalidResponse(
@@ -545,13 +543,11 @@ impl OpenAiCompatProvider {
             ))
         })?;
 
-        let content = first_choice["message"]["content"]
-            .as_str()
-            .ok_or_else(|| {
-                SimpleAgentsError::Provider(ProviderError::InvalidResponse(
-                    "No content field in response choices[0]".to_string(),
-                ))
-            })?;
+        let content = first_choice["message"]["content"].as_str().ok_or_else(|| {
+            SimpleAgentsError::Provider(ProviderError::InvalidResponse(
+                "No content field in response choices[0]".to_string(),
+            ))
+        })?;
 
         // Attempt healing
         let healed = healing.heal_response(

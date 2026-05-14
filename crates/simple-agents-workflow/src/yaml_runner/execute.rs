@@ -773,7 +773,9 @@ async fn execute_single_node_step(
             apply_update_globals(node, &state.outputs, workflow_input, &mut state.globals);
             if let Some(end_config) = node.node_type.end.as_ref() {
                 if end_config.is_object() && !end_config.as_object().unwrap().is_empty() {
-                    state.outputs.insert(node.id.clone(), json!({ "output": end_config }));
+                    state
+                        .outputs
+                        .insert(node.id.clone(), json!({ "output": end_config }));
                 }
             }
             Ok(NodeStepOutcome::Terminated)

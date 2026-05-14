@@ -36,9 +36,7 @@ fn is_hard_parse_error(error: &simple_agent_type::SimpleAgentsError) -> bool {
         simple_agent_type::SimpleAgentsError::Healing(HealingError::ParseFailed {
             error_message,
             ..
-        }) => {
-            error_message.contains("exceeds maximum allowed")
-        }
+        }) => error_message.contains("exceeds maximum allowed"),
         _ => false,
     }
 }

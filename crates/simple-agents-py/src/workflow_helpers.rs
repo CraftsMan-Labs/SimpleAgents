@@ -152,7 +152,6 @@ impl YamlWorkflowEventSink for RecordingWorkflowEventSink {
     }
 }
 
-
 pub(crate) struct PythonWorkflowExecutionRequest {
     pub workflow_path: String,
     pub messages: Vec<Value>,
@@ -496,7 +495,6 @@ impl CombinedWorkflowEventSink {
             PyRuntimeError::new_err(format!("event serialization failed: {error}"))
         })
     }
-
 }
 
 impl YamlWorkflowEventSink for CombinedWorkflowEventSink {

@@ -3038,9 +3038,7 @@ nodes:
     let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
     let diagnostics = verify_yaml_workflow(&workflow);
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "ambiguous_node_type"),
+        diagnostics.iter().any(|d| d.code == "ambiguous_node_type"),
         "expected ambiguous_node_type diagnostic, got: {diagnostics:?}"
     );
 }
@@ -3058,9 +3056,7 @@ nodes:
     let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
     let diagnostics = verify_yaml_workflow(&workflow);
     assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code == "missing_node_type"),
+        diagnostics.iter().any(|d| d.code == "missing_node_type"),
         "expected missing_node_type diagnostic, got: {diagnostics:?}"
     );
 }
