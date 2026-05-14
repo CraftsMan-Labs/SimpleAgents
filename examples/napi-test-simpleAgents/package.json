@@ -2,6 +2,9 @@
   "name": "napi-test-simpleagents",
   "private": true,
   "type": "module",
+  "simpleagentsDependencyPolicy": {
+    "minimumReleaseAge": "182 days"
+  },
   "scripts": {
     "run": "bun run runners/test-simple-agents.ts",
     "stream": "bun run runners/test-simple-agents-streaming.ts",
@@ -14,10 +17,10 @@
     "invoice-image:evals": "bun run runners/test-simple-agents-invoice-image-evals.ts"
   },
   "dependencies": {
-    "dotenv": "^16.4.5",
+    "dotenv": "16.6.1",
     "simple-agents-node": "file:../../crates/simple-agents-napi"
   },
   "devDependencies": {
-    "@napi-rs/cli": "^3.6.0"
+    "@napi-rs/cli": "3.6.2"
   }
 }

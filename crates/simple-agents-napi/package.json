@@ -38,12 +38,15 @@
   "engines": {
     "node": ">=18"
   },
+  "simpleagentsDependencyPolicy": {
+    "minimumReleaseAge": "182 days"
+  },
   "napi": {
     "name": "index"
   },
   "devDependencies": {
     "@napi-rs/cli": "2.16.0",
-    "dotenv": "^16.4.5",
+    "dotenv": "16.6.1",
     "typescript": "5.4.5"
   }
 }
