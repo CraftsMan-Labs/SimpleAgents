@@ -1,4 +1,6 @@
 """Three-phase spec HITL pipeline: interview YAML → optional clarify loop → usefulness YAML.
+The printed ``result`` includes ``runs``: ``wf1_interview``, ``wf2_clarify`` (null when clarification
+is skipped), and ``wf3_usefulness``. Every human pause uses the same ``--- Human input: … ---`` banner.
 
 Usage (from ``examples/python-test-simpleAgents``)::
 
@@ -41,6 +43,177 @@ WF_INTERVIEW = workflows("spec-hitl", "spec-interview.yaml")
 WF_CLARIFY = workflows("spec-hitl", "spec-clarify.yaml")
 WF_USEFULNESS = workflows("spec-hitl", "spec-usefulness.yaml")
 
+# Human-input node ids (must match spec-hitl YAML). WF3 has no HITL.
+NODE_COLLECT_INITIAL_ANSWERS = "collect_initial_answers"
+NODE_COLLECT_FOLLOW_UP = "collect_follow_up"
+
+# Expected human_input shape per phase (warn if YAML drifts).
+_EXPECTED_HITL_BY_PHASE: dict[str, tuple[str, str]] = {
+    "wf1_interview": (NODE_COLLECT_INITIAL_ANSWERS, "form"),
+    "wf2_clarify": (NODE_COLLECT_FOLLOW_UP, "text"),
+}
+
+
+def _hitl_section_title(kind: str) -> None:
+    """Print a visible banner so every pause uses the same pattern."""
+    print(f"\n--- Human input: {kind} ---\n")
+
+
+def _assistant_section(title: str) -> None:
+    """Print a consistent heading for model-generated guidance."""
+    print(f"\n=== Assistant: {title} ===")
+
+
+def _print_bullets(items: list[str]) -> None:
+    for item in items:
+        print(f"- {item}")
+
+
+def _safe_list_of_str(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            cleaned = item.strip()
+            if cleaned:
+                out.append(cleaned)
+        elif item is not None:
+            out.append(str(item))
+    return out
+
+
+def _safe_answer_bundle(value: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for qid, payload in value.items():
+        if not isinstance(qid, str) or qid not in QUESTION_IDS or not isinstance(payload, dict):
+            continue
+        out[qid] = {
+            "question": str(payload.get("question", "")),
+            "answer": str(payload.get("answer", "")),
+        }
+    return out
+
+
+def _coerce_form_data(blob: Any) -> dict[str, Any]:
+    """Normalize human_request.form_data into a dict."""
+    if blob is None:
+        return {}
+    if isinstance(blob, str):
+        try:
+            parsed = json.loads(blob)
+        except json.JSONDecodeError as exc:
+            raise SpecHitlWorkflowError("human_request.form_data string is not valid JSON") from exc
+        if not isinstance(parsed, dict):
+            raise SpecHitlWorkflowError("human_request.form_data JSON must deserialize to an object")
+        return parsed
+    if isinstance(blob, dict):
+        return blob
+    raise SpecHitlWorkflowError(
+        f"human_request.form_data must be a dict, null, or JSON string, got {type(blob).__name__}"
+    )
+
+
+def _write_json_if_dir(
+    artifact_dir: Path | None,
+    filename: str,
+    payload: Mapping[str, Any],
+) -> None:
+    if artifact_dir is None:
+        return
+    (artifact_dir / filename).write_text(
+        json.dumps(payload, indent=2),
+        encoding="utf-8",
+    )
+
+
+def _build_stub_messages(spec_text: str, *, bundle_version: str) -> list[WorkflowMessage]:
+    return [
+        WorkflowMessage(
+            role=WorkflowRole.USER,
+            content=[
+                {
+                    "type": "text",
+                    "text": (
+                        "Spec review pipeline user stub.\n\n"
+                        f"bundle_version={bundle_version}\n\n"
+                        "--- SPEC START ---\n"
+                        f"{spec_text}\n"
+                        "--- SPEC END ---"
+                    ),
+                }
+            ],
+        )
+    ]
+
+
+def _print_interview_review(artifact: Mapping[str, Any]) -> None:
+    _assistant_section("Interview review")
+    review_summary = str(artifact.get("review_summary") or "").strip()
+    if review_summary:
+        print(review_summary)
+    feedback = str(artifact.get("feedback_markdown") or "").strip()
+    if feedback:
+        print("\nFeedback:")
+        print(feedback)
+    unclear_ids = artifact.get("unclear_question_ids")
+    if isinstance(unclear_ids, list) and unclear_ids:
+        unclear_ids_text = ", ".join(str(qid) for qid in unclear_ids)
+        print(f"\nNeeds clarification for ids: {unclear_ids_text}")
+
+
+def _build_wf2_input(
+    *,
+    spec_text: str,
+    bundle_version: str,
+    questions_json: str,
+    answers: Mapping[str, Any],
+    concerns: list[str],
+    unclear_question_ids: list[str],
+    iteration_index: int,
+    max_clarify_rounds: int,
+    follow_up_instruction: str,
+) -> dict[str, Any]:
+    return {
+        "spec_text": spec_text,
+        "bundle_version": bundle_version,
+        "questions_json": questions_json,
+        "answer_bundle_json": json.dumps(answers, ensure_ascii=False),
+        "concerns_json": json.dumps(concerns, ensure_ascii=False),
+        "unclear_question_ids_json": json.dumps(unclear_question_ids, ensure_ascii=False),
+        "iteration_index": str(iteration_index),
+        "max_clarify_rounds": str(max_clarify_rounds),
+        "follow_up_instruction": follow_up_instruction,
+    }
+
+
+def _build_wf3_input(
+    *,
+    spec_text: str,
+    bundle_version: str,
+    questions_json: str,
+    answers: Mapping[str, Any],
+) -> dict[str, str]:
+    return {
+        "spec_text": spec_text,
+        "bundle_version": bundle_version,
+        "final_question_bundle_json": questions_json,
+        "final_answer_bundle_json": json.dumps(answers, ensure_ascii=False),
+    }
+
+
+def _read_multiline_until_blank() -> str:
+    """Read zero or more non-empty lines; empty line ends input."""
+    lines: list[str] = []
+    while True:
+        line = input()
+        if not line:
+            break
+        lines.append(line)
+    return "\n".join(lines).strip()
+
 
 class SpecHitlError(RuntimeError):
     """Raised when orchestration cannot proceed with sane workflow outputs."""
@@ -64,13 +237,12 @@ def _retry_call(operation: Callable[[], T], *, attempts: int = 3, base_delay_sec
                 break
             delay = base_delay_seconds * (2**attempt)
             logger.warning(
-                "workflow_call_failed_retrying",
-                extra={
-                    "attempt": attempt + 1,
-                    "max_attempts": attempts,
-                    "delay_seconds": delay,
-                    "error_type": type(exc).__name__,
-                },
+                "workflow_call_failed_retrying attempt=%s/%s delay_s=%.2f: %s: %s",
+                attempt + 1,
+                attempts,
+                delay,
+                type(exc).__name__,
+                exc,
             )
             time.sleep(delay)
     assert last_exc is not None
@@ -146,17 +318,76 @@ def merge_answer_bundle(
     return merged
 
 
+def _try_parse_hitl_questions_block(prompt: str) -> tuple[str, dict[str, str]] | None:
+    """If *prompt* has a ``Questions (JSON):`` section with ``[{\"id\",\"text\"}, ...]``, return intro and id->text."""
+    marker = "Questions (JSON):"
+    idx = prompt.find(marker)
+    if idx == -1:
+        return None
+    intro = prompt[:idx].strip()
+    tail = prompt[idx + len(marker) :].strip()
+    try:
+        data = json.loads(tail)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, list):
+        return None
+    by_id: dict[str, str] = {}
+    for item in data:
+        if isinstance(item, dict):
+            qid = item.get("id")
+            text = item.get("text")
+            if isinstance(qid, str) and isinstance(text, str):
+                by_id[qid] = text
+    if not any(q in by_id for q in QUESTION_IDS):
+        return None
+    return intro, by_id
+
+
 def poll_human_form(human_request: Mapping[str, Any]) -> dict[str, Any]:
-    """Prompt for structured JSON editing of a HITL form."""
-    form_data = human_request.get("form_data")
-    if not isinstance(form_data, dict):
-        raise SpecHitlWorkflowError("human_request.form_data must be a dict")
+    """Prompt for structured form answers: per-question prompts when questions are embedded in the prompt."""
+    _hitl_section_title("interview (form)")
+    form_data = _coerce_form_data(human_request.get("form_data"))
+    prompt_raw = human_request.get("prompt")
+    prompt_str_full = prompt_raw.strip() if isinstance(prompt_raw, str) else ""
+
+    parsed_block = _try_parse_hitl_questions_block(prompt_str_full) if prompt_str_full else None
+    if parsed_block is not None:
+        intro, by_qid = parsed_block
+        print(
+            "Answer each question below. Defaults come from the form preview (often empty).\n"
+            "Press Enter on a line to accept the default when shown.\n"
+        )
+        if intro:
+            print(intro)
+            print()
+        out: dict[str, Any] = {}
+        for qid in QUESTION_IDS:
+            field = f"answer_{qid}"
+            qtext = (by_qid.get(qid) or "").strip() or f"Provide an answer for {qid}."
+            default_val = form_data.get(field, "")
+            if not isinstance(default_val, str):
+                default_val = str(default_val)
+            print(f"--- [{qid}] ---\n{qtext}\n")
+            hint = f" (default: {default_val})" if default_val else ""
+            line = input(f"Your answer{hint}: ").strip()
+            out[field] = line if line else default_val
+        return out
+
+    print(
+        "This form does not use the standard `Questions (JSON):` block.\n"
+        "Review the prompt and current JSON below, then paste a full JSON object for the form.\n"
+    )
+    if prompt_str_full:
+        print(prompt_str_full)
+        print()
+    print("Current form_data:")
     print(json.dumps(form_data, indent=2))
-    raw = input("Paste updated JSON for the form (blank keeps defaults): ").strip()
-    if not raw:
+    pasted = input("\nPaste updated JSON for the form (blank keeps defaults): ").strip()
+    if not pasted:
         return dict(form_data)
     try:
-        parsed = json.loads(raw)
+        parsed = json.loads(pasted)
     except json.JSONDecodeError as exc:
         raise SpecHitlError("Invalid JSON for form response") from exc
     if not isinstance(parsed, dict):
@@ -164,10 +395,67 @@ def poll_human_form(human_request: Mapping[str, Any]) -> dict[str, Any]:
     return parsed
 
 
-def poll_human_text(human_request: Mapping[str, Any]) -> str:
-    prompt = human_request.get("prompt") or ""
-    print(prompt)
-    return input("Your clarification (single-line text): ").strip()
+def poll_human_text(
+    human_request: Mapping[str, Any],
+    *,
+    hitl_context: Mapping[str, Any] | None = None,
+) -> str:
+    """Collect free-text HITL. This pipeline only uses text for WF2 follow-up (multi-line)."""
+    ctx = dict(hitl_context or {})
+    clarify_round = int(ctx["clarify_round"]) if ctx.get("clarify_round") is not None else 1
+    clarify_max = ctx.get("clarify_max")
+    clarify_max_i = int(clarify_max) if clarify_max is not None else None
+    unclear_ids = _safe_list_of_str(ctx.get("unclear_question_ids"))
+    concerns = _safe_list_of_str(ctx.get("concerns"))
+    validator_notes = _safe_list_of_str(ctx.get("validator_notes"))
+    answer_bundle = _safe_answer_bundle(ctx.get("answer_bundle"))
+
+    _hitl_section_title("clarification (free text)")
+    _assistant_section("Clarification request")
+    if unclear_ids:
+        print(f"Focus question ids: {', '.join(unclear_ids)}")
+    else:
+        print("Focus question ids: (none provided)")
+    if concerns:
+        print("\nOpen concerns from the last review:")
+        _print_bullets(concerns)
+    if validator_notes:
+        print("\nNotes from automated clarity checks:")
+        _print_bullets(validator_notes)
+    if unclear_ids and answer_bundle:
+        print("\nCurrent answers for focus ids:")
+        for qid in unclear_ids:
+            row = answer_bundle.get(qid)
+            if not row:
+                continue
+            question = row.get("question", "").strip() or "(missing question text)"
+            answer = row.get("answer", "").strip() or "(currently blank)"
+            print(f"- {qid}: {question}")
+            print(f"  current answer: {answer}")
+
+    prompt_raw = human_request.get("prompt")
+    prompt = prompt_raw.strip() if isinstance(prompt_raw, str) else ""
+    if not concerns and not unclear_ids and prompt:
+        print("\nRaw workflow prompt:")
+        print(prompt)
+
+    if clarify_round <= 1:
+        print(
+            "\n--- What to type ---\n"
+            "You are adding **follow-up detail** so the model can rewrite weak answers in the bundle.\n"
+            "Address the **focus question ids** and **concerns** from the prompt (e.g. q01: …, q02: …).\n"
+            "Be concrete and implementation-ready—state what you wish your first answers had said.\n"
+            "\n"
+            "Enter one or more lines; **press Enter on an empty line to finish**.\n"
+        )
+    else:
+        cap = f"/{clarify_max_i}" if clarify_max_i is not None else ""
+        print(
+            f"\n--- Follow-up round {clarify_round}{cap} ---\n"
+            "The clarity check requested **retry**, so this is another chance to add detail.\n"
+            "Use the same format as before (cite question ids, multi-line is OK). **Blank line to finish**.\n"
+        )
+    return _read_multiline_until_blank()
 
 
 def run_workflow_until_complete(
@@ -175,8 +463,13 @@ def run_workflow_until_complete(
     req: WorkflowExecutionRequest,
     *,
     phase: str,
+    hitl_context: Mapping[str, Any] | None = None,
 ) -> WorkflowRunOutputWire:
-    """Drain ``awaiting_human_input`` until ``completed``."""
+    """Drain ``awaiting_human_input`` until ``completed``.
+
+    *hitl_context* is passed to text HITL helpers (e.g. ``clarify_round`` / ``clarify_max`` for WF2).
+    """
+    hitl_ctx = dict(hitl_context or {})
     def launch() -> WorkflowRunOutputWire:
         return client.run_workflow(req).to_dict()
 
@@ -185,17 +478,37 @@ def run_workflow_until_complete(
         human_request = out.get("human_request") or {}
         input_type = human_request.get("input_type")
         node_id = human_request.get("node_id")
-        logger.info("hitl_pause", extra={"phase": phase, "node_id": node_id, "input_type": input_type})
+        expected = _EXPECTED_HITL_BY_PHASE.get(phase)
+        if expected is not None:
+            exp_node, exp_type = expected
+            if node_id != exp_node or input_type != exp_type:
+                logger.warning(
+                    "hitl_pause phase=%s expected node_id=%s input_type=%s; got node_id=%s input_type=%s "
+                    "(if spec-hitl YAML changed, update constants in %s)",
+                    phase,
+                    exp_node,
+                    exp_type,
+                    node_id,
+                    input_type,
+                    Path(__file__).name,
+                )
+        logger.info(
+            "hitl_pause phase=%s node_id=%s input_type=%s",
+            phase,
+            node_id,
+            input_type,
+        )
         if input_type == "form":
             human_response = poll_human_form(human_request)
         elif input_type == "text":
-            human_response = poll_human_text(human_request)
+            human_response = poll_human_text(human_request, hitl_context=hitl_ctx)
         else:
             raise SpecHitlWorkflowError(f"unsupported human_input type {input_type!r}")
         resume_req = WorkflowExecutionRequest(
             workflow_path=req.workflow_path,
             input=req.input,
-            messages=[],
+            # Same merge as initial run: ``messages_path: input.messages`` requires this on every call.
+            messages=list(req.messages),
             resume=out,
             human_response=human_response,
         )
@@ -242,23 +555,7 @@ def run_spec_hitl_pipeline(
     if artifact_dir is not None:
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
-    stub_messages = [
-        WorkflowMessage(
-            role=WorkflowRole.USER,
-            content=[
-                {
-                    "type": "text",
-                    "text": (
-                        "Spec review pipeline user stub.\n\n"
-                        f"bundle_version={bundle_version}\n\n"
-                        "--- SPEC START ---\n"
-                        f"{spec_text}\n"
-                        "--- SPEC END ---"
-                    ),
-                }
-            ],
-        )
-    ]
+    stub_messages = _build_stub_messages(spec_text, bundle_version=bundle_version)
 
     wf1_input: dict[str, Any] = {"spec_text": spec_text, "bundle_version": bundle_version}
     wf1_req = WorkflowExecutionRequest(
@@ -266,7 +563,7 @@ def run_spec_hitl_pipeline(
         input=wf1_input,
         messages=stub_messages,
     )
-    logger.info("wf1_start", extra={"workflow_id": WF_INTERVIEW.name})
+    logger.info("wf1_start workflow=%s", WF_INTERVIEW.name)
     wf1_run = run_workflow_until_complete(client, wf1_req, phase="wf1_interview")
 
     draft = extract_node_output(wf1_run, "draft_questions")
@@ -287,16 +584,18 @@ def run_spec_hitl_pipeline(
         "review_summary": review.get("review_summary"),
     }
 
-    if artifact_dir is not None:
-        (artifact_dir / f"{run_id}-wf1-artifact.json").write_text(
-            json.dumps({"wf1_run": wf1_run, "artifact": artifact}, indent=2),
-            encoding="utf-8",
-        )
+    _write_json_if_dir(
+        artifact_dir,
+        f"{run_id}-wf1-artifact.json",
+        {"wf1_run": wf1_run, "artifact": artifact},
+    )
 
     questions_json = json.dumps(draft.get("questions"), ensure_ascii=False)
     validator_notes: list[str] = []
+    wf2_run_final: WorkflowRunOutputWire | None = None
 
     if artifact["needs_clarification"] == "yes" and max_clarify_rounds > 0:
+        _print_interview_review(artifact)
         for attempt in range(max_clarify_rounds):
             follow_instruction = build_follow_up_instruction(
                 concerns=artifact["concerns"],
@@ -304,24 +603,37 @@ def run_spec_hitl_pipeline(
                 iteration_index=attempt,
                 validator_notes=validator_notes,
             )
-            wf2_input: dict[str, Any] = {
-                "spec_text": spec_text,
-                "bundle_version": bundle_version,
-                "questions_json": questions_json,
-                "answer_bundle_json": json.dumps(artifact["answers"], ensure_ascii=False),
-                "concerns_json": json.dumps(artifact["concerns"], ensure_ascii=False),
-                "unclear_question_ids_json": json.dumps(artifact["unclear_question_ids"], ensure_ascii=False),
-                "iteration_index": str(attempt),
-                "max_clarify_rounds": str(max_clarify_rounds),
-                "follow_up_instruction": follow_instruction,
-            }
+            wf2_input = _build_wf2_input(
+                spec_text=spec_text,
+                bundle_version=bundle_version,
+                questions_json=questions_json,
+                answers=artifact["answers"],
+                concerns=artifact["concerns"],
+                unclear_question_ids=artifact["unclear_question_ids"],
+                iteration_index=attempt,
+                max_clarify_rounds=max_clarify_rounds,
+                follow_up_instruction=follow_instruction,
+            )
             wf2_req = WorkflowExecutionRequest(
                 workflow_path=str(WF_CLARIFY),
                 input=wf2_input,
                 messages=stub_messages,
             )
-            logger.info("wf2_round_start", extra={"attempt": attempt})
-            wf2_run = run_workflow_until_complete(client, wf2_req, phase="wf2_clarify")
+            logger.info("wf2_round_start attempt=%s/%s", attempt + 1, max_clarify_rounds)
+            wf2_run = run_workflow_until_complete(
+                client,
+                wf2_req,
+                phase="wf2_clarify",
+                hitl_context={
+                    "clarify_round": attempt + 1,
+                    "clarify_max": max_clarify_rounds,
+                    "unclear_question_ids": artifact["unclear_question_ids"],
+                    "concerns": artifact["concerns"],
+                    "validator_notes": validator_notes,
+                    "answer_bundle": artifact["answers"],
+                },
+            )
+            wf2_run_final = wf2_run
 
             patched_obj = extract_node_output(wf2_run, "patch_bundle")
             validation_obj = extract_node_output(wf2_run, "validate_subset")
@@ -337,11 +649,11 @@ def run_spec_hitl_pipeline(
             artifact["last_clarity_gate"] = gate
             artifact["last_validator_notes"] = validator_notes
 
-            if artifact_dir is not None:
-                (artifact_dir / f"{run_id}-wf2-attempt-{attempt}.json").write_text(
-                    json.dumps({"wf2_run": wf2_run, "artifact_snapshot": dict(artifact)}, indent=2),
-                    encoding="utf-8",
-                )
+            _write_json_if_dir(
+                artifact_dir,
+                f"{run_id}-wf2-attempt-{attempt}.json",
+                {"wf2_run": wf2_run, "artifact_snapshot": dict(artifact)},
+            )
 
             if gate == "clear":
                 artifact["clarify_outcome"] = "clear"
@@ -354,28 +666,36 @@ def run_spec_hitl_pipeline(
     else:
         artifact["clarify_outcome"] = "skipped"
 
-    wf3_input = {
-        "spec_text": spec_text,
-        "bundle_version": bundle_version,
-        "final_question_bundle_json": questions_json,
-        "final_answer_bundle_json": json.dumps(artifact["answers"], ensure_ascii=False),
-    }
+    wf3_input = _build_wf3_input(
+        spec_text=spec_text,
+        bundle_version=bundle_version,
+        questions_json=questions_json,
+        answers=artifact["answers"],
+    )
     wf3_req = WorkflowExecutionRequest(
         workflow_path=str(WF_USEFULNESS),
         input=wf3_input,
         messages=stub_messages,
     )
-    logger.info("wf3_start")
+    logger.info("wf3_start workflow=%s", WF_USEFULNESS.name)
     wf3_run = run_workflow_until_complete(client, wf3_req, phase="wf3_usefulness")
     usefulness = extract_node_output(wf3_run, "assess_fit")
 
-    if artifact_dir is not None:
-        (artifact_dir / f"{run_id}-wf3-final.json").write_text(
-            json.dumps({"wf3_run": wf3_run, "artifact": artifact, "usefulness": usefulness}, indent=2),
-            encoding="utf-8",
-        )
+    _write_json_if_dir(
+        artifact_dir,
+        f"{run_id}-wf3-final.json",
+        {"wf3_run": wf3_run, "artifact": artifact, "usefulness": usefulness},
+    )
 
-    return {"artifact": artifact, "usefulness": usefulness, "runs": {"wf1": wf1_run, "wf3": wf3_run}}
+    return {
+        "artifact": artifact,
+        "usefulness": usefulness,
+        "runs": {
+            "wf1_interview": wf1_run,
+            "wf2_clarify": wf2_run_final,
+            "wf3_usefulness": wf3_run,
+        },
+    }
 
 
 def load_spec_file(path: Path) -> str:
@@ -425,7 +745,7 @@ def main(argv: list[str] | None = None) -> None:
             artifact_dir=args.artifact_dir.resolve() if args.artifact_dir else None,
         )
     except SpecHitlError as exc:
-        logger.error("pipeline_failed", extra={"error": str(exc)})
+        logger.error("pipeline_failed: %s", exc)
         raise SystemExit(1) from exc
 
     print(json.dumps(result, indent=2, default=str))

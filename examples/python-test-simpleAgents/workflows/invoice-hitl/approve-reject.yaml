@@ -6,7 +6,7 @@ nodes:
   - id: extract_invoice
     node_type:
       llm_call:
-        model: gpt-4.1-mini
+        model: azure/gpt-4.1-mini
         messages_path: input.messages
         append_prompt_as_user: true
         heal: true
@@ -63,8 +63,75 @@ nodes:
       switch:
         branches:
           - condition: '$.nodes.review_extraction.output == "approve"'
-            target: save_approved_review
-        default: save_rejected_review
+            target: draft_approval_confirmation
+        default: draft_rejection_reason_prompt
+
+  - id: draft_approval_confirmation
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          reviewer_message:
+            type: string
+        required: [reviewer_message]
+        additionalProperties: false
+      prompt: |
+        The human reviewer approved this invoice extraction.
+
+        Draft a short confirmation message for logs/UI in one sentence.
+        Mention vendor, invoice number, and total amount.
+        Keep it concise and professional.
+
+        Extraction JSON:
+        {{ nodes.extract_invoice.output }}
+
+        Return JSON only:
+        {
+          "reviewer_message": "..."
+        }
+
+  - id: draft_rejection_reason_prompt
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini
+        messages_path: input.messages
+        append_prompt_as_user: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          reviewer_message:
+            type: string
+        required: [reviewer_message]
+        additionalProperties: false
+      prompt: |
+        The human reviewer rejected this invoice extraction.
+
+        Draft a short follow-up prompt asking for the reason for rejection.
+        Keep tone polite, direct, and actionable in 1-2 sentences.
+        Ask for specific corrections or missing fields.
+
+        Extraction JSON:
+        {{ nodes.extract_invoice.output }}
+
+        Return JSON only:
+        {
+          "reviewer_message": "..."
+        }
+
+  - id: collect_rejection_reason
+    node_type:
+      human_input:
+        input_type: text
+        prompt: |
+          {{ nodes.draft_rejection_reason_prompt.output.reviewer_message }}
 
   - id: save_approved_review
     node_type:
@@ -75,6 +142,7 @@ nodes:
       payload:
         review_status: approved
         reviewer_decision: "{{ nodes.review_extraction.output }}"
+        llm_confirmation_message: "{{ nodes.draft_approval_confirmation.output.reviewer_message }}"
         extracted_invoice: "{{ nodes.extract_invoice.output }}"
 
   - id: save_rejected_review
@@ -86,6 +154,8 @@ nodes:
       payload:
         review_status: rejected
         reviewer_decision: "{{ nodes.review_extraction.output }}"
+        llm_rejection_prompt: "{{ nodes.draft_rejection_reason_prompt.output.reviewer_message }}"
+        rejection_reason: "{{ nodes.collect_rejection_reason.output }}"
         extracted_invoice: "{{ nodes.extract_invoice.output }}"
 
 edges:
@@ -93,3 +163,9 @@ edges:
     to: review_extraction
   - from: review_extraction
     to: route_review
+  - from: draft_approval_confirmation
+    to: save_approved_review
+  - from: draft_rejection_reason_prompt
+    to: collect_rejection_reason
+  - from: collect_rejection_reason
+    to: save_rejected_review

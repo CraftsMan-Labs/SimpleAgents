@@ -6,7 +6,7 @@ nodes:
   - id: assess_fit
     node_type:
       llm_call:
-        model: gpt-4.1-mini
+        model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
         append_prompt_as_user: true
