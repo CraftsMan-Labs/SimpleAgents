@@ -189,6 +189,9 @@ class WorkflowEventWire(TypedDict, total=False):
     metadata: JSONValue
 
 
+WorkflowEvent: TypeAlias = WorkflowEventWire
+"""Deprecated alias for :class:`WorkflowEventWire` (pre-rename wire TypedDict)."""
+
 class HumanRequestWire(TypedDict, total=False):
     node_id: str
     input_type: Literal["choice", "text", "form"]
@@ -322,6 +325,7 @@ __all__ = [
     "WorkflowStepTiming",
     "WorkflowLlmNodeMetrics",
     "WorkflowEventWire",
+    "WorkflowEvent",
     "HumanRequestWire",
     "WorkflowRunOutputWire",
     "WorkflowStreamEventModel",
