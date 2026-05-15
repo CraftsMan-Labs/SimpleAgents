@@ -23,6 +23,10 @@ features:
     details: pip install or npm install. Point at your YAML. Run. Stream. Done.
   - title: Multimodal out of the box
     details: Text, images, streaming, structured JSON -- all from the same YAML config.
+  - title: Human-in-the-loop built in
+    details: Pause workflows for `choice`, `text`, or `form` human input, then resume with typed responses.
+  - title: Workflow evals included
+    details: Run output-shaped JSONL golden datasets with Python/Node evaluators for regression-safe workflow updates.
   - title: Observability included
     details: Langfuse or Jaeger with one env block. OpenTelemetry native.
   - title: Self-healing JSON

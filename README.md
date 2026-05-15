@@ -123,6 +123,8 @@ That's it. Your agentic SaaS is a config.
 - **Python + TypeScript** -- `pip install` / `npm install`, run with 10 lines
 - **Streaming** -- real-time LLM output streaming
 - **Images** -- multimodal input (text + images) in the same workflow
+- **Human-in-the-loop (HITL)** -- pause on `human_input` nodes (`choice`, `text`, `form`) and resume safely
+- **Workflow evals** -- output-shaped JSONL datasets with code-side evaluators (Python + TypeScript)
 - **JSON healing** -- auto-fix truncated/malformed LLM JSON output
 - **Observability** -- Langfuse and Jaeger via OpenTelemetry, one env block
 - **Custom workers** -- plug your own code (DB lookups, APIs) into the workflow graph

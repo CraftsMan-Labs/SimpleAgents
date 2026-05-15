@@ -378,6 +378,10 @@ Graph visualization:
 
 ```bash
 cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
+# HITL flow example
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/spec-hitl/spec-interview.yaml
+# Eval-target workflow example
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/friendly/friendly.yaml
 ```
 
 ## Telemetry and Diagnostics
