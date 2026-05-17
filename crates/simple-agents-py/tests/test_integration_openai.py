@@ -121,12 +121,11 @@ nodes:
       llm_call:
         model: {model}
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: true
         heal: true
     config:
-      prompt: |
+      user_input_prompt: |
         Return JSON only with this required field:
         {{
           \"state\": \"capabilities_query\"
