@@ -8,7 +8,6 @@ nodes:
       llm_call:
         model: azure/gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -26,7 +25,7 @@ nodes:
             type: string
         required: [vendor_name, invoice_number, total_amount, currency, due_date]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Extract invoice fields from the latest user-provided content.
         Return JSON only:
         {
@@ -71,7 +70,6 @@ nodes:
       llm_call:
         model: azure/gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -81,7 +79,7 @@ nodes:
             type: string
         required: [reviewer_message]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         The human reviewer approved this invoice extraction.
 
         Draft a short confirmation message for logs/UI in one sentence.
@@ -101,7 +99,6 @@ nodes:
       llm_call:
         model: azure/gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -111,7 +108,7 @@ nodes:
             type: string
         required: [reviewer_message]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         The human reviewer rejected this invoice extraction.
 
         Draft a short follow-up prompt asking for the reason for rejection.

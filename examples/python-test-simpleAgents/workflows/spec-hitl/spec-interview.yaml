@@ -9,7 +9,6 @@ nodes:
         model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -22,7 +21,7 @@ nodes:
               type: string
         required: [overview, ambiguity_hotspots]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Read the specification text in input.spec_text (also echoed in the latest user message).
 
         Return JSON only:
@@ -42,7 +41,6 @@ nodes:
         model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -62,7 +60,7 @@ nodes:
               additionalProperties: false
         required: [questions]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Using the spec text and the prior review summary below, draft exactly **10** clarification questions
         that help validate requirements before implementation.
 
@@ -135,7 +133,6 @@ nodes:
         model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -162,7 +159,7 @@ nodes:
           - feedback_markdown
           - review_summary
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         You are reviewing human answers to spec clarification questions.
 
         SPEC TEXT:
