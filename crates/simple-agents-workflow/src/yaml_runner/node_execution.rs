@@ -79,11 +79,14 @@ pub(super) async fn execute_llm_node(
     } = state;
 
     let mut node_span = node_span;
-    let prompt_template = node
+    let user_input_prompt_template = node
         .config
         .as_ref()
-        .and_then(|cfg| cfg.prompt.as_deref())
-        .unwrap_or_default();
+        .and_then(|cfg| cfg.user_input_prompt.as_deref());
+    let node_system_prompt_template = node
+        .config
+        .as_ref()
+        .and_then(|cfg| cfg.node_system_prompt.as_deref());
     let context = build_execution_context(workflow_input, outputs, globals);
     let messages = if let Some(path) = llm.messages_path.as_deref() {
         Some(
@@ -97,8 +100,16 @@ pub(super) async fn execute_llm_node(
     } else {
         None
     };
-    let prompt_bindings = collect_template_bindings(prompt_template, &context);
-    let prompt = interpolate_template(prompt_template, &context);
+    let user_input_prompt_bindings = user_input_prompt_template
+        .map(|template| collect_template_bindings(template, &context))
+        .unwrap_or_default();
+    let user_input_prompt =
+        user_input_prompt_template.map(|template| interpolate_template(template, &context));
+    let node_system_prompt_bindings = node_system_prompt_template
+        .map(|template| collect_template_bindings(template, &context))
+        .unwrap_or_default();
+    let node_system_prompt =
+        node_system_prompt_template.map(|template| interpolate_template(template, &context));
     let schema = llm_output_schema_for_node(node);
 
     let yaml_heal = llm.heal.unwrap_or(false);
@@ -116,10 +127,12 @@ pub(super) async fn execute_llm_node(
         temperature: llm.temperature,
         top_p: llm.top_p,
         messages,
-        append_prompt_as_user: llm.append_prompt_as_user.unwrap_or(true),
-        prompt,
-        prompt_template: prompt_template.to_string(),
-        prompt_bindings,
+        user_input_prompt,
+        user_input_prompt_template: user_input_prompt_template.map(str::to_string),
+        user_input_prompt_bindings,
+        node_system_prompt,
+        node_system_prompt_template: node_system_prompt_template.map(str::to_string),
+        node_system_prompt_bindings,
         schema,
         stream,
         heal,
@@ -166,9 +179,11 @@ pub(super) async fn execute_llm_node(
             is_terminal_node_token: None,
             elapsed_ms: Some(started.elapsed().as_millis()),
             metadata: Some(json!({
-                "bindings": request.prompt_bindings,
                 "model": request.model,
-                "prompt": request.prompt,
+                "user_input_prompt": request.user_input_prompt,
+                "user_input_prompt_bindings": request.user_input_prompt_bindings,
+                "node_system_prompt": request.node_system_prompt,
+                "node_system_prompt_bindings": request.node_system_prompt_bindings,
             })),
         });
     }

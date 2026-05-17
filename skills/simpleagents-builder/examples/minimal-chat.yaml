@@ -13,11 +13,10 @@ nodes:
         temperature: 0.7
         stream: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: string
-      prompt: |
+      user_input_prompt: |
         You are a helpful assistant. Reply to the user's latest message.
         Be concise and friendly. Do not use JSON or markdown unless asked.
 

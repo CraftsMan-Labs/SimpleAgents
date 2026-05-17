@@ -47,7 +47,7 @@ nodes:
           status: { type: string }
         required: [status]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Return {"status":"ok"}
 
 ```
@@ -123,10 +123,9 @@ node_type:
     stream: false
     heal: true
     messages_path: input.messages
-    append_prompt_as_user: true
 config:
   output_schema: { ...json schema... }
-  prompt: |
+  user_input_prompt: |
     ...
 ```
 
@@ -281,7 +280,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify: {{ input.email_text }}"
+      user_input_prompt: "Classify: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -295,7 +294,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Category is {{ globals.email_category }}"
+      user_input_prompt: "Category is {{ globals.email_category }}"
 ```
 
 Use globals for run-level state, not for long-term secret storage.
@@ -378,6 +377,10 @@ Graph visualization:
 
 ```bash
 cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/email-classification/test.yaml
+# HITL flow example
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/spec-hitl/spec-interview.yaml
+# Eval-target workflow example
+cargo run -p simple-agents-cli -- workflow mermaid examples/python-test-simpleAgents/workflows/friendly/friendly.yaml
 ```
 
 ## Telemetry and Diagnostics

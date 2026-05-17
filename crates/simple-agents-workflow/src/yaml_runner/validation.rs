@@ -122,6 +122,23 @@ pub fn verify_yaml_workflow(workflow: &YamlWorkflow) -> Vec<YamlWorkflowDiagnost
         }
 
         if let Some(llm) = &node.node_type.llm_call {
+            let user_input_prompt = node
+                .config
+                .as_ref()
+                .and_then(|cfg| cfg.user_input_prompt.as_deref())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if llm.messages_path.is_none() && user_input_prompt.is_none() {
+                diagnostics.push(YamlWorkflowDiagnostic {
+                    node_id: Some(node.id.clone()),
+                    code: "missing_llm_input_source".to_string(),
+                    severity: YamlWorkflowDiagnosticSeverity::Error,
+                    message:
+                        "llm_call requires at least one input source: node_type.llm_call.messages_path or config.user_input_prompt"
+                            .to_string(),
+                });
+            }
+
             if llm.model.trim().is_empty() {
                 diagnostics.push(YamlWorkflowDiagnostic {
                     node_id: Some(node.id.clone()),

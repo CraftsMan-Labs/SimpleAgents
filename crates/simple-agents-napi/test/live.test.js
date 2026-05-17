@@ -104,7 +104,6 @@ nodes:
         model: ${MODEL}
         temperature: 0.0
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: true
         heal: true
@@ -116,7 +115,7 @@ nodes:
           reason: { type: string }
         required: [state, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Return exactly this JSON object and nothing else:
         {"state":"ok","reason":"ok"}
 `;

@@ -41,7 +41,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Reply with ok: {{ input.x }}"
+      user_input_prompt: "Reply with ok: {{ input.x }}"
       output_schema:
         type: object
         properties:
@@ -61,7 +61,7 @@ fn linear_chain_workflow(depth: usize) -> YamlWorkflow {
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "step {i} {{ input.x }}"
+      user_input_prompt: "step {i} {{ input.x }}"
       output_schema:
         type: object
         properties:
@@ -89,7 +89,7 @@ fn dense_workflow(node_count: usize) -> YamlWorkflow {
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "node {i} {{ input.x }}"
+      user_input_prompt: "node {i} {{ input.x }}"
       output_schema:
         type: object
         properties:

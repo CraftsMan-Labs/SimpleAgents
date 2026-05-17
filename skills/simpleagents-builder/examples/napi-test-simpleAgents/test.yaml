@@ -28,7 +28,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -43,7 +42,7 @@ nodes:
             type: string
         required: [domain, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the latest user-provided email content into exactly one top-level domain.
 
         Return JSON only:
@@ -78,7 +77,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -93,7 +91,7 @@ nodes:
             type: string
         required: [finance_subtype, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         The latest user message has already been classified as finance.
         Classify it into exactly one finance subtype.
 
@@ -127,7 +125,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -141,7 +138,7 @@ nodes:
             type: string
         required: [company_name, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         The latest user message is already classified as a finance invoice email.
         Extract the seller-side company name associated with the invoice.
 
@@ -174,7 +171,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -195,7 +191,7 @@ nodes:
             type: string
         required: [top_level_category, subtype, label, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Produce the final normalized classification for an hr email.
 
         Return JSON only:
@@ -221,7 +217,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -242,7 +237,7 @@ nodes:
             type: string
         required: [top_level_category, subtype, label, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Produce the final normalized classification for an education email.
 
         Return JSON only:
@@ -268,7 +263,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -288,7 +282,7 @@ nodes:
             type: string
         required: [top_level_category, subtype, label, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Produce the final normalized classification for a finance email that is not enriched with invoice stakeholder data.
 
         Return JSON only:
@@ -315,7 +309,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -348,7 +341,7 @@ nodes:
             reason,
           ]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Produce the final normalized classification for an invoice email.
 
         Return JSON only:

@@ -241,10 +241,12 @@ pub struct YamlLlmExecutionRequest {
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
     pub messages: Option<Vec<super::Message>>,
-    pub append_prompt_as_user: bool,
-    pub prompt: String,
-    pub prompt_template: String,
-    pub prompt_bindings: Vec<YamlTemplateBinding>,
+    pub user_input_prompt: Option<String>,
+    pub user_input_prompt_template: Option<String>,
+    pub user_input_prompt_bindings: Vec<YamlTemplateBinding>,
+    pub node_system_prompt: Option<String>,
+    pub node_system_prompt_template: Option<String>,
+    pub node_system_prompt_bindings: Vec<YamlTemplateBinding>,
     pub schema: Value,
     pub stream: bool,
     pub heal: bool,
@@ -322,7 +324,8 @@ pub struct YamlGlobalUpdate {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct YamlNodeConfig {
-    pub prompt: Option<String>,
+    pub user_input_prompt: Option<String>,
+    pub node_system_prompt: Option<String>,
     #[serde(default, alias = "schema")]
     pub output_schema: Option<Value>,
     pub payload: Option<Value>,
@@ -446,7 +449,6 @@ pub struct YamlLlmCall {
     pub heal: Option<bool>,
     pub send_schema: Option<bool>,
     pub messages_path: Option<String>,
-    pub append_prompt_as_user: Option<bool>,
     #[serde(default)]
     pub tools_format: YamlToolFormat,
     #[serde(default)]

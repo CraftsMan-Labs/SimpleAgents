@@ -39,6 +39,14 @@ def ask_choice() -> str:
         print("Please type 'approve' or 'reject'.")
 
 
+def ask_text(prompt: str) -> str:
+    while True:
+        raw = input(prompt).strip()
+        if raw:
+            return raw
+        print("Please enter a non-empty response.")
+
+
 def main() -> None:
     client = SimpleAgentsClient(
         require_env("WORKFLOW_PROVIDER"),
@@ -67,24 +75,66 @@ def main() -> None:
         ],
     )
 
-    paused = client.run_workflow(initial_request)
-    paused_map = paused.to_dict()
-    print("Paused output:")
-    print(json.dumps(paused_map, indent=2))
+    current = client.run_workflow(initial_request)
+    current_map = current.to_dict()
+    print("Workflow output:")
+    print(json.dumps(current_map, indent=2))
 
-    if paused_map.get("status") != "awaiting_human_input":
-        raise SystemExit("Expected workflow to pause for human input.")
+    while current_map.get("status") == "awaiting_human_input":
+        human_request = current_map.get("human_request") or {}
+        prompt = human_request.get("prompt")
+        if isinstance(prompt, str) and prompt.strip():
+            print("\nLLM message:")
+            print(prompt)
 
-    decision = ask_choice()
-    resumed = client.run_workflow(
-        WorkflowExecutionRequest(
-            workflow_path=str(workflow_file),
-            resume=paused_map,
-            human_response=decision,
+        options = human_request.get("options")
+        if isinstance(options, list) and any(
+            isinstance(opt, dict) and opt.get("value") in {"approve", "reject"}
+            for opt in options
+        ):
+            response = ask_choice()
+        else:
+            response = ask_text("Your response: ")
+
+        current = client.run_workflow(
+            WorkflowExecutionRequest(
+                messages=[
+                    WorkflowMessage(
+                        role=WorkflowRole.USER,
+                        content=[
+                            {
+                                "type": "text",
+                                "text": "Extract structured fields from this invoice image.",
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                            },
+                        ],
+                    ),
+                    WorkflowMessage(
+                        role=WorkflowRole.ASSISTANT,
+                        content=[
+                            {
+                                "type": "text",
+                                "text": f"The user replied: {response}\n{(prompt if isinstance(prompt, str) else '')}",
+                            }
+                        ],
+                    ),
+                ],
+                workflow_path=str(workflow_file),
+                resume=current_map,
+                human_response=response,
+            )
         )
-    )
+        current_map = current.to_dict()
+        print("\nWorkflow output:")
+        print(json.dumps(current_map, indent=2))
+        print("\nLLM Output:\n")
+        print(current.outputs)
+
     print("Final output:")
-    print(json.dumps(resumed.to_dict(), indent=2))
+    print(json.dumps(current_map, indent=2))
 
 
 if __name__ == "__main__":

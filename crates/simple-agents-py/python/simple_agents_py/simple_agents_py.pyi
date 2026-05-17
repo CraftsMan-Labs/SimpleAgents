@@ -419,8 +419,8 @@ class Client:
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...
 
-    # Note: ``WorkflowRunOutput`` here is the Rust pyclass; wire JSON mirrors
-    # :class:`simple_agents_py.models.WorkflowRunOutputWire` (via ``to_dict()``).
+    # ``WorkflowRunOutput`` is the Rust pyclass; ``to_dict()`` returns a mapping
+    # matching ``WorkflowRunOutputWire`` in ``simple_agents_py.models``.
 
     def run_eval_suite(
         self,

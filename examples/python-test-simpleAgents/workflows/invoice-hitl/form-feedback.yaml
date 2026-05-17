@@ -8,7 +8,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -26,7 +25,7 @@ nodes:
             type: string
         required: [vendor_name, invoice_number, total_amount, currency, due_date]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Extract invoice fields from the latest user-provided content.
         Return JSON only:
         {

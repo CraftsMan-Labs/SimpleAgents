@@ -838,10 +838,19 @@ fn build_human_request(
         .prompt
         .as_deref()
         .map(|value| interpolate_template(value, context));
-    let form_data = human
-        .form_prefill
-        .as_deref()
-        .map(|value| resolve_human_form_data(value, context));
+    // Form nodes without `form_prefill` still need a concrete object on the wire so clients
+    // (e.g. Python TypedDict consumers) see `form_data` as `{}` rather than a missing key.
+    let form_data = if human.input_type == YamlHumanInputType::Form {
+        Some(match human.form_prefill.as_deref() {
+            None => Value::Object(serde_json::Map::new()),
+            Some(prefill) => resolve_human_form_data(prefill, context),
+        })
+    } else {
+        human
+            .form_prefill
+            .as_deref()
+            .map(|value| resolve_human_form_data(value, context))
+    };
 
     Ok(HumanRequest {
         node_id: node.id.clone(),

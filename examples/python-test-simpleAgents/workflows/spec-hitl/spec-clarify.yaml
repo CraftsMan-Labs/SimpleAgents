@@ -24,10 +24,9 @@ nodes:
   - id: patch_bundle
     node_type:
       llm_call:
-        model: gpt-4.1-mini
+        model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -45,7 +44,7 @@ nodes:
               additionalProperties: false
         required: [patched_answer_bundle]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Merge the human follow-up into the canonical answer bundle.
 
         SPEC (trimmed context): {{ input.spec_text }}
@@ -77,10 +76,9 @@ nodes:
   - id: validate_subset
     node_type:
       llm_call:
-        model: gpt-4.1-mini
+        model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -96,7 +94,7 @@ nodes:
             type: string
         required: [clarity_gate, notes_for_human, rationale]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Evaluate whether answers are now clear enough for engineering handoff.
 
         SPEC TEXT:

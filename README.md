@@ -71,7 +71,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -82,7 +81,7 @@ nodes:
             enum: [billing, support, sales]
         required: [category]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the user message. Return JSON only.
 
 edges: []
@@ -123,6 +122,8 @@ That's it. Your agentic SaaS is a config.
 - **Python + TypeScript** -- `pip install` / `npm install`, run with 10 lines
 - **Streaming** -- real-time LLM output streaming
 - **Images** -- multimodal input (text + images) in the same workflow
+- **Human-in-the-loop (HITL)** -- pause on `human_input` nodes (`choice`, `text`, `form`) and resume safely
+- **Workflow evals** -- output-shaped JSONL datasets with code-side evaluators (Python + TypeScript)
 - **JSON healing** -- auto-fix truncated/malformed LLM JSON output
 - **Observability** -- Langfuse and Jaeger via OpenTelemetry, one env block
 - **Custom workers** -- plug your own code (DB lookups, APIs) into the workflow graph

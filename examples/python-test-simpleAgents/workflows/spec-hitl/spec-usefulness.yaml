@@ -6,10 +6,9 @@ nodes:
   - id: assess_fit
     node_type:
       llm_call:
-        model: gpt-4.1-mini
+        model: azure/gpt-4.1
         heal: true
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -38,7 +37,7 @@ nodes:
           - recommended_next_actions
           - verdict_summary
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Judge whether the finalized question-and-answer bundle is helpful for understanding and implementing the spec.
 
         SPEC TEXT:

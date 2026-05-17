@@ -110,7 +110,8 @@ struct GraphWorkflowNode {
 
 #[derive(Deserialize, Clone)]
 struct GraphNodeConfig {
-    prompt: Option<String>,
+    user_input_prompt: Option<String>,
+    node_system_prompt: Option<String>,
     payload: Option<JsonValue>,
     output_schema: Option<JsonValue>,
 }
@@ -127,7 +128,6 @@ struct GraphLlmCall {
     model: Option<String>,
     temperature: Option<f64>,
     messages_path: Option<String>,
-    append_prompt_as_user: Option<bool>,
     stream: Option<bool>,
 }
 
@@ -156,7 +156,8 @@ struct WorkflowStep {
     step_type: String,
     key: Option<String>,
     value: Option<JsonValue>,
-    prompt: Option<String>,
+    user_input_prompt: Option<String>,
+    node_system_prompt: Option<String>,
     condition: Option<WorkflowCondition>,
     then: Option<String>,
     r#else: Option<String>,
@@ -1581,10 +1582,17 @@ impl WasmClient {
                             ))
                         })?;
 
-                    let prompt = interpolate_graph_prompt(
+                    let user_input_prompt = interpolate_graph_prompt(
                         node.config
                             .as_ref()
-                            .and_then(|config| config.prompt.as_deref())
+                            .and_then(|config| config.user_input_prompt.as_deref())
+                            .unwrap_or_default(),
+                        &graph_context,
+                    );
+                    let node_system_prompt = interpolate_graph_prompt(
+                        node.config
+                            .as_ref()
+                            .and_then(|config| config.node_system_prompt.as_deref())
                             .unwrap_or_default(),
                         &graph_context,
                     );
@@ -1596,10 +1604,22 @@ impl WasmClient {
                                     serde_json::from_value::<Vec<MessageInput>>(value.clone()).ok()
                                 })
                                 .unwrap_or_default();
-                        if llm.append_prompt_as_user.unwrap_or(true) {
+                        if !node_system_prompt.trim().is_empty() {
+                            history.insert(
+                                0,
+                                MessageInput {
+                                    role: "system".to_string(),
+                                    content: JsonValue::String(node_system_prompt.clone()),
+                                    name: None,
+                                    tool_call_id: None,
+                                    tool_calls: None,
+                                },
+                            );
+                        }
+                        if !user_input_prompt.trim().is_empty() {
                             history.push(MessageInput {
                                 role: "user".to_string(),
-                                content: JsonValue::String(prompt),
+                                content: JsonValue::String(user_input_prompt),
                                 name: None,
                                 tool_call_id: None,
                                 tool_calls: None,
@@ -1610,7 +1630,20 @@ impl WasmClient {
                                 .map_err(|_| js_error("failed to serialize graph llm messages"))?,
                         )?
                     } else {
-                        JsValue::from_str(&prompt)
+                        if user_input_prompt.trim().is_empty() {
+                            return Err(config_error(format!(
+                                "llm_call node '{}' requires config.user_input_prompt when messages_path is not provided",
+                                node.id
+                            )));
+                        }
+                        if node_system_prompt.trim().is_empty() {
+                            JsValue::from_str(&user_input_prompt)
+                        } else {
+                            json_value_to_js_plain(&json!([
+                                {"role":"system","content": node_system_prompt},
+                                {"role":"user","content": user_input_prompt}
+                            ]))?
+                        }
                     };
 
                     let opts = json!({ "temperature": llm.temperature });
@@ -2030,13 +2063,33 @@ impl WasmClient {
                                 step.id
                             ))
                         })?;
-                    let prompt =
-                        interpolate_string(step.prompt.as_deref().unwrap_or_default(), &context);
+                    let user_input_prompt = interpolate_string(
+                        step.user_input_prompt.as_deref().unwrap_or_default(),
+                        &context,
+                    );
+                    let node_system_prompt = interpolate_string(
+                        step.node_system_prompt.as_deref().unwrap_or_default(),
+                        &context,
+                    );
+                    if user_input_prompt.trim().is_empty() {
+                        return Err(config_error(format!(
+                            "llm_call step '{}' requires user_input_prompt",
+                            step.id
+                        )));
+                    }
+                    let prompt_input = if node_system_prompt.trim().is_empty() {
+                        JsValue::from_str(&user_input_prompt)
+                    } else {
+                        json_value_to_js_plain(&json!([
+                            {"role": "system", "content": node_system_prompt},
+                            {"role": "user", "content": user_input_prompt}
+                        ]))?
+                    };
                     let opts = json!({ "temperature": step.temperature });
                     let completion_js = self
                         .complete(
                             model,
-                            JsValue::from_str(&prompt),
+                            prompt_input,
                             Some(json_value_to_js_plain(&opts)?),
                         )
                         .await?;
