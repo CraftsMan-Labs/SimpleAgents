@@ -156,7 +156,8 @@ struct WorkflowStep {
     step_type: String,
     key: Option<String>,
     value: Option<JsonValue>,
-    prompt: Option<String>,
+    user_input_prompt: Option<String>,
+    node_system_prompt: Option<String>,
     condition: Option<WorkflowCondition>,
     then: Option<String>,
     r#else: Option<String>,
@@ -2062,13 +2063,33 @@ impl WasmClient {
                                 step.id
                             ))
                         })?;
-                    let prompt =
-                        interpolate_string(step.prompt.as_deref().unwrap_or_default(), &context);
+                    let user_input_prompt = interpolate_string(
+                        step.user_input_prompt.as_deref().unwrap_or_default(),
+                        &context,
+                    );
+                    let node_system_prompt = interpolate_string(
+                        step.node_system_prompt.as_deref().unwrap_or_default(),
+                        &context,
+                    );
+                    if user_input_prompt.trim().is_empty() {
+                        return Err(config_error(format!(
+                            "llm_call step '{}' requires user_input_prompt",
+                            step.id
+                        )));
+                    }
+                    let prompt_input = if node_system_prompt.trim().is_empty() {
+                        JsValue::from_str(&user_input_prompt)
+                    } else {
+                        json_value_to_js_plain(&json!([
+                            {"role": "system", "content": node_system_prompt},
+                            {"role": "user", "content": user_input_prompt}
+                        ]))?
+                    };
                     let opts = json!({ "temperature": step.temperature });
                     let completion_js = self
                         .complete(
                             model,
-                            JsValue::from_str(&prompt),
+                            prompt_input,
                             Some(json_value_to_js_plain(&opts)?),
                         )
                         .await?;
