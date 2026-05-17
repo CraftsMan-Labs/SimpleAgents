@@ -2,6 +2,9 @@
   "name": "wasm-test-simpleagents",
   "private": true,
   "type": "module",
+  "simpleagentsDependencyPolicy": {
+    "minimumReleaseAge": "182 days"
+  },
   "scripts": {
     "run": "bun run test-simple-agents.ts",
     "stream": "bun run test-simple-agents-streaming.ts",

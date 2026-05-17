@@ -43,7 +43,7 @@ def main() -> None:
     )
 
     result = client.run_workflow(req)
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result.to_dict(), indent=2))
 
 
 if __name__ == "__main__":

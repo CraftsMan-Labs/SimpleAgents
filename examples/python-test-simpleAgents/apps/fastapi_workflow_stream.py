@@ -5,7 +5,7 @@ import json
 import queue
 import sys
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -67,12 +67,17 @@ async def _workflow_sse(message: str) -> AsyncIterator[bytes]:
         req = req.model_copy(update={"execution": WorkflowExecutionFlags(**merged)})
     q: queue.Queue[tuple[str, Any]] = queue.Queue()
 
-    def on_event(event: dict[str, Any]) -> None:
+    def on_event(event: Mapping[str, Any]) -> None:
         q.put(("event", event))
 
     def worker() -> None:
         try:
-            q.put(("result", _client().stream_workflow(req, on_event=on_event)))
+            q.put(
+                (
+                    "result",
+                    _client().stream_workflow(req, on_event=on_event).to_dict(),
+                )
+            )
         except Exception as e:
             q.put(("error", e))
 
@@ -111,7 +116,7 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
         },
     )
 
-# non streaming chat (Pydantic response model — TypedDict ``WorkflowRunOutput`` is not a FastAPI schema)
+# non streaming chat (use :class:`WorkflowRunOutputModel` for OpenAPI — wire shape is ``WorkflowRunOutputWire``)
 @app.post("/chat", response_model=WorkflowRunOutputModel)
 async def chat(body: ChatBody) -> WorkflowRunOutputModel:
     raw = _client().run_workflow(
@@ -120,4 +125,4 @@ async def chat(body: ChatBody) -> WorkflowRunOutputModel:
             messages=[WorkflowMessage(role=WorkflowRole.USER, content=body.message)],
         )
     )
-    return WorkflowRunOutputModel.model_validate(raw)
+    return WorkflowRunOutputModel.model_validate(raw.to_dict())

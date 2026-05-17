@@ -1574,7 +1574,6 @@ impl Client {
 
         Ok(AsyncTask::new(task))
     }
-
 }
 
 /// Copies OTLP-related variables into the Rust process environment (`std::env`).

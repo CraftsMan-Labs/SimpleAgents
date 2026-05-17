@@ -97,13 +97,14 @@ def main() -> None:
     )
 
     paused = client.run_workflow(initial_request)
+    paused_map = paused.to_dict()
     print("Paused output:")
-    print(json.dumps(paused, indent=2))
+    print(json.dumps(paused_map, indent=2))
 
-    if paused.get("status") != "awaiting_human_input":
+    if paused_map.get("status") != "awaiting_human_input":
         raise SystemExit("Expected workflow to pause for form review.")
 
-    human_request = paused.get("human_request") or {}
+    human_request = paused_map.get("human_request") or {}
     form_data = human_request.get("form_data")
     if not isinstance(form_data, dict):
         raise SystemExit("human_request.form_data is missing or invalid.")
@@ -114,18 +115,22 @@ def main() -> None:
         WorkflowExecutionRequest(
             workflow_path=str(workflow_file),
             input=request_input,
-            resume=paused,
+            resume=paused_map,
             human_response=edited_form,
         )
     )
 
-    metadata = (
-        resumed.get("outputs", {})
-        .get("review_invoice_form", {})
-        .get("human_input_metadata", {})
-    )
+    resumed_map = resumed.to_dict()
+    outputs_any = resumed_map.get("outputs")
+    if not isinstance(outputs_any, dict):
+        outputs_any = {}
+    review_out = outputs_any.get("review_invoice_form")
+    if not isinstance(review_out, dict):
+        review_out = {}
+    meta_any = review_out.get("human_input_metadata")
+    metadata: dict[str, Any] = meta_any if isinstance(meta_any, dict) else {}
     print("Final output:")
-    print(json.dumps(resumed, indent=2))
+    print(json.dumps(resumed_map, indent=2))
     print("Form metadata:")
     print(json.dumps(metadata, indent=2))
     print(f"Reviewed form persisted to: {form_store}")

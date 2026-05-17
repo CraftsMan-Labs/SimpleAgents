@@ -10,6 +10,9 @@ repository = "https://github.com/CraftsMan-Labs/SimpleAgents"
 keywords = ["llm", "ai", "json", "parser", "healing"]
 categories = ["parser-implementations", "development-tools"]
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [dependencies]
 # Core dependencies
 simple-agent-type = { workspace = true }
@@ -18,19 +21,19 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Logging
-tracing = "0.1"
+tracing = "=0.1.44"
 
 # Optional
-regex = { version = "1.10", optional = true }
+regex = { version = "=1.12.3", optional = true }
 
 [features]
 default = []
 regex-support = ["regex"]
 
 [dev-dependencies]
-tokio = { version = "1.41", features = ["full"] }
-proptest = "1.5"
-criterion = { version = "0.5", features = ["html_reports"] }
+tokio = { version = "=1.52.3", features = ["full"] }
+proptest = "=1.11.0"
+criterion = { version = "=0.5.1", features = ["html_reports"] }
 
 
 [[test]]

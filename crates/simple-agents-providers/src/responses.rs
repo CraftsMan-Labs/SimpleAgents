@@ -64,9 +64,7 @@ pub fn parse_responses_response(body: Value) -> Result<CompletionResponse, Strin
                 }
             })
         })
-        .ok_or_else(|| {
-            "No assistant output in Responses API response".to_string()
-        })?;
+        .ok_or_else(|| "No assistant output in Responses API response".to_string())?;
 
     let usage = body.get("usage").map(|u| Usage {
         prompt_tokens: u["input_tokens"].as_u64().unwrap_or(0) as u32,
@@ -96,7 +94,10 @@ pub fn parse_responses_response(body: Value) -> Result<CompletionResponse, Strin
 /// # Errors
 ///
 /// Always returns an error — Responses API streaming is not yet implemented.
-pub fn parse_responses_stream_event(_event_type: &str, _data: &str) -> Result<CompletionChunk, String> {
+pub fn parse_responses_stream_event(
+    _event_type: &str,
+    _data: &str,
+) -> Result<CompletionChunk, String> {
     Err("Responses API streaming is not yet supported".to_string())
 }
 

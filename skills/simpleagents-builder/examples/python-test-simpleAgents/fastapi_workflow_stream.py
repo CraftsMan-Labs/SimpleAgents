@@ -109,7 +109,7 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
         },
     )
 
-# non streaming chat (Pydantic response model — TypedDict ``WorkflowRunOutput`` is not a FastAPI schema)
+# non streaming chat (use :class:`WorkflowRunOutputModel` for OpenAPI — wire shape is ``WorkflowRunOutputWire``)
 @app.post("/chat", response_model=WorkflowRunOutputModel)
 async def chat(body: ChatBody) -> WorkflowRunOutputModel:
     raw = _client().run_workflow(

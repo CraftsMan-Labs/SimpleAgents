@@ -516,11 +516,7 @@ impl CoercionEngine {
     }
 
     /// Resolve which input key was actually matched for a given schema field.
-    fn resolve_input_key(
-        &self,
-        map: &serde_json::Map<String, Value>,
-        field: &Field,
-    ) -> String {
+    fn resolve_input_key(&self, map: &serde_json::Map<String, Value>, field: &Field) -> String {
         // Exact match
         if map.contains_key(&field.name) {
             return field.name.clone();
@@ -553,10 +549,10 @@ impl CoercionEngine {
         let mut best: Option<(String, f64)> = None;
         for key in map.keys() {
             let sim = jaro_winkler(&field.name, key);
-            if sim >= self.config.fuzzy_match_threshold {
-                if best.as_ref().map_or(true, |(_, s)| sim > *s) {
-                    best = Some((key.clone(), sim));
-                }
+            if sim >= self.config.fuzzy_match_threshold
+                && best.as_ref().map_or(true, |(_, s)| sim > *s)
+            {
+                best = Some((key.clone(), sim));
             }
         }
         best.map(|(k, _)| k).unwrap_or_default()
@@ -1053,12 +1049,7 @@ mod tests {
         // Simulate truncated JSON by pre-setting the flag
         let mut flags = vec![CoercionFlag::TruncatedJson];
         let mut confidence = 1.0f32;
-        let result = engine.coerce_recursive(
-            &input,
-            &schema,
-            &mut flags,
-            &mut confidence,
-        );
+        let result = engine.coerce_recursive(&input, &schema, &mut flags, &mut confidence);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(

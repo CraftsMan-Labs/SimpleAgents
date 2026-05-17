@@ -1,0 +1,70 @@
+id: spec-hitl-usefulness
+version: 1.0.0
+entry_node: assess_fit
+
+nodes:
+  - id: assess_fit
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        heal: true
+        messages_path: input.messages
+        append_prompt_as_user: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          overall_helpfulness:
+            type: string
+            enum: ["high", "medium", "low"]
+          coverage_gaps:
+            type: array
+            items:
+              type: string
+          contradictions:
+            type: array
+            items:
+              type: string
+          recommended_next_actions:
+            type: array
+            items:
+              type: string
+          verdict_summary:
+            type: string
+        required:
+          - overall_helpfulness
+          - coverage_gaps
+          - contradictions
+          - recommended_next_actions
+          - verdict_summary
+        additionalProperties: false
+      prompt: |
+        Judge whether the finalized question-and-answer bundle is helpful for understanding and implementing the spec.
+
+        SPEC TEXT:
+        {{ input.spec_text }}
+
+        Questions JSON:
+        {{ input.final_question_bundle_json }}
+
+        Final answer bundle JSON:
+        {{ input.final_answer_bundle_json }}
+
+        Return JSON only:
+        {
+          "overall_helpfulness": "high" | "medium" | "low",
+          "coverage_gaps": ["areas the Q&A failed to cover vs the spec"],
+          "contradictions": ["any inconsistencies across answers or vs the spec"],
+          "recommended_next_actions": ["concrete next steps"],
+          "verdict_summary": "2-4 sentences for stakeholders"
+        }
+
+        Be strict but fair: prefer "medium" when minor gaps remain.
+
+  - id: usefulness_complete
+    node_type:
+      end: {}
+
+edges:
+  - from: assess_fit
+    to: usefulness_complete

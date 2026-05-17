@@ -3,8 +3,11 @@ name = "simple-agents-examples"
 version.workspace = true
 edition = "2021"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [dev-dependencies]
-dotenv = "0.15"
+dotenv = "=0.15.0"
 futures-util = { workspace = true }
 serde_json = { workspace = true }
 simple-agents-core = { path = "../crates/simple-agents-core" }

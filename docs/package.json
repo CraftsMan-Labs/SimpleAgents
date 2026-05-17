@@ -13,6 +13,9 @@
   "author": "",
   "license": "ISC",
   "type": "module",
+  "simpleagentsDependencyPolicy": {
+    "minimumReleaseAge": "182 days"
+  },
   "devDependencies": {
     "vitepress": "1.6.4"
   }

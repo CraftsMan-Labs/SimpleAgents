@@ -1,15 +1,15 @@
 [project]
 name = "examples"
-version = "0.5.0"
+version = "0.5.1"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "pyyaml>=6.0.3",
-    "pydantic>=2.12.5",
-    "pyright>=1.1.408",
-    "python-dotenv>=1.2.1",
-    "ruff>=0.14.14",
+    "pyyaml==6.0.3",
+    "pydantic==2.12.5",
+    "pyright==1.1.408",
+    "python-dotenv==1.2.1",
+    "ruff==0.14.14",
     "simple-agents-py",
 ]
 
@@ -20,3 +20,6 @@ simple-agents-py = { path = "../crates/simple-agents-py", editable = true }
 members = [
     "python-test-simpleAgents",
 ]
+
+[tool.simpleagents.dependency-policy]
+minimum-release-age = "182 days"

@@ -68,22 +68,23 @@ def main() -> None:
     )
 
     paused = client.run_workflow(initial_request)
+    paused_map = paused.to_dict()
     print("Paused output:")
-    print(json.dumps(paused, indent=2))
+    print(json.dumps(paused_map, indent=2))
 
-    if paused.get("status") != "awaiting_human_input":
+    if paused_map.get("status") != "awaiting_human_input":
         raise SystemExit("Expected workflow to pause for human input.")
 
     decision = ask_choice()
     resumed = client.run_workflow(
         WorkflowExecutionRequest(
             workflow_path=str(workflow_file),
-            resume=paused,
+            resume=paused_map,
             human_response=decision,
         )
     )
     print("Final output:")
-    print(json.dumps(resumed, indent=2))
+    print(json.dumps(resumed.to_dict(), indent=2))
 
 
 if __name__ == "__main__":

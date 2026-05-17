@@ -4,6 +4,9 @@ version.workspace = true
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [lib]
 crate-type = ["cdylib"]
 test = false
@@ -11,19 +14,19 @@ doctest = false
 
 [dependencies]
 async-trait = { workspace = true }
-napi = { version = "2.16", features = ["napi4", "serde-json", "tokio_rt"] }
-napi-derive = "2.16"
+napi = { version = "=2.16.17", features = ["napi4", "serde-json", "tokio_rt"] }
+napi-derive = "=2.16.13"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 futures-util = { workspace = true }
-tracing = "0.1"
+tracing = "=0.1.44"
 
-simple-agents-core = { path = "../simple-agents-core", version = "0.5.0" }
-simple-agents-providers = { path = "../simple-agents-providers", version = "0.5.0" }
+simple-agents-core = { path = "../simple-agents-core", version = "0.5.1" }
+simple-agents-providers = { path = "../simple-agents-providers", version = "0.5.1" }
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.0" }
-simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.5.0" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.1" }
+simple-agents-workflow = { path = "../simple-agents-workflow", version = "0.5.1" }
 
 [build-dependencies]
-napi-build = "2.1"
+napi-build = "=2.3.2"

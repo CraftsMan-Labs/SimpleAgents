@@ -9,18 +9,16 @@ from typing import (
     Sequence,
     TypedDict,
     overload,
-    Never,
 )
 from enum import Enum
 
 from .models import (
     JSONValue,
-    WorkflowEvent,
-    WorkflowExecutionRequest,
-    WorkflowInput,
-    WorkflowRunOptions,
+    WorkflowEventWire,
+    WorkflowRunOutputWire,
 )
 from .eval_request import EvalReport, EvalSuiteRequest
+from .workflow_request import WorkflowExecutionRequest
 
 # ---------------------------------------------------------------------------
 # Typed message API  (new unified surface)
@@ -187,7 +185,7 @@ class WorkflowRunOutput:
     def metadata(self) -> Any: ...
     @property
     def events(self) -> list[dict[str, Any]] | None: ...
-    def to_dict(self) -> dict[str, Any]: ...
+    def to_dict(self) -> WorkflowRunOutputWire: ...
 
 # ---------------------------------------------------------------------------
 # Streaming types
@@ -417,11 +415,12 @@ class Client:
     def stream_workflow(
         self,
         request: WorkflowExecutionRequest,
-        on_event: Callable[[WorkflowEvent], object] | None = None,
+        on_event: Callable[[WorkflowEventWire], object] | None = None,
         include_events_in_output: bool = False,
     ) -> WorkflowRunOutput: ...
 
-    # Note: WorkflowRunOutput here is the typed pyclass (not the TypedDict)
+    # Note: ``WorkflowRunOutput`` here is the Rust pyclass; wire JSON mirrors
+    # :class:`simple_agents_py.models.WorkflowRunOutputWire` (via ``to_dict()``).
 
     def run_eval_suite(
         self,

@@ -3,7 +3,7 @@ members = ["crates/*", "examples"]
 resolver = "2"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 rust-version = "1.75"
 authors = ["SimpleAgents Contributors"]
@@ -12,24 +12,24 @@ repository = "https://github.com/CraftsMan-Labs/SimpleAgents"
 homepage = "https://github.com/CraftsMan-Labs/SimpleAgents"
 documentation = "https://docs.rs/simple-agent-type"
 
+# Third-party versions should ordinarily age this long before automated bumps pick them up
+# (see renovate.json minimumReleaseAge). Same string is echoed in crate/package manifests.
+[workspace.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [workspace.dependencies]
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
-async-trait = "0.1"
-tokio = { version = "1.35", features = ["full"] }
-reqwest = { version = "0.12", features = ["json", "stream"] }
-prost = "0.13"
-tonic = { version = "0.12", features = ["transport"] }
-subtle = "2.6"
-rand = "0.8"
-blake3 = "1.5"
-futures = "0.3"
-futures-core = "0.3"
-futures-util = "0.3"
-metrics = "0.23"
-metrics-exporter-prometheus = "0.15"
-governor = "0.6"
-simple-agent-type = { version = "0.5.0", path = "crates/simple-agent-type" }
-simple-agents-healing = { version = "0.5.0", path = "crates/simple-agents-healing" }
-simple-agents-providers = { version = "0.5.0", path = "crates/simple-agents-providers" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.149"
+thiserror = "=1.0.69"
+async-trait = "=0.1.89"
+tokio = { version = "=1.52.3", features = ["full"] }
+reqwest = { version = "=0.12.28", features = ["json", "stream"] }
+tonic = { version = "=0.12.3", features = ["transport"] }
+subtle = "=2.6.1"
+rand = "=0.8.6"
+futures = "=0.3.32"
+futures-core = "=0.3.32"
+futures-util = "=0.3.32"
+simple-agent-type = { version = "0.5.1", path = "crates/simple-agent-type" }
+simple-agents-healing = { version = "0.5.1", path = "crates/simple-agents-healing" }
+simple-agents-providers = { version = "0.5.1", path = "crates/simple-agents-providers" }

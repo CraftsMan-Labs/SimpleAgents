@@ -954,7 +954,11 @@ impl Client {
 
     /// Run a YAML workflow (blocking).
     #[pyo3(signature = (request))]
-    fn run_workflow(&self, py: Python<'_>, request: &Bound<'_, PyAny>) -> PyResult<PyWorkflowRunOutput> {
+    fn run_workflow(
+        &self,
+        py: Python<'_>,
+        request: &Bound<'_, PyAny>,
+    ) -> PyResult<PyWorkflowRunOutput> {
         let request = parse_workflow_execution_request(request)?;
         let workflow_path_buf = std::path::PathBuf::from(request.workflow_path.as_str());
         let workflow_root = workflow_root_path(workflow_path_buf.as_path());
@@ -1618,9 +1622,7 @@ impl PyWorkflowRunOutput {
     fn to_dict(&self, py: Python<'_>) -> PyResult<PyObject> {
         let mut value = serde_json::to_value(&self.inner)
             .map_err(|e| PyRuntimeError::new_err(format!("serialization failed: {e}")))?;
-        if let (Some(events), serde_json::Value::Object(ref mut map)) =
-            (&self.events, &mut value)
-        {
+        if let (Some(events), serde_json::Value::Object(ref mut map)) = (&self.events, &mut value) {
             map.insert("events".to_string(), events.clone());
         }
         serde_json_to_py(py, &value)

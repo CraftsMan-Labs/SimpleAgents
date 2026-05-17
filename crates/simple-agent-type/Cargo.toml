@@ -11,6 +11,9 @@ documentation.workspace = true
 description = "Core types and traits for SimpleAgents"
 readme = "README.md"
 
+[package.metadata.simpleagents.dependency-policy]
+minimum-release-age = "182 days"
+
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true

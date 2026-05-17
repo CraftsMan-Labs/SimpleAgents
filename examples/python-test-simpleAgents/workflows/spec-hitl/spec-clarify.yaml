@@ -1,0 +1,138 @@
+id: spec-hitl-clarify
+version: 1.0.0
+entry_node: collect_follow_up
+
+nodes:
+  - id: collect_follow_up
+    node_type:
+      human_input:
+        input_type: text
+        prompt: |
+          {{ input.follow_up_instruction }}
+
+          Iteration (0-based): {{ input.iteration_index }}
+
+          Target question ids (JSON array):
+          {{ input.unclear_question_ids_json }}
+
+          Concerns (JSON array):
+          {{ input.concerns_json }}
+
+          Current bundle JSON:
+          {{ input.answer_bundle_json }}
+
+  - id: patch_bundle
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        heal: true
+        messages_path: input.messages
+        append_prompt_as_user: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          patched_answer_bundle:
+            type: object
+            additionalProperties:
+              type: object
+              properties:
+                question:
+                  type: string
+                answer:
+                  type: string
+              required: [question, answer]
+              additionalProperties: false
+        required: [patched_answer_bundle]
+        additionalProperties: false
+      prompt: |
+        Merge the human follow-up into the canonical answer bundle.
+
+        SPEC (trimmed context): {{ input.spec_text }}
+
+        Questions JSON:
+        {{ input.questions_json }}
+
+        Existing bundle JSON:
+        {{ input.answer_bundle_json }}
+
+        Human follow-up text (latest):
+        {{ nodes.collect_follow_up.output }}
+
+        Rules:
+        - Output patched_answer_bundle with keys q01..q10 only (all ten keys must exist).
+        - For questions not touched by the follow-up, copy question and answer from the existing bundle unchanged.
+        - For clarified questions, keep the same "question" text from the bundle/spec unless correcting wording minimally;
+          replace "answer" with clearer merged text that incorporates the follow-up.
+        - Do not invent requirements absent from the spec + bundle + follow-up.
+
+        Return JSON only:
+        {
+          "patched_answer_bundle": {
+            "q01": {"question": "...", "answer": "..."},
+            ...
+          }
+        }
+
+  - id: validate_subset
+    node_type:
+      llm_call:
+        model: gpt-4.1-mini
+        heal: true
+        messages_path: input.messages
+        append_prompt_as_user: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          clarity_gate:
+            type: string
+            enum: ["clear", "retry", "abort"]
+          notes_for_human:
+            type: array
+            items:
+              type: string
+          rationale:
+            type: string
+        required: [clarity_gate, notes_for_human, rationale]
+        additionalProperties: false
+      prompt: |
+        Evaluate whether answers are now clear enough for engineering handoff.
+
+        SPEC TEXT:
+        {{ input.spec_text }}
+
+        Questions JSON:
+        {{ input.questions_json }}
+
+        Patched bundle JSON:
+        {{ nodes.patch_bundle.output.patched_answer_bundle }}
+
+        Prior concerns (JSON):
+        {{ input.concerns_json }}
+
+        Iteration index (string): {{ input.iteration_index }}
+        Max clarification rounds allowed (string): {{ input.max_clarify_rounds }}
+
+        If iteration_index is already at or beyond max_clarify_rounds minus one and issues remain, prefer "abort".
+        If answers adequately resolve prior concerns and ambiguities, return "clear".
+        If still vague but more human input could help within budget, return "retry".
+
+        Return JSON only:
+        {
+          "clarity_gate": "clear" | "retry" | "abort",
+          "notes_for_human": ["short actionable bullets"],
+          "rationale": "brief explanation"
+        }
+
+  - id: clarify_complete
+    node_type:
+      end: {}
+
+edges:
+  - from: collect_follow_up
+    to: patch_bundle
+  - from: patch_bundle
+    to: validate_subset
+  - from: validate_subset
+    to: clarify_complete
