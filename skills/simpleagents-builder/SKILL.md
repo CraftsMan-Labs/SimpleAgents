@@ -53,7 +53,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -64,7 +63,7 @@ nodes:
             type: string
         required: [field]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Your instruction here.
         Return JSON only.
 
@@ -93,7 +92,8 @@ edges:
 | `heal` | bool | `false` | Auto-fix truncated/malformed JSON |
 | `send_schema` | bool | `false` | Send output_schema to the model as response format |
 | `messages_path` | string | - | Path to input messages (usually `input.messages`) |
-| `append_prompt_as_user` | bool | `false` | Append config.prompt as a user message |
+| `user_input_prompt` | string | - | User instruction text for this node |
+| `node_system_prompt` | string | - | Optional system instruction for this node |
 
 ### Switch Node Pattern
 
@@ -184,7 +184,7 @@ config:
     llm_call:
       model: gpt-4.1-mini
   config:
-    prompt: "Category is {{ globals.email_category }}"
+    user_input_prompt: "Category is {{ globals.email_category }}"
 ```
 
 ## Step 3: Generate the Runner Script
@@ -587,7 +587,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -601,7 +600,7 @@ nodes:
             type: string
         required: [category, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify this email into exactly one category.
         Return JSON only: {"category": "hr" | "finance" | "education", "reason": "..."}
 
@@ -618,7 +617,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -632,7 +630,7 @@ nodes:
             type: string
         required: [subtype, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         This email is classified as finance. Determine the subtype.
         Return JSON only: {"subtype": "invoice" | "reimbursement" | "tax", "reason": "..."}
 
@@ -649,7 +647,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -659,7 +656,7 @@ nodes:
             type: string
         required: [company_name]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Extract the seller/vendor company name from this invoice email.
         Return JSON only: {"company_name": "..."}
 
@@ -676,7 +673,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -685,7 +681,7 @@ nodes:
             type: string
         required: [summary]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Summarize the classification result.
         Category: {{ nodes.classify_email.output.category }}
         Return JSON only: {"summary": "..."}

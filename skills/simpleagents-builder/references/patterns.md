@@ -16,7 +16,6 @@ nodes:
         model: azure/gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -30,7 +29,7 @@ nodes:
             type: string
         required: [domain, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the email into one domain.
         Return JSON only: {"domain": "hr" | "finance" | "education", "reason": "..."}
 
@@ -52,7 +51,8 @@ edges:
 Always set on every `llm_call`:
 
 - `messages_path: input.messages` -- pass conversation history
-- `append_prompt_as_user: true` -- inject the node prompt as a user message
+- `config.user_input_prompt` -- user instruction text sent as a user message
+- `config.node_system_prompt` -- optional system guardrails/instructions for the node
 - `stream: true` -- enable streaming (controlled at runtime by `node_llm_streaming` flag)
 - `heal: true` -- auto-fix truncated JSON
 - `stream_json_as_text: false` -- set to `true` only when you want raw text deltas for structured output

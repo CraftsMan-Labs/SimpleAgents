@@ -13,7 +13,6 @@ nodes:
         model: gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -28,7 +27,7 @@ nodes:
             type: string
         required: [category, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the email into exactly one category.
         Return JSON only:
         {"category": "hr" | "finance" | "education", "reason": "short explanation"}
@@ -49,7 +48,6 @@ nodes:
         model: gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         stream_json_as_text: false
         heal: true
@@ -64,7 +62,7 @@ nodes:
             type: string
         required: [subtype, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         This email is already classified as finance.
         Determine the finance subtype.
         Return JSON only:
@@ -86,7 +84,6 @@ nodes:
         model: gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -99,7 +96,7 @@ nodes:
             type: string
         required: [company_name, reason]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Extract the seller/vendor company name from this invoice email.
         Return JSON only:
         {"company_name": "...", "reason": "..."}
@@ -120,7 +117,6 @@ nodes:
         model: gpt-4.1-mini
         temperature: 0.7
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -133,7 +129,7 @@ nodes:
             type: string
         required: [summary, category]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Summarize the classification.
         Category: {{ nodes.classify_email.output.category }}
         Reason: {{ nodes.classify_email.output.reason }}

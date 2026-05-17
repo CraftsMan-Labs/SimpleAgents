@@ -37,7 +37,6 @@ nodes:
       llm_call:
         model: gemini-3-flash
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -46,7 +45,7 @@ nodes:
             type: string
         required: [state]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Return JSON only.
 
 edges:
@@ -79,6 +78,7 @@ Keep conditions simple (`==`, `!=`) and tied to a stable node output path.
 ## Prompting Pattern
 
 - Instruct: `Return JSON only`.
+- Put user instructions in `config.user_input_prompt`; use `config.node_system_prompt` for optional system-level guardrails.
 - Give exact response shape.
 - Encode policy as explicit bullet rules.
 - Keep each node prompt single-responsibility.

@@ -71,7 +71,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -82,7 +81,7 @@ nodes:
             enum: [billing, support, sales]
         required: [category]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the user message. Return JSON only.
 
 edges: []

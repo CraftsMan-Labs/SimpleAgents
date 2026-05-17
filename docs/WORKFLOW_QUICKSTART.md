@@ -45,7 +45,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         stream: true
         heal: true
     config:
@@ -56,7 +55,7 @@ nodes:
             type: string
         required: [answer]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Answer the user's question concisely.
         Return JSON only: {"answer": "..."}
 ```
@@ -292,7 +291,8 @@ Every `llm_call` node accepts these fields:
 | `heal` | bool | `false` | Auto-fix truncated/malformed JSON output |
 | `send_schema` | bool | `false` | Send `output_schema` to the model as response format |
 | `messages_path` | string | - | JSONPath for input messages (usually `input.messages`) |
-| `append_prompt_as_user` | bool | `false` | Append the `config.prompt` as a user message |
+| `user_input_prompt` | string | - | User-facing prompt template resolved for the LLM input |
+| `node_system_prompt` | string \| null | `null` | Optional system prompt prepended as the first message when set |
 
 ### Execution Flags (Runtime)
 
@@ -577,7 +577,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
         heal: true
     config:
       output_schema:
@@ -588,7 +587,7 @@ nodes:
             enum: [billing, support, sales]
         required: [category]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         Classify the user message into one category.
         Return JSON only: {"category": "billing" | "support" | "sales"}
 
@@ -607,7 +606,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -616,7 +614,7 @@ nodes:
             type: string
         required: [response]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         This is a billing inquiry. Provide a helpful billing response.
         Return JSON only: {"response": "..."}
 
@@ -625,7 +623,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -634,7 +631,7 @@ nodes:
             type: string
         required: [response]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         This is a support request. Provide helpful technical support.
         Return JSON only: {"response": "..."}
 
@@ -643,7 +640,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -652,7 +648,7 @@ nodes:
             type: string
         required: [response]
         additionalProperties: false
-      prompt: |
+      user_input_prompt: |
         This is a sales inquiry. Provide a helpful sales response.
         Return JSON only: {"response": "..."}
 
@@ -666,7 +662,7 @@ edges:
 Reference previous node outputs in prompts and payloads:
 
 ```yaml
-prompt: |
+user_input_prompt: |
   The user asked about: {{ nodes.classify.output.category }}
   Reason: {{ nodes.classify.output.reason }}
 ```

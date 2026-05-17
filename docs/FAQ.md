@@ -256,7 +256,6 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -264,7 +263,7 @@ nodes:
           answer:
             type: string
         required: [answer]
-      prompt: |
+      user_input_prompt: |
         Answer the user's question concisely.
         Return JSON only: {"answer": "..."}
 ```
@@ -300,7 +299,7 @@ nodes:
           category:
             type: string
             enum: [billing, support, sales]
-      prompt: Classify the user message into one category.
+      user_input_prompt: Classify the user message into one category.
 
   - id: route
     node_type:
@@ -634,7 +633,11 @@ def on_event(event: dict):
     
     elif event_type == "node_llm_input_resolved":
         # LLM input details before calling
-        print(f"Calling {event.get('model')} with prompt: {event.get('prompt')}")
+        print(
+            "Calling "
+            f"{event.get('model')} with user_input_prompt: "
+            f"{event.get('user_input_prompt')}"
+        )
     
     elif event_type == "workflow_completed":
         # Final completion
@@ -861,7 +864,7 @@ node_type:
 
 Or adjust your prompt to be more explicit:
 ```yaml
-prompt: |
+user_input_prompt: |
   Return valid JSON only. No markdown, no explanation.
   Format: {"field": "value"}
 ```

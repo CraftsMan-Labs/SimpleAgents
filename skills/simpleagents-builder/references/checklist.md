@@ -15,7 +15,7 @@
 - [ ] `additionalProperties: false` for routing-critical outputs
 - [ ] prompt says `Return JSON only`
 - [ ] `messages_path: input.messages` set (for conversation history)
-- [ ] `append_prompt_as_user: true` set
+- [ ] `config.user_input_prompt` set (use `config.node_system_prompt` when needed)
 - [ ] `stream: true` set (streaming controlled at runtime by `node_llm_streaming` flag)
 - [ ] `heal: true` set (auto-fix truncated JSON)
 
