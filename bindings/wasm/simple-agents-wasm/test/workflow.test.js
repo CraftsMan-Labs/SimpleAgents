@@ -86,7 +86,7 @@ model: gpt-4o-mini
 steps:
   - id: ask
     type: llm_call
-    prompt: "Say hi to {{name}}"
+    user_input_prompt: "Say hi to {{name}}"
   - id: out
     type: output
     text: "{{ask}}"
@@ -119,7 +119,6 @@ nodes:
       llm_call:
         model: gpt-4o-mini
         messages_path: input.messages
-        append_prompt_as_user: true
     config:
       output_schema:
         type: object
@@ -130,7 +129,7 @@ nodes:
             type: string
         required: [state, reason]
         additionalProperties: false
-      prompt: "Classify state"
+      user_input_prompt: "Classify state"
 
   - id: route
     node_type:
@@ -205,7 +204,7 @@ nodes:
             type: string
         required: [state, reason]
         additionalProperties: false
-      prompt: "Classify state"
+      user_input_prompt: "Classify state"
 `;
 
   await assert.rejects(
@@ -240,7 +239,7 @@ nodes:
             type: string
         required: [company_name, reason]
         additionalProperties: false
-      prompt: "Extract company"
+      user_input_prompt: "Extract company"
 
   - id: lookup_company
     node_type:
@@ -298,7 +297,7 @@ nodes:
             type: string
         required: [state, reason]
         additionalProperties: false
-      prompt: "Classify state"
+      user_input_prompt: "Classify state"
   - id: next
     node_type:
       custom_worker:
@@ -339,7 +338,7 @@ nodes:
           reason:
             type: string
         required: [state, reason]
-      prompt: "Classify state"
+      user_input_prompt: "Classify state"
   - id: next
     node_type:
       custom_worker:
