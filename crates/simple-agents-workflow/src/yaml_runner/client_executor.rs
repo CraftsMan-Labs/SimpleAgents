@@ -58,16 +58,47 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
         event_sink: Option<&dyn YamlWorkflowEventSink>,
     ) -> Result<YamlLlmExecutionResult, String> {
         let expects_object = schema_expects_object(&request.schema);
-        let messages = if let Some(mut history) = request.messages.clone() {
-            if request.append_prompt_as_user && !request.prompt.trim().is_empty() {
-                history.push(Message::user(&request.prompt));
+        let user_input_prompt = request
+            .user_input_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty());
+        let node_system_prompt = request
+            .node_system_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty());
+
+        let messages = if let Some(history) = request.messages.clone() {
+            let mut assembled = Vec::with_capacity(
+                history.len()
+                    + usize::from(user_input_prompt.is_some())
+                    + usize::from(node_system_prompt.is_some()),
+            );
+            if let Some(system_prompt) = node_system_prompt {
+                assembled.push(Message::system(system_prompt));
             }
-            history
+            assembled.extend(history);
+            if let Some(user_prompt) = user_input_prompt {
+                assembled.push(Message::user(user_prompt));
+            }
+            assembled
         } else {
-            vec![
-                Message::system("You execute workflow classification steps."),
-                Message::user(&request.prompt),
-            ]
+            let mut assembled = Vec::with_capacity(2);
+            if let Some(system_prompt) = node_system_prompt {
+                assembled.push(Message::system(system_prompt));
+            } else {
+                assembled.push(Message::system("You execute workflow classification steps."));
+            }
+            if let Some(user_prompt) = user_input_prompt {
+                assembled.push(Message::user(user_prompt));
+            } else {
+                return Err(format!(
+                    "llm_call '{}' requires user_input_prompt when messages_path is not provided",
+                    request.node_id
+                ));
+            }
+            assembled
         };
 
         if !request.tools.is_empty() {

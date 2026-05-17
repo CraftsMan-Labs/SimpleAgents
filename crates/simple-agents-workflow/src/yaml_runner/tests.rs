@@ -590,7 +590,7 @@ impl YamlWorkflowLlmExecutor for MockExecutor {
         request: YamlLlmExecutionRequest,
         _event_sink: Option<&dyn YamlWorkflowEventSink>,
     ) -> Result<YamlLlmExecutionResult, String> {
-        let prompt = request.prompt;
+        let prompt = request.user_input_prompt.unwrap_or_default();
         if prompt.contains("exactly one category") {
             return Ok(YamlLlmExecutionResult {
                 payload: json!({"category":"termination","reason":"mock"}),
@@ -658,7 +658,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         Classify the following email into exactly one category:
         - termination
         - supply_chain
@@ -680,7 +680,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         Determine termination subtype for:
         {{ input.email_text }}
       output_schema:
@@ -697,7 +697,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         Determine supply chain subtype for:
         {{ input.email_text }}
       output_schema:
@@ -761,7 +761,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -818,7 +818,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         Classify the following email into exactly one category:
         {{ input.email_text }}
       output_schema:
@@ -855,9 +855,20 @@ nodes:
         .as_ref()
         .expect("event metadata should be present");
     let bindings = metadata
-        .get("bindings")
+        .get("user_input_prompt_bindings")
         .and_then(Value::as_array)
         .expect("bindings should be an array");
+    assert!(
+        metadata
+            .get("user_input_prompt")
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.contains("hello"))
+    );
+    assert!(
+        metadata
+            .get("node_system_prompt")
+            .is_some_and(Value::is_null)
+    );
 
     assert!(!bindings.is_empty());
     let first_binding = &bindings[0];
@@ -882,7 +893,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -934,7 +945,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1018,7 +1029,7 @@ nodes:
         model: gpt-4.1
         stream: true
     config:
-      prompt: "hello"
+      user_input_prompt: "hello"
       output_schema:
         type: object
         properties:
@@ -1075,8 +1086,20 @@ impl YamlWorkflowLlmExecutor for MessageHistoryExecutor {
             .as_ref()
             .ok_or("messages should be present")?;
         let count = messages.len();
+        let has_user_input_prompt = request
+            .user_input_prompt
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
+        let has_node_system_prompt = request
+            .node_system_prompt
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty());
         Ok(YamlLlmExecutionResult {
-            payload: json!({"message_count": count}),
+            payload: json!({
+                "message_count": count,
+                "has_user_input_prompt": has_user_input_prompt,
+                "has_node_system_prompt": has_node_system_prompt
+            }),
             usage: None,
             ttft_ms: None,
             tool_calls: Vec::new(),
@@ -1096,11 +1119,13 @@ nodes:
         model: gpt-4.1
         messages_path: input.messages
     config:
-      prompt: ""
+      user_input_prompt: ""
       output_schema:
         type: object
         properties:
           message_count: { type: integer }
+          has_user_input_prompt: { type: boolean }
+          has_node_system_prompt: { type: boolean }
         required: [message_count]
     "#;
 
@@ -1126,6 +1151,65 @@ nodes:
 }
 
 #[tokio::test]
+async fn resolves_user_and_system_prompt_fields_for_llm_execution() {
+    let yaml = r#"
+id: prompt-order-test
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        messages_path: input.messages
+    config:
+      node_system_prompt: "System policy: {{ input.policy }}"
+      user_input_prompt: "Handle request: {{ input.request }}"
+      output_schema:
+        type: object
+        properties:
+          message_count: { type: integer }
+          has_user_input_prompt: { type: boolean }
+          has_node_system_prompt: { type: boolean }
+        required: [message_count, has_user_input_prompt, has_node_system_prompt]
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let output = run_workflow_yaml_with_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({
+            "policy": "be concise",
+            "request": "review invoice",
+            "messages": [
+                {"role":"user","content":"original user"},
+                {"role":"assistant","content":"original assistant"}
+            ]
+        }),
+        &MessageHistoryExecutor,
+        None,
+        None,
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect("workflow should execute");
+
+    let terminal = output.terminal_output.expect("terminal output present");
+    assert_eq!(terminal.get("message_count").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        terminal
+            .get("has_user_input_prompt")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+    assert_eq!(
+        terminal
+            .get("has_node_system_prompt")
+            .and_then(Value::as_bool),
+        Some(true)
+    );
+}
+
+#[tokio::test]
 async fn wrapper_entrypoints_produce_equivalent_outputs() {
     let yaml = r#"
 id: wrapper-test
@@ -1136,7 +1220,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1187,7 +1271,7 @@ nodes:
               required: [order_id]
         max_tool_roundtrips: 2
     config:
-      prompt: "Handle: {{ input.email_text }}"
+      user_input_prompt: "Handle: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1233,7 +1317,7 @@ nodes:
       llm_call:
         model: o3-mini
     config:
-      prompt: "Classify: {{ input.email_text }}"
+      user_input_prompt: "Classify: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1286,7 +1370,7 @@ nodes:
               required: [order_id]
         max_tool_roundtrips: 2
     config:
-      prompt: "Handle: {{ input.email_text }}"
+      user_input_prompt: "Handle: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1345,7 +1429,7 @@ nodes:
               required: [customer_name, order_status]
         max_tool_roundtrips: 2
     config:
-      prompt: "Handle: {{ input.email_text }}"
+      user_input_prompt: "Handle: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1397,7 +1481,7 @@ nodes:
               required: [order_id]
         max_tool_roundtrips: 2
     config:
-      prompt: "Handle: {{ input.email_text }}"
+      user_input_prompt: "Handle: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1592,7 +1676,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1603,7 +1687,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1651,7 +1735,7 @@ nodes:
         model: gpt-4.1
         messages_path: input.messages
     config:
-      prompt: ""
+      user_input_prompt: ""
       output_schema:
         type: object
         properties:
@@ -1673,6 +1757,93 @@ nodes:
 
     let rendered = err.to_string();
     assert!(rendered.contains("messages_path") || rendered.contains("array"));
+}
+
+#[tokio::test]
+async fn rejects_llm_node_without_messages_path_or_user_prompt() {
+    let yaml = r#"
+id: missing-llm-input-source
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      output_schema:
+        type: object
+        properties:
+          ok: { type: boolean }
+    "#;
+
+    let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
+    let err = run_workflow_yaml_with_custom_worker_and_events_and_options(
+        &workflow,
+        &json!({}),
+        &MockExecutor,
+        None,
+        None,
+        &YamlWorkflowRunOptions::default(),
+        YamlWorkflowExecutionFlags::default(),
+    )
+    .await
+    .expect_err("missing llm input source should fail");
+
+    match err {
+        YamlWorkflowRunError::Validation { diagnostics, .. } => {
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|diagnostic| diagnostic.code == "missing_llm_input_source")
+            );
+        }
+        other => panic!("expected validation error, got {other:?}"),
+    }
+}
+
+#[test]
+fn rejects_legacy_prompt_key_in_node_config() {
+    let yaml = r#"
+id: legacy-prompt-config
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+    config:
+      prompt: "legacy prompt"
+      output_schema:
+        type: object
+        properties:
+          ok: { type: boolean }
+    "#;
+
+    let err = serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy prompt key should fail");
+    assert!(err.to_string().contains("unknown field `prompt`"));
+}
+
+#[test]
+fn rejects_legacy_append_prompt_flag_in_llm_call() {
+    let yaml = r#"
+id: legacy-append-flag
+entry_node: classify
+nodes:
+  - id: classify
+    node_type:
+      llm_call:
+        model: gpt-4.1
+        append_prompt_as_user: true
+    config:
+      user_input_prompt: "hello"
+      output_schema:
+        type: object
+        properties:
+          ok: { type: boolean }
+    "#;
+
+    let err = serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy append flag should fail");
+    assert!(err.to_string().contains("unknown field `append_prompt_as_user`"));
 }
 
 #[tokio::test]
@@ -1752,7 +1923,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1802,7 +1973,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1854,7 +2025,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1914,7 +2085,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -1966,7 +2137,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -2043,7 +2214,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "hello"
+      user_input_prompt: "hello"
       output_schema:
         type: object
         properties:
@@ -2084,7 +2255,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "hello"
+      user_input_prompt: "hello"
       output_schema:
         type: object
         properties:
@@ -2125,7 +2296,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -2185,7 +2356,7 @@ nodes:
         provider: openai
         model: gpt-4.1-mini
     config:
-      prompt: hi
+      user_input_prompt: hi
     "#;
 
     let err = serde_yaml::from_str::<YamlWorkflow>(yaml)
@@ -2231,7 +2402,7 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
     config:
-      prompt: hi
+      user_input_prompt: hi
     "#;
 
     let workflow =
@@ -2252,7 +2423,7 @@ nodes:
       llm_call:
         model: gpt-4.1-mini
     config:
-      prompt: hi
+      user_input_prompt: hi
     "#;
 
     let workflow =
@@ -2303,7 +2474,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         classify
     "#;
 
@@ -2373,7 +2544,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         Extract the company name from the email: {{ input.email_text }}
       output_schema:
         type: object
@@ -2440,7 +2611,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: |
+      user_input_prompt: |
         {{ input.email_text }}
     "#;
 
@@ -2470,7 +2641,7 @@ nodes:
         heal: {heal}
         send_schema: {send_schema}
     config:
-      prompt: "Extract age"
+      user_input_prompt: "Extract age"
       output_schema:
         type: object
         properties:
@@ -2788,7 +2959,7 @@ nodes:
       llm_call:
         model: m
     config:
-      prompt: "x"
+      user_input_prompt: "x"
     "#;
         serde_yaml::from_str(yaml).expect("workflow yaml")
     }
@@ -2933,7 +3104,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -2983,7 +3154,7 @@ nodes:
       llm_call:
         model: gpt-4.1
     config:
-      prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
+      user_input_prompt: "Classify the following email into exactly one category: {{ input.email_text }}"
       output_schema:
         type: object
         properties:
@@ -3032,7 +3203,7 @@ nodes:
         model: gpt-4.1
       end: {}
     config:
-      prompt: "hello"
+      user_input_prompt: "hello"
     "#;
 
     let workflow: YamlWorkflow = serde_yaml::from_str(yaml).expect("yaml should parse");
