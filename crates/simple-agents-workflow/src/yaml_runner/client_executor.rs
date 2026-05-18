@@ -88,7 +88,9 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
             if let Some(system_prompt) = node_system_prompt {
                 assembled.push(Message::system(system_prompt));
             } else {
-                assembled.push(Message::system("You execute workflow classification steps."));
+                assembled.push(Message::system(
+                    "You execute workflow classification steps.",
+                ));
             }
             if let Some(user_prompt) = user_input_prompt {
                 assembled.push(Message::user(user_prompt));
