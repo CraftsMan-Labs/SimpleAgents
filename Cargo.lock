@@ -1514,9 +1514,9 @@ checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
 
 [[package]]
 name = "openssl"
-version = "0.10.79"
+version = "0.10.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf0b434746ee2832f4f0baf10137e1cabb18cbe6912c69e2e33263c45250f542"
+checksum = "a45fa2aa886c42762255da344f0a0d313e254066c46aad76f300c3d3da62d967"
 dependencies = [
  "bitflags",
  "cfg-if",
@@ -1545,9 +1545,9 @@ checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.115"
+version = "0.9.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "158fe5b292746440aa6e7a7e690e55aeb72d41505e2804c23c6973ad0e9c9781"
+checksum = "f28a22dc7140cda5f096e5e7724a6962ca81a7f8bfd2979f9b18c11af56318c4"
 dependencies = [
  "cc",
  "libc",
@@ -2321,7 +2321,7 @@ checksum = "703d5c7ef118737c72f1af64ad2f6f8c5e1921f818cdcb97b8fe6fc69bf66214"
 
 [[package]]
 name = "simple-agent-type"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2334,7 +2334,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-core"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "futures-core",
@@ -2350,7 +2350,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-examples"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "dotenv",
  "futures-util",
@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-healing"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "criterion",
  "proptest",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-napi"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2400,7 +2400,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-providers"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2423,7 +2423,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-py"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -2442,7 +2442,7 @@ dependencies = [
 
 [[package]]
 name = "simple-agents-workflow"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-trait",
  "criterion",

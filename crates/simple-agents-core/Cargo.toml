@@ -22,7 +22,7 @@ tokio.workspace = true
 rand.workspace = true
 
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.1" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.2" }
 
 [dev-dependencies]
 async-trait.workspace = true
