@@ -1,0 +1,656 @@
+# Email Ingestor — hierarchical classification with explicit subtype routing
+# Top-level: HR | Finance | Education
+# Each subtype has its own switch branch and downstream path.
+
+id: email-ingestor
+version: 1.0.1
+
+metadata:
+  name: "Email Ingestor"
+  description: "Classify incoming email text into HR, Finance, or Education with explicit per-subtype routing."
+  tags: [example, email-ingestor, email-classification, hr, finance, education]
+
+entry_node: detect_email_domain
+
+nodes:
+  - id: detect_email_domain
+    name: "Detect Email Domain"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          domain:
+            type: string
+            enum: [hr, finance, education]
+          reason:
+            type: string
+        required: [domain, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Classify the latest user-provided email content into exactly one top-level domain.
+
+        Return JSON only:
+        {
+          "domain": "hr" | "finance" | "education",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - Use the latest user message as the email content to classify.
+        - Choose "hr" for employee lifecycle, hiring, interviews, termination, onboarding, or people operations.
+        - Choose "finance" for reimbursement, invoicing, tax, billing, payments, or accounting topics.
+        - Choose "education" for employee education programs, internships, college admissions for job experience, training, or academic programs.
+        - Pick the single best domain even if the email mentions adjacent context.
+        - Do not invent details not present in the email.
+
+  - id: route_email_domain
+    name: "Route Email Domain"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_email_domain.output.domain == "hr"'
+            target: detect_hr_subtype
+          - condition: '$.nodes.detect_email_domain.output.domain == "finance"'
+            target: detect_finance_subtype
+        default: detect_education_subtype
+
+  # --- HR: detect → route → finalize per subtype ---
+
+  - id: detect_hr_subtype
+    name: "Detect HR Subtype"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          hr_subtype:
+            type: string
+            enum: [employee_termination, employee_onboarding, interview_scheduling]
+          reason:
+            type: string
+        required: [hr_subtype, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        The latest user message has already been classified as HR.
+        Classify it into exactly one HR subtype.
+
+        Return JSON only:
+        {
+          "hr_subtype": "employee_termination" | "employee_onboarding" | "interview_scheduling",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - employee_termination: resignations, exit interviews, offboarding, termination, final paycheck, separation.
+        - employee_onboarding: new hire setup, first-day logistics, badge/laptop provisioning, orientation, I-9, welcome emails.
+        - interview_scheduling: scheduling or rescheduling interviews, panel coordination, candidate availability, interview loops.
+        - Pick the single best subtype from the enum.
+
+  - id: route_hr_subtype
+    name: "Route HR Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_hr_subtype.output.hr_subtype == "employee_termination"'
+            target: finalize_hr_employee_termination
+          - condition: '$.nodes.detect_hr_subtype.output.hr_subtype == "employee_onboarding"'
+            target: finalize_hr_employee_onboarding
+          - condition: '$.nodes.detect_hr_subtype.output.hr_subtype == "interview_scheduling"'
+            target: finalize_hr_interview_scheduling
+        default: finalize_hr_employee_onboarding
+
+  - id: finalize_hr_employee_termination
+    name: "Finalize HR — Employee Termination"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [hr]
+          subtype:
+            type: string
+            enum: [employee_termination]
+          label:
+            type: string
+            enum: [hr/employee_termination]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for an HR employee-termination email.
+
+        Return JSON only:
+        {
+          "top_level_category": "hr",
+          "subtype": "employee_termination",
+          "label": "hr/employee_termination",
+          "reason": "short explanation"
+        }
+
+        Detected HR subtype reason: {{ nodes.detect_hr_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+  - id: finalize_hr_employee_onboarding
+    name: "Finalize HR — Employee Onboarding"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [hr]
+          subtype:
+            type: string
+            enum: [employee_onboarding]
+          label:
+            type: string
+            enum: [hr/employee_onboarding]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for an HR employee-onboarding email.
+
+        Return JSON only:
+        {
+          "top_level_category": "hr",
+          "subtype": "employee_onboarding",
+          "label": "hr/employee_onboarding",
+          "reason": "short explanation"
+        }
+
+        Detected HR subtype reason: {{ nodes.detect_hr_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+  - id: finalize_hr_interview_scheduling
+    name: "Finalize HR — Interview Scheduling"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [hr]
+          subtype:
+            type: string
+            enum: [interview_scheduling]
+          label:
+            type: string
+            enum: [hr/interview_scheduling]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for an HR interview-scheduling email.
+
+        Return JSON only:
+        {
+          "top_level_category": "hr",
+          "subtype": "interview_scheduling",
+          "label": "hr/interview_scheduling",
+          "reason": "short explanation"
+        }
+
+        Detected HR subtype reason: {{ nodes.detect_hr_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+  # --- Finance: detect → route → audit → finalize per subtype ---
+
+  - id: detect_finance_subtype
+    name: "Detect Finance Subtype"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          finance_subtype:
+            type: string
+            enum: [reimbursements, invoicing, tax]
+          reason:
+            type: string
+        required: [finance_subtype, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        The latest user message has already been classified as finance.
+        Classify it into exactly one finance subtype.
+
+        Return JSON only:
+        {
+          "finance_subtype": "reimbursements" | "invoicing" | "tax",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - reimbursements: expense claims, receipt submissions, travel reimbursement, employee repayment requests.
+        - invoicing: vendor invoices, bills, payable notices, billing statements, supplier payment requests.
+        - tax: tax forms, withholding, W-2/1099, GST/VAT/sales tax, compliance, or tax review questions.
+        - Pick the single best subtype from the enum.
+
+  - id: route_finance_subtype
+    name: "Route Finance Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_finance_subtype.output.finance_subtype == "reimbursements"'
+            target: audit_reimbursements
+          - condition: '$.nodes.detect_finance_subtype.output.finance_subtype == "invoicing"'
+            target: audit_invoicing
+          - condition: '$.nodes.detect_finance_subtype.output.finance_subtype == "tax"'
+            target: audit_tax
+        default: audit_reimbursements
+
+  - id: audit_reimbursements
+    name: "Financial Audit — Reimbursements"
+    node_type:
+      custom_worker:
+        handler: financial_audit
+        handler_file: handlers.py
+    config:
+      payload:
+        finance_subtype: reimbursements
+        classification_reason: "{{ nodes.detect_finance_subtype.output.reason }}"
+
+  - id: audit_invoicing
+    name: "Financial Audit — Invoicing"
+    node_type:
+      custom_worker:
+        handler: financial_audit
+        handler_file: handlers.py
+    config:
+      payload:
+        finance_subtype: invoicing
+        classification_reason: "{{ nodes.detect_finance_subtype.output.reason }}"
+
+  - id: audit_tax
+    name: "Financial Audit — Tax"
+    node_type:
+      custom_worker:
+        handler: financial_audit
+        handler_file: handlers.py
+    config:
+      payload:
+        finance_subtype: tax
+        classification_reason: "{{ nodes.detect_finance_subtype.output.reason }}"
+
+  - id: finalize_finance_reimbursements
+    name: "Finalize Finance — Reimbursements"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [finance]
+          subtype:
+            type: string
+            enum: [reimbursements]
+          label:
+            type: string
+            enum: [finance/reimbursements]
+          audit_status:
+            type: string
+          audit_message:
+            type: string
+          reason:
+            type: string
+        required:
+          [top_level_category, subtype, label, audit_status, audit_message, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for a finance reimbursements email.
+
+        Return JSON only:
+        {
+          "top_level_category": "finance",
+          "subtype": "reimbursements",
+          "label": "finance/reimbursements",
+          "audit_status": "recorded",
+          "audit_message": "message from financial audit system",
+          "reason": "short explanation"
+        }
+
+        Finance detection reason: {{ nodes.detect_finance_subtype.output.reason }}
+        Financial audit result: {{ nodes.audit_reimbursements.output }}
+
+  - id: finalize_finance_invoicing
+    name: "Finalize Finance — Invoicing"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [finance]
+          subtype:
+            type: string
+            enum: [invoicing]
+          label:
+            type: string
+            enum: [finance/invoicing]
+          audit_status:
+            type: string
+          audit_message:
+            type: string
+          reason:
+            type: string
+        required:
+          [top_level_category, subtype, label, audit_status, audit_message, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for a finance invoicing email.
+
+        Return JSON only:
+        {
+          "top_level_category": "finance",
+          "subtype": "invoicing",
+          "label": "finance/invoicing",
+          "audit_status": "recorded",
+          "audit_message": "message from financial audit system",
+          "reason": "short explanation"
+        }
+
+        Finance detection reason: {{ nodes.detect_finance_subtype.output.reason }}
+        Financial audit result: {{ nodes.audit_invoicing.output }}
+
+  - id: finalize_finance_tax
+    name: "Finalize Finance — Tax"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [finance]
+          subtype:
+            type: string
+            enum: [tax]
+          label:
+            type: string
+            enum: [finance/tax]
+          audit_status:
+            type: string
+          audit_message:
+            type: string
+          reason:
+            type: string
+        required:
+          [top_level_category, subtype, label, audit_status, audit_message, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for a finance tax email.
+
+        Return JSON only:
+        {
+          "top_level_category": "finance",
+          "subtype": "tax",
+          "label": "finance/tax",
+          "audit_status": "recorded",
+          "audit_message": "message from financial audit system",
+          "reason": "short explanation"
+        }
+
+        Finance detection reason: {{ nodes.detect_finance_subtype.output.reason }}
+        Financial audit result: {{ nodes.audit_tax.output }}
+
+  # --- Education: detect → route → finalize per subtype ---
+
+  - id: detect_education_subtype
+    name: "Detect Education Subtype"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          education_subtype:
+            type: string
+            enum:
+              [
+                employee_education_program,
+                internship,
+                college_admissions_job_exp,
+              ]
+          reason:
+            type: string
+        required: [education_subtype, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        The latest user message has already been classified as education.
+        Classify it into exactly one education subtype.
+
+        Return JSON only:
+        {
+          "education_subtype": "employee_education_program" | "internship" | "college_admissions_job_exp",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - employee_education_program: tuition assistance, internal training programs, certification sponsorship, employee upskilling or education benefits.
+        - internship: internship applications, intern program coordination, intern onboarding or scheduling.
+        - college_admissions_job_exp: college admissions programs tied to job experience, co-op placements, work-study, or academic-to-career bridge programs.
+        - Pick the single best subtype from the enum.
+
+  - id: route_education_subtype
+    name: "Route Education Subtype"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_education_subtype.output.education_subtype == "employee_education_program"'
+            target: finalize_education_employee_education_program
+          - condition: '$.nodes.detect_education_subtype.output.education_subtype == "internship"'
+            target: finalize_education_internship
+          - condition: '$.nodes.detect_education_subtype.output.education_subtype == "college_admissions_job_exp"'
+            target: finalize_education_college_admissions_job_exp
+        default: finalize_education_employee_education_program
+
+  - id: finalize_education_employee_education_program
+    name: "Finalize Education — Employee Education Program"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [education]
+          subtype:
+            type: string
+            enum: [employee_education_program]
+          label:
+            type: string
+            enum: [education/employee_education_program]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for an employee education program email.
+
+        Return JSON only:
+        {
+          "top_level_category": "education",
+          "subtype": "employee_education_program",
+          "label": "education/employee_education_program",
+          "reason": "short explanation"
+        }
+
+        Detected education subtype reason: {{ nodes.detect_education_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+  - id: finalize_education_internship
+    name: "Finalize Education — Internship"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [education]
+          subtype:
+            type: string
+            enum: [internship]
+          label:
+            type: string
+            enum: [education/internship]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for an internship email.
+
+        Return JSON only:
+        {
+          "top_level_category": "education",
+          "subtype": "internship",
+          "label": "education/internship",
+          "reason": "short explanation"
+        }
+
+        Detected education subtype reason: {{ nodes.detect_education_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+  - id: finalize_education_college_admissions_job_exp
+    name: "Finalize Education — College Admissions Job Experience"
+    node_type:
+      llm_call:
+        model: azure/gpt-4.1-mini@eastus2
+        temperature: 0.2
+        messages_path: input.messages
+        stream: true
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          top_level_category:
+            type: string
+            enum: [education]
+          subtype:
+            type: string
+            enum: [college_admissions_job_exp]
+          label:
+            type: string
+            enum: [education/college_admissions_job_exp]
+          reason:
+            type: string
+        required: [top_level_category, subtype, label, reason]
+        additionalProperties: false
+      user_input_prompt: |
+        Produce the final normalized classification for a college admissions job-experience program email.
+
+        Return JSON only:
+        {
+          "top_level_category": "education",
+          "subtype": "college_admissions_job_exp",
+          "label": "education/college_admissions_job_exp",
+          "reason": "short explanation"
+        }
+
+        Detected education subtype reason: {{ nodes.detect_education_subtype.output.reason }}
+        Top-level domain reason: {{ nodes.detect_email_domain.output.reason }}
+
+edges:
+  - from: detect_email_domain
+    to: route_email_domain
+
+  - from: detect_hr_subtype
+    to: route_hr_subtype
+
+  - from: detect_finance_subtype
+    to: route_finance_subtype
+
+  - from: audit_reimbursements
+    to: finalize_finance_reimbursements
+
+  - from: audit_invoicing
+    to: finalize_finance_invoicing
+
+  - from: audit_tax
+    to: finalize_finance_tax
+
+  - from: detect_education_subtype
+    to: route_education_subtype
