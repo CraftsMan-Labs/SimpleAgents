@@ -1,0 +1,563 @@
+# Model router: classify dev task → d-flash sub-tree → execute with routing summary.
+#
+# Local run (OpenAI-compatible router on :8080):
+#   cd examples/python-test-simpleAgents && uv run python runners/run_model_router.py
+#
+# Routing table:
+#   frontend     → mlx-community/LFM2-8B-A1B-4bit
+#   backend      → mlx-community/LFM2-8B-A1B-4bit
+#   devops       → mlx-community/LFM2-8B-A1B-4bit
+#   architecture → mlx-community/LFM2-8B-A1B-4bit
+#
+# d-flash sub-tree: if chat history shows the same implementation was already
+# produced, route to d_flash execute nodes; otherwise full implementation nodes.
+# Terminal execute nodes return what was chosen (task, model, d-flash, mode).
+
+id: dev-task-model-router
+version: 1.0.0
+
+metadata:
+  name: "Dev Task Model Router"
+  description: "Route developer queries to Gemma/Qwen models with d-flash repeat detection"
+  tags: ["example", "model-router", "routing", "d-flash"]
+
+entry_node: classify_task_domain
+
+nodes:
+  - id: classify_task_domain
+    name: "Classify Task Domain"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.2
+        messages_path: input.messages
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [frontend, backend, devops, architecture]
+          reason:
+            type: string
+        required: [task_category, reason]
+        additionalProperties: false
+      set_globals:
+        task_category: nodes.classify_task_domain.output.task_category
+      user_input_prompt: |
+        Classify the latest user message into exactly one developer task domain.
+
+        Return JSON only:
+        {
+          "task_category": "frontend" | "backend" | "devops" | "architecture",
+          "reason": "short explanation"
+        }
+
+        Rules:
+        - frontend: UI, React/Vue/CSS/HTML, components, styling, client-side state, browser APIs.
+        - backend: APIs, databases, services, auth, business logic, server frameworks.
+        - devops: CI/CD, Docker, Kubernetes, Terraform, deployment, monitoring, infra pipelines.
+        - architecture: system design, trade-offs, diagrams, scalability, boundaries, ADRs.
+        - Use the latest user message; use prior turns only for disambiguation.
+        - Pick the single best category.
+
+  - id: detect_repeat_implementation
+    name: "Detect Repeat Implementation (d-flash gate)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.1
+        messages_path: input.messages
+        heal: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          same_implementation_in_history:
+            type: string
+            enum: ["yes", "no"]
+          d_flash_enabled:
+            type: string
+            enum: ["true", "false"]
+          matched_turn_summary:
+            type: string
+          reason:
+            type: string
+        required:
+          [same_implementation_in_history, d_flash_enabled, matched_turn_summary, reason]
+        additionalProperties: false
+      set_globals:
+        d_flash_enabled: nodes.detect_repeat_implementation.output.d_flash_enabled
+      user_input_prompt: |
+        Inspect the full conversation in the messages above.
+
+        Task domain for this turn: {{ globals.task_category }}
+        Routing reason: {{ nodes.classify_task_domain.output.reason }}
+
+        Decide whether the user is asking for essentially the SAME implementation
+        that was already produced in an earlier assistant turn (same feature, same
+        code pattern, same infra stack — not merely the same topic).
+
+        Set d_flash_enabled="true" only when a prior assistant answer already contains
+        the same implementation and the user wants a repeat, tweak, or fast follow-up.
+        Set d_flash_enabled="false" for net-new work or materially different scope.
+
+        Return JSON only:
+        {
+          "same_implementation_in_history": "yes" | "no",
+          "d_flash_enabled": "true" | "false",
+          "matched_turn_summary": "brief note or none",
+          "reason": "short explanation"
+        }
+
+  - id: route_task_domain
+    name: "Route by Task Domain"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.classify_task_domain.output.task_category == "frontend"'
+            target: route_d_flash_frontend
+          - condition: '$.nodes.classify_task_domain.output.task_category == "backend"'
+            target: route_d_flash_backend
+          - condition: '$.nodes.classify_task_domain.output.task_category == "devops"'
+            target: route_d_flash_devops
+        default: route_d_flash_architecture
+
+  - id: route_d_flash_frontend
+    name: "d-flash Route (frontend)"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_repeat_implementation.output.same_implementation_in_history == "yes"'
+            target: execute_frontend_d_flash
+        default: execute_frontend_full
+
+  - id: route_d_flash_backend
+    name: "d-flash Route (backend)"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_repeat_implementation.output.same_implementation_in_history == "yes"'
+            target: execute_backend_d_flash
+        default: execute_backend_full
+
+  - id: route_d_flash_devops
+    name: "d-flash Route (devops)"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_repeat_implementation.output.same_implementation_in_history == "yes"'
+            target: execute_devops_d_flash
+        default: execute_devops_full
+
+  - id: route_d_flash_architecture
+    name: "d-flash Route (architecture)"
+    node_type:
+      switch:
+        branches:
+          - condition: '$.nodes.detect_repeat_implementation.output.same_implementation_in_history == "yes"'
+            target: execute_architecture_d_flash
+        default: execute_architecture_full
+
+  - id: execute_frontend_full
+    name: "Execute Frontend (full)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.4
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [frontend]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["false"]
+          implementation_mode:
+            type: string
+            enum: [full]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior frontend engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=false — provide a complete, production-quality answer.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Repeat check: {{ nodes.detect_repeat_implementation.output }}
+
+        Return JSON only:
+        {
+          "task_category": "frontend",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "false",
+          "implementation_mode": "full",
+          "routing_summary": "one sentence: task, model, d-flash off, full mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_frontend_d_flash
+    name: "Execute Frontend (d-flash)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.2
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [frontend]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["true"]
+          implementation_mode:
+            type: string
+            enum: [d_flash]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior frontend engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=true — the same implementation exists in chat history.
+        Give a concise delta; avoid repeating unchanged code blocks.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Prior match: {{ nodes.detect_repeat_implementation.output.matched_turn_summary }}
+
+        Return JSON only:
+        {
+          "task_category": "frontend",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "true",
+          "implementation_mode": "d_flash",
+          "routing_summary": "one sentence: task, model, d-flash on, delta mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_backend_full
+    name: "Execute Backend (full)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.4
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [backend]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["false"]
+          implementation_mode:
+            type: string
+            enum: [full]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior backend engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=false — provide a complete, production-quality answer.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Repeat check: {{ nodes.detect_repeat_implementation.output }}
+
+        Return JSON only:
+        {
+          "task_category": "backend",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "false",
+          "implementation_mode": "full",
+          "routing_summary": "one sentence: task, model, d-flash off, full mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_backend_d_flash
+    name: "Execute Backend (d-flash)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.2
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [backend]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["true"]
+          implementation_mode:
+            type: string
+            enum: [d_flash]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior backend engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=true — the same implementation exists in chat history.
+        Give a concise delta; avoid repeating unchanged code blocks.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Prior match: {{ nodes.detect_repeat_implementation.output.matched_turn_summary }}
+
+        Return JSON only:
+        {
+          "task_category": "backend",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "true",
+          "implementation_mode": "d_flash",
+          "routing_summary": "one sentence: task, model, d-flash on, delta mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_devops_full
+    name: "Execute DevOps (full)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.4
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [devops]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["false"]
+          implementation_mode:
+            type: string
+            enum: [full]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior DevOps engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=false — provide a complete, production-quality answer.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Repeat check: {{ nodes.detect_repeat_implementation.output }}
+
+        Return JSON only:
+        {
+          "task_category": "devops",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "false",
+          "implementation_mode": "full",
+          "routing_summary": "one sentence: task, model, d-flash off, full mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_devops_d_flash
+    name: "Execute DevOps (d-flash)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.2
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [devops]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["true"]
+          implementation_mode:
+            type: string
+            enum: [d_flash]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a senior DevOps engineer using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=true — the same implementation exists in chat history.
+        Give a concise delta; avoid repeating unchanged infra blocks.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Prior match: {{ nodes.detect_repeat_implementation.output.matched_turn_summary }}
+
+        Return JSON only:
+        {
+          "task_category": "devops",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "true",
+          "implementation_mode": "d_flash",
+          "routing_summary": "one sentence: task, model, d-flash on, delta mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_architecture_full
+    name: "Execute Architecture (full)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.4
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [architecture]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["false"]
+          implementation_mode:
+            type: string
+            enum: [full]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a principal architect using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=false — provide a complete architecture answer with trade-offs.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Repeat check: {{ nodes.detect_repeat_implementation.output }}
+
+        Return JSON only:
+        {
+          "task_category": "architecture",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "false",
+          "implementation_mode": "full",
+          "routing_summary": "one sentence: task, model, d-flash off, full mode",
+          "response": "your answer to the user"
+        }
+
+  - id: execute_architecture_d_flash
+    name: "Execute Architecture (d-flash)"
+    node_type:
+      llm_call:
+        model: mlx-community/LFM2-8B-A1B-4bit
+        temperature: 0.2
+        messages_path: input.messages
+        heal: true
+        stream: true
+    config:
+      output_schema:
+        type: object
+        properties:
+          task_category:
+            type: string
+            enum: [architecture]
+          selected_model:
+            type: string
+            enum: [mlx-community/LFM2-8B-A1B-4bit]
+          d_flash_enabled:
+            type: string
+            enum: ["true"]
+          implementation_mode:
+            type: string
+            enum: [d_flash]
+          routing_summary:
+            type: string
+          response:
+            type: string
+        required:
+          [task_category, selected_model, d_flash_enabled, implementation_mode, routing_summary, response]
+        additionalProperties: false
+      user_input_prompt: |
+        You are a principal architect using model mlx-community/LFM2-8B-A1B-4bit.
+        d_flash_enabled=true — the same design was already discussed in chat history.
+        Give a concise delta; highlight only design changes.
+
+        Classification: {{ nodes.classify_task_domain.output }}
+        Prior match: {{ nodes.detect_repeat_implementation.output.matched_turn_summary }}
+
+        Return JSON only:
+        {
+          "task_category": "architecture",
+          "selected_model": "mlx-community/LFM2-8B-A1B-4bit",
+          "d_flash_enabled": "true",
+          "implementation_mode": "d_flash",
+          "routing_summary": "one sentence: task, model, d-flash on, delta mode",
+          "response": "your answer to the user"
+        }
+
+edges:
+  - from: classify_task_domain
+    to: detect_repeat_implementation
+  - from: detect_repeat_implementation
+    to: route_task_domain

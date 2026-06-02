@@ -12,7 +12,7 @@ minimum-release-age = "182 days"
 
 [dependencies]
 simple-agent-type = { workspace = true }
-simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.1" }
+simple-agents-healing = { path = "../simple-agents-healing", version = "0.5.2" }
 reqwest = { version = "=0.12.28", features = ["json", "stream", "default-tls", "http2", "gzip", "brotli", "deflate"], default-features = false }
 tokio = { version = "=1.52.3", features = ["full"] }
 futures = "=0.3.32"

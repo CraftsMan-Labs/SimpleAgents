@@ -31,3 +31,8 @@ def require_env(name: str) -> str:
             "You can also export variables from ``examples/python-test-simpleAgents/.env`` manually."
         )
     return value
+
+
+def env_or_default(name: str, default: str) -> str:
+    load_monorepo_root_dotenv()
+    return os.environ.get(name, default)

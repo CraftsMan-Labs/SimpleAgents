@@ -858,17 +858,13 @@ nodes:
         .get("user_input_prompt_bindings")
         .and_then(Value::as_array)
         .expect("bindings should be an array");
-    assert!(
-        metadata
-            .get("user_input_prompt")
-            .and_then(Value::as_str)
-            .is_some_and(|value| value.contains("hello"))
-    );
-    assert!(
-        metadata
-            .get("node_system_prompt")
-            .is_some_and(Value::is_null)
-    );
+    assert!(metadata
+        .get("user_input_prompt")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.contains("hello")));
+    assert!(metadata
+        .get("node_system_prompt")
+        .is_some_and(Value::is_null));
 
     assert!(!bindings.is_empty());
     let first_binding = &bindings[0];
@@ -1194,7 +1190,10 @@ nodes:
     .expect("workflow should execute");
 
     let terminal = output.terminal_output.expect("terminal output present");
-    assert_eq!(terminal.get("message_count").and_then(Value::as_u64), Some(2));
+    assert_eq!(
+        terminal.get("message_count").and_then(Value::as_u64),
+        Some(2)
+    );
     assert_eq!(
         terminal
             .get("has_user_input_prompt")
@@ -1791,11 +1790,9 @@ nodes:
 
     match err {
         YamlWorkflowRunError::Validation { diagnostics, .. } => {
-            assert!(
-                diagnostics
-                    .iter()
-                    .any(|diagnostic| diagnostic.code == "missing_llm_input_source")
-            );
+            assert!(diagnostics
+                .iter()
+                .any(|diagnostic| diagnostic.code == "missing_llm_input_source"));
         }
         other => panic!("expected validation error, got {other:?}"),
     }
@@ -1819,7 +1816,8 @@ nodes:
           ok: { type: boolean }
     "#;
 
-    let err = serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy prompt key should fail");
+    let err =
+        serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy prompt key should fail");
     assert!(err.to_string().contains("unknown field `prompt`"));
 }
 
@@ -1842,8 +1840,11 @@ nodes:
           ok: { type: boolean }
     "#;
 
-    let err = serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy append flag should fail");
-    assert!(err.to_string().contains("unknown field `append_prompt_as_user`"));
+    let err =
+        serde_yaml::from_str::<YamlWorkflow>(yaml).expect_err("legacy append flag should fail");
+    assert!(err
+        .to_string()
+        .contains("unknown field `append_prompt_as_user`"));
 }
 
 #[tokio::test]
