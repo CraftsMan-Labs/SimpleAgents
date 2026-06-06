@@ -291,6 +291,7 @@ impl Provider for OpenAiCompatProvider {
                     response_format: req.response_format.as_ref(),
                     tools: req.tools.as_ref(),
                     tool_choice: req.tool_choice.as_ref(),
+                    reasoning_effort: req.reasoning_effort.as_ref(),
                 };
 
                 let mut body = serde_json::to_value(&openai_request)?;

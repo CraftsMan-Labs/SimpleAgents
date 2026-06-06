@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 use serde_json::Value;
 use simple_agent_type::message::{MessageContent, Role};
+use simple_agent_type::request::ReasoningEffort;
 use simple_agent_type::tool::{ToolChoice, ToolType};
 use thiserror::Error;
 
@@ -240,6 +241,7 @@ pub struct YamlLlmExecutionRequest {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub messages: Option<Vec<super::Message>>,
     pub user_input_prompt: Option<String>,
     pub user_input_prompt_template: Option<String>,
@@ -444,6 +446,7 @@ pub struct YamlLlmCall {
     pub max_tokens: Option<u32>,
     pub temperature: Option<f32>,
     pub top_p: Option<f32>,
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub stream: Option<bool>,
     pub stream_json_as_text: Option<bool>,
     pub heal: Option<bool>,

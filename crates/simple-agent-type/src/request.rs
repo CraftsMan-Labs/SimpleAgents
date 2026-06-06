@@ -36,6 +36,33 @@ pub struct JsonSchemaFormat {
     pub strict: Option<bool>,
 }
 
+/// Controls how much reasoning effort the model spends on a request.
+///
+/// Named effort levels cover OpenAI, Anthropic, and Requesty. The `Budget`
+/// variant accepts a numeric token budget for Requesty/Anthropic.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    /// Disable reasoning or use minimal effort.
+    None,
+    /// Minimal reasoning effort (alias for none on some providers).
+    Min,
+    /// Low effort — fastest, cheapest; simple classification/retrieval.
+    Low,
+    /// Medium effort — balanced speed and quality.
+    Medium,
+    /// High effort — thorough reasoning (default on most providers).
+    High,
+    /// Extended high effort — deep agentic/coding work (OpenAI/Anthropic).
+    #[serde(rename = "xhigh")]
+    XHigh,
+    /// Maximum effort — no constraints on token spending.
+    Max,
+    /// Explicit token budget (Requesty/Anthropic).
+    #[serde(untagged)]
+    Budget(u32),
+}
+
 /// A completion request to an LLM provider.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CompletionRequest {
@@ -88,6 +115,9 @@ pub struct CompletionRequest {
     /// Whether to store the response (Responses API)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<bool>,
+    /// Reasoning effort level for reasoning-capable models.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl CompletionRequest {
@@ -111,6 +141,7 @@ impl CompletionRequest {
             instructions: None,
             previous_response_id: None,
             store: None,
+            reasoning_effort: None,
         }
     }
 
@@ -304,6 +335,7 @@ pub struct CompletionRequestBuilder {
     instructions: Option<String>,
     previous_response_id: Option<String>,
     store: Option<bool>,
+    reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl CompletionRequestBuilder {
@@ -415,6 +447,12 @@ impl CompletionRequestBuilder {
         self
     }
 
+    /// Set reasoning effort level.
+    pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
+        self
+    }
+
     /// Enable JSON object mode (no schema validation).
     pub fn json_mode(mut self) -> Self {
         self.response_format = Some(ResponseFormat::JsonObject);
@@ -457,6 +495,7 @@ impl CompletionRequestBuilder {
             instructions: self.instructions,
             previous_response_id: self.previous_response_id,
             store: self.store,
+            reasoning_effort: self.reasoning_effort,
         };
 
         request.validate()?;

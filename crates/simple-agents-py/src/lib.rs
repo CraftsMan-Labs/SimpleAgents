@@ -34,7 +34,7 @@ use client_builder::{ClientBuilder, ProviderConfig};
 use completion_helpers::{
     build_request_with_messages, expect_coerced_schema, expect_healed_json, expect_response,
     expect_stream, finish_reason_to_str, parse_messages, parse_tool_choice, parse_tools, py_err,
-    response_with_metadata_from_response, usage_to_pydict,
+    resolve_reasoning_effort, response_with_metadata_from_response, usage_to_pydict,
 };
 use provider_helpers::build_provider_from_name;
 use simple_agents_workflow::evals::{run_eval_suite, EvalSuiteRunRequest};
@@ -185,25 +185,35 @@ fn healed_json_response_to_py(
     healed: HealedJsonResponse,
 ) -> PyResult<HealedJsonResult> {
     let raw_response = healed.response.content().unwrap_or_default().to_string();
-    let content = serde_json::to_string(&healed.parsed.value)
-        .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-    let confidence = healed.parsed.confidence as f64;
-    let was_healed = !healed.parsed.flags.is_empty();
-    let flags: Vec<String> = healed
-        .parsed
-        .flags
-        .iter()
-        .map(|f| f.description())
-        .collect();
     let usage = usage_to_pydict(py, &healed.response.usage)?;
-    Ok(HealedJsonResult {
-        content,
-        confidence,
-        was_healed,
-        flags,
-        raw_response,
-        usage: usage.into_py(py),
-    })
+
+    match healed.parsed {
+        Ok(parsed) => {
+            let content = serde_json::to_string(&parsed.value)
+                .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+            let confidence = parsed.confidence as f64;
+            let was_healed = !parsed.flags.is_empty();
+            let flags: Vec<String> = parsed.flags.iter().map(|f| f.description()).collect();
+            Ok(HealedJsonResult {
+                content,
+                confidence,
+                was_healed,
+                flags,
+                raw_response,
+                usage: usage.into_py(py),
+                parse_error: None,
+            })
+        }
+        Err(failure) => Ok(HealedJsonResult {
+            content: raw_response.clone(),
+            confidence: 0.0,
+            was_healed: false,
+            flags: vec![],
+            raw_response,
+            usage: usage.into_py(py),
+            parse_error: Some(failure.error.to_string()),
+        }),
+    }
 }
 
 type Runtime = tokio::runtime::Runtime;
@@ -696,7 +706,7 @@ impl Client {
     }
 
     /// Send a completion request.
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None, send_schema=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, tools=None, tool_choice=None, response_format=None, heal=None, stream=None, schema=None, schema_name=None, send_schema=None, reasoning_effort=None))]
     #[allow(clippy::too_many_arguments)]
     fn complete(
         &self,
@@ -714,6 +724,7 @@ impl Client {
         schema: Option<&Bound<'_, PyAny>>,
         schema_name: Option<&str>,
         send_schema: Option<bool>,
+        reasoning_effort: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
@@ -723,6 +734,8 @@ impl Client {
         } else {
             parse_messages(input).map_err(py_err)?
         };
+
+        let resolved_effort = resolve_reasoning_effort(reasoning_effort)?;
 
         if stream.unwrap_or(false) {
             let mut resolved_schema: Option<Schema> = None;
@@ -746,6 +759,7 @@ impl Client {
                 None,
                 Some(true),
                 json_schema_pair,
+                resolved_effort.clone(),
             )
             .map_err(py_err)?;
             let outcome = {
@@ -810,6 +824,7 @@ impl Client {
                 tool_choice,
                 None,
                 json_schema_pair,
+                resolved_effort.clone(),
             )
             .map_err(py_err)?;
             let options = CompletionOptions {
@@ -823,8 +838,25 @@ impl Client {
                 py.allow_threads(|| runtime.block_on(self.client.complete(&request, options)))
                     .map_err(py_err)?
             };
-            let coerced = expect_coerced_schema(outcome)?;
-            let json_str = serde_json::to_string(&coerced.coerced.value)
+            let schema_resp = expect_coerced_schema(outcome)?;
+            let parsed = schema_resp.parsed.map_err(|f| {
+                PyRuntimeError::new_err(format!(
+                    "JSON parsing failed: {}. Raw response: {}",
+                    f.error,
+                    schema_resp.response.content().unwrap_or_default()
+                ))
+            })?;
+            let coerced_result = schema_resp
+                .coerced
+                .ok_or_else(|| PyRuntimeError::new_err("no coercion result available"))?
+                .map_err(|f| {
+                    PyRuntimeError::new_err(format!(
+                        "Schema coercion failed: {}. Parsed value: {}",
+                        f.error, f.raw_text
+                    ))
+                })?;
+            let _ = parsed;
+            let json_str = serde_json::to_string(&coerced_result.value)
                 .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
             return Ok(json_str.into_py(py));
         }
@@ -846,6 +878,7 @@ impl Client {
                 tool_choice,
                 None,
                 None,
+                resolved_effort.clone(),
             )
             .map_err(py_err)?;
             let options = CompletionOptions {
@@ -877,6 +910,7 @@ impl Client {
             tool_choice,
             None,
             None,
+            resolved_effort,
         )
         .map_err(py_err)?;
 
@@ -900,7 +934,7 @@ impl Client {
     }
 
     /// Send a streaming completion request.
-    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None))]
+    #[pyo3(signature = (model, input, max_tokens=None, temperature=None, top_p=None, reasoning_effort=None))]
     fn stream_complete(
         &self,
         py: Python<'_>,
@@ -909,6 +943,7 @@ impl Client {
         max_tokens: Option<u32>,
         temperature: Option<f32>,
         top_p: Option<f32>,
+        reasoning_effort: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<PyObject> {
         let messages = if let Ok(prompt) = input.extract::<&str>() {
             if prompt.is_empty() {
@@ -918,6 +953,8 @@ impl Client {
         } else {
             parse_messages(input).map_err(py_err)?
         };
+
+        let resolved_effort = resolve_reasoning_effort(reasoning_effort)?;
 
         let request = build_request_with_messages(
             model,
@@ -930,6 +967,7 @@ impl Client {
             None,
             Some(true),
             None,
+            resolved_effort,
         )
         .map_err(py_err)?;
 
@@ -1298,12 +1336,15 @@ pub struct HealedJsonResult {
     pub raw_response: String,
     #[pyo3(get)]
     pub(crate) usage: PyObject,
+    /// Error message when JSON parsing failed; `None` on success.
+    #[pyo3(get)]
+    pub parse_error: Option<String>,
 }
 
 #[pymethods]
 impl HealedJsonResult {
     #[new]
-    #[pyo3(signature = (content, confidence, was_healed, flags, *, raw_response=None, usage=None))]
+    #[pyo3(signature = (content, confidence, was_healed, flags, *, raw_response=None, usage=None, parse_error=None))]
     fn new(
         py: Python<'_>,
         content: String,
@@ -1312,6 +1353,7 @@ impl HealedJsonResult {
         flags: Vec<String>,
         raw_response: Option<String>,
         usage: Option<PyObject>,
+        parse_error: Option<String>,
     ) -> PyResult<Self> {
         let usage = usage.unwrap_or_else(|| PyDict::new_bound(py).into_py(py));
         Ok(Self {
@@ -1321,6 +1363,7 @@ impl HealedJsonResult {
             flags,
             raw_response: raw_response.unwrap_or_default(),
             usage,
+            parse_error,
         })
     }
 

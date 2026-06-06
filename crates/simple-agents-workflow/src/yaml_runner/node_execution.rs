@@ -126,6 +126,7 @@ pub(super) async fn execute_llm_node(
         max_tokens: llm.max_tokens,
         temperature: llm.temperature,
         top_p: llm.top_p,
+        reasoning_effort: llm.reasoning_effort.clone(),
         messages,
         user_input_prompt,
         user_input_prompt_template: user_input_prompt_template.map(str::to_string),

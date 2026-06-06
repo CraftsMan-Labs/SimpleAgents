@@ -5,7 +5,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use simple_agent_type::message::{parse_messages_value, Message};
 use simple_agent_type::prelude::{CompletionChunk, CompletionRequest, Result, SimpleAgentsError};
-use simple_agent_type::request::ResponseFormat;
+use simple_agent_type::request::{ReasoningEffort, ResponseFormat};
 use simple_agent_type::response::{CompletionResponse, FinishReason, Usage};
 use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 use simple_agents_core::{CompletionOutcome, HealedJsonResponse, HealedSchemaResponse};
@@ -24,6 +24,7 @@ pub(crate) fn build_request_with_messages(
     tool_choice: Option<ToolChoice>,
     stream: Option<bool>,
     json_schema: Option<(String, serde_json::Value)>,
+    reasoning_effort: Option<ReasoningEffort>,
 ) -> Result<CompletionRequest> {
     if model.is_empty() {
         return Err(SimpleAgentsError::Config(
@@ -64,8 +65,31 @@ pub(crate) fn build_request_with_messages(
     if let Some(stream) = stream {
         builder = builder.stream(stream);
     }
+    if let Some(effort) = reasoning_effort {
+        builder = builder.reasoning_effort(effort);
+    }
 
     builder.build()
+}
+
+/// Parse a Python `str` or `int` into [`ReasoningEffort`].
+pub(crate) fn resolve_reasoning_effort(
+    value: Option<&Bound<'_, PyAny>>,
+) -> PyResult<Option<ReasoningEffort>> {
+    let Some(val) = value else {
+        return Ok(None);
+    };
+    if let Ok(s) = val.extract::<String>() {
+        let effort = serde_json::from_value::<ReasoningEffort>(serde_json::Value::String(s))
+            .map_err(|e| PyRuntimeError::new_err(format!("invalid reasoning_effort: {e}")))?;
+        Ok(Some(effort))
+    } else if let Ok(n) = val.extract::<u32>() {
+        Ok(Some(ReasoningEffort::Budget(n)))
+    } else {
+        Err(PyRuntimeError::new_err(
+            "reasoning_effort must be a string (e.g. 'low', 'medium', 'high') or an integer budget",
+        ))
+    }
 }
 
 pub(crate) fn resolve_response_format(

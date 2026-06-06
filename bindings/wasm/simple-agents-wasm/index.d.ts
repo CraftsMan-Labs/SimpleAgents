@@ -1,3 +1,5 @@
+export type ReasoningEffort = "none" | "min" | "low" | "medium" | "high" | "xhigh" | "max" | number;
+
 export interface CompleteOptions {
   maxTokens?: number;
   temperature?: number;
@@ -5,6 +7,7 @@ export interface CompleteOptions {
   stream?: boolean;
   mode?: "standard" | "healed_json" | "schema";
   schema?: unknown;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -61,6 +64,7 @@ export interface HealingData {
   value?: unknown;
   flags: string[];
   confidence: number;
+  error?: string;
 }
 
 export interface CompletionResult {

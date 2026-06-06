@@ -78,6 +78,7 @@ struct CompleteOptions {
     temperature: Option<f64>,
     top_p: Option<f64>,
     mode: Option<String>,
+    reasoning_effort: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -1103,7 +1104,7 @@ impl WasmClient {
         let messages = to_openai_messages(to_messages(prompt_or_messages)?);
         let messages_value = serde_json::to_value(messages)
             .map_err(|_| js_error("failed to serialize request messages"))?;
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": messages_value,
             "max_tokens": opts.max_tokens,
@@ -1111,6 +1112,9 @@ impl WasmClient {
             "top_p": opts.top_p,
             "stream": false
         });
+        if let Some(ref effort) = opts.reasoning_effort {
+            body["reasoning_effort"] = effort.clone();
+        }
 
         let started = now_millis();
         let mut headers = self.headers.clone();
@@ -1274,7 +1278,7 @@ impl WasmClient {
         let messages = to_openai_messages(to_messages(prompt_or_messages)?);
         let messages_value = serde_json::to_value(messages)
             .map_err(|_| js_error("failed to serialize request messages"))?;
-        let body = json!({
+        let mut body = json!({
             "model": model,
             "messages": messages_value,
             "max_tokens": opts.max_tokens,
@@ -1282,6 +1286,9 @@ impl WasmClient {
             "top_p": opts.top_p,
             "stream": true
         });
+        if let Some(ref effort) = opts.reasoning_effort {
+            body["reasoning_effort"] = effort.clone();
+        }
 
         let started = now_millis();
         let mut headers = self.headers.clone();

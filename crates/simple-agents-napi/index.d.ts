@@ -71,6 +71,7 @@ export interface ClientOptions {
   /** "none" | "fixed" | "exponential" */
   retryStrategy?: string
 }
+export type ReasoningEffort = 'none' | 'min' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number
 export interface CompleteOptions {
   maxTokens?: number
   temperature?: number
@@ -80,6 +81,7 @@ export interface CompleteOptions {
   mode?: string
   schema?: unknown
   sendSchema?: boolean
+  reasoningEffort?: ReasoningEffort
 }
 export interface ContentPartInput {
   type: 'text' | 'image' | 'audio' | 'video'
@@ -121,6 +123,7 @@ export interface HealingData {
   value?: unknown
   flags: Array<string>
   confidence: number
+  error?: string
 }
 export interface CompletionResult {
   id: string

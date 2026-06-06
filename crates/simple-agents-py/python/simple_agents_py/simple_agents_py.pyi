@@ -8,9 +8,15 @@ from typing import (
     Mapping,
     Sequence,
     TypedDict,
+    Union,
     overload,
 )
 from enum import Enum
+
+ReasoningEffort = Union[
+    Literal["none", "min", "low", "medium", "high", "xhigh", "max"],
+    int,
+]
 
 from .models import (
     JSONValue,
@@ -89,6 +95,7 @@ class HealedJsonResult:
     was_healed: bool
     raw_response: str
     usage: Any
+    parse_error: str | None
 
     def __init__(
         self,
@@ -99,6 +106,7 @@ class HealedJsonResult:
         *,
         raw_response: str | None = None,
         usage: Any | None = None,
+        parse_error: str | None = None,
     ) -> None: ...
     @property
     def flags(self) -> list[str]: ...
@@ -309,6 +317,7 @@ class Client:
         schema_name: str | None = None,
         stream: Literal[True],
         heal: Literal[False] = False,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> Iterator[PyStructuredEvent]: ...
     @overload
     def complete(
@@ -326,6 +335,7 @@ class Client:
         schema_name: None = None,
         stream: Literal[True],
         heal: Literal[False] = False,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> Iterator[StreamChunk]: ...
     @overload
     def complete(
@@ -343,6 +353,7 @@ class Client:
         schema_name: str | None = None,
         stream: Literal[False] = False,
         heal: Literal[False] = False,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> str: ...
     @overload
     def complete(
@@ -360,6 +371,7 @@ class Client:
         schema_name: None = None,
         stream: Literal[False] = False,
         heal: Literal[True],
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> HealedJsonResult: ...
     @overload
     def complete(
@@ -377,6 +389,7 @@ class Client:
         schema_name: None = None,
         stream: Literal[False] = False,
         heal: Literal[False] = False,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> ResponseWithMetadata: ...
     def complete(
         self,
@@ -393,6 +406,7 @@ class Client:
         stream: bool = False,
         heal: bool = False,
         send_schema: bool | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> ResponseWithMetadata | HealedJsonResult | str | Iterator[StreamChunk] | Iterator[PyStructuredEvent]: ...
 
     def stream_complete(
@@ -403,6 +417,7 @@ class Client:
         max_tokens: int | None = None,
         temperature: float | None = None,
         top_p: float | None = None,
+        reasoning_effort: ReasoningEffort | None = None,
     ) -> Iterator[StreamChunk]: ...
 
     # --- Workflow APIs ---

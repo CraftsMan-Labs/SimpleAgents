@@ -83,7 +83,7 @@ pub mod prelude {
     };
 
     // Requests and responses
-    pub use crate::request::{CompletionRequest, CompletionRequestBuilder};
+    pub use crate::request::{CompletionRequest, CompletionRequestBuilder, ReasoningEffort};
     pub use crate::response::{
         ChoiceDelta, CompletionChoice, CompletionChunk, CompletionResponse, FinishReason,
         MessageDelta, Usage,

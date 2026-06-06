@@ -123,6 +123,9 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                 if let Some(top_p) = request.top_p {
                     builder = builder.top_p(top_p);
                 }
+                if let Some(effort) = request.reasoning_effort.clone() {
+                    builder = builder.reasoning_effort(effort);
+                }
 
                 if request.send_schema && expects_object {
                     builder = builder.json_schema("workflow_step", request.schema.clone());
@@ -799,6 +802,9 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
         if let Some(top_p) = request.top_p {
             builder = builder.top_p(top_p);
         }
+        if let Some(effort) = request.reasoning_effort.clone() {
+            builder = builder.reasoning_effort(effort);
+        }
 
         if request.send_schema && expects_object {
             builder = builder.json_schema("workflow_step", request.schema.clone());
@@ -1087,6 +1093,13 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         "healed json outcome is unsupported for non-object schema".to_string()
                     );
                 }
+                let parsed = healed.parsed.map_err(|f| {
+                    format!(
+                        "healed JSON parsing failed: {}. Raw response: {}",
+                        f.error,
+                        healed.response.content().unwrap_or_default()
+                    )
+                })?;
                 if let Some(sink) = event_sink {
                     sink.emit(&YamlWorkflowEvent {
                         event_type: "node_healed".to_string(),
@@ -1096,7 +1109,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         streamable: Some(request.stream),
                         message: Some(format!(
                             "healed structured response confidence={}",
-                            healed.parsed.confidence
+                            parsed.confidence
                         )),
                         delta: None,
                         snapshot: None,
@@ -1107,7 +1120,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                     });
                 }
                 Ok(YamlLlmExecutionResult {
-                    payload: healed.parsed.value,
+                    payload: parsed.value,
                     usage: Some(YamlLlmTokenUsage {
                         prompt_tokens: healed.response.usage.prompt_tokens,
                         completion_tokens: healed.response.usage.completion_tokens,
@@ -1124,6 +1137,23 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         "coerced schema outcome is unsupported for non-object schema".to_string(),
                     );
                 }
+                let parsed = coerced.parsed.map_err(|f| {
+                    format!(
+                        "JSON parsing failed: {}. Raw response: {}",
+                        f.error,
+                        coerced.response.content().unwrap_or_default()
+                    )
+                })?;
+                let coerced_result = coerced
+                    .coerced
+                    .ok_or_else(|| "no coercion result available".to_string())?
+                    .map_err(|f| {
+                        format!(
+                            "schema coercion failed: {}. Raw response: {}",
+                            f.error,
+                            coerced.response.content().unwrap_or_default()
+                        )
+                    })?;
                 if let Some(sink) = event_sink {
                     sink.emit(&YamlWorkflowEvent {
                         event_type: "node_healed".to_string(),
@@ -1133,7 +1163,7 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         streamable: Some(request.stream),
                         message: Some(format!(
                             "coerced structured response confidence={}",
-                            coerced.coerced.confidence
+                            coerced_result.confidence
                         )),
                         delta: None,
                         snapshot: None,
@@ -1141,13 +1171,13 @@ impl<'a> YamlWorkflowLlmExecutor for BorrowedClientExecutor<'a> {
                         is_terminal_node_token: None,
                         elapsed_ms: None,
                         metadata: Some(json!({
-                            "heal_confidence": coerced.parsed.confidence,
-                            "coerced_confidence": coerced.coerced.confidence,
+                            "heal_confidence": parsed.confidence,
+                            "coerced_confidence": coerced_result.confidence,
                         })),
                     });
                 }
                 Ok(YamlLlmExecutionResult {
-                    payload: coerced.coerced.value,
+                    payload: coerced_result.value,
                     usage: Some(YamlLlmTokenUsage {
                         prompt_tokens: coerced.response.usage.prompt_tokens,
                         completion_tokens: coerced.response.usage.completion_tokens,

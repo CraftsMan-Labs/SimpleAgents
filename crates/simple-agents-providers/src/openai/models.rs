@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::Message;
-use simple_agent_type::request::ResponseFormat;
+use simple_agent_type::request::{ReasoningEffort, ResponseFormat};
 use simple_agent_type::tool::{ToolChoice, ToolDefinition};
 
 /// OpenAI chat completion request
@@ -53,6 +53,9 @@ pub struct OpenAICompletionRequest<'a> {
     /// Tool choice configuration
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<&'a ToolChoice>,
+    /// Reasoning effort level for reasoning-capable models
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<&'a ReasoningEffort>,
 }
 
 /// OpenAI stream options.
@@ -287,6 +290,7 @@ mod tests {
             response_format: None,
             tools: None,
             tool_choice: None,
+            reasoning_effort: None,
         };
 
         let json = serde_json::to_string(&request).unwrap();

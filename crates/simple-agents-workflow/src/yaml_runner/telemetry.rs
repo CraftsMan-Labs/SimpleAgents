@@ -832,6 +832,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             top_p: None,
+            reasoning_effort: None,
             messages: None,
             user_input_prompt: Some("test".to_string()),
             user_input_prompt_template: Some("test".to_string()),

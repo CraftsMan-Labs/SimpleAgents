@@ -346,6 +346,8 @@ pub struct CompleteOptions {
     #[napi(ts_type = "unknown")]
     pub schema: Option<JsonValue>,
     pub send_schema: Option<bool>,
+    #[napi(ts_type = "'none' | 'min' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | number")]
+    pub reasoning_effort: Option<JsonValue>,
 }
 
 #[napi(object)]
@@ -408,6 +410,8 @@ pub struct HealingData {
     pub value: Option<JsonValue>,
     pub flags: Vec<String>,
     pub confidence: f64,
+    /// Error message when parsing or coercion failed.
+    pub error: Option<String>,
 }
 
 #[napi(object)]
@@ -631,6 +635,12 @@ fn build_request(
     if let Some(stream) = options.stream {
         builder = builder.stream(stream);
     }
+    if let Some(ref effort_val) = options.reasoning_effort {
+        let effort: simple_agent_type::request::ReasoningEffort =
+            serde_json::from_value(effort_val.clone())
+                .map_err(|e| SimpleAgentsError::Config(format!("invalid reasoning_effort: {e}")))?;
+        builder = builder.reasoning_effort(effort);
+    }
 
     builder.build()
 }
@@ -727,26 +737,38 @@ impl CompletionResult {
 
     fn from_healed_json(healed: HealedJsonResponse, latency_ms: u64) -> Self {
         let mut base = Self::from_response(healed.response, latency_ms);
-        base.healed = Some(healing_data(
-            healed.parsed.value,
-            healed.parsed.flags,
-            healed.parsed.confidence,
-        ));
+        base.healed = Some(match healed.parsed {
+            Ok(parsed) => healing_data(parsed.value, parsed.flags, parsed.confidence),
+            Err(failure) => HealingData {
+                value: None,
+                flags: vec![],
+                confidence: 0.0,
+                error: Some(failure.error.to_string()),
+            },
+        });
         base
     }
 
     fn from_schema(healed: HealedSchemaResponse, latency_ms: u64) -> Self {
         let mut base = Self::from_response(healed.response, latency_ms);
-        base.healed = Some(healing_data(
-            healed.parsed.value,
-            healed.parsed.flags,
-            healed.parsed.confidence,
-        ));
-        base.coerced = Some(healing_data(
-            healed.coerced.value,
-            healed.coerced.flags,
-            healed.coerced.confidence,
-        ));
+        base.healed = Some(match healed.parsed {
+            Ok(parsed) => healing_data(parsed.value, parsed.flags, parsed.confidence),
+            Err(failure) => HealingData {
+                value: None,
+                flags: vec![],
+                confidence: 0.0,
+                error: Some(failure.error.to_string()),
+            },
+        });
+        base.coerced = healed.coerced.map(|c| match c {
+            Ok(coerced) => healing_data(coerced.value, coerced.flags, coerced.confidence),
+            Err(failure) => HealingData {
+                value: None,
+                flags: vec![],
+                confidence: 0.0,
+                error: Some(failure.error.to_string()),
+            },
+        });
         base
     }
 }
@@ -786,6 +808,7 @@ fn healing_data(value: JsonValue, flags: Vec<CoercionFlag>, confidence: f32) -> 
         value: Some(value),
         flags: flags_to_strings(&flags),
         confidence: confidence as f64,
+        error: None,
     }
 }
 

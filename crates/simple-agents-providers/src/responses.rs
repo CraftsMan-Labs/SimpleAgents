@@ -37,6 +37,9 @@ pub fn build_responses_request(req: &CompletionRequest) -> Value {
     if req.stream == Some(true) {
         body["stream"] = Value::Bool(true);
     }
+    if let Some(ref effort) = req.reasoning_effort {
+        body["reasoning"] = json!({ "effort": effort });
+    }
 
     body
 }
