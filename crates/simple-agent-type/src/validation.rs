@@ -55,10 +55,14 @@ impl ApiKey {
             .into());
         }
 
-        if key.len() < 20 {
+        let min_len = std::env::var("SA_MIN_API_KEY_LEN")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(20);
+        if key.len() < min_len {
             return Err(ValidationError::TooShort {
                 field: "api_key".to_string(),
-                min: 20,
+                min: min_len,
             }
             .into());
         }
