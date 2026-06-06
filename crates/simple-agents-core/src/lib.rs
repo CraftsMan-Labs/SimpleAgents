@@ -69,7 +69,7 @@ pub use client::{
     ClientConfig, CompletionMode, CompletionOptions, CompletionOutcome, ExecutionFlags, RunOptions,
     SimpleAgentsClient,
 };
-pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
+pub use healing::{HealedJsonResponse, HealedSchemaResponse, HealingFailure, HealingSettings};
 
 // Re-export commonly used types.
 pub use simple_agent_type::prelude;

@@ -1,6 +1,6 @@
 //! SimpleAgents client implementation.
 
-use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingSettings};
+use crate::healing::{HealedJsonResponse, HealedSchemaResponse, HealingFailure, HealingSettings};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use simple_agent_type::prelude::{
@@ -287,15 +287,27 @@ impl SimpleAgentsClient {
     ) -> Result<HealedJsonResponse> {
         self.ensure_healing_enabled()?;
         let response = self.complete_response(request).await?;
-        let content = response.content().ok_or_else(|| {
-            SimpleAgentsError::Healing(simple_agent_type::error::HealingError::ParseFailed {
-                error_message: "response contained no content".to_string(),
-                input: String::new(),
-            })
-        })?;
 
-        let parser = JsonishParser::with_config(self.healing.parser_config.clone());
-        let parsed = parser.parse(content)?;
+        let parsed = match response.content() {
+            Some(content) => {
+                let parser = JsonishParser::with_config(self.healing.parser_config.clone());
+                match parser.parse(content) {
+                    Ok(result) => Ok(result),
+                    Err(SimpleAgentsError::Healing(healing_err)) => Err(HealingFailure {
+                        error: healing_err,
+                        raw_text: content.to_string(),
+                    }),
+                    Err(other) => return Err(other),
+                }
+            }
+            None => Err(HealingFailure {
+                error: simple_agent_type::error::HealingError::ParseFailed {
+                    error_message: "response contained no content".to_string(),
+                    input: String::new(),
+                },
+                raw_text: String::new(),
+            }),
+        };
 
         Ok(HealedJsonResponse { response, parsed })
     }
@@ -307,10 +319,20 @@ impl SimpleAgentsClient {
     ) -> Result<HealedSchemaResponse> {
         self.ensure_healing_enabled()?;
         let healed = self.complete_json_internal(request).await?;
-        let engine = CoercionEngine::with_config(self.healing.coercion_config.clone());
-        let coerced = engine
-            .coerce(&healed.parsed.value, schema)
-            .map_err(SimpleAgentsError::Healing)?;
+
+        let coerced = match &healed.parsed {
+            Ok(parsed) => {
+                let engine = CoercionEngine::with_config(self.healing.coercion_config.clone());
+                match engine.coerce(&parsed.value, schema) {
+                    Ok(result) => Some(Ok(result)),
+                    Err(healing_err) => Some(Err(HealingFailure {
+                        error: healing_err,
+                        raw_text: serde_json::to_string(&parsed.value).unwrap_or_default(),
+                    })),
+                }
+            }
+            Err(_) => None,
+        };
 
         Ok(HealedSchemaResponse {
             response: healed.response,

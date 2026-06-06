@@ -82,7 +82,8 @@ async fn complete_json_parses_markdown() {
         CompletionOutcome::HealedJson(healed) => healed,
         _ => panic!("expected healed json"),
     };
-    assert_eq!(healed.parsed.value["value"], 42);
+    let parsed = healed.parsed.expect("parsing should succeed");
+    assert_eq!(parsed.value["value"], 42);
 }
 
 #[tokio::test]
@@ -105,7 +106,8 @@ async fn complete_with_schema_coerces_types() {
         _ => panic!("expected coerced schema"),
     };
 
-    assert_eq!(healed.coerced.value["count"], 5);
+    let coerced = healed.coerced.expect("coercion should be present").expect("coercion should succeed");
+    assert_eq!(coerced.value["count"], 5);
 }
 
 #[tokio::test]
